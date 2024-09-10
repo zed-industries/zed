@@ -344,6 +344,18 @@ mod tests {
                 (Path::new("test_dirs/1.46/bar_2"), true),
             ]
         );
+        let mut paths = vec![
+            (Path::new("root1/one.txt"), true),
+            (Path::new("root1/one.two.txt"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("root1/one.txt"), true),
+                (Path::new("root1/one.two.txt"), true),
+            ]
+        );
     }
 
     #[test]

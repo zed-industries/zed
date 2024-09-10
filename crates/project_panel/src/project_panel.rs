@@ -3517,9 +3517,9 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > [EDITOR: '']  <== selected",
                 "        > 3",
                 "        > 4",
+                "        > [EDITOR: '']  <== selected",
                 "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
@@ -3540,10 +3540,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > [PROCESSING: 'new-dir']",
-                "        > 3  <== selected",
+                "        > 3",
                 "        > 4",
-                "          a-different-filename.tar.gz",
+                "        > [PROCESSING: 'new-dir']",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3557,10 +3557,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > 3  <== selected",
+                "        > 3",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3574,10 +3574,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > [EDITOR: '3']  <== selected",
+                "        > 3",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz",
+                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3592,10 +3592,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > 3  <== selected",
+                "        > 3",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3842,8 +3842,8 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two.txt  <== selected",
-                "      one.txt",
+                "      one.txt  <== selected",
+                "      one.two.txt",
             ]
         );
 
@@ -3860,9 +3860,9 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy.txt  <== selected",
-                "      one.two.txt",
                 "      one.txt",
+                "      one copy.txt  <== selected",
+                "      one.two.txt",
             ]
         );
 
@@ -3876,10 +3876,10 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy 1.txt  <== selected",
-                "      one.two copy.txt",
-                "      one.two.txt",
                 "      one.txt",
+                "      one copy.txt",
+                "      one copy 1.txt  <== selected",
+                "      one.two.txt",
             ]
         );
     }
@@ -4072,8 +4072,8 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three copy.txt  <== selected",
                 "      three.txt",
+                "      three copy.txt  <== selected",
                 "      two.txt",
             ]
         );
@@ -4103,8 +4103,8 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three copy.txt",
                 "      three.txt",
+                "      three copy.txt",
                 "      two.txt",
             ]
         );
