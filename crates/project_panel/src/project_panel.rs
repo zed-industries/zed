@@ -115,7 +115,6 @@ struct EntryDetails {
     is_cut: bool,
     git_status: Option<GitFileStatus>,
     is_private: bool,
-    is_auto_folded: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Box<Path>>,
 }
@@ -2099,7 +2098,6 @@ impl ProjectPanel {
                             .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
                         git_status: status,
                         is_private: entry.is_private,
-                        is_auto_folded: difference > 1,
                         worktree_id: *worktree_id,
                         canonical_path: entry.canonical_path.clone(),
                     };
@@ -2212,7 +2210,6 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
-        let is_auto_folded = details.is_auto_folded;
         div()
             .id(entry_id.to_proto() as usize)
             .on_drag_move::<ExternalPaths>(cx.listener(
@@ -2314,8 +2311,9 @@ impl ProjectPanel {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
                             h_flex().h_6().map(|this| {
-                                if is_auto_folded && is_active {
-                                    let folded_ancestors = self.ancestors.get(&entry_id).unwrap();
+                                if let Some(folded_ancestors) =
+                                    is_active.then(|| self.ancestors.get(&entry_id)).flatten()
+                                {
                                     let Some(part_to_highlight) = Path::new(&file_name)
                                         .ancestors()
                                         .nth(folded_ancestors.current_ancestor_depth)
