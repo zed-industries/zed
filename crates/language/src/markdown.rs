@@ -166,6 +166,7 @@ pub async fn parse_markdown_block(
     let mut list_stack = Vec::new();
 
     let mut options = pulldown_cmark::Options::all();
+    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
     options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
 
     for event in Parser::new_ext(markdown, options) {
@@ -384,6 +385,7 @@ public: void format(const int &, const std::tm &, int &dest)
 "#;
 
         let mut options = pulldown_cmark::Options::all();
+        options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
         options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
 
         let parser = pulldown_cmark::Parser::new_ext(input, options);
