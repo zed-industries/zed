@@ -17,7 +17,6 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
-    stream::FuturesUnordered,
     FutureExt, StreamExt,
 };
 use gpui::{
@@ -33,7 +32,7 @@ use language_model::{
     StopReason,
 };
 use open_ai::Model as OpenAiModel;
-use paths::{context_images_dir, contexts_dir};
+use paths::contexts_dir;
 use project::Project;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -629,18 +628,6 @@ impl Context {
                     id: message.id,
                     start: message.offset_range.start,
                     metadata: self.messages_metadata[&message.id].clone(),
-                    image_offsets: Vec::new(),
-                    // todo!("store this in `SavedContext`")
-                    // image_offsets: message
-                    //     .contents
-                    //     .iter()
-                    //     .filter_map(|content| match content {
-                    //         Content::Image {
-                    //             anchor, image_id, ..
-                    //         } => Some((anchor.to_offset(buffer), image_id)),
-                    //         Content::ToolUse { .. } | Content::ToolResult { .. } => None,
-                    //     })
-                    //     .collect(),
                 })
                 .collect(),
             summary: self
@@ -2785,9 +2772,6 @@ impl Context {
             })?;
 
             if let Some(summary) = summary {
-                this.read_with(&cx, |this, cx| this.serialize_images(fs.clone(), cx))?
-                    .await;
-
                 let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
                 let mut discriminant = 1;
                 let mut new_path;
@@ -2825,45 +2809,6 @@ impl Context {
 
             Ok(())
         });
-    }
-
-    pub fn serialize_images(&self, fs: Arc<dyn Fs>, cx: &AppContext) -> Task<()> {
-        let mut images_to_save = self
-            .images
-            .iter()
-            .map(|(id, (_, llm_image))| {
-                let fs = fs.clone();
-                let llm_image = llm_image.clone();
-                let id = *id;
-                async move {
-                    if let Some(llm_image) = llm_image.await {
-                        let path: PathBuf =
-                            context_images_dir().join(&format!("{}.png.base64", id));
-                        if fs
-                            .metadata(path.as_path())
-                            .await
-                            .log_err()
-                            .flatten()
-                            .is_none()
-                        {
-                            fs.atomic_write(path, llm_image.source.to_string())
-                                .await
-                                .log_err();
-                        }
-                    }
-                }
-            })
-            .collect::<FuturesUnordered<_>>();
-        cx.background_executor().spawn(async move {
-            if fs
-                .create_dir(context_images_dir().as_ref())
-                .await
-                .log_err()
-                .is_some()
-            {
-                while let Some(_) = images_to_save.next().await {}
-            }
-        })
     }
 
     pub(crate) fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
@@ -2951,9 +2896,6 @@ pub struct SavedMessage {
     pub id: MessageId,
     pub start: usize,
     pub metadata: MessageMetadata,
-    // This is defaulted for backwards compatibility with JSON files created before August 2024. We didn't always have this field.
-    #[serde(default)]
-    pub image_offsets: Vec<(usize, u64)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -3139,7 +3081,6 @@ impl SavedContextV0_3_0 {
                             timestamp,
                             cache: None,
                         },
-                        image_offsets: Vec::new(),
                     })
                 })
                 .collect(),
