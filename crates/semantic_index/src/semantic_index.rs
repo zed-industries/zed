@@ -132,7 +132,7 @@ mod tests {
     use std::{future, path::Path, sync::Arc};
 
     fn init_test(cx: &mut TestAppContext) {
-        env_logger::init();
+        env_logger::try_init().ok();
 
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
