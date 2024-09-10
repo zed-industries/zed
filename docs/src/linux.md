@@ -22,9 +22,10 @@ The Zed installed by the script works best on systems that:
 Both Nix and Alpine have third-party Zed packages available (though they are currently a few weeks out of date). If you'd like to use our builds they do work if you install a glibc compatibility layer. On NixOS you can try [nix-ld](https://github.com/Mic92/nix-ld), and on Alpine [gcompat](https://wiki.alpinelinux.org/wiki/Running_glibc_programs).
 
 You will need to build from source for:
-  - architectures other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
-  - Amazon Linux 2 on x86_64
-  - Rocky Linux 9.3
+
+- architectures other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+- Amazon Linux 2 on x86_64
+- Rocky Linux 9.3
 
 ## Other ways to install Zed on Linux
 
