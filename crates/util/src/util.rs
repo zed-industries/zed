@@ -655,14 +655,16 @@ impl<'a> NumericPrefixWithSuffix<'a> {
         Self(prefix, remainder)
     }
 }
-
 impl Ord for NumericPrefixWithSuffix<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let NumericPrefixWithSuffix(num_a, remainder_a) = self;
-        let NumericPrefixWithSuffix(num_b, remainder_b) = other;
-        num_a
-            .cmp(num_b)
-            .then_with(|| UniCase::new(remainder_a).cmp(&UniCase::new(remainder_b)))
+        match (self.0, other.0) {
+            (None, None) => UniCase::new(self.1).cmp(&UniCase::new(other.1)),
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(a), Some(b)) => a
+                .cmp(&b)
+                .then_with(|| UniCase::new(self.1).cmp(&UniCase::new(other.1))),
+        }
     }
 }
 
