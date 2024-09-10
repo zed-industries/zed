@@ -1364,6 +1364,9 @@ impl Pane {
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
+        if self.is_tab_pinned(item_index) {
+            self.pinned_tab_count -= 1;
+        }
         if item_index == self.active_item_index {
             let index_to_activate = self
                 .activation_history
