@@ -186,7 +186,7 @@ impl FeedbackModal {
             );
             editor.set_show_gutter(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_show_inline_completions(false);
+            editor.set_show_inline_completions(Some(false), cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.set_use_modal_editing(false);
             editor
@@ -302,7 +302,7 @@ impl FeedbackModal {
         let http_client = zed_client.http_client();
         let feedback_endpoint = http_client.build_url("/api/feedback");
         let request = FeedbackRequestBody {
-            feedback_text: &feedback_text,
+            feedback_text,
             email,
             metrics_id,
             installation_id,

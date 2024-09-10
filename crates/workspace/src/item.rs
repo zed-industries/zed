@@ -510,7 +510,7 @@ impl<T: Item> ItemHandle for View<T> {
         if let Some(project_path) = self.project_path(cx) {
             WorkspaceSettings::get(
                 Some(SettingsLocation {
-                    worktree_id: project_path.worktree_id.into(),
+                    worktree_id: project_path.worktree_id,
                     path: &project_path.path,
                 }),
                 cx,
@@ -681,7 +681,6 @@ impl<T: Item> ItemHandle for View<T> {
                                 pane.close_item_by_id(item.item_id(), crate::SaveIntent::Close, cx)
                             })
                             .detach_and_log_err(cx);
-                            return;
                         }
 
                         ItemEvent::UpdateTab => {

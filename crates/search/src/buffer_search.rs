@@ -122,7 +122,7 @@ impl BufferSearchBar {
         };
 
         EditorElement::new(
-            &editor,
+            editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
@@ -498,12 +498,14 @@ impl BufferSearchBar {
     }
 
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let query_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let query_editor = cx.new_view(Editor::single_line);
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let replacement_editor = cx.new_view(Editor::single_line);
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
+
+        let search_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
 
         Self {
             query_editor,
@@ -514,8 +516,8 @@ impl BufferSearchBar {
             active_searchable_item_subscription: None,
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
-            default_options: SearchOptions::NONE,
-            search_options: SearchOptions::NONE,
+            default_options: search_options,
+            search_options,
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
@@ -552,7 +554,7 @@ impl BufferSearchBar {
             active_editor.search_bar_visibility_changed(false, cx);
             active_editor.toggle_filtered_search_ranges(false, cx);
             let handle = active_editor.focus_handle(cx);
-            cx.focus(&handle);
+            self.focus(&handle, cx);
         }
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -567,6 +569,7 @@ impl BufferSearchBar {
                 active_item.toggle_filtered_search_ranges(deploy.selection_search_enabled, cx);
             }
             self.search_suggested(cx);
+            self.smartcase(cx);
             self.replace_enabled = deploy.replace_enabled;
             self.selection_search_enabled = deploy.selection_search_enabled;
             if deploy.focus {
@@ -601,6 +604,12 @@ impl BufferSearchBar {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
+
+        self.default_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+
+        if self.default_options != self.search_options {
+            self.search_options = self.default_options;
+        }
 
         self.dismissed = false;
         handle.search_bar_visibility_changed(true, cx);
@@ -718,11 +727,19 @@ impl BufferSearchBar {
         }
     }
 
-    fn toggle_search_option(&mut self, search_option: SearchOptions, cx: &mut ViewContext<Self>) {
+    pub fn toggle_search_option(
+        &mut self,
+        search_option: SearchOptions,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
         drop(self.update_matches(cx));
         cx.notify();
+    }
+
+    pub fn has_search_option(&mut self, search_option: SearchOptions) -> bool {
+        self.search_options.contains(search_option)
     }
 
     pub fn enable_search_option(
@@ -775,13 +792,12 @@ impl BufferSearchBar {
                     .filter(|matches| !matches.is_empty())
                 {
                     // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
-                    if !EditorSettings::get_global(cx).search_wrap {
-                        if (direction == Direction::Next && index + count >= matches.len())
-                            || (direction == Direction::Prev && index < count)
-                        {
-                            crate::show_no_more_matches(cx);
-                            return;
-                        }
+                    if !EditorSettings::get_global(cx).search_wrap
+                        && ((direction == Direction::Next && index + count >= matches.len())
+                            || (direction == Direction::Prev && index < count))
+                    {
+                        crate::show_no_more_matches(cx);
+                        return;
                     }
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
@@ -799,7 +815,7 @@ impl BufferSearchBar {
                 .searchable_items_with_matches
                 .get(&searchable_item.downgrade())
             {
-                if matches.len() == 0 {
+                if matches.is_empty() {
                     return;
                 }
                 let new_match_index = matches.len() - 1;
@@ -819,6 +835,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited { .. } => {
+                self.smartcase(cx);
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
 
@@ -936,6 +953,7 @@ impl BufferSearchBar {
                         false,
                         Default::default(),
                         Default::default(),
+                        None,
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -953,6 +971,7 @@ impl BufferSearchBar {
                         false,
                         Default::default(),
                         Default::default(),
+                        None,
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -1030,7 +1049,7 @@ impl BufferSearchBar {
         } else {
             return;
         };
-        cx.focus(&focus_handle);
+        self.focus(&focus_handle, cx);
         cx.stop_propagation();
     }
 
@@ -1043,7 +1062,7 @@ impl BufferSearchBar {
         } else {
             return;
         };
-        cx.focus(&focus_handle);
+        self.focus(&focus_handle, cx);
         cx.stop_propagation();
     }
 
@@ -1081,15 +1100,21 @@ impl BufferSearchBar {
         }
     }
 
+    fn focus(&self, handle: &gpui::FocusHandle, cx: &mut ViewContext<Self>) {
+        cx.on_next_frame(|_, cx| {
+            cx.invalidate_character_coordinates();
+        });
+        cx.focus(handle);
+    }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
-        if let Some(_) = &self.active_searchable_item {
+        if self.active_searchable_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
             let handle = if self.replace_enabled {
                 self.replacement_editor.focus_handle(cx)
             } else {
                 self.query_editor.focus_handle(cx)
             };
-            cx.focus(&handle);
+            self.focus(&handle, cx);
             cx.notify();
         }
     }
@@ -1143,6 +1168,26 @@ impl BufferSearchBar {
         self.update_match_index(cx);
         self.active_match_index.is_some()
     }
+
+    pub fn should_use_smartcase_search(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        EditorSettings::get_global(cx).use_smartcase_search
+    }
+
+    pub fn is_contains_uppercase(&mut self, str: &String) -> bool {
+        str.chars().any(|c| c.is_uppercase())
+    }
+
+    fn smartcase(&mut self, cx: &mut ViewContext<Self>) {
+        if self.should_use_smartcase_search(cx) {
+            let query = self.query(cx);
+            if !query.is_empty() {
+                let is_case = self.is_contains_uppercase(&query);
+                if self.has_search_option(SearchOptions::CASE_SENSITIVE) != is_case {
+                    self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1166,6 +1211,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            crate::init(cx);
         });
     }
 
@@ -1670,7 +1716,7 @@ mod tests {
         let last_match_selections = window
             .update(cx, |_, cx| {
                 assert!(
-                    editor.read(cx).is_focused(&cx),
+                    editor.read(cx).is_focused(cx),
                     "Should still have editor focused after SelectPrevMatch"
                 );
 

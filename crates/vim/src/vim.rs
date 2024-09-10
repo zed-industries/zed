@@ -23,8 +23,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, EventEmitter, KeyContext, KeystrokeEvent, Render,
-    View, ViewContext, WeakView,
+    actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
+    Render, View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -230,8 +230,21 @@ impl Vim {
         }
 
         let mut was_enabled = Vim::enabled(cx);
+        let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global::<SettingsStore>(move |editor, cx| {
             let enabled = Vim::enabled(cx);
+            let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
+            if enabled && was_enabled && (toggle != was_toggle) {
+                if toggle {
+                    let is_relative = editor
+                        .addon::<VimAddon>()
+                        .map(|vim| vim.view.read(cx).mode != Mode::Insert);
+                    editor.set_relative_line_number(is_relative, cx)
+                } else {
+                    editor.set_relative_line_number(None, cx)
+                }
+            }
+            was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if was_enabled == enabled {
                 return;
             }
@@ -298,6 +311,12 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
+        editor.set_relative_line_number(None, cx);
+        if let Some(vim) = Vim::globals(cx).focused_vim() {
+            if vim.entity_id() == cx.view().entity_id() {
+                Vim::globals(cx).focused_vim = None;
+            }
+        }
     }
 
     /// Register an action on the editor.
@@ -426,6 +445,16 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
+        if VimSettings::get_global(cx).toggle_relative_line_numbers
+            && self.mode != self.last_mode
+            && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
+        {
+            self.update_editor(cx, |vim, editor, cx| {
+                let is_relative = vim.mode != Mode::Insert;
+                editor.set_relative_line_number(Some(is_relative), cx)
+            });
+        }
+
         if leave_selections {
             return;
         }
@@ -482,10 +511,8 @@ impl Vim {
                             point = movement::left(map, selection.head());
                         }
                         selection.collapse_to(point, selection.goal)
-                    } else if !last_mode.is_visual() && mode.is_visual() {
-                        if selection.is_empty() {
-                            selection.end = movement::right(map, selection.start);
-                        }
+                    } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
+                        selection.end = movement::right(map, selection.start);
                     }
                 });
             })
@@ -498,7 +525,7 @@ impl Vim {
             return global_state.recorded_count;
         }
 
-        let count = if self.post_count == None && self.pre_count == None {
+        let count = if self.post_count.is_none() && self.pre_count.is_none() {
             return None;
         } else {
             Some(self.post_count.take().unwrap_or(1) * self.pre_count.take().unwrap_or(1))
@@ -618,6 +645,29 @@ impl Vim {
 
         cx.emit(VimEvent::Focused);
         self.sync_vim_settings(cx);
+
+        if VimSettings::get_global(cx).toggle_relative_line_numbers {
+            if let Some(old_vim) = Vim::globals(cx).focused_vim() {
+                if old_vim.entity_id() != cx.view().entity_id() {
+                    old_vim.update(cx, |vim, cx| {
+                        vim.update_editor(cx, |_, editor, cx| {
+                            editor.set_relative_line_number(None, cx)
+                        });
+                    });
+
+                    self.update_editor(cx, |vim, editor, cx| {
+                        let is_relative = vim.mode != Mode::Insert;
+                        editor.set_relative_line_number(Some(is_relative), cx)
+                    });
+                }
+            } else {
+                self.update_editor(cx, |vim, editor, cx| {
+                    let is_relative = vim.mode != Mode::Insert;
+                    editor.set_relative_line_number(Some(is_relative), cx)
+                });
+            }
+        }
+        Vim::globals(cx).focused_vim = Some(cx.view().downgrade());
     }
 
     fn blurred(&mut self, cx: &mut ViewContext<Self>) {
@@ -995,10 +1045,11 @@ impl Vim {
                 }
             },
             Some(Operator::Jump { line }) => self.jump(text, line, cx),
-            _ => match self.mode {
-                Mode::Replace => self.multi_replace(text, cx),
-                _ => {}
-            },
+            _ => {
+                if self.mode == Mode::Replace {
+                    self.multi_replace(text, cx)
+                }
+            }
         }
     }
 
@@ -1010,6 +1061,7 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
+            editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
         });
         cx.notify()
     }
@@ -1040,6 +1092,7 @@ pub enum UseSystemClipboard {
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 struct VimSettings {
+    pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
@@ -1049,6 +1102,7 @@ struct VimSettings {
 impl Default for VimSettings {
     fn default() -> Self {
         Self {
+            toggle_relative_line_numbers: false,
             use_system_clipboard: UseSystemClipboard::Always,
             use_multiline_find: false,
             use_smartcase_find: false,

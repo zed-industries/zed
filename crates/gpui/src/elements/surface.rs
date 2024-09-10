@@ -71,7 +71,6 @@ impl Element for Surface {
         _request_layout: &mut Self::RequestLayoutState,
         _cx: &mut WindowContext,
     ) -> Self::PrepaintState {
-        ()
     }
 
     fn paint(

@@ -1,6 +1,6 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::http_client::AsyncBody;
-use ::settings::Settings;
+use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -76,7 +76,7 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<u64> {
         let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_id())
+        Ok(delegate.worktree_id().to_proto())
     }
 
     async fn root_path(
@@ -393,7 +393,7 @@ impl ExtensionImports for WasmState {
                 let location = location
                     .as_ref()
                     .map(|location| ::settings::SettingsLocation {
-                        worktree_id: location.worktree_id as usize,
+                        worktree_id: WorktreeId::from_proto(location.worktree_id),
                         path: Path::new(&location.path),
                     });
 

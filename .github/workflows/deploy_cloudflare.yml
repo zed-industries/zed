@@ -21,6 +21,14 @@ jobs:
         with:
           mdbook-version: "0.4.37"
 
+      - name: Set up default .cargo/config.toml
+        run: cp ./.cargo/collab-config.toml ./.cargo/config.toml
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev
+
       - name: Build book
         run: |
           set -euo pipefail

@@ -3,10 +3,12 @@ use crate::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
-use anthropic::AnthropicError;
+use crate::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
+use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use editor::{Editor, EditorElement, EditorStyle};
+use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
@@ -16,11 +18,13 @@ use http_client::HttpClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::pin::Pin;
+use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
-use util::ResultExt;
+use util::{maybe, ResultExt};
 
 const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
@@ -54,7 +58,7 @@ pub struct AnthropicLanguageModelProvider {
     state: gpui::Model<State>,
 }
 
-const ANTHROPIC_API_KEY_VAR: &'static str = "ANTHROPIC_API_KEY";
+const ANTHROPIC_API_KEY_VAR: &str = "ANTHROPIC_API_KEY";
 
 pub struct State {
     api_key: Option<String>,
@@ -257,11 +261,17 @@ pub fn count_anthropic_tokens(
 
                 for content in message.content {
                     match content {
-                        MessageContent::Text(string) => {
-                            string_contents.push_str(&string);
+                        MessageContent::Text(text) => {
+                            string_contents.push_str(&text);
                         }
                         MessageContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
+                        }
+                        MessageContent::ToolUse(_tool_use) => {
+                            // TODO: Estimate token usage from tool uses.
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            string_contents.push_str(&tool_result.content);
                         }
                     }
                 }
@@ -364,21 +374,15 @@ impl LanguageModel for AnthropicModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request =
             request.into_anthropic(self.model.id().into(), self.model.max_output_tokens());
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| anyhow!(err))?;
-            Ok(anthropic::extract_text_from_events(response))
+            Ok(map_to_language_model_completion_events(response))
         });
-        async move {
-            Ok(future
-                .await?
-                .map(|result| result.map_err(|err| anyhow!(err)))
-                .boxed())
-        }
-        .boxed()
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -425,6 +429,120 @@ impl LanguageModel for AnthropicModel {
             })
             .boxed()
     }
+}
+
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    struct RawToolUse {
+        id: String,
+        name: String,
+        input_json: String,
+    }
+
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+        tool_uses_by_index: HashMap<usize, RawToolUse>,
+    }
+
+    futures::stream::unfold(
+        State {
+            events,
+            tool_uses_by_index: HashMap::default(),
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart {
+                            index,
+                            content_block,
+                        } => match content_block {
+                            ResponseContent::Text { text } => {
+                                return Some((
+                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    state,
+                                ));
+                            }
+                            ResponseContent::ToolUse { id, name, .. } => {
+                                state.tool_uses_by_index.insert(
+                                    index,
+                                    RawToolUse {
+                                        id,
+                                        name,
+                                        input_json: String::new(),
+                                    },
+                                );
+
+                                return Some((None, state));
+                            }
+                        },
+                        Event::ContentBlockDelta { index, delta } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                return Some((
+                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    state,
+                                ));
+                            }
+                            ContentDelta::InputJsonDelta { partial_json } => {
+                                if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
+                                    tool_use.input_json.push_str(&partial_json);
+                                    return Some((None, state));
+                                }
+                            }
+                        },
+                        Event::ContentBlockStop { index } => {
+                            if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
+                                return Some((
+                                    Some(maybe!({
+                                        Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_use.id,
+                                                name: tool_use.name,
+                                                input: serde_json::Value::from_str(
+                                                    &tool_use.input_json,
+                                                )
+                                                .map_err(|err| anyhow!(err))?,
+                                            },
+                                        ))
+                                    })),
+                                    state,
+                                ));
+                            }
+                        }
+                        Event::MessageDelta { delta, .. } => {
+                            if let Some(stop_reason) = delta.stop_reason.as_deref() {
+                                let stop_reason = match stop_reason {
+                                    "end_turn" => StopReason::EndTurn,
+                                    "max_tokens" => StopReason::MaxTokens,
+                                    "tool_use" => StopReason::ToolUse,
+                                    _ => StopReason::EndTurn,
+                                };
+
+                                return Some((
+                                    Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason))),
+                                    state,
+                                ));
+                            }
+                        }
+                        Event::Error { error } => {
+                            return Some((
+                                Some(Err(anyhow!(AnthropicError::ApiError(error)))),
+                                state,
+                            ));
+                        }
+                        _ => {}
+                    },
+                    Err(err) => {
+                        return Some((Some(Err(anyhow!(err))), state));
+                    }
+                }
+            }
+
+            None
+        },
+    )
+    .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -538,13 +656,13 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const ANTHROPIC_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
         const INSTRUCTIONS: [&str; 4] = [
             "To use the assistant panel or inline assistant, you need to add your Anthropic API key.",
-            "You can create an API key at: https://console.anthropic.com/settings/keys",
+            "You can create an API key at:",
             "",
             "Paste your Anthropic API key below and hit enter to use the assistant:",
         ];
-
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -553,9 +671,18 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
+                .child(Label::new(INSTRUCTIONS[0]))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                    Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
+                    )
                 )
+                .child(Label::new(INSTRUCTIONS[2]))
+                .child(Label::new(INSTRUCTIONS[3]))
                 .child(
                     h_flex()
                         .w_full()

@@ -16,7 +16,6 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
-mod fps;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -52,7 +51,6 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
-pub use fps::*;
 pub use keystroke::*;
 
 #[cfg(target_os = "linux")]
@@ -356,7 +354,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
-    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>);
+    fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
@@ -381,7 +379,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GPUSpecs>;
-    fn fps(&self) -> Option<f32>;
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -526,9 +525,9 @@ impl PlatformInputHandler {
         Self { cx, handler }
     }
 
-    fn selected_text_range(&mut self) -> Option<Range<usize>> {
+    fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
         self.cx
-            .update(|cx| self.handler.selected_text_range(cx))
+            .update(|cx| self.handler.selected_text_range(ignore_disabled_input, cx))
             .ok()
             .flatten()
     }
@@ -589,6 +588,29 @@ impl PlatformInputHandler {
     pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
         self.handler.replace_text_in_range(None, input, cx);
     }
+
+    pub fn selected_bounds(&mut self, cx: &mut WindowContext) -> Option<Bounds<Pixels>> {
+        let selection = self.handler.selected_text_range(true, cx)?;
+        self.handler.bounds_for_range(
+            if selection.reversed {
+                selection.range.start..selection.range.start
+            } else {
+                selection.range.end..selection.range.end
+            },
+            cx,
+        )
+    }
+}
+
+/// A struct representing a selection in a text buffer, in UTF16 characters.
+/// This is different from a range because the head may be before the tail.
+pub struct UTF16Selection {
+    /// The range of text in the document this selection corresponds to
+    /// in UTF16 characters.
+    pub range: Range<usize>,
+    /// Whether the head of this selection is at the start (true), or end (false)
+    /// of the range
+    pub reversed: bool,
 }
 
 /// Zed's interface for handling text input from the platform's IME system
@@ -600,7 +622,11 @@ pub trait InputHandler: 'static {
     /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        cx: &mut WindowContext,
+    ) -> Option<UTF16Selection>;
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
@@ -784,7 +810,8 @@ pub struct TitlebarOptions {
     /// The initial title of the window
     pub title: Option<SharedString>,
 
-    /// Whether the titlebar should appear transparent (macOS only)
+    /// Should the default system titlebar be hidden to allow for a custom-drawn titlebar? (macOS and Windows only)
+    /// Refer to [`WindowOptions::window_decorations`] on Linux
     pub appears_transparent: bool,
 
     /// The position of the macOS traffic light buttons

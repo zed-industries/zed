@@ -24,11 +24,11 @@ use ui::{
 };
 
 use crate::settings::AllLanguageModelSettings;
-use crate::LanguageModelProviderState;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
 };
+use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
 use super::open_ai::count_open_ai_tokens;
 
@@ -192,7 +192,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
@@ -243,7 +243,13 @@ impl LanguageModel for CopilotChatLanguageModel {
             }).await
         });
 
-        async move { Ok(future.await?.boxed()) }.boxed()
+        async move {
+            Ok(future
+                .await?
+                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(
@@ -320,7 +326,7 @@ impl Render for ConfigurationView {
                     |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
                 );
 
-            const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
+            const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 
             match &self.copilot_status {
                 Some(status) => match status {

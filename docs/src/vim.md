@@ -1,18 +1,26 @@
 # Vim Mode
 
-Zed includes a vim emulation layer known as "vim mode". This document aims to describe how it works, and how to make the most out of it.
+Zed includes a Vim emulation layer known as "vim mode". On this page, you will learn how to turn Zed's vim mode on or off, what tools and commands are available, and how to customize keybindings.
 
 ## Philosophy
 
-Vim mode in Zed is supposed to primarily "do what you expect": it mostly tries to copy vim exactly, but will use Zed-specific functionality when available to make things smoother.
+Vim mode tries to offer a familiar experience to Vim users: it replicates the behavior of motions and commands precisely when it makes sense and uses Zed-specific functionality to provide an editing experience that "just works" without requiring configuration on your part. This includes support for semantic navigation, multiple cursors, or other features usually provided by plugins like surrounding text.
 
-This means Zed will never be 100% Vim compatible, but should be 100% Vim familiar! We expect that our Vim mode already copes with 90% of your workflow, and we'd like to keep improving it. If you find things that you can’t yet do in Vim mode, but which you rely on in your current workflow, please [file an issue](https://github.com/zed-industries/zed/issues).
+So, Zed's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal design with Zed's modern features to provide a more fluid experience. It's also configurable, so you can add your own key bindings or override the defaults.
+
+> **Note:** The foundations of Zed's vim mode should already cover many use cases, and we're always looking to improve it. If you find missing features that you rely on in your workflow, please [file an issue](https://github.com/zed-industries/zed/issues).
+
+## Enabling and disabling vim mode
+
+When you first open Zed, a checkbox will appear on the welcome screen, allowing you to enable vim mode.
+
+If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
 
 ## Zed-specific features
 
-Zed is built on a modern foundation that (among other things) uses tree-sitter and language servers to understand the content of the file you're editing, and supports multiple cursors out of the box.
+Zed is built on a modern foundation that (among other things) uses tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
 
-Vim mode has several "core Zed" key bindings, that will help you make the most of Zed's specific feature set.
+Vim mode has several "core Zed" key bindings that will help you make the most of Zed's specific feature set.
 
 ```
 # Language server
@@ -57,7 +65,6 @@ g <space>  Open the current search excerpt
 <ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
-i a / a a      Select the function argument the cursor is in
 ctrl-x ctrl-o  Open the completion menu
 ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)
@@ -82,14 +89,12 @@ Vim mode emulates visual block mode using Zed's multiple cursor support. This ag
 
 Vim's macro support (`q` and `@`) is implemented using Zed's actions. This lets us support recording and replaying of autocompleted code, etc. Unlike Vim, Zed does not re-use the yank registers for recording macros, they are two separate namespaces.
 
-Finally, Vim mode's search and replace functionality is backed by Zed's. This means that the pattern syntax is slightly different, see the section on [Regex differences](#regex-differences) for details.
+Finally, vim mode's search and replace functionality is backed by Zed's. This means that the pattern syntax is slightly different, see the section on [Regex differences](#regex-differences) for details.
 
 ## Custom key bindings
 
 You can edit your personal key bindings with `:keymap`.
 For vim-specific shortcuts, you may find the following template a good place to start.
-
-> **Note:** We made some breaking changes in Zed version `0.145.0`. For older versions, see [the previous version of this document](https://github.com/zed-industries/zed/blob/c67aeaa9c58619a58708722ac7d7a78c75c29336/docs/src/vim.md#L90).
 
 ```json
 [
@@ -97,6 +102,12 @@ For vim-specific shortcuts, you may find the following template a good place to 
     "context": "VimControl && !menu",
     "bindings": {
       // put key-bindings here if you want them to work in normal & visual mode
+    }
+  },
+  {
+    "context": "vim_mode == normal && !menu",
+    "bindings": {
+      // "shift-y": ["workspace::SendKeystrokes", "y $"] // use nvim's Y behavior
     }
   },
   {
@@ -120,7 +131,7 @@ If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to 
 
 You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
-#### Contexts
+### Contexts
 
 Zed's keyboard bindings are evaluated only when the `"context"` matches the location you are in on the screen. Locations are nested, so when you're editing you're in the `"Workspace"` location is at the top, containing a `"Pane"` which contains an `"Editor"`. Contexts are matched only on one level at a time. So it is possible to combine `Editor && vim_mode == normal`, but `Workspace && vim_mode == normal` will never match because we set the vim context at the `Editor` level.
 
@@ -130,10 +141,9 @@ Vim mode adds several contexts to the `Editor`:
 - `vim_operator` is set to `none` unless `vim_mode == operator` in which case it is set to the current operator's default keybinding (for example after typing `d`, `vim_operator == d`).
 - `"VimControl"` indicates that vim keybindings should work. It is currently an alias for `vim_mode == normal || vim_mode == visual || vim_mode == operator`, but the definition may change over time.
 
-### Restoring some sense of normality
+### Restoring common text editing keybindings
 
-If you're using Vim mode on Linux or Windows, you may find that it has overridden keybindings
-that you can't live without. You can restore them to their defaults by copying these into your keymap:
+If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: <kbd>Ctrl</kbd>+<kbd>v</kbd> to copy, <kbd>Ctrl</kbd>+<kbd>f</kbd> to search, etc. You can restore them by copying this data into your keymap:
 
 ```json
 {
@@ -154,9 +164,9 @@ that you can't live without. You can restore them to their defaults by copying t
 
 Vim mode allows you to enable Zed’s command palette with `:`. This means that you can use vim's command palette to run any action that Zed supports.
 
-Additionally vim mode contains a number of aliases for popular vim commands to ensure that muscle memory works. For example `:w<enter>` will save the file.
+Additionally, vim mode contains a number of aliases for popular vim commands to ensure that muscle memory works. For example `:w<enter>` will save the file.
 
-We do not (yet) emulate the full power of vim’s command line, in particular we special case specific patterns instead of using vim's range selection syntax, and we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+We do not (yet) emulate the full power of vim’s command line, in particular, we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
 
 As mentioned above, one thing to be aware of is that the regex engine is slightly different from vim's in `:%s/a/b`.
 
@@ -185,6 +195,12 @@ Currently supported vim-specific commands:
 :cc, :ll
     to open the errors page
 
+# handling git diff
+:dif[fupdate]
+    to view the diff under the cursor ("d o" in normal mode)
+:rev[ert]
+    to revert the diff under the cursor ("d p" in normal mode)
+
 # jump to position
 :<number>
     to jump to a line number
@@ -194,11 +210,8 @@ Currently supported vim-specific commands:
     to jump to next/prev line matching foo
 
 # replacement (/g is always assumed and Zed uses different regex syntax to vim)
-:%s/foo/bar/
+:[range]s/foo/bar/
   to replace instances of foo with bar
-:X,Ys/foo/bar/
-    to limit replacement between line X and Y
-    other ranges are not yet implemented
 
 # editing
 :j[oin]
@@ -207,23 +220,23 @@ Currently supported vim-specific commands:
     to delete the current line (no range is yet supported)
 :s[ort] [i]
     to sort the current selection (with i, case-insensitively)
+:y[ank]
 ```
 
 As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
 
 ```
-:diff   Toggle Hunk [Diff]
 :diffs  Toggle all Hunk [Diffs]
-:revert Revert Selected Hunks
 :cpp    [C]o[p]y [P]ath to file
 :crp    [C]opy [r]elative [P]ath
 :reveal [Reveal] in finder
 :zlog   Open [Z]ed Log
+:clank  [C]ancel [lan]guage server work[k]
 ```
 
 ## Settings
 
-Vim mode is not enabled by default. To enable Vim mode, you need to add the following configuration to your settings file:
+Vim mode is not enabled by default. To enable vim mode, you need to add the following configuration to your settings file:
 
 ```json
 {
@@ -231,7 +244,7 @@ Vim mode is not enabled by default. To enable Vim mode, you need to add the foll
 }
 ```
 
-Alternatively, you can enable Vim mode by running the `toggle vim mode` command from the command palette.
+Alternatively, you can enable vim mode by running the `toggle vim mode` command from the command palette.
 
 Some vim settings are available to modify the default vim behavior:
 
@@ -242,8 +255,17 @@ Some vim settings are available to modify the default vim behavior:
     // "never": don't use system clipboard unless "+ or "* is specified
     // "on_yank": use system clipboard for yank operations when no register is specified
     "use_system_clipboard": "always",
-    // Lets `f` and `t` motions extend across multiple lines
-    "use_multiline_find": true
+    // Let `f` and `t` motions extend across multiple lines
+    "use_multiline_find": true,
+    // Let `f` and `t` motions match case insensitively if the target is lowercase
+    "use_smartcase_find": true,
+    // Use relative line numbers in normal mode, absolute in insert mode
+    // c.f. https://github.com/jeffkreeftmeijer/vim-numbertoggle
+    "toggle_relative_line_numbers": true,
+    // Add custom digraphs (e.g. ctrl-k f z will insert a zombie emoji)
+    "custom_digraphs": {
+      "fz": "🧟‍♀️"
+    }
   }
 }
 ```

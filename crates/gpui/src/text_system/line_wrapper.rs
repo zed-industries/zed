@@ -106,18 +106,29 @@ impl LineWrapper {
         ellipsis: Option<&str>,
     ) -> SharedString {
         let mut width = px(0.);
+        let mut ellipsis_width = px(0.);
         if let Some(ellipsis) = ellipsis {
             for c in ellipsis.chars() {
-                width += self.width_for_char(c);
+                ellipsis_width += self.width_for_char(c);
             }
         }
 
         let mut char_indices = line.char_indices();
+        let mut truncate_ix = 0;
         for (ix, c) in char_indices {
+            if width + ellipsis_width <= truncate_width {
+                truncate_ix = ix;
+            }
+
             let char_width = self.width_for_char(c);
             width += char_width;
-            if width > truncate_width {
-                return SharedString::from(format!("{}{}", &line[..ix], ellipsis.unwrap_or("")));
+
+            if width.floor() > truncate_width {
+                return SharedString::from(format!(
+                    "{}{}",
+                    &line[..truncate_ix],
+                    ellipsis.unwrap_or("")
+                ));
             }
         }
 
@@ -142,7 +153,7 @@ impl LineWrapper {
         matches!(c, '\u{0400}'..='\u{04FF}') ||
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
-        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~') ||
+        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',') ||
         // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
         matches!(c,  '/' | ':' | '?' | '&' | '=') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.

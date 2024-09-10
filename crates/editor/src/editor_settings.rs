@@ -42,6 +42,7 @@ pub struct EditorSettings {
     pub relative_line_numbers: bool,
     /// When to populate a new search's query based on the text under the cursor.
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub use_smartcase_search: bool,
     /// The key to use for adding multiple cursors
     pub multi_cursor_modifier: MultiCursorModifier,
     /// Hide the values of variables in `private` files, as defined by the
@@ -51,12 +52,15 @@ pub struct EditorSettings {
 
     /// How many lines to expand the multibuffer excerpts by default
     pub expand_excerpt_lines: u32,
+    pub middle_click_paste: bool,
     /// What to do when multibuffer is double clicked in some of its excerpts
     /// (parts of singleton buffers).
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     /// Whether the editor search results will loop
     pub search_wrap: bool,
+    #[serde(default)]
+    pub search: SearchSettings,
     /// Show method signatures in the editor, when inside parentheses.
     pub auto_signature_help: bool,
     /// Whether to show the signature help after completion or a bracket pair inserted.

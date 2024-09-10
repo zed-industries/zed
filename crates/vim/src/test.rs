@@ -306,6 +306,25 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_kebab_case(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(cx).await;
+    cx.set_state(
+        indoc! { r#"
+            <div><a class="bg-rˇed"></a></div>
+            "#},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("v i w");
+    cx.assert_state(
+        indoc! { r#"
+        <div><a class="bg-«redˇ»"></a></div>
+        "#
+        },
+        Mode::Visual,
+    )
+}
+
+#[gpui::test]
 async fn test_join_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1405,5 +1424,105 @@ async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes(".").await;
     cx.simulate_shared_keystrokes(".").await;
     cx.simulate_shared_keystrokes(".").await;
-    cx.shared_state().await.assert_eq("ˇhello world"); // takes a _long_ time
+    cx.shared_state().await.assert_eq("ˇhello world");
+}
+
+#[gpui::test]
+async fn test_blackhole_register(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("ˇhello world").await;
+    cx.simulate_shared_keystrokes("d i w \" _ d a w").await;
+    cx.simulate_shared_keystrokes("p").await;
+    cx.shared_state().await.assert_eq("hellˇo");
+}
+
+#[gpui::test]
+async fn test_sentence_backwards(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("one\n\ntwo\nthree\nˇ\nfour").await;
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state()
+        .await
+        .assert_eq("one\n\nˇtwo\nthree\n\nfour");
+
+    cx.set_shared_state("hello.\n\n\nworˇld.").await;
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq("hello.\n\n\nˇworld.");
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq("hello.\n\nˇ\nworld.");
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq("ˇhello.\n\n\nworld.");
+
+    cx.set_shared_state("hello. worlˇd.").await;
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq("hello. ˇworld.");
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq("ˇhello. world.");
+
+    cx.set_shared_state(". helˇlo.").await;
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq(". ˇhello.");
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq(". ˇhello.");
+
+    cx.set_shared_state(indoc! {
+        "{
+            hello_world();
+        ˇ}"
+    })
+    .await;
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "ˇ{
+            hello_world();
+        }"
+    });
+
+    cx.set_shared_state(indoc! {
+        "Hello! World..?
+
+        \tHello! World... ˇ"
+    })
+    .await;
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "Hello! World..?
+
+        \tHello! ˇWorld... "
+    });
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "Hello! World..?
+
+        \tˇHello! World... "
+    });
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "Hello! World..?
+        ˇ
+        \tHello! World... "
+    });
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "Hello! ˇWorld..?
+
+        \tHello! World... "
+    });
+}
+
+#[gpui::test]
+async fn test_sentence_forwards(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("helˇlo.\n\n\nworld.").await;
+    cx.simulate_shared_keystrokes(")").await;
+    cx.shared_state().await.assert_eq("hello.\nˇ\n\nworld.");
+    cx.simulate_shared_keystrokes(")").await;
+    cx.shared_state().await.assert_eq("hello.\n\n\nˇworld.");
+    cx.simulate_shared_keystrokes(")").await;
+    cx.shared_state().await.assert_eq("hello.\n\n\nworldˇ.");
+
+    cx.set_shared_state("helˇlo.\n\n\nworld.").await;
 }

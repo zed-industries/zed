@@ -24,7 +24,7 @@ use wit_component::ComponentEncoder;
 ///
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
-const RUST_TARGET: &str = "wasm32-wasi";
+const RUST_TARGET: &str = "wasm32-wasip1";
 const WASI_ADAPTER_URL: &str =
     "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
@@ -77,7 +77,7 @@ impl ExtensionBuilder {
         extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<()> {
-        populate_defaults(extension_manifest, &extension_dir)?;
+        populate_defaults(extension_manifest, extension_dir)?;
 
         if extension_dir.is_relative() {
             bail!(
@@ -93,12 +93,21 @@ impl ExtensionBuilder {
             self.compile_rust_extension(extension_dir, extension_manifest, options)
                 .await
                 .context("failed to compile Rust extension")?;
+            log::info!("compiled Rust extension {}", extension_dir.display());
         }
 
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
+            log::info!(
+                "compiling grammar {grammar_name} for extension {}",
+                extension_dir.display()
+            );
             self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
                 .await
                 .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
+            log::info!(
+                "compiled grammar {grammar_name} for extension {}",
+                extension_dir.display()
+            );
         }
 
         log::info!("finished compiling extension {}", extension_dir.display());
@@ -114,16 +123,19 @@ impl ExtensionBuilder {
         self.install_rust_wasm_target_if_needed()?;
         let adapter_bytes = self.install_wasi_preview1_adapter_if_needed().await?;
 
-        let cargo_toml_content = fs::read_to_string(&extension_dir.join("Cargo.toml"))?;
+        let cargo_toml_content = fs::read_to_string(extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
-        log::info!("compiling rust extension {}", extension_dir.display());
+        log::info!(
+            "compiling Rust crate for extension {}",
+            extension_dir.display()
+        );
         let output = Command::new("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
             .arg(extension_dir.join("target"))
-            .current_dir(&extension_dir)
+            .current_dir(extension_dir)
             .output()
             .context("failed to run `cargo`")?;
         if !output.status.success() {
@@ -133,6 +145,11 @@ impl ExtensionBuilder {
             );
         }
 
+        log::info!(
+            "compiled Rust crate for extension {}",
+            extension_dir.display()
+        );
+
         let mut wasm_path = PathBuf::from(extension_dir);
         wasm_path.extend([
             "target",
@@ -141,7 +158,7 @@ impl ExtensionBuilder {
             &cargo_toml
                 .package
                 .name
-                // The wasm32-wasi target normalizes `-` in package names to `_` in the resulting `.wasm` file.
+                // The wasm32-wasip1 target normalizes `-` in package names to `_` in the resulting `.wasm` file.
                 .replace('-', "_"),
         ]);
         wasm_path.set_extension("wasm");
@@ -154,6 +171,11 @@ impl ExtensionBuilder {
             .adapter("wasi_snapshot_preview1", &adapter_bytes)
             .context("failed to load adapter module")?
             .validate(true);
+
+        log::info!(
+            "encoding wasm component for extension {}",
+            extension_dir.display()
+        );
 
         let component_bytes = encoder
             .encode()
@@ -168,8 +190,15 @@ impl ExtensionBuilder {
                 .context("compiled wasm did not contain a valid zed extension api version")?;
         manifest.lib.version = Some(wasm_extension_api_version);
 
-        fs::write(extension_dir.join("extension.wasm"), &component_bytes)
+        let extension_file = extension_dir.join("extension.wasm");
+        fs::write(extension_file.clone(), &component_bytes)
             .context("failed to write extension.wasm")?;
+
+        log::info!(
+            "extension {} written to {}",
+            extension_dir.display(),
+            extension_file.display()
+        );
 
         Ok(())
     }
@@ -252,12 +281,12 @@ impl ExtensionBuilder {
                 );
             }
         } else {
-            fs::create_dir_all(&directory).with_context(|| {
+            fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
             let init_output = Command::new("git")
                 .arg("init")
-                .current_dir(&directory)
+                .current_dir(directory)
                 .output()?;
             if !init_output.status.success() {
                 bail!(
@@ -283,15 +312,15 @@ impl ExtensionBuilder {
         let fetch_output = Command::new("git")
             .arg("--git-dir")
             .arg(&git_dir)
-            .args(["fetch", "--depth", "1", "origin", &rev])
+            .args(["fetch", "--depth", "1", "origin", rev])
             .output()
             .context("failed to execute `git fetch`")?;
 
         let checkout_output = Command::new("git")
             .arg("--git-dir")
             .arg(&git_dir)
-            .args(["checkout", &rev])
-            .current_dir(&directory)
+            .args(["checkout", rev])
+            .current_dir(directory)
             .output()
             .context("failed to execute `git checkout`")?;
         if !checkout_output.status.success() {
@@ -459,14 +488,10 @@ impl ExtensionBuilder {
                 _ => {}
             }
 
-            match &payload {
-                CustomSection(c) => {
-                    if strip_custom_section(c.name()) {
-                        continue;
-                    }
+            if let CustomSection(c) = &payload {
+                if strip_custom_section(c.name()) {
+                    continue;
                 }
-
-                _ => {}
             }
 
             if let Some((id, range)) = payload.as_section() {

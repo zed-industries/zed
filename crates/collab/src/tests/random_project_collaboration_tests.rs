@@ -15,7 +15,7 @@ use language::{
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
 use project::{
-    search::SearchQuery, Project, ProjectPath, SearchResult, DEFAULT_COMPLETION_CONTEXT,
+    search::SearchQuery, search::SearchResult, Project, ProjectPath, DEFAULT_COMPLETION_CONTEXT,
 };
 use rand::{
     distributions::{Alphanumeric, DistString},
@@ -282,7 +282,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || rng.gen() {
-                                Path::new("/").join(&plan.next_root_dir_name())
+                                Path::new("/").join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
                             };
@@ -883,6 +883,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             false,
                             Default::default(),
                             Default::default(),
+                            None,
                         )
                         .unwrap(),
                         cx,

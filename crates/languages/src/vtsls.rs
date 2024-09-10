@@ -49,7 +49,7 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
-const SERVER_NAME: &'static str = "vtsls";
+const SERVER_NAME: &str = "vtsls";
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -220,41 +220,42 @@ impl LspAdapter for VtslsLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(&adapter).await;
-        Ok(Some(json!({
-            "typescript": {
-                "tsdk": tsdk_path,
-                "suggest": {
-                    "completeFunctionCalls": true
+        let tsdk_path = Self::tsdk_path(adapter).await;
+        let config = serde_json::json!({
+            "tsdk": tsdk_path,
+            "suggest": {
+                "completeFunctionCalls": true
+            },
+            "tsserver": {
+                "maxTsServerMemory": 8092
+            },
+            "inlayHints": {
+                "parameterNames": {
+                    "enabled": "all",
+                    "suppressWhenArgumentMatchesName": false
                 },
-                "inlayHints": {
-                    "parameterNames": {
-                        "enabled": "all",
-                        "suppressWhenArgumentMatchesName": false,
-                    },
-                    "parameterTypes": {
-                        "enabled": true
-                    },
-                    "variableTypes": {
-                        "enabled": true,
-                        "suppressWhenTypeMatchesName": false,
-                    },
-                    "propertyDeclarationTypes": {
-                        "enabled": true,
-                    },
-                    "functionLikeReturnTypes": {
-                        "enabled": true,
-                    },
-                    "enumMemberValues": {
-                        "enabled": true,
-                    }
+                "parameterTypes": {
+                    "enabled": true
+                },
+                "variableTypes": {
+                    "enabled": true,
+                    "suppressWhenTypeMatchesName": false
+                },
+                "propertyDeclarationTypes": {
+                    "enabled": true
+                },
+                "functionLikeReturnTypes": {
+                    "enabled": true
+                },
+                "enumMemberValues": {
+                    "enabled": true
                 }
-            },
-            "javascript": {
-                "suggest": {
-                    "completeFunctionCalls": true
-                }
-            },
+            }
+        });
+
+        Ok(Some(json!({
+            "typescript": config,
+            "javascript": config,
             "vtsls": {
                 "experimental": {
                     "completion": {

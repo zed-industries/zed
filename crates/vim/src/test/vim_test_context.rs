@@ -16,12 +16,12 @@ impl VimTestContext {
             return;
         }
         cx.update(|cx| {
-            search::init(cx);
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
             crate::init(cx);
+            search::init(cx);
         });
     }
 

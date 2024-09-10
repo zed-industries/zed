@@ -18,6 +18,12 @@ pub struct Breadcrumbs {
     subscription: Option<Subscription>,
 }
 
+impl Default for Breadcrumbs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Breadcrumbs {
     pub fn new() -> Self {
         Self {

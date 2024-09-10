@@ -275,7 +275,13 @@ message Envelope {
         GetLlmTokenResponse get_llm_token_response = 236;
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
-        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242; // current max
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
+
+        FindSearchCandidates find_search_candidates = 243;
+        FindSearchCandidatesResponse find_search_candidates_response = 244;
+
+        CloseBuffer close_buffer = 245;
+        UpdateUserSettings update_user_settings = 246; // current max
     }
 
     reserved 158 to 161;
@@ -651,6 +657,7 @@ message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
+    optional string relative_worktree_source_path = 4;
 }
 
 message DeleteProjectEntry {
@@ -864,6 +871,11 @@ message SaveBuffer {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     optional ProjectPath new_path = 4;
+}
+
+message CloseBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
 }
 
 message ProjectPath {
@@ -1234,6 +1246,26 @@ message SearchProject {
 message SearchProjectResponse {
     repeated Location locations = 1;
     bool limit_reached = 2;
+}
+
+message SearchQuery {
+    string query = 2;
+    bool regex = 3;
+    bool whole_word = 4;
+    bool case_sensitive = 5;
+    string files_to_include = 6;
+    string files_to_exclude = 7;
+    bool include_ignored = 8;
+}
+
+message FindSearchCandidates {
+    uint64 project_id = 1;
+    SearchQuery query = 2;
+    uint64 limit = 3;
+}
+
+message FindSearchCandidatesResponse {
+    repeated uint64 buffer_ids = 1;
 }
 
 message CodeAction {
@@ -1814,6 +1846,7 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     optional GitStatus git_status = 9;
+    bool is_fifo = 10;
 }
 
 message RepositoryEntry {
@@ -2452,9 +2485,15 @@ message GetLlmTokenResponse {
 // Remote FS
 
 message AddWorktree {
+    uint64 project_id = 2;
     string path = 1;
 }
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
+}
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string content = 2;
 }

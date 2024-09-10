@@ -117,7 +117,7 @@ impl Vim {
                             to_insert = "\n".to_owned() + &to_insert;
                         }
                     } else if !line_mode && vim.mode == Mode::VisualLine {
-                        to_insert = to_insert + "\n";
+                        to_insert += "\n";
                     }
 
                     let display_range = if !selection.is_empty() {
@@ -432,7 +432,7 @@ mod test {
                 the laˇzy dog"});
         // paste in visual mode
         cx.simulate_shared_keystrokes("v i w p").await;
-        cx.shared_state().await.assert_eq(&indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
                 the•
                 ˇfox jumps over

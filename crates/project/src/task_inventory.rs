@@ -395,7 +395,7 @@ fn task_lru_comparator(
 ) -> cmp::Ordering {
     lru_score_a
         // First, display recently used templates above all.
-        .cmp(&lru_score_b)
+        .cmp(lru_score_b)
         // Then, ensure more specific sources are displayed first.
         .then(task_source_kind_preference(kind_a).cmp(&task_source_kind_preference(kind_b)))
         // After that, display first more specific tasks, using more template variables.
@@ -579,15 +579,16 @@ impl ContextProvider for BasicContextProvider {
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
-        let worktree_abs_path = buffer
-            .file()
-            .map(|file| WorktreeId::from_usize(file.worktree_id()))
-            .and_then(|worktree_id| {
-                self.project
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).abs_path())
-            });
+        let worktree_abs_path =
+            buffer
+                .file()
+                .map(|file| file.worktree_id(cx))
+                .and_then(|worktree_id| {
+                    self.project
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .map(|worktree| worktree.read(cx).abs_path())
+                });
         if let Some(worktree_path) = worktree_abs_path {
             task_variables.insert(
                 VariableName::WorktreeRoot,

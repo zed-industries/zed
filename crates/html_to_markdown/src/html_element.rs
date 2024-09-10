@@ -9,7 +9,7 @@ use html5ever::Attribute;
 /// [MDN: List of "inline" elements](https://yari-demos.prod.mdn.mozit.cloud/en-US/docs/Web/HTML/Inline_elements)
 fn inline_elements() -> &'static HashSet<&'static str> {
     static INLINE_ELEMENTS: OnceLock<HashSet<&str>> = OnceLock::new();
-    &INLINE_ELEMENTS.get_or_init(|| {
+    INLINE_ELEMENTS.get_or_init(|| {
         HashSet::from_iter([
             "a", "abbr", "acronym", "audio", "b", "bdi", "bdo", "big", "br", "button", "canvas",
             "cite", "code", "data", "datalist", "del", "dfn", "em", "embed", "i", "iframe", "img",

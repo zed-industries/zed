@@ -1,5 +1,5 @@
 use gpui::Render;
-use story::{StoryContainer, StoryItem, StorySection};
+use story::{Story, StoryItem, StorySection};
 
 use ui::prelude::*;
 
@@ -9,13 +9,11 @@ pub struct ApplicationMenuStory;
 
 impl Render for ApplicationMenuStory {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        StoryContainer::new(
-            "ApplicationMenu Story",
-            "crates/title_bar/src/stories/application_menu.rs",
-        )
-        .child(StorySection::new().child(StoryItem::new(
-            "Application Menu",
-            h_flex().child(ApplicationMenu::new()),
-        )))
+        Story::container()
+            .child(Story::title_for::<ApplicationMenu>())
+            .child(StorySection::new().child(StoryItem::new(
+                "Application Menu",
+                h_flex().child(ApplicationMenu::new()),
+            )))
     }
 }

@@ -13,9 +13,9 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
 
-Your settings file can be opened with <kbd>cmd-,|ctrl-,</kbd>. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running `zed: Open Local Settings` from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenLocalSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
@@ -23,7 +23,7 @@ The syntax for configuration files is a super-set of JSON that allows `//` comme
 
 ## Default settings
 
-You can find the default settings for your current Zed by running `zed: Open Default Settings` from the command palette.
+You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
@@ -108,6 +108,7 @@ The name of any font family installed on the user's system
 - Description: The OpenType features to enable for text in the editor.
 - Setting: `buffer_font_features`
 - Default: `null`
+- Platform: macOS and Windows.
 
 **Options**
 
@@ -130,6 +131,23 @@ You can also set other OpenType features, like setting `cv01` to `7`:
   "buffer_font_features": {
     "cv01": 7
   }
+}
+```
+
+## Buffer Font Fallbacks
+
+- Description: Set the buffer text's font fallbacks, this will be merged with the platform's default fallbacks.
+- Setting: `buffer_font_fallbacks`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+For example, to use `Nerd Font` as a fallback, add the following to your settings:
+
+```json
+{
+  "buffer_font_fallbacks": ["Nerd Font"]
 }
 ```
 
@@ -893,7 +911,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 {
   "git": {
     "inline_blame": {
-      "enabled": false,
+      "enabled": true,
       "delay_ms": 500
     }
   }
@@ -1260,6 +1278,12 @@ List of `integer` column numbers
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "dock": "bottom",
+    "detect_venv": {
+      "on": {
+        "directories": [".env", "env", ".venv", "venv"],
+        "activate_script": "default"
+      }
+    }
     "env": {},
     "font_family": null,
     "font_features": null,
@@ -1432,6 +1456,7 @@ The name of any font family installed on the user's system
 - Description: What font features to use for the terminal. When not set, defaults to matching the editor's font features.
 - Setting: `font_features`
 - Default: `null`
+- Platform: macOS and Windows.
 
 **Options**
 
@@ -1547,6 +1572,39 @@ See Buffer Font Features
         "args": ["--login"]
       }
     }
+  }
+}
+```
+
+## Terminal: Detect Virtual Environments {#terminal-detect_venv}
+
+- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environemtn
+- Setting: `detect_venv`
+- Default:
+
+```json
+{
+  "terminal":
+    "detect_venv": {
+      "on": {
+        // Default directories to search for virtual environments, relative
+        // to the current working directory. We recommend overriding this
+        // in your project's settings, rather than globally.
+        "directories": [".venv", "venv"],
+        // Can also be `csh`, `fish`, and `nushell`
+        "activate_script": "default"
+      }
+    }
+  }
+}
+```
+
+Disable with:
+
+```json
+{
+  "terminal":
+    "detect_venv": "off"
   }
 }
 ```

@@ -22,9 +22,32 @@ pub struct KeymapBlock {
     bindings: BTreeMap<String, KeymapAction>,
 }
 
+impl KeymapBlock {
+    pub fn context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    pub fn bindings(&self) -> &BTreeMap<String, KeymapAction> {
+        &self.bindings
+    }
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(transparent)]
 pub struct KeymapAction(Value);
+
+impl std::fmt::Display for KeymapAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Value::String(s) => write!(f, "{}", s),
+            Value::Array(arr) => {
+                let strings: Vec<String> = arr.iter().map(|v| v.to_string()).collect();
+                write!(f, "{}", strings.join(", "))
+            }
+            _ => write!(f, "{}", self.0),
+        }
+    }
+}
 
 impl JsonSchema for KeymapAction {
     fn schema_name() -> String {
@@ -134,6 +157,10 @@ impl KeymapFile {
             .insert("KeymapAction".to_owned(), action_schema);
 
         serde_json::to_value(root_schema).unwrap()
+    }
+
+    pub fn blocks(&self) -> &[KeymapBlock] {
+        &self.0
     }
 }
 

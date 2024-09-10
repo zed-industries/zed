@@ -8,6 +8,12 @@ pub struct SettingsContainer {
     children: SmallVec<[AnyElement; 2]>,
 }
 
+impl Default for SettingsContainer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SettingsContainer {
     pub fn new() -> Self {
         Self {

@@ -33,7 +33,7 @@ There are several third-party Zed packages for various Linux distributions and p
 - Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 - Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
 - Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_64](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
-- Nix: `zed-editor` ([stable](https://search.nixos.org/packages?show=zed-editor)), ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
+- Nix: `zed-editor` ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
 - Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
 - Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
 - Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
@@ -108,6 +108,8 @@ If Zed is selecting your integrated GPU instead of your discrete GPU, you can fi
 If you are using Mesa, and want more control over which GPU is selected you can run `MESA_VK_DEVICE_SELECT=list zed --foreground` to get a list of available GPUs and then export `MESA_VK_DEVICE_SELECT=xxxx:yyyy` to choose a specific device.
 
 If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141).
+
+If you have a discrete GPU and you are using [PRIME](https://wiki.archlinux.org/title/PRIME) you may be able to configure Zed to work by setting `/etc/prime-discrete` to 'on'.
 
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 

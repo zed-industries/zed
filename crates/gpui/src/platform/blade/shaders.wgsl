@@ -548,7 +548,9 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
 
 struct PolychromeSprite {
     order: u32,
+    pad: u32,
     grayscale: u32,
+    opacity: f32,
     bounds: Bounds,
     content_mask: Bounds,
     corner_radii: Corners,
@@ -592,7 +594,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, saturate(0.5 - distance));
+    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
 }
 
 // --- surfaces --- //

@@ -1,5 +1,8 @@
 mod supported_countries;
 
+use std::time::Duration;
+use std::{pin::Pin, str::FromStr};
+
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
@@ -7,15 +10,13 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use isahc::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use std::{pin::Pin, str::FromStr};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 use util::ResultExt as _;
 
 pub use supported_countries::*;
 
-pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
+pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -330,28 +331,6 @@ pub async fn stream_completion_with_rate_limit_info(
     }
 }
 
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<Event, AnthropicError>>,
-) -> impl Stream<Item = Result<String, AnthropicError>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(response) => match response {
-                Event::ContentBlockStart { content_block, .. } => match content_block {
-                    Content::Text { text, .. } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::ContentBlockDelta { delta, .. } => match delta {
-                    ContentDelta::TextDelta { text } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::Error { error } => Some(Err(AnthropicError::ApiError(error))),
-                _ => None,
-            },
-            Err(error) => Some(Err(error)),
-        }
-    })
-}
-
 pub async fn extract_tool_args_from_events(
     tool_name: String,
     mut events: Pin<Box<dyn Send + Stream<Item = Result<Event>>>>,
@@ -360,14 +339,12 @@ pub async fn extract_tool_args_from_events(
     while let Some(event) = events.next().await {
         if let Event::ContentBlockStart {
             index,
-            content_block,
+            content_block: ResponseContent::ToolUse { name, .. },
         } = event?
         {
-            if let Content::ToolUse { name, .. } = content_block {
-                if name == tool_name {
-                    tool_use_index = Some(index);
-                    break;
-                }
+            if name == tool_name {
+                tool_use_index = Some(index);
+                break;
             }
         }
     }
@@ -411,7 +388,7 @@ pub struct CacheControl {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<RequestContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -423,7 +400,7 @@ pub enum Role {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Content {
+pub enum RequestContent {
     #[serde(rename = "text")]
     Text {
         text: String,
@@ -447,9 +424,23 @@ pub enum Content {
     #[serde(rename = "tool_result")]
     ToolResult {
         tool_use_id: String,
+        is_error: bool,
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResponseContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
     },
 }
 
@@ -525,7 +516,7 @@ pub struct Response {
     #[serde(rename = "type")]
     pub response_type: String,
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<ResponseContent>,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
@@ -542,7 +533,7 @@ pub enum Event {
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: usize,
-        content_block: Content,
+        content_block: ResponseContent,
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: usize, delta: ContentDelta },
@@ -617,9 +608,6 @@ impl ApiError {
     }
 
     pub fn is_rate_limit_error(&self) -> bool {
-        match self.error_type.as_str() {
-            "rate_limit_error" => true,
-            _ => false,
-        }
+        matches!(self.error_type.as_str(), "rate_limit_error")
     }
 }

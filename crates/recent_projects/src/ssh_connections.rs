@@ -105,7 +105,7 @@ impl SshPrompt {
             connection_string,
             status_message: None,
             prompt: None,
-            editor: cx.new_view(|cx| Editor::single_line(cx)),
+            editor: cx.new_view(Editor::single_line),
         }
     }
 
@@ -369,6 +369,7 @@ pub async fn open_ssh_project(
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            None,
             cx,
         );
         cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
