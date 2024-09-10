@@ -40,7 +40,7 @@ use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     Edit, FileSystemWatcher, InsertTextFormat, LanguageServer, LanguageServerBinary,
     LanguageServerId, LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus,
-    ServerStatus, SymbolKind, TextEdit, WorkDoneProgressCancelParams,
+    ServerStatus, SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -4774,6 +4774,30 @@ impl LspStore {
             })
             .detach();
 
+        let id = language_server.server_id();
+        language_server
+            .on_request::<lsp::request::WorkspaceFoldersRequest, _, _>({
+                let this = this.clone();
+                move |_, mut cx| {
+                    let this = this.clone();
+                    async move {
+                        let Some(server) =
+                            this.update(&mut cx, |this, _| this.language_server_for_id(id))?
+                        else {
+                            return Ok(None);
+                        };
+                        let root = server.root_path();
+                        let Ok(uri) = Url::from_file_path(&root) else {
+                            return Ok(None);
+                        };
+                        Ok(Some(vec![WorkspaceFolder {
+                            uri,
+                            name: Default::default(),
+                        }]))
+                    }
+                }
+            })
+            .detach();
         // Even though we don't have handling for these requests, respond to them to
         // avoid stalling any language server like `gopls` which waits for a response
         // to these requests when initializing.
