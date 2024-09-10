@@ -96,6 +96,9 @@ impl Default for EditorSettings {
             auto_signature_help: false,
             show_signature_help_after_edits: true,
             jupyter: Default::default(),
+            use_smartcase_search: false,
+            middle_click_paste: true,
+            search: SearchSet,
         }
     }
 }
@@ -265,6 +268,19 @@ pub enum ScrollBeyondLastLine {
 
     /// The editor will scroll beyond the last line by the same number of lines as vertical_scroll_margin.
     VerticalScrollMargin,
+}
+
+/// Default options for buffer and project search items.
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchSettings {
+    #[serde(default)]
+    pub whole_word: bool,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub include_ignored: bool,
+    #[serde(default)]
+    pub regex: bool,
 }
 
 impl EditorSettings {
