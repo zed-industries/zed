@@ -5933,6 +5933,7 @@ fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut W
 
 fn move_all_items(from_pane: &View<Pane>, to_pane: &View<Pane>, cx: &mut WindowContext<'_>) {
     let destination_is_different = from_pane != to_pane;
+    let mut moved_items = 0;
     for (item_ix, item_handle) in from_pane
         .read(cx)
         .items()
@@ -5940,11 +5941,13 @@ fn move_all_items(from_pane: &View<Pane>, to_pane: &View<Pane>, cx: &mut WindowC
         .map(|(ix, item)| (ix, item.clone()))
         .collect::<Vec<_>>()
     {
+        let ix = item_ix - moved_items;
         if destination_is_different {
             // Close item from previous pane
             from_pane.update(cx, |source, cx| {
-                source.remove_item_and_focus_on_pane(item_ix, false, to_pane.clone(), cx);
+                source.remove_item_and_focus_on_pane(ix, false, to_pane.clone(), cx);
             });
+            moved_items += 1;
         }
 
         // This automatically removes duplicate items in the pane
