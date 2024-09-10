@@ -5349,7 +5349,7 @@ fn make_lsp_adapter_delegate(
         let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
             Ok(
-                ProjectLspAdapterDelegate::new(lsp_store, &worktree, http_client, fs, cx)
+                ProjectLspAdapterDelegate::new(lsp_store, &worktree, http_client, fs, None, cx)
                     as Arc<dyn LspAdapterDelegate>,
             )
         })

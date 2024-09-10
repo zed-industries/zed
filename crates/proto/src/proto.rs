@@ -367,7 +367,9 @@ messages!(
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
-    (CreateLanguageServer, Foreground)
+    (CreateLanguageServer, Foreground),
+    (WhichCommand, Foreground),
+    (WhichCommandResponse, Foreground),
 );
 
 request_messages!(
@@ -491,7 +493,8 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CreateLanguageServer, Ack)
+    (CreateLanguageServer, Ack),
+    (WhichCommand, WhichCommandResponse)
 );
 
 entity_messages!(
@@ -565,7 +568,8 @@ entity_messages!(
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
-    CreateLanguageServer
+    CreateLanguageServer,
+    WhichCommand
 );
 
 entity_messages!(
