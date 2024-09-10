@@ -339,7 +339,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  bundle-linux-aarch64:
+  bundle-linux-aarch64: # this runs on ubuntu22.04
     timeout-minutes: 60
     name: Create arm64 Linux bundle
     runs-on:
@@ -360,8 +360,8 @@ jobs:
       - name: Set up Clang
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
-          echo "/usr/lib/llvm-10/bin" >> $GITHUB_PATH
+          sudo apt-get install -y llvm-15 clang-15 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
+          echo "/usr/lib/llvm-15/bin" >> $GITHUB_PATH
 
       - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
         with:
