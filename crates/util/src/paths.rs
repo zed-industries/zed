@@ -9,9 +9,8 @@ use std::{
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use unicase::UniCase;
 
-use crate::{maybe, NumericPrefixWithSuffix};
+use crate::NumericPrefixWithSuffix;
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
@@ -282,34 +281,29 @@ pub fn compare_paths(
                 let a_is_file = components_a.peek().is_none() && a_is_file;
                 let b_is_file = components_b.peek().is_none() && b_is_file;
                 let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                    let maybe_numeric_ordering = maybe!({
-                        let path_a = Path::new(component_a.as_os_str());
-                        let num_and_remainder_a = if a_is_file {
+                    let path_a = Path::new(component_a.as_os_str());
+                    let num_and_remainder_a = NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                        if a_is_file {
                             path_a.file_stem()
                         } else {
                             path_a.file_name()
                         }
                         .and_then(|s| s.to_str())
-                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+                        .unwrap_or_default(),
+                    );
 
-                        let path_b = Path::new(component_b.as_os_str());
-                        let num_and_remainder_b = if b_is_file {
+                    let path_b = Path::new(component_b.as_os_str());
+                    let num_and_remainder_b = NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                        if b_is_file {
                             path_b.file_stem()
                         } else {
                             path_b.file_name()
                         }
                         .and_then(|s| s.to_str())
-                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+                        .unwrap_or_default(),
+                    );
 
-                        num_and_remainder_a.partial_cmp(&num_and_remainder_b)
-                    });
-
-                    maybe_numeric_ordering.unwrap_or_else(|| {
-                        let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
-                        let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
-
-                        name_a.cmp(&name_b)
-                    })
+                    num_and_remainder_a.cmp(&num_and_remainder_b)
                 });
                 if !ordering.is_eq() {
                     return ordering;
@@ -348,6 +342,18 @@ mod tests {
                 (Path::new("test_dirs/1.46"), false),
                 (Path::new("test_dirs/1.46/bar_1"), true),
                 (Path::new("test_dirs/1.46/bar_2"), true),
+            ]
+        );
+        let mut paths = vec![
+            (Path::new("root1/one.txt"), true),
+            (Path::new("root1/one.two.txt"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("root1/one.txt"), true),
+                (Path::new("root1/one.two.txt"), true),
             ]
         );
     }
