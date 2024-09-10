@@ -1,6 +1,6 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::http_client::AsyncBody;
-use ::settings::Settings;
+use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -9,6 +9,7 @@ use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
 use isahc::config::{Configurable, RedirectPolicy};
+use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
@@ -76,7 +77,7 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<u64> {
         let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_id())
+        Ok(delegate.worktree_id().to_proto())
     }
 
     async fn root_path(
@@ -393,14 +394,15 @@ impl ExtensionImports for WasmState {
                 let location = location
                     .as_ref()
                     .map(|location| ::settings::SettingsLocation {
-                        worktree_id: location.worktree_id as usize,
+                        worktree_id: WorktreeId::from_proto(location.worktree_id),
                         path: Path::new(&location.path),
                     });
 
                 cx.update(|cx| match category.as_str() {
                     "language" => {
+                        let key = key.map(|k| LanguageName::new(&k));
                         let settings =
-                            AllLanguageSettings::get(location, cx).language(key.as_deref());
+                            AllLanguageSettings::get(location, cx).language(key.as_ref());
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
                         })?)

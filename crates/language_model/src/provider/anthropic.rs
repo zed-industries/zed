@@ -58,7 +58,7 @@ pub struct AnthropicLanguageModelProvider {
     state: gpui::Model<State>,
 }
 
-const ANTHROPIC_API_KEY_VAR: &'static str = "ANTHROPIC_API_KEY";
+const ANTHROPIC_API_KEY_VAR: &str = "ANTHROPIC_API_KEY";
 
 pub struct State {
     api_key: Option<String>,
@@ -695,7 +695,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        "You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed.",
+                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small),
                 )

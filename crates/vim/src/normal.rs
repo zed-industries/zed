@@ -52,7 +52,6 @@ actions!(
         DeleteToEndOfLine,
         Yank,
         YankLine,
-        YankToEndOfLine,
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
@@ -77,7 +76,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_upper_case);
     Vim::action(editor, cx, Vim::convert_to_lower_case);
     Vim::action(editor, cx, Vim::yank_line);
-    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
 
@@ -250,7 +248,7 @@ impl Vim {
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
-                        target: Some(SurroundsType::Object(object)),
+                        target: Some(SurroundsType::Object(object, around)),
                     });
                 }
                 Some(Operator::ToggleComments) => self.toggle_comments_object(object, around, cx),
@@ -426,18 +424,6 @@ impl Vim {
     fn yank_line(&mut self, _: &YankLine, cx: &mut ViewContext<Self>) {
         let count = self.take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, cx)
-    }
-
-    fn yank_to_end_of_line(&mut self, _: &YankToEndOfLine, cx: &mut ViewContext<Self>) {
-        self.record_current_action(cx);
-        let count = self.take_count(cx);
-        self.yank_motion(
-            motion::Motion::EndOfLine {
-                display_lines: false,
-            },
-            count,
-            cx,
-        )
     }
 
     fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
@@ -1406,15 +1392,6 @@ mod test {
             indoc! {"assert_bindinˇg"},
             indoc! {"asserˇt_binding"},
         );
-    }
-
-    #[gpui::test]
-    async fn test_shift_y(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        cx.set_shared_state("helˇlo\n").await;
-        cx.simulate_shared_keystrokes("shift-y").await;
-        cx.shared_clipboard().await.assert_eq("lo");
     }
 
     #[gpui::test]

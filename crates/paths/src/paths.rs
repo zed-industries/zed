@@ -170,12 +170,6 @@ pub fn contexts_dir() -> &'static PathBuf {
     })
 }
 
-/// Returns the path within the contexts directory where images from contexts are stored.
-pub fn context_images_dir() -> &'static PathBuf {
-    static CONTEXT_IMAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    CONTEXT_IMAGES_DIR.get_or_init(|| contexts_dir().join("images"))
-}
-
 /// Returns the path to the contexts directory.
 ///
 /// This is where the prompts for use with the Assistant are stored.

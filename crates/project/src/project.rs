@@ -37,7 +37,7 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, Entity, EventEmitter, Model,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Model,
     ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
@@ -107,7 +107,7 @@ pub use buffer_store::ProjectTransaction;
 pub use lsp_store::{
     DiagnosticSummary, LanguageServerLogType, LanguageServerProgress, LanguageServerPromptRequest,
     LanguageServerStatus, LanguageServerToQuery, LspStore, LspStoreEvent,
-    ProjectLspAdapterDelegate, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -643,16 +643,13 @@ impl Project {
 
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
             let lsp_store = cx.new_model(|cx| {
-                LspStore::new(
+                LspStore::new_local(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(environment.clone()),
+                    environment.clone(),
                     languages.clone(),
                     Some(client.http_client()),
                     fs.clone(),
-                    None,
-                    None,
-                    None,
                     cx,
                 )
             });
@@ -712,16 +709,89 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let this = Self::local(client, node, user_store, languages, fs, None, cx);
-        this.update(cx, |this, cx| {
-            let client: AnyProtoClient = ssh.clone().into();
+        cx.new_model(|cx: &mut ModelContext<Self>| {
+            let (tx, rx) = mpsc::unbounded();
+            cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+                .detach();
+            let tasks = Inventory::new(cx);
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            this.worktree_store.update(cx, |store, _cx| {
-                store.set_upstream_client(client.clone());
+            let worktree_store = cx.new_model(|_| {
+                let mut worktree_store = WorktreeStore::new(false, fs.clone());
+                worktree_store.set_upstream_client(ssh.clone().into());
+                worktree_store
             });
-            this.settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_ssh(ssh.clone().into(), this.worktree_store.clone(), cx)
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                .detach();
+
+            let buffer_store =
+                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), None, cx));
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
+            let settings_observer = cx.new_model(|cx| {
+                SettingsObserver::new_ssh(ssh.clone().into(), worktree_store.clone(), cx)
             });
+
+            let environment = ProjectEnvironment::new(&worktree_store, None, cx);
+            let lsp_store = cx.new_model(|cx| {
+                LspStore::new_ssh(
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    languages.clone(),
+                    ssh.clone().into(),
+                    0,
+                    cx,
+                )
+            });
+            cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+            let this = Self {
+                buffer_ordered_messages_tx: tx,
+                collaborators: Default::default(),
+                worktree_store,
+                buffer_store,
+                lsp_store,
+                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
+                join_project_response_message_id: 0,
+                client_state: ProjectClientState::Local,
+                client_subscriptions: Vec::new(),
+                _subscriptions: vec![
+                    cx.observe_global::<SettingsStore>(Self::on_settings_changed),
+                    cx.on_release(Self::release),
+                ],
+                active_entry: None,
+                snippets,
+                languages,
+                client,
+                user_store,
+                settings_observer,
+                fs,
+                ssh_session: Some(ssh.clone()),
+                buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DebouncedDelay::new(),
+                terminals: Terminals {
+                    local_handles: Vec::new(),
+                },
+                node: Some(node),
+                default_prettier: DefaultPrettier::default(),
+                prettiers_per_worktree: HashMap::default(),
+                prettier_instances: HashMap::default(),
+                tasks,
+                hosted_project_id: None,
+                dev_server_project_id: None,
+                search_history: Self::new_search_history(),
+                environment,
+                remotely_created_buffers: Default::default(),
+                last_formatting_failure: None,
+                buffers_being_formatted: Default::default(),
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
+            };
+
+            let client: AnyProtoClient = ssh.clone().into();
 
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
@@ -735,9 +805,8 @@ impl Project {
             LspStore::init(&client);
             SettingsObserver::init(&client);
 
-            this.ssh_session = Some(ssh);
-        });
-        this
+            this
+        })
     }
 
     pub async fn remote(
@@ -820,16 +889,12 @@ impl Project {
             cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx))?;
 
         let lsp_store = cx.new_model(|cx| {
-            let mut lsp_store = LspStore::new(
+            let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                None,
                 languages.clone(),
-                Some(client.http_client()),
-                fs.clone(),
-                None,
-                Some(client.clone().into()),
-                Some(remote_id),
+                client.clone().into(),
+                remote_id,
                 cx,
             );
             lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
@@ -900,7 +965,7 @@ impl Project {
                 dev_server_project_id: response
                     .payload
                     .dev_server_project_id
-                    .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
+                    .map(DevServerProjectId),
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
@@ -911,7 +976,7 @@ impl Project {
             };
             this.set_role(role, cx);
             for worktree in worktrees {
-                let _ = this.add_worktree(&worktree, cx);
+                this.add_worktree(&worktree, cx);
             }
             this
         })?;
@@ -1125,8 +1190,7 @@ impl Project {
             if let Some(language) = buffer_language {
                 if settings.enable_language_server {
                     if let Some(file) = buffer_file {
-                        language_servers_to_start
-                            .push((file.worktree.clone(), Arc::clone(language)));
+                        language_servers_to_start.push((file.worktree.clone(), language.name()));
                     }
                 }
                 language_formatters_to_check
@@ -1144,7 +1208,7 @@ impl Project {
             let language = languages.iter().find_map(|l| {
                 let adapter = self
                     .languages
-                    .lsp_adapters(l)
+                    .lsp_adapters(&l.name())
                     .iter()
                     .find(|adapter| adapter.name == started_lsp_name)?
                     .clone();
@@ -1165,11 +1229,11 @@ impl Project {
                     ) {
                         (None, None) => {}
                         (Some(_), None) | (None, Some(_)) => {
-                            language_servers_to_restart.push((worktree, Arc::clone(language)));
+                            language_servers_to_restart.push((worktree, language.name()));
                         }
                         (Some(current_lsp_settings), Some(new_lsp_settings)) => {
                             if current_lsp_settings != new_lsp_settings {
-                                language_servers_to_restart.push((worktree, Arc::clone(language)));
+                                language_servers_to_restart.push((worktree, language.name()));
                             }
                         }
                     }
@@ -1194,7 +1258,7 @@ impl Project {
             {
                 prettier_plugins_by_worktree
                     .entry(worktree)
-                    .or_insert_with(|| HashSet::default())
+                    .or_insert_with(HashSet::default)
                     .extend(plugins.iter().cloned());
             }
         }
@@ -1606,7 +1670,7 @@ impl Project {
             self.worktree_store.update(cx, |worktree_store, cx| {
                 for worktree in worktree_store.worktrees() {
                     store
-                        .clear_local_settings(worktree.entity_id().as_u64() as usize, cx)
+                        .clear_local_settings(worktree.read(cx).id(), cx)
                         .log_err();
                 }
             });
@@ -2090,7 +2154,7 @@ impl Project {
                 };
                 let buffer_file = buffer.read(cx).file().cloned();
                 let settings =
-                    language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+                    language_settings(Some(new_language), buffer_file.as_ref(), cx).clone();
                 let buffer_file = File::from_dyn(buffer_file.as_ref());
                 let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
                 if let Some(prettier_plugins) =
@@ -2233,7 +2297,7 @@ impl Project {
                     }
                 })
                 .collect();
-            if paths.len() > 0 {
+            if !paths.is_empty() {
                 let request = self.client.request(proto::UpdateDevServerProject {
                     dev_server_project_id: dev_server_project_id.0,
                     paths,
@@ -2739,7 +2803,7 @@ impl Project {
                 .as_ref()
                 .zip(buffer_abs_path.as_ref());
 
-            let prettier_settings = buffer.read_with(&mut cx, |buffer, cx| {
+            let prettier_settings = buffer.read_with(&cx, |buffer, cx| {
                 language_settings(buffer.language(), buffer.file(), cx)
                     .prettier
                     .clone()
@@ -2823,7 +2887,7 @@ impl Project {
                             FormatOnSave::List(formatters) => {
                                 for formatter in formatters.as_ref() {
                                     let diff = Self::perform_format(
-                                        &formatter,
+                                        formatter,
                                         server_and_buffer,
                                         project.clone(),
                                         buffer,
@@ -2968,10 +3032,10 @@ impl Project {
         buffer: &Model<Buffer>,
         buffer_abs_path: &Option<PathBuf>,
         settings: &LanguageSettings,
-        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
+        adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         push_to_history: bool,
         transaction: &mut ProjectTransaction,
-        mut cx: &mut AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<Option<FormatOperation>, anyhow::Error> {
         let result = match formatter {
             Formatter::LanguageServer { name } => {
@@ -2982,7 +3046,7 @@ impl Project {
                             .find_map(|(adapter, server)| {
                                 adapter.name.0.as_ref().eq(name.as_str()).then_some(server)
                             })
-                            .unwrap_or_else(|| language_server)
+                            .unwrap_or(language_server)
                     } else {
                         language_server
                     };
@@ -3004,36 +3068,28 @@ impl Project {
                     None
                 }
             }
-            Formatter::Prettier => {
-                prettier_support::format_with_prettier(&project, buffer, &mut cx)
-                    .await
-                    .transpose()
-                    .ok()
-                    .flatten()
-            }
+            Formatter::Prettier => prettier_support::format_with_prettier(&project, buffer, cx)
+                .await
+                .transpose()
+                .ok()
+                .flatten(),
             Formatter::External { command, arguments } => {
                 let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
-                Self::format_via_external_command(
-                    buffer,
-                    buffer_abs_path,
-                    &command,
-                    &arguments,
-                    &mut cx,
-                )
-                .await
-                .context(format!(
-                    "failed to format via external command {:?}",
-                    command
-                ))?
-                .map(FormatOperation::External)
+                Self::format_via_external_command(buffer, buffer_abs_path, command, arguments, cx)
+                    .await
+                    .context(format!(
+                        "failed to format via external command {:?}",
+                        command
+                    ))?
+                    .map(FormatOperation::External)
             }
             Formatter::CodeActions(code_actions) => {
-                let code_actions = deserialize_code_actions(&code_actions);
+                let code_actions = deserialize_code_actions(code_actions);
                 let lsp_store = project.update(cx, |p, _| p.lsp_store.downgrade())?;
                 if !code_actions.is_empty() {
                     LspStore::execute_code_actions_on_servers(
                         &lsp_store,
-                        &adapters_and_servers,
+                        adapters_and_servers,
                         code_actions,
                         buffer,
                         push_to_history,
@@ -3549,9 +3605,9 @@ impl Project {
     ) -> Receiver<Model<Buffer>> {
         if self.is_local() {
             let fs = self.fs.clone();
-            return self.buffer_store.update(cx, |buffer_store, cx| {
+            self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(query, limit, fs, cx)
-            });
+            })
         } else {
             self.search_for_candidate_buffers_remote(query, limit, cx)
         }
@@ -3582,7 +3638,7 @@ impl Project {
                         }
                     }
                 }
-                return true;
+                true
             })
             .collect::<Vec<_>>();
         let (tx, rx) = smol::channel::unbounded();
@@ -3777,10 +3833,10 @@ impl Project {
                         .update(&mut cx, |worktree, _| {
                             let root_entry_path = &worktree.root_entry()?.path;
 
-                            let resolved = resolve_path(&root_entry_path, candidate);
+                            let resolved = resolve_path(root_entry_path, candidate);
 
                             let stripped =
-                                resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
+                                resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
 
                             worktree.entry_for_path(stripped).map(|entry| {
                                 ResolvedPath::ProjectPath(ProjectPath {
@@ -3878,7 +3934,7 @@ impl Project {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
                         let tasks_file_rx =
-                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
+                            watch_config_file(cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
@@ -3898,7 +3954,7 @@ impl Project {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
                         let tasks_file_rx =
-                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
+                            watch_config_file(cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
@@ -4785,7 +4841,7 @@ impl Project {
     pub fn supplementary_language_servers<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl '_ + Iterator<Item = (&'a LanguageServerId, &'a LanguageServerName)> {
+    ) -> impl '_ + Iterator<Item = (LanguageServerId, LanguageServerName)> {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
@@ -5191,11 +5247,11 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 
 impl EventEmitter<Event> for Project {}
 
-impl<'a> Into<SettingsLocation<'a>> for &'a ProjectPath {
-    fn into(self) -> SettingsLocation<'a> {
+impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
+    fn from(val: &'a ProjectPath) -> Self {
         SettingsLocation {
-            worktree_id: self.worktree_id.to_usize(),
-            path: self.path.as_ref(),
+            worktree_id: val.worktree_id,
+            path: val.path.as_ref(),
         }
     }
 }
@@ -5347,7 +5403,7 @@ fn deserialize_location(
     })
 }
 
-pub fn sort_worktree_entries(entries: &mut Vec<Entry>) {
+pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {
         compare_paths(
             (&entry_a.path, entry_a.is_file()),

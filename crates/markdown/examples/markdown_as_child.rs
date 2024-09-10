@@ -9,7 +9,7 @@ use theme::LoadThemes;
 use ui::div;
 use ui::prelude::*;
 
-const MARKDOWN_EXAMPLE: &'static str = r#"
+const MARKDOWN_EXAMPLE: &str = r#"
 this text should be selectable
 
 wow so cool

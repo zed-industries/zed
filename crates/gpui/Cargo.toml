@@ -192,3 +192,7 @@ path = "examples/text_wrapper.rs"
 [[example]]
 name = "opacity"
 path = "examples/opacity.rs"
+
+[[example]]
+name = "uniform_list"
+path = "examples/uniform_list.rs"

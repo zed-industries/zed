@@ -74,7 +74,7 @@ impl<'a> std::fmt::Debug for CwdBacktrace<'a> {
             if frame
                 .symbols()
                 .iter()
-                .any(|s| s.filename().map_or(false, |f| f.starts_with(&cwd)))
+                .any(|s| s.filename().map_or(false, |f| f.starts_with(cwd)))
             {
                 formatted_frame.backtrace_frame(frame)?;
             }

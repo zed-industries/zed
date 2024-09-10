@@ -728,11 +728,10 @@ impl LspCommand for GetTypeDefinition {
     type ProtoRequest = proto::GetTypeDefinition;
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        match &capabilities.server_capabilities.type_definition_provider {
-            None => false,
-            Some(lsp::TypeDefinitionProviderCapability::Simple(false)) => false,
-            _ => true,
-        }
+        !matches!(
+            &capabilities.server_capabilities.type_definition_provider,
+            None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
+        )
     }
 
     fn to_lsp(
@@ -1037,7 +1036,7 @@ impl LspCommand for GetReferences {
     type ProtoRequest = proto::GetReferences;
 
     fn status(&self) -> Option<String> {
-        return Some("Finding references...".to_owned());
+        Some("Finding references...".to_owned())
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
@@ -1469,7 +1468,7 @@ impl LspCommand for GetSignatureHelp {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         Ok(response
             .signature_help
-            .map(|proto_help| proto_to_lsp_signature(proto_help))
+            .map(proto_to_lsp_signature)
             .and_then(|lsp_help| SignatureHelp::new(lsp_help, language)))
     }
 
@@ -2835,7 +2834,7 @@ impl LspCommand for InlayHints {
         proto::InlayHintsResponse {
             hints: response
                 .into_iter()
-                .map(|response_hint| InlayHints::project_to_proto_hint(response_hint))
+                .map(InlayHints::project_to_proto_hint)
                 .collect(),
             version: serialize_version(buffer_version),
         }
@@ -2883,7 +2882,7 @@ impl LspCommand for LinkedEditingRange {
         if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
             return false;
         }
-        return true;
+        true
     }
 
     fn to_lsp(
@@ -2913,7 +2912,8 @@ impl LspCommand for LinkedEditingRange {
     ) -> Result<Vec<Range<Anchor>>> {
         if let Some(lsp::LinkedEditingRanges { mut ranges, .. }) = message {
             ranges.sort_by_key(|range| range.start);
-            let ranges = buffer.read_with(&cx, |buffer, _| {
+
+            buffer.read_with(&cx, |buffer, _| {
                 ranges
                     .into_iter()
                     .map(|range| {
@@ -2923,9 +2923,7 @@ impl LspCommand for LinkedEditingRange {
                         buffer.anchor_before(start)..buffer.anchor_after(end)
                     })
                     .collect()
-            });
-
-            ranges
+            })
         } else {
             Ok(vec![])
         }

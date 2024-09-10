@@ -212,7 +212,7 @@ impl LanguageModelRequestMessage {
         self.content.is_empty()
             || self
                 .content
-                .get(0)
+                .first()
                 .map(|content| match content {
                     MessageContent::Text(text) => text.trim().is_empty(),
                     MessageContent::ToolResult(tool_result) => {

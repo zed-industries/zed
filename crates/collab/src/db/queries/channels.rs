@@ -188,17 +188,16 @@ impl Database {
                             .anyhow())?;
                     }
                 }
-            } else if visibility == ChannelVisibility::Members {
-                if self
+            } else if visibility == ChannelVisibility::Members
+                && self
                     .get_channel_descendants_excluding_self([&channel], &tx)
                     .await?
                     .into_iter()
                     .any(|channel| channel.visibility == ChannelVisibility::Public)
-                {
-                    Err(ErrorCode::BadPublicNesting
-                        .with_tag("direction", "children")
-                        .anyhow())?;
-                }
+            {
+                Err(ErrorCode::BadPublicNesting
+                    .with_tag("direction", "children")
+                    .anyhow())?;
             }
 
             let mut model = channel.into_active_model();
@@ -308,7 +307,7 @@ impl Database {
 
     fn sanitize_channel_name(name: &str) -> Result<&str> {
         let new_name = name.trim().trim_start_matches('#');
-        if new_name == "" {
+        if new_name.is_empty() {
             Err(anyhow!("channel name can't be blank"))?;
         }
         Ok(new_name)
@@ -985,7 +984,7 @@ impl Database {
                 .all(&*tx)
                 .await?
                 .into_iter()
-                .map(|c| Channel::from_model(c))
+                .map(Channel::from_model)
                 .collect::<Vec<_>>();
 
             Ok((root_id, channels))

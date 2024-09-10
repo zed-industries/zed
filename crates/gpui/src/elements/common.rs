@@ -110,6 +110,6 @@ impl DefaultColor {
 
     /// Returns the HSLA color for the given color type.
     pub fn hsla(&self, colors: &DefaultColors) -> Hsla {
-        self.color(&colors).into()
+        self.color(colors).into()
     }
 }

@@ -102,7 +102,6 @@ impl Vim {
                     cx,
                 )
             }
-            return;
         } else {
             self.update_editor(cx, |_, editor, cx| {
                 let map = editor.snapshot(cx);

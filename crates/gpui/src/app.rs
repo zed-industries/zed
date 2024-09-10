@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{atomic::Ordering::SeqCst, Arc},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -142,12 +142,6 @@ impl App {
         self
     }
 
-    /// Sets a start time for tracking time to first window draw.
-    pub fn measure_time_to_first_window_draw(self, start: Instant) -> Self {
-        self.0.borrow_mut().time_to_first_window_draw = Some(TimeToFirstWindowDraw::Pending(start));
-        self
-    }
-
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -253,7 +247,6 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) time_to_first_window_draw: Option<TimeToFirstWindowDraw>,
 }
 
 impl AppContext {
@@ -307,7 +300,6 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
-                time_to_first_window_draw: None,
             }),
         });
 
@@ -514,7 +506,7 @@ impl AppContext {
                 }
                 Err(e) => {
                     cx.windows.remove(id);
-                    return Err(e);
+                    Err(e)
                 }
             }
         })
@@ -663,6 +655,11 @@ impl AppContext {
     /// Reveals the specified path at the platform level, such as in Finder on macOS.
     pub fn reveal_path(&self, path: &Path) {
         self.platform.reveal_path(path)
+    }
+
+    /// Opens the specified path with the system's default application.
+    pub fn open_with_system(&self, path: &Path) {
+        self.platform.open_with_system(path)
     }
 
     /// Returns whether the user has configured scrollbars to auto-hide at the platform level.
@@ -1310,14 +1307,6 @@ impl AppContext {
 
         (task, is_first)
     }
-
-    /// Returns the time to first window draw, if available.
-    pub fn time_to_first_window_draw(&self) -> Option<Duration> {
-        match self.time_to_first_window_draw {
-            Some(TimeToFirstWindowDraw::Done(duration)) => Some(duration),
-            _ => None,
-        }
-    }
 }
 
 impl Context for AppContext {
@@ -1481,15 +1470,6 @@ impl<G: Global> DerefMut for GlobalLease<G> {
     }
 }
 
-/// Represents the initialization duration of the application.
-#[derive(Clone, Copy)]
-pub enum TimeToFirstWindowDraw {
-    /// The application is still initializing, and contains the start time.
-    Pending(Instant),
-    /// The application has finished initializing, and contains the total duration.
-    Done(Duration),
-}
-
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
@@ -1523,4 +1503,10 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+}
+
+impl Drop for AppContext {
+    fn drop(&mut self) {
+        println!("Dropping the App Context");
+    }
 }

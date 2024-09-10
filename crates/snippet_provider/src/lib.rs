@@ -169,7 +169,12 @@ impl SnippetProvider {
 
             let (mut entries, _) = watcher.await;
             while let Some(entries) = entries.next().await {
-                process_updates(this.clone(), entries, cx.clone()).await?;
+                process_updates(
+                    this.clone(),
+                    entries.into_iter().map(|event| event.path).collect(),
+                    cx.clone(),
+                )
+                .await?;
             }
             Ok(())
         })
@@ -182,7 +187,7 @@ impl SnippetProvider {
     ) -> Vec<Arc<Snippet>> {
         let mut user_snippets: Vec<_> = self
             .snippets
-            .get(&language)
+            .get(language)
             .cloned()
             .unwrap_or_default()
             .into_iter()

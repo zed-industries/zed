@@ -44,10 +44,9 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 
     fn requires_argument(&self) -> bool {
-        self.prompt
-            .arguments
-            .as_ref()
-            .map_or(false, |args| !args.is_empty())
+        self.prompt.arguments.as_ref().map_or(false, |args| {
+            args.iter().any(|arg| arg.required == Some(true))
+        })
     }
 
     fn complete_argument(
@@ -179,6 +178,8 @@ fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap
                 let mut map = HashMap::default();
                 map.insert(args[0].name.clone(), arguments.join(" "));
                 Ok(map)
+            } else if arguments.is_empty() && args[0].required == Some(false) {
+                Ok(HashMap::default())
             } else {
                 Err(anyhow!("Prompt expects argument but none given"))
             }
@@ -199,7 +200,7 @@ fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap
 pub fn acceptable_prompt(prompt: &PromptInfo) -> bool {
     match &prompt.arguments {
         None => true,
-        Some(args) if args.len() == 1 => true,
+        Some(args) if args.len() <= 1 => true,
         _ => false,
     }
 }

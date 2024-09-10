@@ -11,7 +11,7 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
     InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageMetadata,
     MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
@@ -26,14 +26,15 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, FoldId,
-        RenderBlock, ToDisplayPoint,
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseMetadata,
+        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
@@ -50,17 +51,19 @@ use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
 };
+use language_model::{LanguageModelImage, LanguageModelToolUse};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectLspAdapterDelegate, Worktree};
+use project::lsp_store::ProjectLspAdapterDelegate;
+use project::{Project, Worktree};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
+use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp,
     collections::hash_map,
-    fmt::Write,
     ops::{ControlFlow, Range},
     path::PathBuf,
     sync::Arc,
@@ -329,7 +332,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
-        let model_summary_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let model_summary_editor = cx.new_view(Editor::single_line);
         let context_editor_toolbar = cx.new_view(|_| {
             ContextEditorToolbarItem::new(
                 workspace,
@@ -939,9 +942,16 @@ impl AssistantPanel {
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-            panel.update(cx, |panel, cx| {
-                panel.new_context(cx);
-            });
+            let did_create_context = panel
+                .update(cx, |panel, cx| {
+                    panel.new_context(cx)?;
+
+                    Some(())
+                })
+                .is_some();
+            if did_create_context {
+                ContextEditor::quote_selection(workspace, &Default::default(), cx);
+            }
         }
     }
 
@@ -1097,7 +1107,7 @@ impl AssistantPanel {
                 pane.activate_item(configuration_item_ix, true, true, cx);
             });
         } else {
-            let configuration = cx.new_view(|cx| ConfigurationView::new(cx));
+            let configuration = cx.new_view(ConfigurationView::new);
             self.configuration_subscription = Some(cx.subscribe(
                 &configuration,
                 |this, _, event: &ConfigurationViewEvent, cx| match event {
@@ -1988,6 +1998,20 @@ impl ContextEditor {
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
 
+                            self.context.update(cx, |context, cx| {
+                                context.insert_content(
+                                    Content::ToolUse {
+                                        range: tool_use.source_range.clone(),
+                                        tool_use: LanguageModelToolUse {
+                                            id: tool_use.id.to_string(),
+                                            name: tool_use.name.clone(),
+                                            input: tool_use.input.clone(),
+                                        },
+                                    },
+                                    cx,
+                                );
+                            });
+
                             Crease::new(
                                 start..end,
                                 placeholder,
@@ -2197,6 +2221,47 @@ impl ContextEditor {
                         });
                     }
                 }
+            }
+            ContextEvent::ToolFinished {
+                tool_use_id,
+                output_range,
+            } => {
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
+
+                    let placeholder = FoldPlaceholder {
+                        render: render_fold_icon_button(
+                            cx.view().downgrade(),
+                            IconName::PocketKnife,
+                            format!("Tool Result: {tool_use_id}").into(),
+                        ),
+                        constrain_width: false,
+                        merge_adjacent: false,
+                    };
+                    let render_trailer =
+                        move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+
+                    let start = buffer
+                        .anchor_in_excerpt(excerpt_id, output_range.start)
+                        .unwrap();
+                    let end = buffer
+                        .anchor_in_excerpt(excerpt_id, output_range.end)
+                        .unwrap();
+
+                    let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+
+                    let crease = Crease::new(
+                        start..end,
+                        placeholder,
+                        fold_toggle("tool-use"),
+                        render_trailer,
+                    );
+
+                    editor.insert_creases([crease], cx);
+                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                });
             }
             ContextEvent::Operation(_) => {}
             ContextEvent::ShowAssistError(error_message) => {
@@ -2450,20 +2515,26 @@ impl ContextEditor {
                     .unwrap();
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
-                creases.push(Crease::new(
-                    start..end,
-                    FoldPlaceholder {
-                        render: render_fold_icon_button(
-                            cx.view().downgrade(),
-                            section.icon,
-                            section.label.clone(),
-                        ),
-                        constrain_width: false,
-                        merge_adjacent: false,
-                    },
-                    render_slash_command_output_toggle,
-                    |_, _, _| Empty.into_any_element(),
-                ));
+                creases.push(
+                    Crease::new(
+                        start..end,
+                        FoldPlaceholder {
+                            render: render_fold_icon_button(
+                                cx.view().downgrade(),
+                                section.icon,
+                                section.label.clone(),
+                            ),
+                            constrain_width: false,
+                            merge_adjacent: false,
+                        },
+                        render_slash_command_output_toggle,
+                        |_, _, _| Empty.into_any_element(),
+                    )
+                    .with_metadata(CreaseMetadata {
+                        icon: section.icon,
+                        label: section.label,
+                    }),
+                );
             }
 
             editor.insert_creases(creases, cx);
@@ -3139,87 +3210,93 @@ impl ContextEditor {
             return;
         };
 
-        let selection = editor.update(cx, |editor, cx| editor.selections.newest_adjusted(cx));
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        let range = editor::ToOffset::to_offset(&selection.start, &buffer)
-            ..editor::ToOffset::to_offset(&selection.end, &buffer);
-        let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
-        if selected_text.is_empty() {
-            return;
-        }
-
-        let start_language = buffer.language_at(range.start);
-        let end_language = buffer.language_at(range.end);
-        let language_name = if start_language == end_language {
-            start_language.map(|language| language.code_fence_block_name())
-        } else {
-            None
-        };
-        let language_name = language_name.as_deref().unwrap_or("");
-
-        let filename = buffer
-            .file_at(selection.start)
-            .map(|file| file.full_path(cx));
-
-        let text = if language_name == "markdown" {
-            selected_text
-                .lines()
-                .map(|line| format!("> {}", line))
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            let start_symbols = buffer
-                .symbols_containing(selection.start, None)
-                .map(|(_, symbols)| symbols);
-            let end_symbols = buffer
-                .symbols_containing(selection.end, None)
-                .map(|(_, symbols)| symbols);
-
-            let outline_text =
-                if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
-                    Some(
-                        start_symbols
-                            .into_iter()
-                            .zip(end_symbols)
-                            .take_while(|(a, b)| a == b)
-                            .map(|(a, _)| a.text)
-                            .collect::<Vec<_>>()
-                            .join(" > "),
-                    )
+        let mut creases = vec![];
+        editor.update(cx, |editor, cx| {
+            let selections = editor.selections.all_adjusted(cx);
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            for selection in selections {
+                let range = editor::ToOffset::to_offset(&selection.start, &buffer)
+                    ..editor::ToOffset::to_offset(&selection.end, &buffer);
+                let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
+                if selected_text.is_empty() {
+                    continue;
+                }
+                let start_language = buffer.language_at(range.start);
+                let end_language = buffer.language_at(range.end);
+                let language_name = if start_language == end_language {
+                    start_language.map(|language| language.code_fence_block_name())
                 } else {
                     None
                 };
+                let language_name = language_name.as_deref().unwrap_or("");
+                let filename = buffer
+                    .file_at(selection.start)
+                    .map(|file| file.full_path(cx));
+                let text = if language_name == "markdown" {
+                    selected_text
+                        .lines()
+                        .map(|line| format!("> {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    let start_symbols = buffer
+                        .symbols_containing(selection.start, None)
+                        .map(|(_, symbols)| symbols);
+                    let end_symbols = buffer
+                        .symbols_containing(selection.end, None)
+                        .map(|(_, symbols)| symbols);
 
-            let line_comment_prefix = start_language
-                .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
+                    let outline_text = if let Some((start_symbols, end_symbols)) =
+                        start_symbols.zip(end_symbols)
+                    {
+                        Some(
+                            start_symbols
+                                .into_iter()
+                                .zip(end_symbols)
+                                .take_while(|(a, b)| a == b)
+                                .map(|(a, _)| a.text)
+                                .collect::<Vec<_>>()
+                                .join(" > "),
+                        )
+                    } else {
+                        None
+                    };
 
-            let fence = codeblock_fence_for_path(
-                filename.as_deref(),
-                Some(selection.start.row..selection.end.row),
-            );
+                    let line_comment_prefix = start_language
+                        .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
 
-            if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text)
-            {
-                let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
-                format!("{fence}{breadcrumb}{selected_text}\n```")
-            } else {
-                format!("{fence}{selected_text}\n```")
+                    let fence = codeblock_fence_for_path(
+                        filename.as_deref(),
+                        Some(selection.start.row..selection.end.row),
+                    );
+
+                    if let Some((line_comment_prefix, outline_text)) =
+                        line_comment_prefix.zip(outline_text)
+                    {
+                        let breadcrumb =
+                            format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
+                        format!("{fence}{breadcrumb}{selected_text}\n```")
+                    } else {
+                        format!("{fence}{selected_text}\n```")
+                    }
+                };
+                let crease_title = if let Some(path) = filename {
+                    let start_line = selection.start.row + 1;
+                    let end_line = selection.end.row + 1;
+                    if start_line == end_line {
+                        format!("{}, Line {}", path.display(), start_line)
+                    } else {
+                        format!("{}, Lines {} to {}", path.display(), start_line, end_line)
+                    }
+                } else {
+                    "Quoted selection".to_string()
+                };
+                creases.push((text, crease_title));
             }
-        };
-
-        let crease_title = if let Some(path) = filename {
-            let start_line = selection.start.row + 1;
-            let end_line = selection.end.row + 1;
-            if start_line == end_line {
-                format!("{}, Line {}", path.display(), start_line)
-            } else {
-                format!("{}, Lines {} to {}", path.display(), start_line, end_line)
-            }
-        } else {
-            "Quoted selection".to_string()
-        };
-
+        });
+        if creases.is_empty() {
+            return;
+        }
         // Activate the panel
         if !panel.focus_handle(cx).contains_focused(cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
@@ -3236,39 +3313,40 @@ impl ContextEditor {
                     context.update(cx, |context, cx| {
                         context.editor.update(cx, |editor, cx| {
                             editor.insert("\n", cx);
+                            for (text, crease_title) in creases {
+                                let point = editor.selections.newest::<Point>(cx).head();
+                                let start_row = MultiBufferRow(point.row);
 
-                            let point = editor.selections.newest::<Point>(cx).head();
-                            let start_row = MultiBufferRow(point.row);
+                                editor.insert(&text, cx);
 
-                            editor.insert(&text, cx);
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let anchor_before = snapshot.anchor_after(point);
+                                let anchor_after = editor
+                                    .selections
+                                    .newest_anchor()
+                                    .head()
+                                    .bias_left(&snapshot);
 
-                            let snapshot = editor.buffer().read(cx).snapshot(cx);
-                            let anchor_before = snapshot.anchor_after(point);
-                            let anchor_after = editor
-                                .selections
-                                .newest_anchor()
-                                .head()
-                                .bias_left(&snapshot);
+                                editor.insert("\n", cx);
 
-                            editor.insert("\n", cx);
-
-                            let fold_placeholder = quote_selection_fold_placeholder(
-                                crease_title,
-                                cx.view().downgrade(),
-                            );
-                            let crease = Crease::new(
-                                anchor_before..anchor_after,
-                                fold_placeholder,
-                                render_quote_selection_output_toggle,
-                                |_, _, _| Empty.into_any(),
-                            );
-                            editor.insert_creases(vec![crease], cx);
-                            editor.fold_at(
-                                &FoldAt {
-                                    buffer_row: start_row,
-                                },
-                                cx,
-                            );
+                                let fold_placeholder = quote_selection_fold_placeholder(
+                                    crease_title,
+                                    cx.view().downgrade(),
+                                );
+                                let crease = Crease::new(
+                                    anchor_before..anchor_after,
+                                    fold_placeholder,
+                                    render_quote_selection_output_toggle,
+                                    |_, _, _| Empty.into_any(),
+                                );
+                                editor.insert_creases(vec![crease], cx);
+                                editor.fold_at(
+                                    &FoldAt {
+                                        buffer_row: start_row,
+                                    },
+                                    cx,
+                                );
+                            }
                         })
                     });
                 };
@@ -3277,39 +3355,113 @@ impl ContextEditor {
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
-        let editor = self.editor.read(cx);
-        let context = self.context.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let mut copied_text = String::new();
-            let mut spanned_messages = 0;
-            for message in context.messages(cx) {
-                if message.offset_range.start >= selection.range().end {
-                    break;
-                } else if message.offset_range.end >= selection.range().start {
-                    let range = cmp::max(message.offset_range.start, selection.range().start)
-                        ..cmp::min(message.offset_range.end, selection.range().end);
-                    if !range.is_empty() {
-                        spanned_messages += 1;
-                        write!(&mut copied_text, "## {}\n\n", message.role).unwrap();
-                        for chunk in context.buffer().read(cx).text_for_range(range) {
-                            copied_text.push_str(chunk);
-                        }
-                        copied_text.push('\n');
-                    }
-                }
-            }
-
-            if spanned_messages > 1 {
-                cx.write_to_clipboard(ClipboardItem::new_string(copied_text));
-                return;
-            }
+        if self.editor.read(cx).selections.count() == 1 {
+            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                copied_text,
+                metadata,
+            ));
+            cx.stop_propagation();
+            return;
         }
 
         cx.propagate();
     }
 
-    fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+    fn cut(&mut self, _: &editor::actions::Cut, cx: &mut ViewContext<Self>) {
+        if self.editor.read(cx).selections.count() == 1 {
+            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+
+            self.editor.update(cx, |editor, cx| {
+                let selections = editor.selections.all::<Point>(cx);
+
+                editor.transact(cx, |this, cx| {
+                    this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select(selections);
+                    });
+                    this.insert("", cx);
+                    cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                        copied_text,
+                        metadata,
+                    ));
+                });
+            });
+
+            cx.stop_propagation();
+            return;
+        }
+
+        cx.propagate();
+    }
+
+    fn get_clipboard_contents(&mut self, cx: &mut ViewContext<Self>) -> (String, CopyMetadata) {
+        let creases = self.editor.update(cx, |editor, cx| {
+            let selection = editor.selections.newest::<Point>(cx);
+            let selection_start = editor.selections.newest::<usize>(cx).start;
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.display_map.update(cx, |display_map, cx| {
+                display_map
+                    .snapshot(cx)
+                    .crease_snapshot
+                    .creases_in_range(
+                        MultiBufferRow(selection.start.row)..MultiBufferRow(selection.end.row + 1),
+                        &snapshot,
+                    )
+                    .filter_map(|crease| {
+                        if let Some(metadata) = &crease.metadata {
+                            let start = crease
+                                .range
+                                .start
+                                .to_offset(&snapshot)
+                                .saturating_sub(selection_start);
+                            let end = crease
+                                .range
+                                .end
+                                .to_offset(&snapshot)
+                                .saturating_sub(selection_start);
+
+                            let range_relative_to_selection = start..end;
+
+                            if range_relative_to_selection.is_empty() {
+                                None
+                            } else {
+                                Some(SelectedCreaseMetadata {
+                                    range_relative_to_selection,
+                                    crease: metadata.clone(),
+                                })
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+
+        let context = self.context.read(cx);
+        let selection = self.editor.read(cx).selections.newest::<usize>(cx);
+        let mut text = String::new();
+        for message in context.messages(cx) {
+            if message.offset_range.start >= selection.range().end {
+                break;
+            } else if message.offset_range.end >= selection.range().start {
+                let range = cmp::max(message.offset_range.start, selection.range().start)
+                    ..cmp::min(message.offset_range.end, selection.range().end);
+                if !range.is_empty() {
+                    for chunk in context.buffer().read(cx).text_for_range(range) {
+                        text.push_str(chunk);
+                    }
+                    text.push('\n');
+                }
+            }
+        }
+
+        (text, CopyMetadata { creases })
+    }
+
+    fn paste(&mut self, action: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+        cx.stop_propagation();
+
         let images = if let Some(item) = cx.read_from_clipboard() {
             item.into_entries()
                 .filter_map(|entry| {
@@ -3324,9 +3476,62 @@ impl ContextEditor {
             Vec::new()
         };
 
+        let metadata = if let Some(item) = cx.read_from_clipboard() {
+            item.entries().first().and_then(|entry| {
+                if let ClipboardEntry::String(text) = entry {
+                    text.metadata_json::<CopyMetadata>()
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
         if images.is_empty() {
-            // If we didn't find any valid image data to paste, propagate to let normal pasting happen.
-            cx.propagate();
+            self.editor.update(cx, |editor, cx| {
+                let paste_position = editor.selections.newest::<usize>(cx).head();
+                editor.paste(action, cx);
+
+                if let Some(metadata) = metadata {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+
+                    let mut buffer_rows_to_fold = BTreeSet::new();
+                    let weak_editor = cx.view().downgrade();
+                    editor.insert_creases(
+                        metadata.creases.into_iter().map(|metadata| {
+                            let start = buffer.anchor_after(
+                                paste_position + metadata.range_relative_to_selection.start,
+                            );
+                            let end = buffer.anchor_before(
+                                paste_position + metadata.range_relative_to_selection.end,
+                            );
+
+                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                            buffer_rows_to_fold.insert(buffer_row);
+                            Crease::new(
+                                start..end,
+                                FoldPlaceholder {
+                                    constrain_width: false,
+                                    render: render_fold_icon_button(
+                                        weak_editor.clone(),
+                                        metadata.crease.icon,
+                                        metadata.crease.label.clone(),
+                                    ),
+                                    merge_adjacent: false,
+                                },
+                                render_slash_command_output_toggle,
+                                |_, _, _| Empty.into_any(),
+                            )
+                            .with_metadata(metadata.crease.clone())
+                        }),
+                        cx,
+                    );
+                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                    }
+                }
+            });
         } else {
             let mut image_positions = Vec::new();
             self.editor.update(cx, |editor, cx| {
@@ -3347,10 +3552,22 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
+                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                        continue;
+                    };
                     let image_id = image.id();
-                    context.insert_image(image, cx);
+                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+
                     for image_position in image_positions.iter() {
-                        context.insert_image_anchor(image_id, image_position.text_anchor, cx);
+                        context.insert_content(
+                            Content::Image {
+                                anchor: image_position.text_anchor,
+                                image_id,
+                                image: image_task.clone(),
+                                render_image: render_image.clone(),
+                            },
+                            cx,
+                        );
                     }
                 }
             });
@@ -3365,11 +3582,23 @@ impl ContextEditor {
             let new_blocks = self
                 .context
                 .read(cx)
-                .images(cx)
-                .filter_map(|image| {
+                .contents(cx)
+                .filter_map(|content| {
+                    if let Content::Image {
+                        anchor,
+                        render_image,
+                        ..
+                    } = content
+                    {
+                        Some((anchor, render_image))
+                    } else {
+                        None
+                    }
+                })
+                .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
-                    let image = image.render_image.clone();
+                    let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
+                    let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,
@@ -3996,6 +4225,17 @@ fn render_fold_icon_button(
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CopyMetadata {
+    creases: Vec<SelectedCreaseMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SelectedCreaseMetadata {
+    range_relative_to_selection: Range<usize>,
+    crease: CreaseMetadata,
+}
+
 impl EventEmitter<EditorEvent> for ContextEditor {}
 impl EventEmitter<SearchEvent> for ContextEditor {}
 
@@ -4021,6 +4261,7 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::cancel))
             .capture_action(cx.listener(ContextEditor::save))
             .capture_action(cx.listener(ContextEditor::copy))
+            .capture_action(cx.listener(ContextEditor::cut))
             .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
@@ -4181,8 +4422,7 @@ impl Item for ContextEditor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| Item::deactivated(editor, cx))
+        self.editor.update(cx, Item::deactivated)
     }
 }
 
@@ -5114,9 +5354,17 @@ fn make_lsp_adapter_delegate(
             .worktrees(cx)
             .next()
             .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
+        let fs = if project.is_local() {
+            Some(project.fs().clone())
+        } else {
+            None
+        };
+        let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
-            Ok(ProjectLspAdapterDelegate::new(lsp_store, &worktree, cx)
-                as Arc<dyn LspAdapterDelegate>)
+            Ok(
+                ProjectLspAdapterDelegate::new(lsp_store, &worktree, http_client, fs, None, cx)
+                    as Arc<dyn LspAdapterDelegate>,
+            )
         })
     })
 }

@@ -236,7 +236,7 @@ impl ConnectionPool {
                 }
                 PrincipalId::DevServerId(dev_server_id) => {
                     assert_eq!(
-                        self.connected_dev_servers.get(&dev_server_id).unwrap(),
+                        self.connected_dev_servers.get(dev_server_id).unwrap(),
                         connection_id
                     );
                 }
@@ -300,9 +300,9 @@ impl ChannelPool {
     }
 
     pub fn remove_user(&mut self, user_id: &UserId) {
-        if let Some(channels) = self.by_user.remove(&user_id) {
+        if let Some(channels) = self.by_user.remove(user_id) {
             for channel_id in channels.keys() {
-                self.unsubscribe(user_id, &channel_id)
+                self.unsubscribe(user_id, channel_id)
             }
         }
     }

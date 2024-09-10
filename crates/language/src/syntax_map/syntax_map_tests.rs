@@ -958,7 +958,7 @@ fn check_interpolation(
     new_buffer: &BufferSnapshot,
 ) {
     let edits = new_buffer
-        .edits_since::<usize>(&old_buffer.version())
+        .edits_since::<usize>(old_buffer.version())
         .collect::<Vec<_>>();
 
     for (old_layer, new_layer) in old_syntax_map
@@ -1086,7 +1086,7 @@ fn test_edit_sequence(
     mutated_syntax_map.set_language_registry(registry.clone());
     mutated_syntax_map.reparse(language.clone(), &buffer);
 
-    for (i, marked_string) in steps.into_iter().enumerate() {
+    for (i, marked_string) in steps.iter().enumerate() {
         let marked_string = marked_string.unindent();
         log::info!("incremental parse {i}: {marked_string:?}");
         buffer.edit_via_marked_text(&marked_string);
@@ -1302,7 +1302,7 @@ fn assert_layers_for_range(
     expected_layers: &[&str],
 ) {
     let layers = syntax_map
-        .layers_for_range(range, &buffer, true)
+        .layers_for_range(range, buffer, true)
         .collect::<Vec<_>>();
     assert_eq!(
         layers.len(),
@@ -1338,7 +1338,7 @@ fn assert_capture_ranges(
         .collect::<Vec<_>>();
     for capture in captures {
         let name = &queries[capture.grammar_index].capture_names()[capture.index as usize];
-        if highlight_query_capture_names.contains(&name) {
+        if highlight_query_capture_names.contains(name) {
             actual_ranges.push(capture.node.byte_range());
         }
     }

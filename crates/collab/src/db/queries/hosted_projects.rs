@@ -5,7 +5,7 @@ use super::*;
 impl Database {
     pub async fn get_hosted_projects(
         &self,
-        channel_ids: &Vec<ChannelId>,
+        channel_ids: &[ChannelId],
         roles: &HashMap<ChannelId, ChannelRole>,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<proto::HostedProject>> {

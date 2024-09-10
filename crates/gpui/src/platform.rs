@@ -16,7 +16,6 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
-mod fps;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -52,7 +51,6 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
-pub use fps::*;
 pub use keystroke::*;
 
 #[cfg(target_os = "linux")]
@@ -151,6 +149,7 @@ pub(crate) trait Platform: 'static {
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
     fn reveal_path(&self, path: &Path);
+    fn open_with_system(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
@@ -356,7 +355,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
-    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>);
+    fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
@@ -381,7 +380,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GPUSpecs>;
-    fn fps(&self) -> Option<f32>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
@@ -593,9 +591,7 @@ impl PlatformInputHandler {
     }
 
     pub fn selected_bounds(&mut self, cx: &mut WindowContext) -> Option<Bounds<Pixels>> {
-        let Some(selection) = self.handler.selected_text_range(true, cx) else {
-            return None;
-        };
+        let selection = self.handler.selected_text_range(true, cx)?;
         self.handler.bounds_for_range(
             if selection.reversed {
                 selection.range.start..selection.range.start

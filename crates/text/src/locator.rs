@@ -2,8 +2,8 @@ use smallvec::{smallvec, SmallVec};
 use std::iter;
 use std::sync::LazyLock;
 
-static MIN: LazyLock<Locator> = LazyLock::new(|| Locator::min());
-static MAX: LazyLock<Locator> = LazyLock::new(|| Locator::max());
+static MIN: LazyLock<Locator> = LazyLock::new(Locator::min);
+static MAX: LazyLock<Locator> = LazyLock::new(Locator::max);
 
 /// An identifier for a position in a ordered collection.
 ///

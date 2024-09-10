@@ -592,9 +592,9 @@ impl TransformationMatrix {
     pub fn apply(&self, point: Point<Pixels>) -> Point<Pixels> {
         let input = [point.x.0, point.y.0];
         let mut output = self.translation;
-        for i in 0..2 {
-            for k in 0..2 {
-                output[i] += self.rotation_scale[i][k] * input[k];
+        for (i, output_cell) in output.iter_mut().enumerate() {
+            for (k, input_cell) in input.iter().enumerate() {
+                *output_cell += self.rotation_scale[i][k] * *input_cell;
             }
         }
         Point::new(output[0].into(), output[1].into())

@@ -19,12 +19,13 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
     /// The following settings can be overridden for specific language servers:
     /// - initialization_options
+    ///
     /// To override settings for a language, add an entry for that language server's
     /// name to the lsp value.
     /// Default: null
@@ -248,7 +249,7 @@ impl SettingsObserver {
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
+            for (path, content) in store.local_settings(worktree.read(cx).id()) {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -335,16 +336,13 @@ impl SettingsObserver {
         event: &WorktreeStoreEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
-                .subscribe(worktree, |this, worktree, event, cx| match event {
-                    worktree::Event::UpdatedEntries(changes) => {
-                        this.update_local_worktree_settings(&worktree, changes, cx)
-                    }
-                    _ => {}
-                })
-                .detach(),
-            _ => {}
+        if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
+            cx.subscribe(worktree, |this, worktree, event, cx| {
+                if let worktree::Event::UpdatedEntries(changes) = event {
+                    this.update_local_worktree_settings(&worktree, changes, cx)
+                }
+            })
+            .detach()
         }
     }
 
@@ -418,17 +416,12 @@ impl SettingsObserver {
         settings_contents: impl IntoIterator<Item = (Arc<Path>, Option<String>)>,
         cx: &mut ModelContext<Self>,
     ) {
-        let worktree_id = worktree.entity_id();
+        let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
         cx.update_global::<SettingsStore, _>(|store, cx| {
             for (directory, file_content) in settings_contents {
                 store
-                    .set_local_settings(
-                        worktree_id.as_u64() as usize,
-                        directory.clone(),
-                        file_content.as_deref(),
-                        cx,
-                    )
+                    .set_local_settings(worktree_id, directory.clone(), file_content.as_deref(), cx)
                     .log_err();
                 if let Some(downstream_client) = &self.downstream_client {
                     downstream_client

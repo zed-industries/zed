@@ -1134,6 +1134,21 @@ These values take in the same options as the root-level settings with the same n
 
 `boolean` values
 
+## Search
+
+- Description: Search options to enable by default when opening new project and buffer searches.
+- Setting: `search`
+- Default:
+
+```
+"search": {
+  "whole_word": false,
+  "case_sensitive": false,
+  "include_ignored": false,
+  "regex": false
+},
+```
+
 ## Show Call Status Icon
 
 - Description: Whether or not to show the call status icon in the status bar.
@@ -1278,6 +1293,12 @@ List of `integer` column numbers
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "dock": "bottom",
+    "detect_venv": {
+      "on": {
+        "directories": [".env", "env", ".venv", "venv"],
+        "activate_script": "default"
+      }
+    }
     "env": {},
     "font_family": null,
     "font_features": null,
@@ -1566,6 +1587,39 @@ See Buffer Font Features
         "args": ["--login"]
       }
     }
+  }
+}
+```
+
+## Terminal: Detect Virtual Environments {#terminal-detect_venv}
+
+- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environemtn
+- Setting: `detect_venv`
+- Default:
+
+```json
+{
+  "terminal":
+    "detect_venv": {
+      "on": {
+        // Default directories to search for virtual environments, relative
+        // to the current working directory. We recommend overriding this
+        // in your project's settings, rather than globally.
+        "directories": [".venv", "venv"],
+        // Can also be `csh`, `fish`, and `nushell`
+        "activate_script": "default"
+      }
+    }
+  }
+}
+```
+
+Disable with:
+
+```json
+{
+  "terminal":
+    "detect_venv": "off"
   }
 }
 ```

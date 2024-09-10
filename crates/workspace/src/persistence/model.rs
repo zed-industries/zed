@@ -356,7 +356,11 @@ impl SerializedPaneGroup {
 
                 if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
                     let pane = pane.upgrade()?;
-                    Some((Member::Pane(pane.clone()), active.then(|| pane), new_items))
+                    Some((
+                        Member::Pane(pane.clone()),
+                        active.then_some(pane),
+                        new_items,
+                    ))
                 } else {
                     let pane = pane.upgrade()?;
                     workspace

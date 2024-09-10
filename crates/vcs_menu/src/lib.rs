@@ -91,7 +91,7 @@ impl BranchListDelegate {
         branch_name_trailoff_after: usize,
         cx: &AppContext,
     ) -> Result<Self> {
-        let project = workspace.project().read(&cx);
+        let project = workspace.project().read(cx);
         let repo = project
             .get_first_worktree_root_repo(cx)
             .context("failed to get root repository for first worktree")?;
@@ -317,12 +317,12 @@ impl PickerDelegate for BranchListDelegate {
                                     let repo = project.get_first_worktree_root_repo(cx).context(
                                         "failed to get root repository for first worktree",
                                     )?;
-                                    let status = repo.create_branch(&current_pick);
+                                    let status = repo.create_branch(current_pick);
                                     if status.is_err() {
                                         this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
                                         status?;
                                     }
-                                    let status = repo.change_branch(&current_pick);
+                                    let status = repo.change_branch(current_pick);
                                     if status.is_err() {
                                         this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
                                         status?;
