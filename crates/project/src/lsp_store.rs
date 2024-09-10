@@ -7098,12 +7098,10 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
                 .await
                 .log_err()
                 .and_then(|response| response.path)
-                .map(|path| PathBuf::from(path));
+                .map(PathBuf::from);
         }
 
-        if self.fs.is_none() {
-            return None;
-        }
+        self.fs.as_ref()?;
 
         let worktree_abs_path = self.worktree.abs_path();
         let shell_path = self.shell_env().await.get("PATH").cloned();
