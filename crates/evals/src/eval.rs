@@ -4,7 +4,6 @@ use clap::Parser;
 use client::{Client, UserStore};
 use clock::RealSystemClock;
 use collections::BTreeMap;
-use futures::channel::oneshot;
 use git::GitHostingProviderRegistry;
 use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model, Task};
 use http_client::{HttpClient, Method};
@@ -15,7 +14,10 @@ use project::Project;
 use semantic_index::{OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex, Status};
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
+use smol::channel::bounded;
 use smol::io::AsyncReadExt;
+use smol::Timer;
+use std::time::Duration;
 use std::{
     fs,
     ops::Range,
@@ -344,8 +346,7 @@ async fn run_evaluation(
         let project_index = cx
             .update(|cx| semantic_index.project_index(project.clone(), cx))
             .unwrap();
-
-        wait_for_indexing_complete(&project_index, cx).await;
+        wait_for_indexing_complete(&project_index, cx, Some(Duration::from_secs(60))).await;
 
         for query in evaluation_project.queries {
             let results = cx
@@ -404,19 +405,46 @@ async fn run_evaluation(
     Ok(())
 }
 
-async fn wait_for_indexing_complete(project_index: &Model<ProjectIndex>, cx: &mut AsyncAppContext) {
-    let (tx, rx) = oneshot::channel();
-    let mut tx = Some(tx);
+async fn wait_for_indexing_complete(
+    project_index: &Model<ProjectIndex>,
+    cx: &mut AsyncAppContext,
+    timeout: Option<Duration>,
+) {
+    let (tx, rx) = bounded(1);
     let subscription = cx.update(|cx| {
         cx.subscribe(project_index, move |_, event, _| {
             if let Status::Idle = event {
-                if let Some(tx) = tx.take() {
-                    _ = tx.send(*event);
-                }
+                let _ = tx.try_send(*event);
             }
         })
     });
-    rx.await.expect("no event emitted");
+
+    let result = match timeout {
+        Some(timeout_duration) => {
+            smol::future::or(
+                async {
+                    rx.recv().await.map_err(|_| ())?;
+                    Ok(())
+                },
+                async {
+                    Timer::after(timeout_duration).await;
+                    Err(())
+                },
+            )
+            .await
+        }
+        None => rx.recv().await.map(|_| ()).map_err(|_| ()),
+    };
+
+    match result {
+        Ok(_) => (),
+        Err(_) => {
+            if let Some(timeout) = timeout {
+                eprintln!("Timeout: Indexing did not complete within {:?}", timeout);
+            }
+        }
+    }
+
     drop(subscription);
 }
 
