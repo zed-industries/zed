@@ -112,6 +112,8 @@ impl EmbeddingIndex {
 
             let mut deletion_range: Option<(Bound<&str>, Bound<&str>)> = None;
             for entry in worktree.files(false, 0) {
+                log::trace!("scanning for embedding index: {:?}", &entry.path);
+
                 let entry_db_key = db_key_for_path(&entry.path);
 
                 let mut saved_mtime = None;

@@ -121,6 +121,7 @@ mod tests {
     use anyhow::anyhow;
     use chunking::Chunk;
     use embedding_index::{ChunkedFile, EmbeddingIndex};
+    use feature_flags::FeatureFlagAppExt;
     use futures::{future::BoxFuture, FutureExt};
     use gpui::TestAppContext;
     use indexing::IndexingEntrySet;
@@ -137,6 +138,7 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             language::init(cx);
+            cx.update_flags(false, vec![]);
             Project::init_settings(cx);
             SettingsStore::update(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
@@ -244,6 +246,7 @@ mod tests {
             })
             .unwrap();
 
+        cx.run_until_parked();
         while cx
             .update(|cx| semantic_index.remaining_summaries(&project.downgrade(), cx))
             .unwrap()

@@ -4209,6 +4209,7 @@ dependencies = [
 name = "feature_flags"
 version = "0.1.0"
 dependencies = [
+ "futures 0.3.30",
  "gpui",
 ]
 
