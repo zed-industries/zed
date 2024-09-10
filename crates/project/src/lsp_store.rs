@@ -43,12 +43,8 @@ use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileSystemWatcher, InsertTextFormat,
     LanguageServer, LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem,
-    MessageType, OneOf, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit,
-    WorkDoneProgressCancelParams,
-    CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    Edit, FileSystemWatcher, InsertTextFormat, LanguageServer, LanguageServerBinary,
-    LanguageServerId, LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus,
-    ServerStatus, SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
+    MessageType, OneOf, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
+    WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -3424,7 +3420,17 @@ impl LspStore {
         language_server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) {
-        let worktrees = self.worktree_store.read(cx).worktrees().collect::<Vec<_>>();
+        let worktrees = self
+            .worktree_store
+            .read(cx)
+            .worktrees()
+            .filter_map(|worktree| {
+                self.language_servers_for_worktree(worktree.read(cx).id())
+                    .find(|server| server.server_id() == language_server_id)
+                    .map(|_| worktree)
+            })
+            .collect::<Vec<_>>();
+
         let local_lsp_store = self.as_local_mut().unwrap();
 
         let Some(watchers) = local_lsp_store
@@ -3440,17 +3446,6 @@ impl LspStore {
             "Processing new watcher paths for language server with id {}",
             language_server_id
         );
-
-        let worktrees = self
-            .worktree_store
-            .read(cx)
-            .worktrees()
-            .filter_map(|worktree| {
-                self.language_servers_for_worktree(worktree.read(cx).id())
-                    .find(|(_, _, server)| server.server_id() == language_server_id)
-                    .map(|_| worktree)
-            })
-            .collect::<Vec<_>>();
 
         enum PathToWatch {
             Worktree {
@@ -3601,8 +3596,9 @@ impl LspStore {
                 watch_builder.watch_abs_path(abs_path, globset);
             }
         }
-        let watcher = watch_builder.build(self.fs.clone(), language_server_id, cx);
-        self.language_server_watched_paths
+        let watcher = watch_builder.build(local_lsp_store.fs.clone(), language_server_id, cx);
+        local_lsp_store
+            .language_server_watched_paths
             .insert(language_server_id, watcher);
 
         cx.notify();
@@ -4294,7 +4290,7 @@ impl LspStore {
             .ok_or_else(|| anyhow!("missing language"))?;
         let language_name = LanguageName::from_proto(language.name);
         let matcher: LanguageMatcher = serde_json::from_str(&language.matcher)?;
-        let result = this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, cx| {
             this.languages
                 .register_language(language_name.clone(), None, matcher.clone(), {
                     let language_name = language_name.clone();
@@ -4570,11 +4566,6 @@ impl LspStore {
             return;
         }
 
-        let root_file = worktree_handle.update(cx, |worktree, cx| {
-            worktree
-                .root_file(cx)
-                .map(|file| file as Arc<dyn language::File>)
-        });
         let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
         let worktree_path = worktree.abs_path();
@@ -6018,6 +6009,8 @@ impl LspStore {
             return;
         }
 
+        let Some(local) = self.as_local() else { return };
+
         let worktree_id = worktree_handle.read(cx).id();
         let mut language_server_ids = self
             .language_server_ids
@@ -6032,9 +6025,9 @@ impl LspStore {
         let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
             if let Some(LanguageServerState::Running { server, .. }) =
-                self.language_servers.get(server_id)
+                local.language_servers.get(server_id)
             {
-                if let Some(watched_paths) = self
+                if let Some(watched_paths) = local
                     .language_server_watched_paths
                     .get(server_id)
                     .and_then(|paths| paths.read(cx).worktree_paths.get(&worktree_id))
@@ -6057,13 +6050,13 @@ impl LspStore {
                                     uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
                                     typ,
                                 })
-                                .collect(),
-                        };
-                        if !params.changes.is_empty() {
-                            server
-                                .notify::<lsp::notification::DidChangeWatchedFiles>(params)
-                                .log_err();
-                        }
+                            })
+                            .collect(),
+                    };
+                    if !params.changes.is_empty() {
+                        server
+                            .notify::<lsp::notification::DidChangeWatchedFiles>(params)
+                            .log_err();
                     }
                 }
             }
@@ -6076,8 +6069,11 @@ impl LspStore {
         token_to_cancel: Option<String>,
         _cx: &mut ModelContext<Self>,
     ) {
+        let Some(local) = self.as_local() else {
+            return;
+        };
         let status = self.language_server_statuses.get(&server_id);
-        let server = self.language_servers.get(&server_id);
+        let server = local.language_servers.get(&server_id);
         if let Some((LanguageServerState::Running { server, .. }, status)) = server.zip(status) {
             for (token, progress) in &status.pending_work {
                 if let Some(token_to_cancel) = token_to_cancel.as_ref() {
@@ -6619,7 +6615,10 @@ impl LanguageServerWatchedPathsBuilder {
                                 while let Some(update) = push_updates.0.next().await {
                                     let action = lsp_store
                                         .update(&mut cx, |this, cx| {
-                                            let Some(watcher) = this
+                                            let Some(local) = this.as_local() else {
+                                                return ControlFlow::Break(());
+                                            };
+                                            let Some(watcher) = local
                                                 .language_server_watched_paths
                                                 .get(&language_server_id)
                                             else {

@@ -564,10 +564,9 @@ impl Worktree {
         !self.is_local()
     }
 
-    pub fn settings_location(&self, cx: &ModelContext<Self>) -> SettingsLocation<'static> {
-        let worktree_id = cx.handle().entity_id().as_u64();
+    pub fn settings_location(&self, _: &ModelContext<Self>) -> SettingsLocation<'static> {
         SettingsLocation {
-            worktree_id: worktree_id as usize,
+            worktree_id: self.id(),
             path: Path::new(EMPTY_PATH),
         }
     }
