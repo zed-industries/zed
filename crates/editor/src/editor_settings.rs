@@ -98,7 +98,7 @@ impl Default for EditorSettings {
             jupyter: Default::default(),
             use_smartcase_search: false,
             middle_click_paste: true,
-            search: SearchSet,
+            search: SearchSettings::default(),
         }
     }
 }
