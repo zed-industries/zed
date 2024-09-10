@@ -898,13 +898,9 @@ impl Element for TerminalElement {
                 .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
                     cx.handle_input(&self.focus, terminal_input_handler);
 
-                    cx.on_key_event_global({
+                    cx.on_modifiers_changed({
                         let this = self.terminal.clone();
-                        move |event: &ModifiersChangedEvent, phase, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
-                            }
-
+                        move |event: &ModifiersChangedEvent, cx| {
                             let handled = this
                                 .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 

@@ -2935,36 +2935,6 @@ impl<'a> WindowContext<'a> {
         ));
     }
 
-    /// Register a global key event listener on the window for the next frame. The type of event
-    /// is determined by the first parameter of the given listener. When the next frame is rendered
-    /// the listener will be cleared.
-    ///
-    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
-    /// a specific need to register a global listener.
-    ///
-    /// This method should only be called as part of the paint phase of element drawing.
-    pub fn on_key_event_global<Event: KeyEvent>(
-        &mut self,
-        listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
-    ) {
-        debug_assert_eq!(
-            self.window.draw_phase,
-            DrawPhase::Paint,
-            "this method can only be called during paint"
-        );
-
-        self.window
-            .next_frame
-            .dispatch_tree
-            .on_key_event_global(Rc::new(
-                move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                    if let Some(event) = event.downcast_ref::<Event>() {
-                        listener(event, phase, cx)
-                    }
-                },
-            ));
-    }
-
     /// Register a modifiers changed event listener on the window for the next frame.
     ///
     /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
