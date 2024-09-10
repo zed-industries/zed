@@ -2162,7 +2162,7 @@ impl Context {
     pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
 
-        let mut contents = self.contents.iter().peekable();
+        let mut contents = self.contents(cx).peekable();
 
         fn collect_text_content(buffer: &Buffer, range: Range<usize>) -> Option<String> {
             let text: String = buffer.text_for_range(range.clone()).collect();
@@ -2421,8 +2421,15 @@ impl Context {
         cx.emit(ContextEvent::MessagesEdited);
     }
 
-    pub fn contents<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = Content> {
-        self.contents.iter().cloned()
+    pub fn contents<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Content> {
+        let buffer = self.buffer.read(cx);
+        self.contents
+            .iter()
+            .filter(|content| {
+                let range = content.range();
+                range.start.is_valid(buffer) && range.end.is_valid(buffer)
+            })
+            .cloned()
     }
 
     pub fn split_message(
