@@ -368,6 +368,7 @@ impl PickerDelegate for NewPathDelegate {
 
         if let Some(path) = m.project_path(self.project.read(cx), cx) {
             if let Some(tx) = self.tx.take() {
+                println!("{:?}", path.clone());
                 tx.send(Some(path)).ok();
             }
         }

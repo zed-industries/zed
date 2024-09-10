@@ -105,6 +105,7 @@ theme.workspace = true
 theme_selector.workspace = true
 time.workspace = true
 ui.workspace = true
+unicode-normalization = "0.1.23"
 url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true

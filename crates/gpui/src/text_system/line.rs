@@ -116,6 +116,7 @@ fn paint_line(
             line_height * (wrap_boundaries.len() as f32 + 1.),
         ),
     );
+
     cx.paint_layer(line_bounds, |cx| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);

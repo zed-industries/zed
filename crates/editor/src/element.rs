@@ -1026,7 +1026,6 @@ impl EditorElement {
                                         cx.text_system().get_font_for_id(cursor_font_id)
                                     })
                                     .unwrap_or(self.style.text.font());
-
                                 cx.text_system()
                                     .shape_line(
                                         text,

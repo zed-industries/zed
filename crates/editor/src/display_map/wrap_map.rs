@@ -397,7 +397,6 @@ impl WrapSnapshot {
             old_rows: Range<u32>,
             new_rows: Range<u32>,
         }
-
         let mut tab_edits_iter = tab_edits.iter().peekable();
         let mut row_edits = Vec::new();
         while let Some(edit) = tab_edits_iter.next() {
@@ -465,7 +464,6 @@ impl WrapSnapshot {
                     if line.is_empty() {
                         break;
                     }
-
                     let mut prev_boundary_ix = 0;
                     for boundary in line_wrapper.wrap_line(&line, wrap_width) {
                         let wrapped = &line[prev_boundary_ix..boundary.ix];

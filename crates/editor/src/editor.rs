@@ -23,6 +23,7 @@ mod editor_settings_controls;
 mod element;
 mod git;
 mod highlight_matching_bracket;
+mod highlight_bad_unicode;
 mod hover_links;
 mod hover_popover;
 mod hunk_diff;
@@ -82,6 +83,7 @@ use gpui::{
     VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
+use highlight_bad_unicode::refresh_invalid_character_highlight;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HoveredHunk;
@@ -2496,6 +2498,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
+            refresh_invalid_character_highlight(self, cx);
             self.discard_inline_completion(false, cx);
             linked_editing_ranges::refresh_linked_ranges(self, cx);
             if self.git_blame_inline_enabled {
@@ -3088,7 +3091,6 @@ impl Editor {
 
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
-
         if self.read_only(cx) {
             return;
         }
@@ -6756,9 +6758,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-
         let clipboard_text = Cow::Borrowed(text);
-
         self.transact(cx, |this, cx| {
             if let Some(mut clipboard_selections) = clipboard_selections {
                 let old_selections = this.selections.all::<usize>(cx);

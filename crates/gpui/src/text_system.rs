@@ -377,7 +377,6 @@ impl WindowTextSystem {
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
-
         let mut lines = SmallVec::new();
         let mut line_start = 0;
 
@@ -448,10 +447,9 @@ impl WindowTextSystem {
                     runs.next();
                 }
             }
-
             font_runs.clear();
         };
-
+       
         let mut split_lines = text.split('\n');
         let mut processed = false;
 
