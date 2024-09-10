@@ -1228,6 +1228,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 6, true, false),
                             ],
                             false,
+                            0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -1235,6 +1236,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 8, false, false),
                             ],
                             false,
+                            0,
                         )),
                     ],
                 ),
@@ -1244,6 +1246,7 @@ mod tests {
                         SerializedItem::new("Terminal", 10, true, false),
                     ],
                     false,
+                    0,
                 )),
             ],
         );
@@ -1532,6 +1535,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
+                            0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -1539,6 +1543,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
+                            0,
                         )),
                     ],
                 ),
@@ -1548,6 +1553,7 @@ mod tests {
                         SerializedItem::new("Terminal", 6, false, false),
                     ],
                     false,
+                    0,
                 )),
             ],
         );
@@ -1579,6 +1585,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
+                            0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -1586,6 +1593,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
+                            0,
                         )),
                     ],
                 ),
@@ -1595,6 +1603,7 @@ mod tests {
                         SerializedItem::new("Terminal", 6, true, false),
                     ],
                     false,
+                    0,
                 )),
             ],
         );
@@ -1614,6 +1623,7 @@ mod tests {
                         SerializedItem::new("Terminal", 2, true, false),
                     ],
                     false,
+                    0,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
@@ -1621,6 +1631,7 @@ mod tests {
                         SerializedItem::new("Terminal", 3, false, false),
                     ],
                     true,
+                    0,
                 )),
             ],
         );
