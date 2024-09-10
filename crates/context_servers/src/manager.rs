@@ -125,6 +125,12 @@ pub enum Event {
 impl Global for ContextServerManager {}
 impl EventEmitter<Event> for ContextServerManager {}
 
+impl Default for ContextServerManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContextServerManager {
     pub fn new() -> Self {
         Self {

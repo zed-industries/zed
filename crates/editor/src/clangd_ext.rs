@@ -28,7 +28,7 @@ pub fn switch_source_header(
     };
 
     let Some((_, _, server_to_query, buffer)) =
-        find_specific_language_server_in_selection(&editor, cx, &is_c_language, CLANGD_SERVER_NAME)
+        find_specific_language_server_in_selection(editor, cx, is_c_language, CLANGD_SERVER_NAME)
     else {
         return;
     };
@@ -85,7 +85,7 @@ pub fn switch_source_header(
 
 pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {
     if editor.update(cx, |e, cx| {
-        find_specific_language_server_in_selection(e, cx, &is_c_language, CLANGD_SERVER_NAME)
+        find_specific_language_server_in_selection(e, cx, is_c_language, CLANGD_SERVER_NAME)
             .is_some()
     }) {
         register_action(editor, cx, switch_source_header);

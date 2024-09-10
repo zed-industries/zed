@@ -33,6 +33,7 @@ impl Sound {
     }
 }
 
+#[derive(Default)]
 pub struct Audio {
     _output_stream: Option<OutputStream>,
     output_handle: Option<OutputStreamHandle>,
@@ -45,10 +46,7 @@ impl Global for GlobalAudio {}
 
 impl Audio {
     pub fn new() -> Self {
-        Self {
-            _output_stream: None,
-            output_handle: None,
-        }
+        Self::default()
     }
 
     fn ensure_output_exists(&mut self) -> Option<&OutputStreamHandle> {

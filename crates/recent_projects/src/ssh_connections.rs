@@ -94,7 +94,7 @@ impl SshPrompt {
             connection_string,
             status_message: None,
             prompt: None,
-            editor: cx.new_view(|cx| Editor::single_line(cx)),
+            editor: cx.new_view(Editor::single_line),
         }
     }
 

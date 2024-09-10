@@ -74,7 +74,7 @@ pub fn show_keyboard_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) ->
         }
     }
 
-    return false;
+    false
 }
 
 pub struct InlayHover {
@@ -648,7 +648,7 @@ impl HoverState {
                 }
             }
         }
-        return hover_popover_is_focused;
+        hover_popover_is_focused
     }
 }
 
@@ -1445,7 +1445,7 @@ mod tests {
                     let variable« »= TestNewType(TestStruct);
                 }
         "})
-            .get(0)
+            .first()
             .cloned()
             .unwrap();
         let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {

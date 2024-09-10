@@ -337,8 +337,8 @@ impl Editor {
                         .offset_to_point(hunk.diff_base_byte_range.start)
                         .row;
                     let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
-                    let line_count = diff_end_row - diff_start_row;
-                    line_count
+
+                    diff_end_row - diff_start_row
                 })?;
                 Some((diff_base_buffer, deleted_text_lines))
             } else {
@@ -358,7 +358,7 @@ impl Editor {
 
         let block = match hunk.status {
             DiffHunkStatus::Removed => {
-                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
+                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, hunk, cx)
             }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
@@ -376,7 +376,7 @@ impl Editor {
                     false,
                     cx,
                 );
-                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
+                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, hunk, cx)
             }
         };
         self.expanded_hunks.hunks.insert(
@@ -591,7 +591,7 @@ impl Editor {
                                     .to_display_point(&snapshot)
                                     .row();
                             while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                                match diff_hunk_to_display(&buffer_hunk, &snapshot) {
+                                match diff_hunk_to_display(buffer_hunk, &snapshot) {
                                     DisplayDiffHunk::Folded { display_row } => {
                                         recalculated_hunks.next();
                                         if !expanded_hunk.folded
@@ -710,12 +710,12 @@ fn to_diff_hunk(
         .multi_buffer_range
         .start
         .buffer_id
-        .or_else(|| hovered_hunk.multi_buffer_range.end.buffer_id)?;
+        .or(hovered_hunk.multi_buffer_range.end.buffer_id)?;
     let buffer_range = hovered_hunk.multi_buffer_range.start.text_anchor
         ..hovered_hunk.multi_buffer_range.end.text_anchor;
     let point_range = hovered_hunk
         .multi_buffer_range
-        .to_point(&multi_buffer_snapshot);
+        .to_point(multi_buffer_snapshot);
     Some(DiffHunk {
         associated_range: MultiBufferRow(point_range.start.row)
             ..MultiBufferRow(point_range.end.row),

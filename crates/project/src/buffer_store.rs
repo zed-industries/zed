@@ -91,11 +91,10 @@ impl BufferStore {
         remote_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.subscribe(&worktree_store, |this, _, event, cx| match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+        cx.subscribe(&worktree_store, |this, _, event, cx| {
+            if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
                 this.subscribe_to_worktree(worktree, cx);
             }
-            _ => {}
         })
         .detach();
 
@@ -711,7 +710,7 @@ impl BufferStore {
     pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<Buffer>> {
         self.buffers().find_map(|buffer| {
             let file = File::from_dyn(buffer.read(cx).file())?;
-            if file.worktree_id(cx) == path.worktree_id && &file.path == &path.path {
+            if file.worktree_id(cx) == path.worktree_id && file.path == path.path {
                 Some(buffer)
             } else {
                 None
@@ -885,11 +884,8 @@ impl BufferStore {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        match event {
-            BufferEvent::FileHandleChanged => {
-                self.buffer_changed_file(buffer, cx);
-            }
-            _ => {}
+        if event == &BufferEvent::FileHandleChanged {
+            self.buffer_changed_file(buffer, cx);
         }
     }
 

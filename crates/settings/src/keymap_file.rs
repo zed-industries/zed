@@ -36,16 +36,15 @@ impl KeymapBlock {
 #[serde(transparent)]
 pub struct KeymapAction(Value);
 
-impl ToString for KeymapAction {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for KeymapAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
-            Value::String(s) => s.clone(),
-            Value::Array(arr) => arr
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            _ => self.0.to_string(),
+            Value::String(s) => write!(f, "{}", s),
+            Value::Array(arr) => {
+                let strings: Vec<String> = arr.iter().map(|v| v.to_string()).collect();
+                write!(f, "{}", strings.join(", "))
+            }
+            _ => write!(f, "{}", self.0),
         }
     }
 }

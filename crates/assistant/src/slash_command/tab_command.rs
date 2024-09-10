@@ -253,7 +253,7 @@ fn tab_items_for_queries(
                         .fold(HashMap::default(), |mut candidates, (id, path_string)| {
                             candidates
                                 .entry(path_string)
-                                .or_insert_with(|| Vec::new())
+                                .or_insert_with(Vec::new)
                                 .push(id);
                             candidates
                         });

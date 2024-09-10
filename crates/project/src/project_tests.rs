@@ -72,10 +72,10 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     }));
 
     let root_link_path = dir.path().join("root_link");
-    os::unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
+    os::unix::fs::symlink(dir.path().join("root"), &root_link_path).unwrap();
     os::unix::fs::symlink(
-        &dir.path().join("root/fennel"),
-        &dir.path().join("root/finnochio"),
+        dir.path().join("root/fennel"),
+        dir.path().join("root/finnochio"),
     )
     .unwrap();
 
@@ -4699,7 +4699,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
     let mut fake_tsx_language_servers = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[0],
+            name: language_server_names[0],
             capabilities: lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
@@ -4710,7 +4710,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
     let _a = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[1],
+            name: language_server_names[1],
             capabilities: lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
@@ -4721,7 +4721,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
     let _b = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[2],
+            name: language_server_names[2],
             capabilities: lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
@@ -4732,7 +4732,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
     let _c = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[3],
+            name: language_server_names[3],
             capabilities: lsp::ServerCapabilities {
                 hover_provider: None,
                 ..lsp::ServerCapabilities::default()
@@ -4919,7 +4919,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     let mut fake_tsx_language_servers = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[0],
+            name: language_server_names[0],
             capabilities: lsp::ServerCapabilities {
                 code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
@@ -4930,7 +4930,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     let _a = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[1],
+            name: language_server_names[1],
             capabilities: lsp::ServerCapabilities {
                 code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
@@ -4941,7 +4941,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     let _b = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[2],
+            name: language_server_names[2],
             capabilities: lsp::ServerCapabilities {
                 code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
@@ -4952,7 +4952,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     let _c = language_registry.register_fake_lsp_adapter(
         "tsx",
         FakeLspAdapter {
-            name: &language_server_names[3],
+            name: language_server_names[3],
             capabilities: lsp::ServerCapabilities {
                 code_action_provider: None,
                 ..lsp::ServerCapabilities::default()

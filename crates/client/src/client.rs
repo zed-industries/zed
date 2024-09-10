@@ -117,7 +117,7 @@ impl Settings for ClientSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
         if let Some(server_url) = &*ZED_SERVER_URL {
-            result.server_url.clone_from(&server_url)
+            result.server_url.clone_from(server_url)
         }
         Ok(result)
     }
@@ -1141,7 +1141,7 @@ impl Client {
             request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
             request_headers.insert(
                 "x-zed-release-channel",
-                HeaderValue::from_str(&release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
+                HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
             );
 
             match url_scheme {
@@ -1344,16 +1344,14 @@ impl Client {
                 );
             }
 
-            let user = serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
+            serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
                 log::error!("Error deserializing: {:?}", err);
                 log::error!(
                     "GitHub API response text: {:?}",
                     String::from_utf8_lossy(body.as_slice())
                 );
                 anyhow!("error deserializing GitHub user")
-            })?;
-
-            user
+            })?
         };
 
         let query_params = [
@@ -1408,7 +1406,7 @@ impl Client {
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncAppContext) {
         self.state.write().credentials = None;
-        self.disconnect(&cx);
+        self.disconnect(cx);
 
         if self.has_credentials(cx).await {
             self.credentials_provider

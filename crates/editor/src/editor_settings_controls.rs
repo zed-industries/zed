@@ -14,6 +14,12 @@ use crate::EditorSettings;
 #[derive(IntoElement)]
 pub struct EditorSettingsControls {}
 
+impl Default for EditorSettingsControls {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EditorSettingsControls {
     pub fn new() -> Self {
         Self {}
@@ -235,13 +241,7 @@ impl EditableSettingControl for BufferFontLigaturesControl {
         let mut features = settings
             .buffer_font_features
             .as_ref()
-            .map(|features| {
-                features
-                    .tag_value_list()
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
+            .map(|features| features.tag_value_list().to_vec())
             .unwrap_or_default();
 
         if let Some(calt_index) = features.iter().position(|(tag, _)| tag == "calt") {

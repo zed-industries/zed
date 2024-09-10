@@ -24,7 +24,7 @@ use wit_component::ComponentEncoder;
 ///
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
-const RUST_TARGET: &str = "wasm32-wasi";
+const RUST_TARGET: &str = "wasm32-wasip1";
 const WASI_ADAPTER_URL: &str =
     "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
@@ -77,7 +77,7 @@ impl ExtensionBuilder {
         extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<()> {
-        populate_defaults(extension_manifest, &extension_dir)?;
+        populate_defaults(extension_manifest, extension_dir)?;
 
         if extension_dir.is_relative() {
             bail!(
@@ -123,7 +123,7 @@ impl ExtensionBuilder {
         self.install_rust_wasm_target_if_needed()?;
         let adapter_bytes = self.install_wasi_preview1_adapter_if_needed().await?;
 
-        let cargo_toml_content = fs::read_to_string(&extension_dir.join("Cargo.toml"))?;
+        let cargo_toml_content = fs::read_to_string(extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
         log::info!(
@@ -135,7 +135,7 @@ impl ExtensionBuilder {
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
             .arg(extension_dir.join("target"))
-            .current_dir(&extension_dir)
+            .current_dir(extension_dir)
             .output()
             .context("failed to run `cargo`")?;
         if !output.status.success() {
@@ -158,7 +158,7 @@ impl ExtensionBuilder {
             &cargo_toml
                 .package
                 .name
-                // The wasm32-wasi target normalizes `-` in package names to `_` in the resulting `.wasm` file.
+                // The wasm32-wasip1 target normalizes `-` in package names to `_` in the resulting `.wasm` file.
                 .replace('-', "_"),
         ]);
         wasm_path.set_extension("wasm");
@@ -281,12 +281,12 @@ impl ExtensionBuilder {
                 );
             }
         } else {
-            fs::create_dir_all(&directory).with_context(|| {
+            fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
             let init_output = Command::new("git")
                 .arg("init")
-                .current_dir(&directory)
+                .current_dir(directory)
                 .output()?;
             if !init_output.status.success() {
                 bail!(
@@ -312,15 +312,15 @@ impl ExtensionBuilder {
         let fetch_output = Command::new("git")
             .arg("--git-dir")
             .arg(&git_dir)
-            .args(["fetch", "--depth", "1", "origin", &rev])
+            .args(["fetch", "--depth", "1", "origin", rev])
             .output()
             .context("failed to execute `git fetch`")?;
 
         let checkout_output = Command::new("git")
             .arg("--git-dir")
             .arg(&git_dir)
-            .args(["checkout", &rev])
-            .current_dir(&directory)
+            .args(["checkout", rev])
+            .current_dir(directory)
             .output()
             .context("failed to execute `git checkout`")?;
         if !checkout_output.status.success() {
@@ -488,14 +488,10 @@ impl ExtensionBuilder {
                 _ => {}
             }
 
-            match &payload {
-                CustomSection(c) => {
-                    if strip_custom_section(c.name()) {
-                        continue;
-                    }
+            if let CustomSection(c) = &payload {
+                if strip_custom_section(c.name()) {
+                    continue;
                 }
-
-                _ => {}
             }
 
             if let Some((id, range)) = payload.as_section() {

@@ -316,7 +316,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         }
     };
 
-    let menu_state = match &session.kernel {
+    match &session.kernel {
         Kernel::Restarting => ReplMenuState {
             tooltip: format!("Restarting {}", kernel_name).into(),
             icon_is_animating: true,
@@ -376,7 +376,5 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             status: KernelStatus::Shutdown,
             ..fill_fields()
         },
-    };
-
-    menu_state
+    }
 }

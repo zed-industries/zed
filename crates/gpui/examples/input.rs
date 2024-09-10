@@ -298,9 +298,7 @@ impl ViewInputHandler for TextInput {
         bounds: Bounds<Pixels>,
         _cx: &mut ViewContext<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let Some(last_layout) = self.last_layout.as_ref() else {
-            return None;
-        };
+        let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(

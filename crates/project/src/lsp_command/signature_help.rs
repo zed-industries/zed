@@ -117,9 +117,7 @@ pub fn lsp_to_proto_signature(lsp_help: lsp::SignatureHelp) -> proto::SignatureH
             .into_iter()
             .map(|signature| proto::SignatureInformation {
                 label: signature.label,
-                documentation: signature
-                    .documentation
-                    .map(|documentation| lsp_to_proto_documentation(documentation)),
+                documentation: signature.documentation.map(lsp_to_proto_documentation),
                 parameters: signature
                     .parameters
                     .unwrap_or_default()
@@ -204,7 +202,7 @@ pub fn proto_to_lsp_signature(proto_help: proto::SignatureHelp) -> lsp::Signatur
 }
 
 fn proto_to_lsp_documentation(documentation: proto::Documentation) -> Option<lsp::Documentation> {
-    let documentation = {
+    {
         Some(match documentation.content? {
             documentation::Content::Value(string) => lsp::Documentation::String(string),
             documentation::Content::MarkupContent(markup) => {
@@ -221,8 +219,7 @@ fn proto_to_lsp_documentation(documentation: proto::Documentation) -> Option<lsp
                 })
             }
         })
-    };
-    documentation
+    }
 }
 
 #[cfg(test)]

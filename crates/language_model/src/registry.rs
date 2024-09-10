@@ -176,7 +176,7 @@ impl LanguageModelRegistry {
         model_id: &LanguageModelId,
         cx: &mut ModelContext<Self>,
     ) {
-        let Some(provider) = self.provider(&provider) else {
+        let Some(provider) = self.provider(provider) else {
             return;
         };
 

@@ -92,7 +92,7 @@ impl Item for ImageView {
             .file_icons
             .then(|| FileIcons::get_icon(self.path.as_path(), cx))
             .flatten()
-            .map(|icon| Icon::from_path(icon))
+            .map(Icon::from_path)
     }
 
     fn clone_on_split(

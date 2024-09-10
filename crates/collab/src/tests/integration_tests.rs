@@ -538,10 +538,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Leave the room
     active_call_a
-        .update(cx_a, |call, cx| {
-            let hang_up = call.hang_up(cx);
-            hang_up
-        })
+        .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
 
@@ -574,10 +571,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Leave the room
     active_call_a
-        .update(cx_a, |call, cx| {
-            let hang_up = call.hang_up(cx);
-            hang_up
-        })
+        .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
 
@@ -2578,7 +2572,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2602,7 +2596,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2626,7 +2620,7 @@ async fn test_git_diff_base_change(
 
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2641,7 +2635,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2684,7 +2678,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2708,7 +2702,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2741,7 +2735,7 @@ async fn test_git_diff_base_change(
 
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2756,7 +2750,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2884,8 +2878,8 @@ async fn test_git_status_sync(
     client_a.fs().set_status_for_repo_via_git_operation(
         Path::new("/dir/.git"),
         &[
-            (&Path::new(A_TXT), GitFileStatus::Added),
-            (&Path::new(B_TXT), GitFileStatus::Added),
+            (Path::new(A_TXT), GitFileStatus::Added),
+            (Path::new(B_TXT), GitFileStatus::Added),
         ],
     );
 
@@ -2932,8 +2926,8 @@ async fn test_git_status_sync(
     client_a.fs().set_status_for_repo_via_working_copy_change(
         Path::new("/dir/.git"),
         &[
-            (&Path::new(A_TXT), GitFileStatus::Modified),
-            (&Path::new(B_TXT), GitFileStatus::Modified),
+            (Path::new(A_TXT), GitFileStatus::Modified),
+            (Path::new(B_TXT), GitFileStatus::Modified),
         ],
     );
 
@@ -3330,7 +3324,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{"tab_size":2}"#.to_string()),
@@ -3349,7 +3343,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{}"#.to_string()),
@@ -3378,7 +3372,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
@@ -3410,7 +3404,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
         )
@@ -6336,7 +6330,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Close permanent tab
     pane.update(cx, |pane, cx| {
-        let id = pane.items().nth(0).unwrap().item_id();
+        let id = pane.items().next().unwrap().item_id();
         pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
     })
     .await
@@ -6347,7 +6341,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());
@@ -6366,7 +6360,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());
@@ -6395,7 +6389,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());
@@ -6433,7 +6427,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_2.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());

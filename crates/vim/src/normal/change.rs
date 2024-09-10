@@ -61,7 +61,7 @@ impl Vim {
                                         selection.start.to_offset(map, Bias::Left);
                                     let classifier = map
                                         .buffer_snapshot
-                                        .char_classifier_at(selection.start.to_point(&map));
+                                        .char_classifier_at(selection.start.to_point(map));
                                     for (ch, offset) in map.buffer_chars_at(start_offset) {
                                         if ch == '\n' || !classifier.is_whitespace(ch) {
                                             break;
@@ -136,7 +136,7 @@ fn expand_changed_word_selection(
             .next()
             .map(|(c, _)| !classifier.is_whitespace(c))
             .unwrap_or_default();
-        return in_word;
+        in_word
     };
     if (times.is_none() || times.unwrap() == 1) && is_in_word() {
         let next_char = map
@@ -164,7 +164,7 @@ fn expand_changed_word_selection(
         } else {
             Motion::NextWordStart { ignore_punctuation }
         };
-        motion.expand_selection(map, selection, times, false, &text_layout_details)
+        motion.expand_selection(map, selection, times, false, text_layout_details)
     }
 }
 

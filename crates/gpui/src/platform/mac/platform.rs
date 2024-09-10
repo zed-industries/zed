@@ -540,8 +540,6 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        // Clippy thinks that this evaluates to `()`, for some reason.
-        #[allow(clippy::unit_arg, clippy::clone_on_copy)]
         let renderer_context = self.0.lock().renderer_context.clone();
         Ok(Box::new(MacWindow::open(
             handle,

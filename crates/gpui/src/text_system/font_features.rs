@@ -10,7 +10,7 @@ impl FontFeatures {
     /// Get the tag name list of the font OpenType features
     /// only enabled or disabled features are returned
     pub fn tag_value_list(&self) -> &[(String, u32)] {
-        &self.0.as_slice()
+        self.0.as_slice()
     }
 
     /// Returns whether the `calt` feature is enabled.
@@ -134,11 +134,14 @@ impl schemars::JsonSchema for FontFeatures {
             InstanceType::Object,
         )));
         {
-            let mut property = SchemaObject::default();
-            property.instance_type = Some(schemars::schema::SingleOrVec::Vec(vec![
-                InstanceType::Boolean,
-                InstanceType::Integer,
-            ]));
+            let mut property = SchemaObject {
+                instance_type: Some(schemars::schema::SingleOrVec::Vec(vec![
+                    InstanceType::Boolean,
+                    InstanceType::Integer,
+                ])),
+                ..Default::default()
+            };
+
             {
                 let mut number_constraints = property.number();
                 number_constraints.multiple_of = Some(1.0);
