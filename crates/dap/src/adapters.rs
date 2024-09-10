@@ -25,7 +25,7 @@ pub fn build_adapter(adapter_config: &DebugAdapterConfig) -> Result<Box<dyn Debu
     match adapter_config.kind {
         DebugAdapterKind::Custom => Err(anyhow!("Custom is not implemented")),
         DebugAdapterKind::Python => Ok(Box::new(PythonDebugAdapter::new(adapter_config))),
-        DebugAdapterKind::Php => Ok(Box::new(PhpDebugAdapter::new(adapter_config))),
+        DebugAdapterKind::PHP => Ok(Box::new(PhpDebugAdapter::new(adapter_config))),
     }
 }
 

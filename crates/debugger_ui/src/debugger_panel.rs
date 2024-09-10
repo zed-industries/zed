@@ -83,7 +83,7 @@ impl DebugPanel {
 
                             match payload {
                                 Payload::Event(event) => {
-                                    Self::handle_debug_client_events(this, client, event, cx);
+                                    this.handle_debug_client_events(client, event, cx);
                                 }
                                 Payload::Request(request) => {
                                     if StartDebugging::COMMAND == request.command {
@@ -214,19 +214,19 @@ impl DebugPanel {
     }
 
     fn handle_debug_client_events(
-        this: &mut Self,
+        &mut self,
         client: Arc<DebugAdapterClient>,
         event: &Events,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            Events::Initialized(event) => Self::handle_initialized_event(client, event, cx),
-            Events::Stopped(event) => Self::handle_stopped_event(client, event, cx),
-            Events::Continued(event) => Self::handle_continued_event(client, event, cx),
-            Events::Exited(event) => Self::handle_exited_event(client, event, cx),
-            Events::Terminated(event) => Self::handle_terminated_event(this, client, event, cx),
-            Events::Thread(event) => Self::handle_thread_event(this, client, event, cx),
-            Events::Output(event) => Self::handle_output_event(client, event, cx),
+            Events::Initialized(event) => self.handle_initialized_event(client, event, cx),
+            Events::Stopped(event) => self.handle_stopped_event(client, event, cx),
+            Events::Continued(event) => self.handle_continued_event(client, event, cx),
+            Events::Exited(event) => self.handle_exited_event(client, event, cx),
+            Events::Terminated(event) => self.handle_terminated_event(client, event, cx),
+            Events::Thread(event) => self.handle_thread_event(client, event, cx),
+            Events::Output(event) => self.handle_output_event(client, event, cx),
             Events::Breakpoint(_) => {}
             Events::Module(_) => {}
             Events::LoadedSource(_) => {}
@@ -365,6 +365,7 @@ impl DebugPanel {
     }
 
     fn handle_initialized_event(
+        &mut self,
         client: Arc<DebugAdapterClient>,
         _: &Option<Capabilities>,
         cx: &mut ViewContext<Self>,
@@ -386,6 +387,7 @@ impl DebugPanel {
     }
 
     fn handle_continued_event(
+        &mut self,
         client: Arc<DebugAdapterClient>,
         event: &ContinuedEvent,
         cx: &mut ViewContext<Self>,
@@ -404,6 +406,7 @@ impl DebugPanel {
     }
 
     fn handle_stopped_event(
+        &mut self,
         client: Arc<DebugAdapterClient>,
         event: &StoppedEvent,
         cx: &mut ViewContext<Self>,
@@ -554,7 +557,7 @@ impl DebugPanel {
     }
 
     fn handle_thread_event(
-        this: &mut Self,
+        &mut self,
         client: Arc<DebugAdapterClient>,
         event: &ThreadEvent,
         cx: &mut ViewContext<Self>,
@@ -563,7 +566,7 @@ impl DebugPanel {
 
         if let Some(thread_state) = client.thread_states().get(&thread_id) {
             if !thread_state.stopped && event.reason == ThreadEventReason::Exited {
-                this.show_did_not_stop_warning = true;
+                self.show_did_not_stop_warning = true;
                 cx.notify();
             };
         }
@@ -595,6 +598,7 @@ impl DebugPanel {
     }
 
     fn handle_exited_event(
+        &mut self,
         client: Arc<DebugAdapterClient>,
         _: &ExitedEvent,
         cx: &mut ViewContext<Self>,
@@ -610,13 +614,13 @@ impl DebugPanel {
     }
 
     fn handle_terminated_event(
-        this: &mut Self,
+        &mut self,
         client: Arc<DebugAdapterClient>,
         event: &Option<TerminatedEvent>,
         cx: &mut ViewContext<Self>,
     ) {
         let restart_args = event.clone().and_then(|e| e.restart);
-        let workspace = this.workspace.clone();
+        let workspace = self.workspace.clone();
 
         cx.spawn(|_, mut cx| async move {
             Self::remove_highlights(workspace.clone(), cx.clone())?;
@@ -644,6 +648,7 @@ impl DebugPanel {
     }
 
     fn handle_output_event(
+        &mut self,
         client: Arc<DebugAdapterClient>,
         event: &OutputEvent,
         cx: &mut ViewContext<Self>,

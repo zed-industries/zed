@@ -516,8 +516,8 @@ impl Item for DebugPanelItem {
         _: &WindowContext,
     ) -> AnyElement {
         Label::new(format!(
-            "{} - Thread {}",
-            self.client.id().0,
+            "{:?} - Thread {}",
+            self.client.config().kind,
             self.thread_id
         ))
         .color(if params.selected {

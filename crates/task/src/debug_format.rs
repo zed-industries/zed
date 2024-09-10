@@ -43,7 +43,7 @@ pub enum DebugAdapterKind {
     /// Use debugpy
     Python,
     /// Use vscode-php-debug
-    Php,
+    PHP,
 }
 
 /// Represents the configuration for the debug adapter
