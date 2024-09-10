@@ -449,7 +449,6 @@ impl WindowTextSystem {
             }
             font_runs.clear();
         };
-       
         let mut split_lines = text.split('\n');
         let mut processed = false;
 

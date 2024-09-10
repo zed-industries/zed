@@ -22,8 +22,8 @@ mod editor_settings;
 mod editor_settings_controls;
 mod element;
 mod git;
-mod highlight_matching_bracket;
 mod highlight_bad_unicode;
+mod highlight_matching_bracket;
 mod hover_links;
 mod hover_popover;
 mod hunk_diff;
@@ -82,8 +82,8 @@ use gpui::{
     UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
     VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
-use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use highlight_bad_unicode::refresh_invalid_character_highlight;
+use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HoveredHunk;

@@ -48,7 +48,6 @@ impl LineWrapper {
                 if c == '\n' {
                     continue;
                 }
-                
                 if Self::is_word_char(c) {
                     if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
                         last_candidate_ix = ix;
