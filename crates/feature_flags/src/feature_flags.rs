@@ -62,6 +62,10 @@ impl FeatureFlag for ZedPro {
 pub struct AutoCommand {}
 impl FeatureFlag for AutoCommand {
     const NAME: &'static str = "auto-command";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
