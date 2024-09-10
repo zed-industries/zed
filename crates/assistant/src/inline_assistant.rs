@@ -2373,19 +2373,6 @@ impl Codegen {
             None
         };
 
-        // Higher Temperature increases the randomness of model outputs.
-        // If Markdown or No Language is Known, increase the randomness for more creative output
-        // If Code, decrease temperature to get more deterministic outputs
-        let temperature = if let Some(language) = language_name.clone() {
-            if language == "Markdown".into() {
-                1.0
-            } else {
-                0.5
-            }
-        } else {
-            1.0
-        };
-
         let language_name = language_name.as_ref();
         let start = buffer.point_to_buffer_offset(edit_range.start);
         let end = buffer.point_to_buffer_offset(edit_range.end);
@@ -2421,7 +2408,7 @@ impl Codegen {
             messages,
             tools: Vec::new(),
             stop: vec!["|END|>".to_string()],
-            temperature,
+            temperature: 1.,
         })
     }
 
