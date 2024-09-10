@@ -111,6 +111,8 @@ impl SlashCommand for AutoCommand {
                 .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
                 .await?;
 
+            dbg!(&summaries);
+
             commands_for_summaries(&summaries, &original_prompt, &cx).await
         });
 

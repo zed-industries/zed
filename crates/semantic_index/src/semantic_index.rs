@@ -131,6 +131,8 @@ mod tests {
     use std::{future, path::Path, sync::Arc};
 
     fn init_test(cx: &mut TestAppContext) {
+        env_logger::init();
+
         _ = cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
@@ -259,7 +261,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(results.len() > 1, "should have found some results");
+        assert!(
+            results.len() > 1,
+            "should have found some results, but only found {:?}",
+            results
+        );
 
         for result in &results {
             println!("result: {:?}", result.path);

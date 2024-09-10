@@ -18,6 +18,7 @@ use smol::channel;
 use std::{cmp::Ordering, future::Future, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
+#[derive(Debug)]
 pub struct SearchResult {
     pub worktree: Model<Worktree>,
     pub path: Arc<Path>,
