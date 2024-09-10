@@ -32,15 +32,6 @@ pub struct TerminalAssistantPromptContext {
     pub user_prompt: String,
 }
 
-/// Context required to generate a workflow step resolution prompt.
-#[derive(Debug, Serialize)]
-pub struct StepResolutionContext {
-    /// The full context, including <step>...</step> tags
-    pub workflow_context: String,
-    /// The text of the specific step from the context to resolve
-    pub step_to_resolve: String,
-}
-
 pub struct PromptLoadingParams<'a> {
     pub fs: Arc<dyn Fs>,
     pub repo_path: Option<PathBuf>,

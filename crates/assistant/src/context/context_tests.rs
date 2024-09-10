@@ -1,8 +1,7 @@
-use super::{MessageCacheMetadata, WorkflowStepEdit};
+use super::{AssistantEdit, MessageCacheMetadata};
 use crate::{
-    assistant_panel, prompt_library, slash_command::file_command, CacheStatus, Context,
-    ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
-    WorkflowStepEditKind,
+    assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
+    Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -520,7 +519,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         »",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -542,7 +541,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         <patch»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -567,7 +566,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         <edit>»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -603,7 +602,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -623,9 +622,9 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         </patch>»
 
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
+            kind: AssistantEditKind::InsertAfter {
                 old_text: "fn one".into(),
                 new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
@@ -657,7 +656,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -677,9 +676,9 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         </patch>»
 
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
+            kind: AssistantEditKind::InsertAfter {
                 old_text: "fn zero".into(),
                 new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
@@ -693,7 +692,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -721,7 +720,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     context.update(cx, |context, cx| {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -741,9 +740,9 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         </patch>»
 
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
+            kind: AssistantEditKind::InsertAfter {
                 old_text: "fn zero".into(),
                 new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
@@ -765,7 +764,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             cx,
         )
     });
-    expect_steps(
+    expect_patches(
         &deserialized_context,
         "
 
@@ -785,9 +784,9 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         </patch>»
 
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
+            kind: AssistantEditKind::InsertAfter {
                 old_text: "fn zero".into(),
                 new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
@@ -806,10 +805,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     }
 
     #[track_caller]
-    fn expect_steps(
+    fn expect_patches(
         context: &Model<Context>,
         expected_marked_text: &str,
-        expected_suggestions: &[&[WorkflowStepEdit]],
+        expected_suggestions: &[&[AssistantEdit]],
         cx: &mut TestAppContext,
     ) {
         let expected_marked_text = expected_marked_text.unindent();
@@ -818,7 +817,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
             context.buffer.read_with(cx, |buffer, _| {
                 let ranges = context
-                    .workflow_steps
+                    .patches
                     .iter()
                     .map(|entry| entry.range.to_offset(buffer))
                     .collect::<Vec<_>>();
@@ -826,7 +825,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                     buffer.text(),
                     ranges,
                     context
-                        .workflow_steps
+                        .patches
                         .iter()
                         .map(|step| step.edits.clone())
                         .collect::<Vec<_>>(),
@@ -847,7 +846,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                         .iter()
                         .map(|edit| {
                             let edit = edit.as_ref().unwrap();
-                            WorkflowStepEdit {
+                            AssistantEdit {
                                 path: edit.path.clone(),
                                 kind: edit.kind.clone(),
                             }

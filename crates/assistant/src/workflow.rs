@@ -12,23 +12,23 @@ use text::Bias;
 use workspace::Workspace;
 
 #[derive(Debug)]
-pub(crate) struct WorkflowStep {
+pub(crate) struct AssistantPatch {
     pub range: Range<language::Anchor>,
     pub leading_tags_end: text::Anchor,
     pub trailing_tag_start: Option<text::Anchor>,
-    pub edits: Arc<[Result<WorkflowStepEdit>]>,
+    pub edits: Arc<[Result<AssistantEdit>]>,
     pub resolution_task: Option<Task<()>>,
-    pub resolution: Option<Arc<Result<WorkflowStepResolution>>>,
+    pub resolution: Option<Arc<Result<AssistantPatchResolution>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WorkflowStepEdit {
+pub(crate) struct AssistantEdit {
     pub path: String,
-    pub kind: WorkflowStepEditKind,
+    pub kind: AssistantEditKind,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct WorkflowStepResolution {
+pub(crate) struct AssistantPatchResolution {
     pub title: String,
     pub suggestion_groups: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
 }
@@ -194,7 +194,7 @@ impl WorkflowSuggestion {
     }
 }
 
-impl WorkflowStepEdit {
+impl AssistantEdit {
     pub fn new(
         path: Option<String>,
         operation: Option<String>,
@@ -206,25 +206,25 @@ impl WorkflowStepEdit {
         let operation = operation.ok_or_else(|| anyhow!("missing operation"))?;
 
         let kind = match operation.as_str() {
-            "update" => WorkflowStepEditKind::Update {
+            "update" => AssistantEditKind::Update {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
             },
-            "insert_before" => WorkflowStepEditKind::InsertBefore {
+            "insert_before" => AssistantEditKind::InsertBefore {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
             },
-            "insert_after" => WorkflowStepEditKind::InsertAfter {
+            "insert_after" => AssistantEditKind::InsertAfter {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
             },
-            "delete" => WorkflowStepEditKind::Delete {
+            "delete" => AssistantEditKind::Delete {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
             },
-            "create" => WorkflowStepEditKind::Create {
+            "create" => AssistantEditKind::Create {
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
             },
@@ -269,7 +269,7 @@ impl WorkflowStepEdit {
             .background_executor()
             .spawn(async move {
                 match kind {
-                    WorkflowStepEditKind::Update {
+                    AssistantEditKind::Update {
                         old_text,
                         new_text,
                         description,
@@ -277,11 +277,11 @@ impl WorkflowStepEdit {
                         let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::Update { range, description }
                     }
-                    WorkflowStepEditKind::Create {
+                    AssistantEditKind::Create {
                         new_text,
                         description,
                     } => WorkflowSuggestion::CreateFile { description },
-                    WorkflowStepEditKind::InsertBefore {
+                    AssistantEditKind::InsertBefore {
                         old_text,
                         new_text,
                         description,
@@ -292,7 +292,7 @@ impl WorkflowStepEdit {
                             description,
                         }
                     }
-                    WorkflowStepEditKind::InsertAfter {
+                    AssistantEditKind::InsertAfter {
                         old_text,
                         new_text,
                         description,
@@ -303,7 +303,7 @@ impl WorkflowStepEdit {
                             description,
                         }
                     }
-                    WorkflowStepEditKind::Delete { old_text } => {
+                    AssistantEditKind::Delete { old_text } => {
                         let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::Delete { range }
                     }
@@ -399,7 +399,7 @@ impl WorkflowStepEdit {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation")]
-pub enum WorkflowStepEditKind {
+pub enum AssistantEditKind {
     Update {
         old_text: String,
         new_text: String,
@@ -446,7 +446,7 @@ mod tests {
             });
             let snapshot = buffer.read(cx).snapshot();
             assert_eq!(
-                WorkflowStepEdit::resolve_location(&snapshot, "ipsum\ndolor").to_point(&snapshot),
+                AssistantEdit::resolve_location(&snapshot, "ipsum\ndolor").to_point(&snapshot),
                 Point::new(1, 0)..Point::new(2, 18)
             );
         }
@@ -468,7 +468,7 @@ mod tests {
             });
             let snapshot = buffer.read(cx).snapshot();
             assert_eq!(
-                WorkflowStepEdit::resolve_location(&snapshot, "fn foo1(b: usize) {\n42\n}")
+                AssistantEdit::resolve_location(&snapshot, "fn foo1(b: usize) {\n42\n}")
                     .to_point(&snapshot),
                 Point::new(0, 0)..Point::new(2, 1)
             );
@@ -494,8 +494,7 @@ mod tests {
             });
             let snapshot = buffer.read(cx).snapshot();
             assert_eq!(
-                WorkflowStepEdit::resolve_location(&snapshot, "Foo.bar.baz.qux()")
-                    .to_point(&snapshot),
+                AssistantEdit::resolve_location(&snapshot, "Foo.bar.baz.qux()").to_point(&snapshot),
                 Point::new(1, 0)..Point::new(4, 14)
             );
         }

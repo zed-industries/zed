@@ -2,8 +2,8 @@
 mod context_tests;
 
 use crate::{
-    prompts::PromptBuilder, slash_command::SlashCommandLine, MessageId, MessageStatus,
-    WorkflowStep, WorkflowStepEdit, WorkflowStepResolution, WorkflowSuggestionGroup,
+    prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantEdit, AssistantPatch,
+    AssistantPatchResolution, MessageId, MessageStatus, WorkflowSuggestionGroup,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -292,7 +292,7 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
-    WorkflowStepsUpdated {
+    PatchesUpdated {
         removed: Vec<Range<language::Anchor>>,
         updated: Vec<Range<language::Anchor>>,
     },
@@ -483,7 +483,7 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    workflow_steps: Vec<WorkflowStep>,
+    patches: Vec<AssistantPatch>,
     xml_tags: Vec<XmlTag>,
     project: Option<Model<Project>>,
     prompt_builder: Arc<PromptBuilder>,
@@ -499,7 +499,7 @@ impl ContextAnnotation for PendingSlashCommand {
     }
 }
 
-impl ContextAnnotation for WorkflowStep {
+impl ContextAnnotation for AssistantPatch {
     fn range(&self) -> &Range<language::Anchor> {
         &self.range
     }
@@ -585,7 +585,7 @@ impl Context {
             telemetry,
             project,
             language_registry,
-            workflow_steps: Vec::new(),
+            patches: Vec::new(),
             xml_tags: Vec::new(),
             prompt_builder,
         };
@@ -924,48 +924,48 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub(crate) fn workflow_step_containing(
+    pub(crate) fn patch_containing(
         &self,
         offset: usize,
         cx: &AppContext,
-    ) -> Option<&WorkflowStep> {
+    ) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
         let index = self
-            .workflow_steps
-            .binary_search_by(|step| {
-                let step_range = step.range.to_offset(&buffer);
-                if offset < step_range.start {
+            .patches
+            .binary_search_by(|patch| {
+                let patch_range = patch.range.to_offset(&buffer);
+                if offset < patch_range.start {
                     Ordering::Greater
-                } else if offset > step_range.end {
+                } else if offset > patch_range.end {
                     Ordering::Less
                 } else {
                     Ordering::Equal
                 }
             })
             .ok()?;
-        Some(&self.workflow_steps[index])
+        Some(&self.patches[index])
     }
 
-    pub fn workflow_step_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
-        self.workflow_steps.iter().map(|step| step.range.clone())
+    pub fn patch_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
+        self.patches.iter().map(|patch| patch.range.clone())
     }
 
-    pub(crate) fn workflow_step_for_range(
+    pub(crate) fn patch_for_range(
         &self,
         range: &Range<language::Anchor>,
         cx: &AppContext,
-    ) -> Option<&WorkflowStep> {
+    ) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
-        let index = self.workflow_step_index_for_range(range, buffer).ok()?;
-        Some(&self.workflow_steps[index])
+        let index = self.patch_index_for_range(range, buffer).ok()?;
+        Some(&self.patches[index])
     }
 
-    fn workflow_step_index_for_range(
+    fn patch_index_for_range(
         &self,
         tagged_range: &Range<text::Anchor>,
         buffer: &text::BufferSnapshot,
     ) -> Result<usize, usize> {
-        self.workflow_steps
+        self.patches
             .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
     }
 
@@ -1010,8 +1010,6 @@ impl Context {
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
-                // Use `inclusive = true` to invalidate a step when an edit occurs
-                // at the start/end of a parsed step.
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -1240,8 +1238,8 @@ impl Context {
 
         let mut removed_slash_command_ranges = Vec::new();
         let mut updated_slash_commands = Vec::new();
-        let mut removed_steps = Vec::new();
-        let mut updated_steps = Vec::new();
+        let mut removed_patches = Vec::new();
+        let mut updated_patches = Vec::new();
         while let Some(mut row_range) = row_ranges.next() {
             while let Some(next_row_range) = row_ranges.peek() {
                 if row_range.end >= next_row_range.start {
@@ -1265,11 +1263,11 @@ impl Context {
                 &mut removed_slash_command_ranges,
                 cx,
             );
-            self.reparse_workflow_steps_in_range(
+            self.reparse_patches_in_range(
                 start..end,
                 &buffer,
-                &mut updated_steps,
-                &mut removed_steps,
+                &mut updated_patches,
+                &mut removed_patches,
                 cx,
             );
         }
@@ -1281,10 +1279,10 @@ impl Context {
             });
         }
 
-        if !updated_steps.is_empty() || !removed_steps.is_empty() {
-            cx.emit(ContextEvent::WorkflowStepsUpdated {
-                removed: removed_steps,
-                updated: updated_steps,
+        if !updated_patches.is_empty() || !removed_patches.is_empty() {
+            cx.emit(ContextEvent::PatchesUpdated {
+                removed: removed_patches,
+                updated: updated_patches,
             });
         }
     }
@@ -1346,7 +1344,7 @@ impl Context {
         removed.extend(removed_commands.map(|command| command.source_range));
     }
 
-    fn reparse_workflow_steps_in_range(
+    fn reparse_patches_in_range(
         &mut self,
         range: Range<text::Anchor>,
         buffer: &BufferSnapshot,
@@ -1361,19 +1359,19 @@ impl Context {
         self.xml_tags
             .splice(intersecting_tags_range.clone(), new_tags);
 
-        // Find which steps intersect the changed range.
-        let intersecting_steps_range =
-            self.indices_intersecting_buffer_range(&self.workflow_steps, range.clone(), cx);
+        // Find which patches intersect the changed range.
+        let intersecting_patches_range =
+            self.indices_intersecting_buffer_range(&self.patches, range.clone(), cx);
 
-        // Reparse all tags after the last unchanged step before the change.
+        // Reparse all tags after the last unchanged patch before the change.
         let mut tags_start_ix = 0;
-        if let Some(preceding_unchanged_step) =
-            self.workflow_steps[..intersecting_steps_range.start].last()
+        if let Some(preceding_unchanged_patch) =
+            self.patches[..intersecting_patches_range.start].last()
         {
             tags_start_ix = match self.xml_tags.binary_search_by(|tag| {
                 tag.range
                     .start
-                    .cmp(&preceding_unchanged_step.range.end, buffer)
+                    .cmp(&preceding_unchanged_patch.range.end, buffer)
                     .then(Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => ix,
@@ -1381,21 +1379,19 @@ impl Context {
         }
 
         // Rebuild the edit suggestions in the range.
-        let mut new_steps = self.parse_steps(tags_start_ix, range.end, buffer);
+        let mut new_patches = self.parse_patches(tags_start_ix, range.end, buffer);
 
         if let Some(project) = self.project() {
-            for step in &mut new_steps {
-                Self::resolve_workflow_step_internal(step, &project, cx);
+            for patch in &mut new_patches {
+                Self::resolve_patch_internal(patch, &project, cx);
             }
         }
 
-        updated.extend(new_steps.iter().map(|step| step.range.clone()));
-        let removed_steps = self
-            .workflow_steps
-            .splice(intersecting_steps_range, new_steps);
+        updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
+        let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
         removed.extend(
-            removed_steps
-                .map(|step| step.range)
+            removed_patches
+                .map(|patch| patch.range)
                 .filter(|range| !updated.contains(&range)),
         );
     }
@@ -1456,27 +1452,27 @@ impl Context {
         tags
     }
 
-    fn parse_steps(
+    fn parse_patches(
         &mut self,
         tags_start_ix: usize,
         buffer_end: text::Anchor,
         buffer: &BufferSnapshot,
-    ) -> Vec<WorkflowStep> {
-        let mut new_steps = Vec::new();
-        let mut pending_step = None;
-        let mut edit_step_depth = 0;
+    ) -> Vec<AssistantPatch> {
+        let mut new_patches = Vec::new();
+        let mut pending_patch = None;
+        let mut patch_tag_depth = 0;
         let mut tags = self.xml_tags[tags_start_ix..].iter().peekable();
         'tags: while let Some(tag) = tags.next() {
-            if tag.range.start.cmp(&buffer_end, buffer).is_gt() && edit_step_depth == 0 {
+            if tag.range.start.cmp(&buffer_end, buffer).is_gt() && patch_tag_depth == 0 {
                 break;
             }
 
             if tag.kind == XmlTagKind::Patch && tag.is_open_tag {
-                edit_step_depth += 1;
-                let edit_start = tag.range.start;
+                patch_tag_depth += 1;
+                let patch_start = tag.range.start;
                 let mut edits = Vec::new();
-                let mut step = WorkflowStep {
-                    range: edit_start..edit_start,
+                let mut patch = AssistantPatch {
+                    range: patch_start..patch_start,
                     leading_tags_end: tag.range.end,
                     trailing_tag_start: None,
                     edits: Default::default(),
@@ -1485,14 +1481,14 @@ impl Context {
                 };
 
                 while let Some(tag) = tags.next() {
-                    step.trailing_tag_start.get_or_insert(tag.range.start);
+                    patch.trailing_tag_start.get_or_insert(tag.range.start);
 
                     if tag.kind == XmlTagKind::Patch && !tag.is_open_tag {
-                        edit_step_depth -= 1;
-                        if edit_step_depth == 0 {
-                            step.range.end = tag.range.end;
-                            step.edits = edits.into();
-                            new_steps.push(step);
+                        patch_tag_depth -= 1;
+                        if patch_tag_depth == 0 {
+                            patch.range.end = tag.range.end;
+                            patch.edits = edits.into();
+                            new_patches.push(patch);
                             continue 'tags;
                         }
                     }
@@ -1506,7 +1502,7 @@ impl Context {
 
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
-                                edits.push(WorkflowStepEdit::new(
+                                edits.push(AssistantEdit::new(
                                     path,
                                     operation,
                                     old_text,
@@ -1568,57 +1564,57 @@ impl Context {
                     }
                 }
 
-                pending_step = Some(step);
+                pending_patch = Some(patch);
             }
         }
 
-        if let Some(mut pending_step) = pending_step {
-            pending_step.range.end = text::Anchor::MAX;
-            new_steps.push(pending_step);
+        if let Some(mut pending_patch) = pending_patch {
+            pending_patch.range.end = text::Anchor::MAX;
+            new_patches.push(pending_patch);
         }
 
-        new_steps
+        new_patches
     }
 
-    pub fn resolve_workflow_step(
+    pub fn resolve_patch(
         &mut self,
         tagged_range: Range<text::Anchor>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let index = self
-            .workflow_step_index_for_range(&tagged_range, self.buffer.read(cx))
+            .patch_index_for_range(&tagged_range, self.buffer.read(cx))
             .ok()?;
-        let step = &mut self.workflow_steps[index];
+        let patch = &mut self.patches[index];
         let project = self.project.as_ref()?;
-        step.resolution.take();
-        Self::resolve_workflow_step_internal(step, project, cx);
+        patch.resolution.take();
+        Self::resolve_patch_internal(patch, project, cx);
         None
     }
 
-    fn resolve_workflow_step_internal(
-        step: &mut WorkflowStep,
+    fn resolve_patch_internal(
+        patch: &mut AssistantPatch,
         project: &Model<Project>,
         cx: &mut ModelContext<'_, Context>,
     ) {
-        step.resolution_task = Some(cx.spawn({
-            let range = step.range.clone();
-            let edits = step.edits.clone();
+        patch.resolution_task = Some(cx.spawn({
+            let range = patch.range.clone();
+            let edits = patch.edits.clone();
             let project = project.clone();
             |this, mut cx| async move {
                 let suggestion_groups =
-                    Self::compute_step_resolution(project, edits, &mut cx).await;
+                    Self::compute_patch_resolution(project, edits, &mut cx).await;
 
                 this.update(&mut cx, |this, cx| {
                     let buffer = this.buffer.read(cx).text_snapshot();
-                    let ix = this.workflow_step_index_for_range(&range, &buffer).ok();
+                    let ix = this.patch_index_for_range(&range, &buffer).ok();
                     if let Some(ix) = ix {
-                        let step = &mut this.workflow_steps[ix];
+                        let patch = &mut this.patches[ix];
 
                         let resolution = suggestion_groups.map(|suggestion_groups| {
                             let mut title = String::new();
                             for mut chunk in buffer.text_for_range(
-                                step.leading_tags_end
-                                    ..step.trailing_tag_start.unwrap_or(step.range.end),
+                                patch.leading_tags_end
+                                    ..patch.trailing_tag_start.unwrap_or(patch.range.end),
                             ) {
                                 if title.is_empty() {
                                     chunk = chunk.trim_start();
@@ -1631,14 +1627,14 @@ impl Context {
                                 }
                             }
 
-                            WorkflowStepResolution {
+                            AssistantPatchResolution {
                                 title,
                                 suggestion_groups,
                             }
                         });
 
-                        step.resolution = Some(Arc::new(resolution));
-                        cx.emit(ContextEvent::WorkflowStepsUpdated {
+                        patch.resolution = Some(Arc::new(resolution));
+                        cx.emit(ContextEvent::PatchesUpdated {
                             removed: vec![],
                             updated: vec![range],
                         })
@@ -1649,9 +1645,9 @@ impl Context {
         }));
     }
 
-    async fn compute_step_resolution(
+    async fn compute_patch_resolution(
         project: Model<Project>,
-        edits: Arc<[Result<WorkflowStepEdit>]>,
+        edits: Arc<[Result<AssistantEdit>]>,
         cx: &mut AsyncAppContext,
     ) -> Result<HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>> {
         let mut suggestion_tasks = Vec::new();
@@ -2301,11 +2297,11 @@ impl Context {
         let mut updated = Vec::new();
         let mut removed = Vec::new();
         for range in ranges {
-            self.reparse_workflow_steps_in_range(range, &buffer, &mut updated, &mut removed, cx);
+            self.reparse_patches_in_range(range, &buffer, &mut updated, &mut removed, cx);
         }
 
         if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::WorkflowStepsUpdated { removed, updated })
+            cx.emit(ContextEvent::PatchesUpdated { removed, updated })
         }
     }
 
