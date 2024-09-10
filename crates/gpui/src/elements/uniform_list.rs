@@ -87,7 +87,7 @@ pub struct UniformListScrollHandle(pub Rc<RefCell<UniformListScrollState>>);
 pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
     pub deferred_scroll_to_item: Option<usize>,
-    pub last_item_height: Option<Pixels>,
+    pub last_item_size: Option<Size<Pixels>>,
 }
 
 impl UniformListScrollHandle {
@@ -96,7 +96,7 @@ impl UniformListScrollHandle {
         Self(Rc::new(RefCell::new(UniformListScrollState {
             base_handle: ScrollHandle::new(),
             deferred_scroll_to_item: None,
-            last_item_height: None,
+            last_item_size: None,
         })))
     }
 
@@ -133,7 +133,7 @@ impl Element for UniformList {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let max_items = self.item_count;
-        let item_size = self.measure_item(None, cx);
+        let item_size = self.measure_item(cx);
         let layout_id = self
             .interactivity
             .request_layout(global_id, cx, |style, cx| match self.sizing_behavior {
@@ -200,10 +200,11 @@ impl Element for UniformList {
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
 
-        let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
+        let measurement = self.measure_item(cx);
+        let item_height = measurement.height;
         let shared_scroll_to_item = self.scroll_handle.as_mut().and_then(|handle| {
             let mut handle = handle.0.borrow_mut();
-            handle.last_item_height = Some(item_height);
+            handle.last_item_size = Some(measurement);
             handle.deferred_scroll_to_item.take()
         });
 
@@ -228,17 +229,26 @@ impl Element for UniformList {
                 if self.item_count > 0 {
                     let content_height =
                         item_height * self.item_count + padding.top + padding.bottom;
-                    let min_scroll_offset = padded_bounds.size.height - content_height;
-                    let is_scrolled = scroll_offset.y != px(0.);
+                    let is_scrolled_vertically = scroll_offset.y != px(0.);
+                    let min_vertical_scroll_offset = padded_bounds.size.height - content_height;
+                    if is_scrolled_vertically && scroll_offset.y < min_vertical_scroll_offset {
+                        shared_scroll_offset.borrow_mut().y = min_vertical_scroll_offset;
+                        scroll_offset.y = min_vertical_scroll_offset;
+                    }
 
-                    if is_scrolled && scroll_offset.y < min_scroll_offset {
-                        shared_scroll_offset.borrow_mut().y = min_scroll_offset;
-                        scroll_offset.y = min_scroll_offset;
+                    let content_width = measurement.width + padding.left + padding.right;
+                    let min_horizontal_scroll_offset = padded_bounds.size.width - content_width;
+                    let is_scrolled_horizontally = scroll_offset.x != px(0.);
+                    if is_scrolled_horizontally && scroll_offset.x < min_horizontal_scroll_offset {
+                        shared_scroll_offset.borrow_mut().x = min_horizontal_scroll_offset;
+
+                        scroll_offset.x = min_horizontal_scroll_offset;
                     }
 
                     if let Some(ix) = shared_scroll_to_item {
                         let list_height = padded_bounds.size.height;
                         let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
+                        dbg!(&updated_scroll_offset);
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
@@ -263,7 +273,10 @@ impl Element for UniformList {
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
                             let item_origin = padded_bounds.origin
-                                + point(px(0.), item_height * ix + scroll_offset.y + padding.top);
+                                + point(
+                                    scroll_offset.x + padding.left,
+                                    item_height * ix + scroll_offset.y + padding.top,
+                                );
                             let available_space = size(
                                 AvailableSpace::Definite(padded_bounds.size.width),
                                 AvailableSpace::Definite(item_height),
@@ -318,7 +331,7 @@ impl UniformList {
         self
     }
 
-    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut WindowContext) -> Size<Pixels> {
+    fn measure_item(&self, cx: &mut WindowContext) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();
         }
@@ -328,12 +341,7 @@ impl UniformList {
         let Some(mut item_to_measure) = items.pop() else {
             return Size::default();
         };
-        let available_space = size(
-            list_width.map_or(AvailableSpace::MinContent, |width| {
-                AvailableSpace::Definite(width)
-            }),
-            AvailableSpace::MinContent,
-        );
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
         item_to_measure.layout_as_root(available_space, cx)
     }
 

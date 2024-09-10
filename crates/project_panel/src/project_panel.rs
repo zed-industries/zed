@@ -18,10 +18,10 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
     AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
-    ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement,
+    KeyContext, ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -80,8 +80,10 @@ pub struct ProjectPanel {
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     show_scrollbar: bool,
-    scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
+    vertical_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
+    horizontal_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     hide_scrollbar_task: Option<Task<()>>,
+    max_width_item_index: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -311,7 +313,9 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
-                scrollbar_drag_thumb_offset: Default::default(),
+                vertical_scrollbar_drag_thumb_offset: Default::default(),
+                horizontal_scrollbar_drag_thumb_offset: Default::default(),
+                max_width_item_index: 0,
             };
             this.update_visible_entries(None, cx);
 
@@ -1272,6 +1276,7 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
+            dbg!("Autoscroll");
             self.scroll_handle.scroll_to_item(index);
             cx.notify();
         }
@@ -1750,6 +1755,7 @@ impl ProjectPanel {
 
         let old_ancestors = std::mem::take(&mut self.ancestors);
         self.visible_entries.clear();
+        let mut max_width_item = None;
         for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
@@ -1837,6 +1843,57 @@ impl ProjectPanel {
                         is_fifo: entry.is_fifo,
                     });
                 }
+                let worktree_abs_path = worktree.read(cx).abs_path();
+                let (depth, path) = if entry.is_file() {
+                    let depth = entry.path.ancestors().count() - 1;
+                    let path = Arc::from(Path::new(entry.path.file_name().unwrap()));
+                    (depth, path)
+                } else if Some(entry) == worktree.read(cx).root_entry() {
+                    let path = Arc::from(Path::new(worktree_abs_path.file_name().unwrap()));
+                    let depth = 0;
+                    (depth, path)
+                } else {
+                    let path = self
+                        .ancestors
+                        .get(&entry.id)
+                        .and_then(|ancestors| {
+                            let outermost_ancestor = ancestors.ancestors.last()?;
+                            let root_folded_entry = worktree
+                                .read(cx)
+                                .entry_for_id(*outermost_ancestor)?
+                                .path
+                                .as_ref();
+                            entry
+                                .path
+                                .strip_prefix(root_folded_entry)
+                                .ok()
+                                .and_then(|suffix| {
+                                    let full_path = Path::new(root_folded_entry.file_name()?);
+                                    Some(Arc::<Path>::from(full_path.join(suffix)))
+                                })
+                        })
+                        .unwrap_or_else(|| entry.path.clone());
+                    let depth = path
+                        .strip_prefix(worktree_abs_path)
+                        .map(|suffix| suffix.components().count())
+                        .unwrap_or_default();
+                    (depth, path)
+                };
+                let estimated_width = Self::item_width(depth, &path, entry.is_symlink);
+
+                match max_width_item.as_mut() {
+                    Some((id, worktree_id, width)) => {
+                        if *width < estimated_width {
+                            *id = entry.id;
+                            *worktree_id = worktree.read(cx).id();
+                            *width = estimated_width;
+                        }
+                    }
+                    None => {
+                        max_width_item = Some((entry.id, worktree.read(cx).id(), estimated_width))
+                    }
+                }
+
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
                     && entry_iter.advance_to_sibling()
                 {
@@ -1851,6 +1908,22 @@ impl ProjectPanel {
                 .push((worktree_id, visible_worktree_entries, OnceCell::new()));
         }
 
+        if let Some((project_entry_id, worktree_id, _)) = max_width_item {
+            let mut visited_worktrees_length = 0;
+            let index = self.visible_entries.iter().find_map(|(id, entries, _)| {
+                if worktree_id == *id {
+                    entries
+                        .iter()
+                        .position(|entry| entry.id == project_entry_id)
+                } else {
+                    visited_worktrees_length += entries.len();
+                    None
+                }
+            });
+            if let Some(index) = index {
+                self.max_width_item_index = visited_worktrees_length + index;
+            }
+        }
         if let Some((worktree_id, entry_id)) = new_selected_entry {
             self.selection = Some(SelectedEntry {
                 worktree_id,
@@ -2498,7 +2571,7 @@ impl ProjectPanel {
             )
     }
 
-    fn render_scrollbar(
+    fn render_vertical_scrollbar(
         &self,
         items_count: usize,
         cx: &mut ViewContext<Self>,
@@ -2510,8 +2583,11 @@ impl ProjectPanel {
         let scroll_handle = self.scroll_handle.0.borrow();
 
         let height = scroll_handle
-            .last_item_height
-            .filter(|_| self.show_scrollbar || self.scrollbar_drag_thumb_offset.get().is_some())?;
+            .last_item_size
+            .filter(|_| {
+                self.show_scrollbar || self.vertical_scrollbar_drag_thumb_offset.get().is_some()
+            })?
+            .height;
 
         let total_list_length = height.0 as f64 * items_count as f64;
         let current_offset = scroll_handle.base_handle.offset().y.0.min(0.).abs() as f64;
@@ -2536,7 +2612,7 @@ impl ProjectPanel {
         Some(
             div()
                 .occlude()
-                .id("project-panel-scroll")
+                .id("project-panel-vertical-scroll")
                 .on_mouse_move(cx.listener(|_, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
@@ -2550,7 +2626,7 @@ impl ProjectPanel {
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|this, _, cx| {
-                        if this.scrollbar_drag_thumb_offset.get().is_none()
+                        if this.vertical_scrollbar_drag_thumb_offset.get().is_none()
                             && !this.focus_handle.contains_focused(cx)
                         {
                             this.hide_scrollbar(cx);
@@ -2570,13 +2646,94 @@ impl ProjectPanel {
                 .bottom_0()
                 .w(px(12.))
                 .cursor_default()
-                .child(ProjectPanelScrollbar::new(
+                .child(ProjectPanelScrollbar::vertical(
                     percentage as f32..end_offset as f32,
                     self.scroll_handle.clone(),
-                    self.scrollbar_drag_thumb_offset.clone(),
-                    cx.view().clone().into(),
+                    self.vertical_scrollbar_drag_thumb_offset.clone(),
+                    cx.view().entity_id(),
                     items_count,
                 )),
+        )
+    }
+
+    fn render_horizontal_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+        let settings = ProjectPanelSettings::get_global(cx);
+        if settings.scrollbar.show == ShowScrollbar::Never {
+            return None;
+        }
+        let scroll_handle = self.scroll_handle.0.borrow();
+        let longest_item_width = scroll_handle
+            .last_item_size
+            .filter(|_| {
+                self.show_scrollbar || self.horizontal_scrollbar_drag_thumb_offset.get().is_some()
+            })?
+            .width
+            .0;
+        let current_offset = scroll_handle.base_handle.offset().x.0.min(0.).abs();
+        let mut percentage = current_offset / longest_item_width;
+        let end_offset =
+            (current_offset + scroll_handle.base_handle.bounds().size.width.0) / longest_item_width;
+        // Uniform scroll handle might briefly report an offset greater than the length of a list;
+        // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
+        let overshoot = (end_offset - 1.).clamp(0., 1.);
+        if overshoot > 0. {
+            percentage -= overshoot;
+        }
+        const MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT: f32 = 0.005;
+        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT > 1.0 || end_offset > longest_item_width
+        {
+            return None;
+        }
+        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 {
+            return None;
+        }
+        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT, 1.);
+        Some(
+            div()
+                .occlude()
+                .id("project-panel-horizontal-scroll")
+                .on_mouse_move(cx.listener(|_, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, cx| {
+                        if this.horizontal_scrollbar_drag_thumb_offset.get().is_none()
+                            && !this.focus_handle.contains_focused(cx)
+                        {
+                            this.hide_scrollbar(cx);
+                            cx.notify();
+                        }
+
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                    cx.notify();
+                }))
+                .w_full()
+                .absolute()
+                .right_0()
+                .left_0()
+                .bottom_0()
+                .h(px(12.))
+                .cursor_default()
+                .children(self.width.map(|width| {
+                    ProjectPanelScrollbar::horizontal(
+                        percentage as f32..end_offset as f32,
+                        self.scroll_handle.clone(),
+                        self.horizontal_scrollbar_drag_thumb_offset.clone(),
+                        cx.view().entity_id(),
+                        width,
+                    )
+                })),
         )
     }
 
@@ -2642,6 +2799,15 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         }
+    }
+
+    fn item_width(depth: usize, entry: &Path, is_symlink: bool) -> usize {
+        const ICON_SIZE_FACTOR: usize = 2;
+        let mut item_width = depth * ICON_SIZE_FACTOR + entry.to_string_lossy().chars().count();
+        if is_symlink {
+            item_width += ICON_SIZE_FACTOR;
+        }
+        item_width
     }
 }
 
@@ -2753,9 +2919,11 @@ impl Render for ProjectPanel {
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
+                    .with_width_from_item(Some(self.max_width_item_index))
                     .track_scroll(self.scroll_handle.clone()),
                 )
-                .children(self.render_scrollbar(items_count, cx))
+                .children(self.render_vertical_scrollbar(items_count, cx))
+                .children(self.render_horizontal_scrollbar(cx))
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()
