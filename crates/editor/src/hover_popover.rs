@@ -11,7 +11,7 @@ use gpui::{
     StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
 use itertools::Itertools;
-use language::{Language, DiagnosticEntry, LanguageRegistry};
+use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;

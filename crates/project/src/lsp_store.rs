@@ -609,9 +609,7 @@ impl LspStore {
     ) -> Option<language::AvailableLanguage> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
-        let Some(file) = buffer.file() else {
-            return None;
-        };
+        let file = buffer.file()?;
 
         let content = buffer.as_rope();
         let available_language = self.languages.language_for_file(file, Some(content), cx);
@@ -4271,7 +4269,6 @@ impl LspStore {
         envelope: TypedEnvelope<proto::CreateLanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        dbg!("handle_create");
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let name = LanguageServerName::from_proto(envelope.payload.name);
 
@@ -4527,7 +4524,7 @@ impl LspStore {
                 .transpose()?;
 
             upstream_client
-                .request(dbg!(proto::CreateLanguageServer {
+                .request(proto::CreateLanguageServer {
                     project_id,
                     worktree_id,
                     name,
@@ -4538,7 +4535,7 @@ impl LspStore {
                         name: language.to_proto(),
                         matcher: serde_json::to_string(&available_language.matcher())?,
                     }),
-                }))
+                })
                 .await
         });
         cx.spawn(|this, mut cx| async move {
@@ -6719,10 +6716,10 @@ impl std::fmt::Debug for LanguageServerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LanguageServerState::Starting(_) => {
-                f.debug_struct("LangaugeServerState::Starting").finish()
+                f.debug_struct("LanguageServerState::Starting").finish()
             }
             LanguageServerState::Running { language, .. } => f
-                .debug_struct("LangaugeServerState::Running")
+                .debug_struct("LanguageServerState::Running")
                 .field("language", &language)
                 .finish(),
         }
@@ -7000,9 +6997,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        if self.fs.is_none() {
-            return None;
-        }
+        self.fs.as_ref()?;
         let worktree_abs_path = self.worktree.abs_path();
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
@@ -7010,9 +7005,8 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     #[cfg(target_os = "windows")]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        if self.fs.is_none() {
-            return None;
-        }
+        self.fs.as_ref()?;
+
         // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
         //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
         //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup

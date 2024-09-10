@@ -324,9 +324,7 @@ impl SshSession {
                 while let Some(incoming) = incoming_rx.next().await {
                     if let Some(request_id) = incoming.responding_to {
                         let request_id = MessageId(request_id);
-                        let mut response_channels_lock = this.response_channels.lock();
-                        let sender = response_channels_lock.remove(&request_id);
-                        drop(response_channels_lock);
+                        let sender = this.response_channels.lock().remove(&request_id);
                         if let Some(sender) = sender {
                             let (tx, rx) = oneshot::channel();
                             if incoming.payload.is_some() {

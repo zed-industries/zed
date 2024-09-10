@@ -18,8 +18,8 @@ use http_client::github::latest_github_release;
 use http_client::HttpClient;
 use language::{
     language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
-    point_from_lsp, point_to_lsp, Anchor, Language, Bias, Buffer, BufferSnapshot,
-    PointUtf16, ToPointUtf16,
+    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
+    ToPointUtf16,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
