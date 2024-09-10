@@ -9,7 +9,6 @@ use crate::{
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
-use futures::channel::oneshot;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 #[cfg(target_os = "macos")]
@@ -337,6 +336,17 @@ impl BladePipelines {
             }),
         }
     }
+
+    fn destroy(&mut self, gpu: &gpu::Context) {
+        gpu.destroy_render_pipeline(&mut self.quads);
+        gpu.destroy_render_pipeline(&mut self.shadows);
+        gpu.destroy_render_pipeline(&mut self.path_rasterization);
+        gpu.destroy_render_pipeline(&mut self.paths);
+        gpu.destroy_render_pipeline(&mut self.underlines);
+        gpu.destroy_render_pipeline(&mut self.mono_sprites);
+        gpu.destroy_render_pipeline(&mut self.poly_sprites);
+        gpu.destroy_render_pipeline(&mut self.surfaces);
+    }
 }
 
 pub struct BladeSurfaceConfig {
@@ -439,6 +449,7 @@ impl BladeRenderer {
             self.wait_for_gpu();
             self.surface_config.transparent = transparent;
             let surface_info = self.gpu.resize(self.surface_config);
+            self.pipelines.destroy(&self.gpu);
             self.pipelines = BladePipelines::new(&self.gpu, surface_info);
             self.alpha_mode = surface_info.alpha;
         }
@@ -539,16 +550,13 @@ impl BladeRenderer {
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
         self.atlas.destroy();
+        self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
+        self.pipelines.destroy(&self.gpu);
     }
 
-    pub fn draw(
-        &mut self,
-        scene: &Scene,
-        // Required to compile on macOS, but not currently supported.
-        _on_complete: Option<oneshot::Sender<()>>,
-    ) {
+    pub fn draw(&mut self, scene: &Scene) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
@@ -776,11 +784,5 @@ impl BladeRenderer {
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
-    }
-
-    /// Required to compile on macOS, but not currently supported.
-    #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
-    pub fn fps(&self) -> f32 {
-        0.0
     }
 }

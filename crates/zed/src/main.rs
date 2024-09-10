@@ -267,7 +267,6 @@ fn init_ui(
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
-    performance::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -317,7 +316,6 @@ fn init_ui(
 }
 
 fn main() {
-    let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
 
@@ -329,9 +327,7 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new()
-        .with_assets(Assets)
-        .measure_time_to_first_window_draw(start_time);
+    let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -1079,9 +1075,8 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
+                || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
-            } else if parse_zed_link(arg, cx).is_some() {
                 Ok(arg.into())
             } else {
                 Err(anyhow!("error parsing path argument: {}", error))
@@ -1157,13 +1152,13 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             .await;
 
         while let Some(paths) = events.next().await {
-            for path in paths {
-                if fs.metadata(&path).await.ok().flatten().is_some() {
+            for event in paths {
+                if fs.metadata(&event.path).await.ok().flatten().is_some() {
                     if let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                     {
                         if let Some(()) = theme_registry
-                            .load_user_theme(&path, fs.clone())
+                            .load_user_theme(&event.path, fs.clone())
                             .await
                             .log_err()
                         {
@@ -1192,8 +1187,10 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     cx.spawn(|_| async move {
         let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while let Some(event) = events.next().await {
-            let has_language_file = event.iter().any(|path| {
-                path.extension()
+            let has_language_file = event.iter().any(|event| {
+                event
+                    .path
+                    .extension()
                     .map(|ext| ext.to_string_lossy().as_ref() == "scm")
                     .unwrap_or(false)
             });

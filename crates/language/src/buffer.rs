@@ -27,6 +27,7 @@ use gpui::{
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use serde_json::Value;
+use settings::WorktreeId;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -361,7 +362,7 @@ pub trait File: Send + Sync {
     /// Returns the id of the worktree to which this file belongs.
     ///
     /// This is needed for looking up project-specific settings.
-    fn worktree_id(&self) -> usize;
+    fn worktree_id(&self, cx: &AppContext) -> WorktreeId;
 
     /// Returns whether the file has been deleted.
     fn is_deleted(&self) -> bool;
@@ -4172,8 +4173,8 @@ impl File for TestFile {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
-    fn worktree_id(&self) -> usize {
-        0
+    fn worktree_id(&self, _: &AppContext) -> WorktreeId {
+        WorktreeId::from_usize(0)
     }
 
     fn is_deleted(&self) -> bool {
@@ -4301,7 +4302,7 @@ pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
         let mut prev_line_trailing_whitespace_range = 0..0;
         for (i, line) in chunk.split('\n').enumerate() {
             let line_end_offset = offset + line.len();
-            let trimmed_line_len = line.trim_end_matches(|c| matches!(c, ' ' | '\t')).len();
+            let trimmed_line_len = line.trim_end_matches([' ', '\t']).len();
             let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
 
             if i == 0 && trimmed_line_len == 0 {

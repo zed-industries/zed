@@ -579,15 +579,16 @@ impl ContextProvider for BasicContextProvider {
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
-        let worktree_abs_path = buffer
-            .file()
-            .map(|file| WorktreeId::from_usize(file.worktree_id()))
-            .and_then(|worktree_id| {
-                self.project
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).abs_path())
-            });
+        let worktree_abs_path =
+            buffer
+                .file()
+                .map(|file| file.worktree_id(cx))
+                .and_then(|worktree_id| {
+                    self.project
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .map(|worktree| worktree.read(cx).abs_path())
+                });
         if let Some(worktree_path) = worktree_abs_path {
             task_variables.insert(
                 VariableName::WorktreeRoot,

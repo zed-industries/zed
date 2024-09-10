@@ -37,7 +37,7 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, Entity, EventEmitter, Model,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Model,
     ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
@@ -1606,7 +1606,7 @@ impl Project {
             self.worktree_store.update(cx, |worktree_store, cx| {
                 for worktree in worktree_store.worktrees() {
                     store
-                        .clear_local_settings(worktree.entity_id().as_u64() as usize, cx)
+                        .clear_local_settings(worktree.read(cx).id(), cx)
                         .log_err();
                 }
             });
@@ -5186,7 +5186,7 @@ impl EventEmitter<Event> for Project {}
 impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
     fn from(val: &'a ProjectPath) -> Self {
         SettingsLocation {
-            worktree_id: val.worktree_id.to_usize(),
+            worktree_id: val.worktree_id,
             path: val.path.as_ref(),
         }
     }

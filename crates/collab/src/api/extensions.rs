@@ -52,7 +52,7 @@ async fn get_extensions(
         let extension_id = filter.to_lowercase();
         let mut exact_match = None;
         extensions.retain(|extension| {
-            if extension.id.as_ref() == &extension_id {
+            if extension.id.as_ref() == extension_id {
                 exact_match = Some(extension.clone());
                 false
             } else {

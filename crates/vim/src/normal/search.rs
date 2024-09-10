@@ -135,9 +135,7 @@ impl Vim {
         self.store_visual_marks(cx);
         let Some(pane) = self.pane(cx) else { return };
         let result = pane.update(cx, |pane, cx| {
-            let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
-                return None;
-            };
+            let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
             search_bar.update(cx, |search_bar, cx| {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
@@ -420,12 +418,9 @@ impl Replacement {
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
     // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
     pub(crate) fn parse(mut chars: Peekable<Chars>) -> Option<Replacement> {
-        let Some(delimiter) = chars
+        let delimiter = chars
             .next()
-            .filter(|c| !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'')
-        else {
-            return None;
-        };
+            .filter(|c| !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'')?;
 
         let mut search = String::new();
         let mut replacement = String::new();

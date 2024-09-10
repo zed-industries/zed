@@ -514,7 +514,7 @@ impl<T: Item> ItemHandle for View<T> {
         if let Some(project_path) = self.project_path(cx) {
             WorkspaceSettings::get(
                 Some(SettingsLocation {
-                    worktree_id: project_path.worktree_id.into(),
+                    worktree_id: project_path.worktree_id,
                     path: &project_path.path,
                 }),
                 cx,

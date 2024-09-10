@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{copy_recursive, Fs, RemoveOptions, Watcher};
+use fs::{copy_recursive, Fs, PathEvent, RemoveOptions, Watcher};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -37,6 +37,7 @@ use postage::{
     watch,
 };
 use rpc::proto::{self, AnyProtoClient};
+pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{smallvec, SmallVec};
 use smol::channel::{self, Sender};
@@ -67,15 +68,6 @@ pub use worktree_settings::WorktreeSettings;
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 #[cfg(not(feature = "test-support"))]
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
-pub struct WorktreeId(usize);
-
-impl From<WorktreeId> for usize {
-    fn from(value: WorktreeId) -> Self {
-        value.0
-    }
-}
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -385,24 +377,6 @@ impl Worktree {
         });
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
-            let worktree_id = cx.handle().entity_id().as_u64();
-            let settings_location = Some(SettingsLocation {
-                worktree_id: worktree_id as usize,
-                path: Path::new(EMPTY_PATH),
-            });
-
-            let settings = WorktreeSettings::get(settings_location, cx).clone();
-            cx.observe_global::<SettingsStore>(move |this, cx| {
-                if let Self::Local(this) = this {
-                    let settings = WorktreeSettings::get(settings_location, cx).clone();
-                    if settings != this.settings {
-                        this.settings = settings;
-                        this.restart_background_scanners(cx);
-                    }
-                }
-            })
-            .detach();
-
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
@@ -427,6 +401,24 @@ impl Worktree {
                     fs.as_ref(),
                 );
             }
+
+            let worktree_id = snapshot.id();
+            let settings_location = Some(SettingsLocation {
+                worktree_id,
+                path: Path::new(EMPTY_PATH),
+            });
+
+            let settings = WorktreeSettings::get(settings_location, cx).clone();
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                if let Self::Local(this) = this {
+                    let settings = WorktreeSettings::get(settings_location, cx).clone();
+                    if settings != this.settings {
+                        this.settings = settings;
+                        this.restart_background_scanners(cx);
+                    }
+                }
+            })
+            .detach();
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
@@ -1048,7 +1040,11 @@ impl LocalWorktree {
                     watcher,
                 };
 
-                scanner.run(events).await;
+                scanner
+                    .run(Box::pin(
+                        events.map(|events| events.into_iter().map(Into::into).collect()),
+                    ))
+                    .await;
             }
         });
         let scan_state_updater = cx.spawn(|this, mut cx| async move {
@@ -2974,30 +2970,6 @@ async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     Ok(builder.build()?)
 }
 
-impl WorktreeId {
-    pub fn from_usize(handle_id: usize) -> Self {
-        Self(handle_id)
-    }
-
-    pub fn from_proto(id: u64) -> Self {
-        Self(id as usize)
-    }
-
-    pub fn to_proto(&self) -> u64 {
-        self.0 as u64
-    }
-
-    pub fn to_usize(&self) -> usize {
-        self.0
-    }
-}
-
-impl fmt::Display for WorktreeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 impl Deref for Worktree {
     type Target = Snapshot;
 
@@ -3119,8 +3091,8 @@ impl language::File for File {
             .unwrap_or_else(|| OsStr::new(&self.worktree.read(cx).root_name))
     }
 
-    fn worktree_id(&self) -> usize {
-        self.worktree.entity_id().as_u64() as usize
+    fn worktree_id(&self, cx: &AppContext) -> WorktreeId {
+        self.worktree.read(cx).id()
     }
 
     fn is_deleted(&self) -> bool {
@@ -3512,7 +3484,7 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
-    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>) {
+    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
         use futures::FutureExt as _;
 
         // If the worktree root does not contain a git repository, then find
@@ -3593,7 +3565,8 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            self.process_events(paths).await;
+            self.process_events(paths.into_iter().map(Into::into).collect())
+                .await;
         }
 
         // Continue processing events until the worktree is dropped.
@@ -3634,7 +3607,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.clone()).await;
+                    self.process_events(paths.into_iter().map(Into::into).collect()).await;
                 }
             }
         }

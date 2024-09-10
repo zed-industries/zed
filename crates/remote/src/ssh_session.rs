@@ -156,7 +156,7 @@ impl SshSession {
         run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
 
         let mut remote_server_child = socket
-            .ssh_command(&format!(
+            .ssh_command(format!(
                 "RUST_LOG={} {:?} run",
                 std::env::var("RUST_LOG").unwrap_or_default(),
                 remote_binary_path,
@@ -661,7 +661,7 @@ impl SshClientState {
                     .unwrap_or_default(),
             )
             .arg(src_path)
-            .arg(&format!(
+            .arg(format!(
                 "{}:{}",
                 self.socket.connection_options.scp_url(),
                 dest_path.display()

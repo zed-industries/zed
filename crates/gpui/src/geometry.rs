@@ -1836,11 +1836,18 @@ impl Edges<Pixels> {
 
 impl From<f32> for Edges<Pixels> {
     fn from(val: f32) -> Self {
+        let val: Pixels = val.into();
+        val.into()
+    }
+}
+
+impl From<Pixels> for Edges<Pixels> {
+    fn from(val: Pixels) -> Self {
         Edges {
-            top: val.into(),
-            right: val.into(),
-            bottom: val.into(),
-            left: val.into(),
+            top: val,
+            right: val,
+            bottom: val,
+            left: val,
         }
     }
 }

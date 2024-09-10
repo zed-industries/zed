@@ -425,7 +425,7 @@ impl TerminalBuilder {
         // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
         // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
         let word_regex =
-            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
+            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
 
         let terminal = Terminal {
             task,
@@ -1889,16 +1889,15 @@ mod tests {
         cells
     }
 
-    fn convert_cells_to_content(size: TerminalSize, cells: &Vec<Vec<char>>) -> TerminalContent {
+    fn convert_cells_to_content(size: TerminalSize, cells: &[Vec<char>]) -> TerminalContent {
         let mut ic = Vec::new();
 
-        for row in 0..cells.len() {
-            for col in 0..cells[row].len() {
-                let cell_char = cells[row][col];
+        for (index, row) in cells.iter().enumerate() {
+            for (cell_index, cell_char) in row.iter().enumerate() {
                 ic.push(IndexedCell {
-                    point: AlacPoint::new(Line(row as i32), Column(col)),
+                    point: AlacPoint::new(Line(index as i32), Column(cell_index)),
                     cell: Cell {
-                        c: cell_char,
+                        c: *cell_char,
                         ..Default::default()
                     },
                 });

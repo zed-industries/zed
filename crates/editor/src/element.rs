@@ -2732,7 +2732,7 @@ impl EditorElement {
                         .position(position)
                         .child(context_menu)
                         .anchor(AnchorCorner::TopLeft)
-                        .snap_to_window(),
+                        .snap_to_window_with_margin(px(8.)),
                 )
                 .with_priority(1)
                 .into_any(),

@@ -875,9 +875,7 @@ fn surrounding_markers(
         }
     }
 
-    let Some(mut opening) = opening else {
-        return None;
-    };
+    let mut opening = opening?;
 
     let mut matched_opens = 0;
     let mut closing = None;
@@ -905,9 +903,7 @@ fn surrounding_markers(
         before_ch = ch;
     }
 
-    let Some(mut closing) = closing else {
-        return None;
-    };
+    let mut closing = closing?;
 
     if around && !search_across_lines {
         let mut found = false;
