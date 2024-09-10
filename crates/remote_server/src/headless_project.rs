@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
-use language::{LanguageRegistry, LOGITY_PATH};
+use language::LanguageRegistry;
 use project::{
     buffer_store::BufferStore, project_settings::SettingsObserver, search::SearchQuery,
     worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId,
@@ -30,7 +30,6 @@ pub struct HeadlessProject {
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
-        *LOGITY_PATH.lock() = PathBuf::from("/Users/conrad/remote-log");
         language::init(cx);
         project::Project::init_settings(cx);
     }
