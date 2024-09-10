@@ -40,6 +40,7 @@ pub struct OpenAiSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
     pub name: String,
+    pub display_name: Option<String>,
     pub max_tokens: usize,
     pub max_output_tokens: Option<u32>,
 }
@@ -171,6 +172,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                 model.name.clone(),
                 open_ai::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                 },
@@ -368,11 +370,7 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            if let open_ai::Model::Custom { .. } = model {
-                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-            } else {
-                tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
-            }
+            tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
         })
         .boxed()
 }

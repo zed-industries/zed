@@ -254,11 +254,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 }),
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                 }),
                 AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                 }),
             };

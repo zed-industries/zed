@@ -160,10 +160,12 @@ impl AssistantSettingsContent {
                                             .filter_map(|model| match model {
                                                 OpenAiModel::Custom {
                                                     name,
+                                                    display_name,
                                                     max_tokens,
                                                     max_output_tokens,
                                                 } => Some(open_ai::AvailableModel {
                                                     name,
+                                                    display_name,
                                                     max_tokens,
                                                     max_output_tokens,
                                                 }),
