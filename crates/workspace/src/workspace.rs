@@ -3095,7 +3095,7 @@ impl Workspace {
         };
 
         let new_pane = self.add_pane(cx);
-        self.move_item(&from, &new_pane, item_id_to_move, 0, cx);
+        move_item(&from, &new_pane, item_id_to_move, 0, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -3124,48 +3124,14 @@ impl Workspace {
     }
 
     pub fn join_all_panes(&mut self, cx: &mut ViewContext<Self>) {
-        let active_item = self.active_pane.read(cx).active_item().take();
-        for i in 0..self.panes.len() {
-            self.join_pane_into_active(&self.panes[i].clone(), cx);
+        let active_item = self.active_pane.read(cx).active_item();
+        for pane in &self.panes {
+            join_pane_into_active(&self.active_pane, pane, cx);
         }
         if let Some(active_item) = active_item {
-            self.activate_item(&(*active_item), true, true, cx);
+            self.activate_item(active_item.as_ref(), true, true, cx);
         }
         cx.notify();
-    }
-
-    fn join_pane_into_active(&mut self, pane: &View<Pane>, cx: &mut ViewContext<'_, Self>) {
-        if *pane == self.active_pane {
-            return;
-        } else if pane.read(cx).items_len() == 0 {
-            self.close_pane(pane, cx);
-        } else {
-            self.move_all_items(pane, &self.active_pane.clone(), cx);
-        }
-    }
-
-    fn close_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) {
-        pane.update(cx, |_, cx| {
-            cx.emit(pane::Event::Remove {
-                focus_on_pane: None,
-            })
-        })
-    }
-
-    fn move_all_items(
-        &mut self,
-        from_pane: &View<Pane>,
-        to_pane: &View<Pane>,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
-        let item_ids: Vec<EntityId> = from_pane
-            .read(cx)
-            .items()
-            .map(|item| item.item_id())
-            .collect();
-        for item_id in item_ids {
-            self.move_item(from_pane, to_pane, item_id, 0, cx);
-        }
     }
 
     pub fn join_pane_into_next(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
@@ -3177,42 +3143,8 @@ impl Workspace {
         let Some(next_pane) = next_pane else {
             return;
         };
-        self.move_all_items(&pane, &next_pane, cx);
+        move_all_items(&pane, &next_pane, cx);
         cx.notify();
-    }
-
-    pub fn move_item(
-        &mut self,
-        source: &View<Pane>,
-        destination: &View<Pane>,
-        item_id_to_move: EntityId,
-        destination_index: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let Some((item_ix, item_handle)) = source
-            .read(cx)
-            .items()
-            .enumerate()
-            .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
-        else {
-            // Tab was closed during drag
-            return;
-        };
-
-        let item_handle = item_handle.clone();
-
-        if source != destination {
-            // Close item from previous pane
-            source.update(cx, |source, cx| {
-                source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), cx);
-            });
-        }
-
-        // This automatically removes duplicate items in the pane
-        destination.update(cx, |destination, cx| {
-            destination.add_item(item_handle, true, true, Some(destination_index), cx);
-            destination.focus(cx)
-        });
     }
 
     fn remove_pane(
@@ -5983,6 +5915,76 @@ fn resize_edge(
     } else {
         None
     }
+}
+
+fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut WindowContext<'_>) {
+    if pane == active_pane {
+        return;
+    } else if pane.read(cx).items_len() == 0 {
+        pane.update(cx, |_, cx| {
+            cx.emit(pane::Event::Remove {
+                focus_on_pane: None,
+            });
+        })
+    } else {
+        move_all_items(pane, active_pane, cx);
+    }
+}
+
+fn move_all_items(from_pane: &View<Pane>, to_pane: &View<Pane>, cx: &mut WindowContext<'_>) {
+    let destination_is_different = from_pane != to_pane;
+    for (item_ix, item_handle) in from_pane
+        .read(cx)
+        .items()
+        .enumerate()
+        .map(|(ix, item)| (ix, item.clone()))
+        .collect::<Vec<_>>()
+    {
+        if destination_is_different {
+            // Close item from previous pane
+            from_pane.update(cx, |source, cx| {
+                source.remove_item_and_focus_on_pane(item_ix, false, to_pane.clone(), cx);
+            });
+        }
+
+        // This automatically removes duplicate items in the pane
+        to_pane.update(cx, |destination, cx| {
+            destination.add_item(item_handle, true, true, None, cx);
+            destination.focus(cx)
+        });
+    }
+}
+
+pub fn move_item(
+    source: &View<Pane>,
+    destination: &View<Pane>,
+    item_id_to_move: EntityId,
+    destination_index: usize,
+    cx: &mut WindowContext<'_>,
+) {
+    let Some((item_ix, item_handle)) = source
+        .read(cx)
+        .items()
+        .enumerate()
+        .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
+        .map(|(ix, item)| (ix, item.clone()))
+    else {
+        // Tab was closed during drag
+        return;
+    };
+
+    if source != destination {
+        // Close item from previous pane
+        source.update(cx, |source, cx| {
+            source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), cx);
+        });
+    }
+
+    // This automatically removes duplicate items in the pane
+    destination.update(cx, |destination, cx| {
+        destination.add_item(item_handle, true, true, Some(destination_index), cx);
+        destination.focus(cx)
+    });
 }
 
 #[cfg(test)]

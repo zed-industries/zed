@@ -3,6 +3,7 @@ use crate::{
         ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
         WeakItemHandle,
     },
+    move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
@@ -1753,9 +1754,7 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |this, cx| {
-                        this.move_item(&pane, &pane, id, destination_index, cx)
-                    });
+                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
                 })
                 .ok()?;
 
@@ -1773,9 +1772,7 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |this, cx| {
-                        this.move_item(&pane, &pane, id, destination_index, cx)
-                    });
+                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
                 })
                 .ok()?;
 
@@ -2345,7 +2342,7 @@ impl Pane {
                             }
                         })
                     }
-                    workspace.move_item(&from_pane, &to_pane, item_id, ix, cx);
+                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                 });
             })
             .log_err();
