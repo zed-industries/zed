@@ -451,7 +451,7 @@ impl ContextProvider for RustContextProvider {
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         let package_to_run = all_language_settings(file.as_ref(), cx)
-            .language(Some("Rust"))
+            .language(Some(&"Rust".into()))
             .tasks
             .variables
             .get(DEFAULT_RUN_NAME_STR);

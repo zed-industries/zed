@@ -291,11 +291,24 @@ impl SshClientDelegate {
 
             self.update_status(Some("building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args(["build", "--package", "remote_server"])).await?;
-            run_cmd(Command::new("strip").args(["target/debug/remote_server"])).await?;
-            run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+            // run_cmd(Command::new("strip").args(["target/remote_server/debug/remote_server"]))
+            // .await?;
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
 
-            let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
             return Ok((path, version));
 
             async fn run_cmd(command: &mut Command) -> Result<()> {

@@ -28,6 +28,7 @@ use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
+pub use language_registry::LanguageName;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
 use regex::Regex;
@@ -67,8 +68,8 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
 pub use language_registry::{
-    LanguageNotFound, LanguageQueries, LanguageRegistry, LanguageServerBinaryStatus,
-    PendingLanguageServer, QUERY_FILENAME_PREFIXES,
+    AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
+    LanguageServerBinaryStatus, PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
 pub use outline::*;
@@ -140,6 +141,12 @@ pub trait ToLspPosition {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct LanguageServerName(pub Arc<str>);
 
+impl LanguageServerName {
+    pub fn from_proto(s: String) -> Self {
+        Self(Arc::from(s))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: Model<Buffer>,
@@ -195,9 +202,12 @@ impl CachedLspAdapter {
         })
     }
 
+    pub fn name(&self) -> Arc<str> {
+        self.adapter.name().0.clone()
+    }
+
     pub async fn get_language_server_command(
         self: Arc<Self>,
-        language: Arc<Language>,
         container_dir: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
@@ -205,16 +215,8 @@ impl CachedLspAdapter {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
             .clone()
-            .get_language_server_command(language, container_dir, delegate, cached_binary, cx)
+            .get_language_server_command(container_dir, delegate, cached_binary, cx)
             .await
-    }
-
-    pub fn will_start_server(
-        &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Option<Task<Result<()>>> {
-        self.adapter.will_start_server(delegate, cx)
     }
 
     pub fn can_be_reinstalled(&self) -> bool {
@@ -262,11 +264,11 @@ impl CachedLspAdapter {
             .await
     }
 
-    pub fn language_id(&self, language: &Language) -> String {
+    pub fn language_id(&self, language_name: &LanguageName) -> String {
         self.language_ids
-            .get(language.name().as_ref())
+            .get(language_name.0.as_ref())
             .cloned()
-            .unwrap_or_else(|| language.lsp_id())
+            .unwrap_or_else(|| language_name.lsp_id())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -296,7 +298,6 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        language: Arc<Language>,
         container_dir: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
@@ -317,7 +318,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
                 log::info!(
                     "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                    language.name(),
+                    self.name().0,
                     binary.path,
                     binary.arguments
                 );
@@ -380,14 +381,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     ) -> Result<Box<dyn 'static + Send + Any>>;
 
     fn will_fetch_server(
-        &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncAppContext,
-    ) -> Option<Task<Result<()>>> {
-        None
-    }
-
-    fn will_start_server(
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: &mut AsyncAppContext,
@@ -562,7 +555,7 @@ pub struct CodeLabel {
 #[derive(Clone, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
-    pub name: Arc<str>,
+    pub name: LanguageName,
     /// The name of this language for a Markdown code fence block
     pub code_fence_block_name: Option<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
@@ -699,7 +692,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: Arc::default(),
+            name: LanguageName::new(""),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
@@ -1335,7 +1328,7 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut()?)
     }
 
-    pub fn name(&self) -> Arc<str> {
+    pub fn name(&self) -> LanguageName {
         self.config.name.clone()
     }
 
@@ -1343,7 +1336,7 @@ impl Language {
         self.config
             .code_fence_block_name
             .clone()
-            .unwrap_or_else(|| self.config.name.to_lowercase().into())
+            .unwrap_or_else(|| self.config.name.0.to_lowercase().into())
     }
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
@@ -1408,10 +1401,7 @@ impl Language {
     }
 
     pub fn lsp_id(&self) -> String {
-        match self.config.name.as_ref() {
-            "Plain Text" => "plaintext".to_string(),
-            language_name => language_name.to_lowercase(),
-        }
+        self.config.name.lsp_id()
     }
 
     pub fn prettier_parser_name(&self) -> Option<&str> {
@@ -1420,7 +1410,7 @@ impl Language {
 }
 
 impl LanguageScope {
-    pub fn language_name(&self) -> Arc<str> {
+    pub fn language_name(&self) -> LanguageName {
         self.language.config.name.clone()
     }
 
@@ -1663,7 +1653,6 @@ impl LspAdapter for FakeLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Arc<Language>,
         _: Arc<Path>,
         _: Arc<dyn LspAdapterDelegate>,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,

@@ -471,7 +471,7 @@ impl SyntaxTreeToolbarItemView {
 
     fn render_header(active_layer: &OwnedSyntaxLayer) -> ButtonLike {
         ButtonLike::new("syntax tree header")
-            .child(Label::new(active_layer.language.name()))
+            .child(Label::new(active_layer.language.name().0))
             .child(Label::new(format_node_range(active_layer.node())))
     }
 }

@@ -2377,7 +2377,7 @@ impl Codegen {
         // If Markdown or No Language is Known, increase the randomness for more creative output
         // If Code, decrease temperature to get more deterministic outputs
         let temperature = if let Some(language) = language_name.clone() {
-            if language.as_ref() == "Markdown" {
+            if language == "Markdown".into() {
                 1.0
             } else {
                 0.5
@@ -2386,7 +2386,7 @@ impl Codegen {
             1.0
         };
 
-        let language_name = language_name.as_deref();
+        let language_name = language_name.as_ref();
         let start = buffer.point_to_buffer_offset(edit_range.start);
         let end = buffer.point_to_buffer_offset(edit_range.end);
         let (buffer, range) = if let Some((start, end)) = start.zip(end) {
