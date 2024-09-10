@@ -918,33 +918,37 @@ impl WorktreeIndex {
     fn persist_embeddings(
         &self,
         mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
-        embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
+        mut embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let db = self.db;
+
         cx.background_executor().spawn(async move {
-            while let Some(deletion_range) = deleted_entry_ranges.next().await {
-                let mut txn = db_connection.write_txn()?;
-                let start = deletion_range.0.as_ref().map(|start| start.as_str());
-                let end = deletion_range.1.as_ref().map(|end| end.as_str());
-                log::debug!("deleting embeddings in range {:?}", &(start, end));
-                db.delete_range(&mut txn, &(start, end))?;
-                txn.commit()?;
-            }
-
-            let mut embedded_files = embedded_files.chunks_timeout(4096, Duration::from_secs(2));
-            while let Some(embedded_files) = embedded_files.next().await {
-                let mut txn = db_connection.write_txn()?;
-                for (file, _) in &embedded_files {
-                    log::debug!("saving embedding for file {:?}", file.path);
-                    let key = db_key_for_path(&file.path);
-                    db.put(&mut txn, &key, file)?;
+            loop {
+                // Interleave deletions and persists of embedded files
+                futures::select_biased! {
+                    deletion_range = deleted_entry_ranges.next() => {
+                        if let Some(deletion_range) = deletion_range {
+                            let mut txn = db_connection.write_txn()?;
+                            let start = deletion_range.0.as_ref().map(|start| start.as_str());
+                            let end = deletion_range.1.as_ref().map(|end| end.as_str());
+                            log::debug!("deleting embeddings in range {:?}", &(start, end));
+                            db.delete_range(&mut txn, &(start, end))?;
+                            txn.commit()?;
+                        }
+                    },
+                    file = embedded_files.next() => {
+                        if let Some((file, _)) = file {
+                            let mut txn = db_connection.write_txn()?;
+                            log::debug!("saving embedding for file {:?}", file.path);
+                            let key = db_key_for_path(&file.path);
+                            db.put(&mut txn, &key, &file)?;
+                            txn.commit()?;
+                        }
+                    },
+                    complete => break,
                 }
-                txn.commit()?;
-
-                drop(embedded_files);
-                log::debug!("committed");
             }
 
             Ok(())
