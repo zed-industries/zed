@@ -1799,10 +1799,11 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let fd = pipe.read;
                     drop(pipe.write);
 
-                    let read_task = state
-                        .common
-                        .background_executor
-                        .spawn(async { unsafe { read_fd(fd) } });
+                    let read_task = state.common.background_executor.spawn(async {
+                        let buffer = unsafe { read_fd(fd)? };
+                        let text = String::from_utf8(buffer)?;
+                        anyhow::Ok(text)
+                    });
 
                     let this = this.clone();
                     state
