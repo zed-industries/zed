@@ -283,7 +283,13 @@ message Envelope {
         CloseBuffer close_buffer = 245;
         UpdateUserSettings update_user_settings = 246;
 
-        CreateLanguageServer create_language_server = 247; // current max
+        CreateLanguageServer create_language_server = 247;
+
+        WhichCommand which_command = 248;
+        WhichCommandResponse which_command_response = 249;
+
+        ShellEnv shell_env = 250;
+        ShellEnvResponse shell_env_response = 251; // current max
     }
 
     reserved 158 to 161;
@@ -2503,6 +2509,7 @@ message UpdateUserSettings {
 message LanguageServerCommand {
    string path = 1;
    repeated string arguments = 2;
+   map<string, string> env = 3;
 }
 
 message AvailableLanguage {
@@ -2520,6 +2527,25 @@ message CreateLanguageServer {
     optional string code_action_kinds = 6;
 
     AvailableLanguage language = 7;
+}
+
+message WhichCommand {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string command = 3;
+}
+
+message WhichCommandResponse {
+    optional string path = 1;
+}
+
+message ShellEnv {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+}
+
+message ShellEnvResponse {
+    map<string, string> env = 1;
 }
 
 // message RestartLanguageServer {
