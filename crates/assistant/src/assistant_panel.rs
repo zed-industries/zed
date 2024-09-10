@@ -11,7 +11,7 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
     InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageMetadata,
     MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
@@ -46,6 +46,7 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
+use language_model::LanguageModelToolUse;
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
@@ -1995,6 +1996,20 @@ impl ContextEditor {
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
 
+                            self.context.update(cx, |context, cx| {
+                                context.insert_content(
+                                    Content::ToolUse {
+                                        range: tool_use.source_range.clone(),
+                                        tool_use: LanguageModelToolUse {
+                                            id: tool_use.id.to_string(),
+                                            name: tool_use.name.clone(),
+                                            input: tool_use.input.clone(),
+                                        },
+                                    },
+                                    cx,
+                                );
+                            });
+
                             Crease::new(
                                 start..end,
                                 placeholder,
@@ -3538,7 +3553,7 @@ impl ContextEditor {
                     let image_id = image.id();
                     context.insert_image(image, cx);
                     for image_position in image_positions.iter() {
-                        context.insert_image_anchor(image_id, image_position.text_anchor, cx);
+                        context.insert_image_content(image_id, image_position.text_anchor, cx);
                     }
                 }
             });
@@ -3553,11 +3568,23 @@ impl ContextEditor {
             let new_blocks = self
                 .context
                 .read(cx)
-                .images(cx)
-                .filter_map(|image| {
+                .contents(cx)
+                .filter_map(|content| {
+                    if let Content::Image {
+                        anchor,
+                        render_image,
+                        ..
+                    } = content
+                    {
+                        Some((anchor, render_image))
+                    } else {
+                        None
+                    }
+                })
+                .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
-                    let image = image.render_image.clone();
+                    let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
+                    let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,
