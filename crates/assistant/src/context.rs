@@ -2441,24 +2441,16 @@ impl Context {
         kind: ContentAnchorKind,
         cx: &mut ModelContext<Self>,
     ) {
-        cx.emit(ContextEvent::MessagesEdited);
-
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
             .content_anchors
-            .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
+            .binary_search_by(|probe| probe.anchor.cmp(&anchor, buffer))
         {
-            Ok(ix) => ix,
-            Err(ix) => ix,
+            Ok(ix) | Err(ix) => ix,
         };
-
         self.content_anchors
             .insert(insertion_ix, ContentAnchor { anchor, kind });
-
-        // HACK: The insertion using `binary_search_by` doesn't seem to be operating as expected, so we
-        // sort the content anchors afterwards to maintain a sorted order.
-        self.content_anchors
-            .sort_by(|a, b| a.anchor.cmp(&b.anchor, buffer));
+        cx.emit(ContextEvent::MessagesEdited);
     }
 
     pub fn content_anchors<'a>(
