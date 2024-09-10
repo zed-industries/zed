@@ -1651,6 +1651,14 @@ impl LspAdapter for FakeLspAdapter {
         LanguageServerName(self.name.into())
     }
 
+    async fn check_if_user_installed(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        Some(self.language_server_binary.clone())
+    }
+
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         _: Arc<Path>,
