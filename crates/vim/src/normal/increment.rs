@@ -60,23 +60,14 @@ impl Vim {
                     };
 
                     if let Some((range, num, radix)) = find_number(&snapshot, start) {
-                        if let Ok(val) = i32::from_str_radix(&num, radix) {
-                            let result = val + delta;
-                            delta += step;
-                            let replace = match radix {
-                                10 => format!("{}", result),
-                                16 => {
-                                    if num.to_ascii_lowercase() == num {
-                                        format!("{:x}", result)
-                                    } else {
-                                        format!("{:X}", result)
-                                    }
-                                }
-                                2 => format!("{:b}", result),
-                                _ => unreachable!(),
-                            };
-                            edits.push((range.clone(), replace));
-                        }
+                        delta += step;
+                        let replace = match radix {
+                            10 => increment_decimal_string(&num, delta),
+                            16 => increment_hex_string(&num, delta),
+                            2 => increment_binary_string(&num, delta),
+                            _ => unreachable!(),
+                        };
+                        edits.push((range.clone(), replace));
                         if selection.is_empty() {
                             new_anchors.push((false, snapshot.anchor_after(range.end)))
                         }
@@ -107,6 +98,93 @@ impl Vim {
     }
 }
 
+fn increment_decimal_string(mut num: &str, delta: i32) -> String {
+    let mut negative = false;
+    let mut n: u64;
+    let mut decrement = false;
+    if delta < 0 {
+        decrement = true;
+    }
+    if num.chars().next() == Some('-') {
+        negative = true;
+        num = &num[1..];
+    }
+    if let Ok(result) = u64::from_str_radix(num, 10) {
+        n = result;
+    } else {
+        if !negative {
+            return u64::MAX.to_string()
+        } else {
+            return format!("-{}", u64::MAX)
+        }
+    }
+
+    let (result, overflow) = if !negative && !decrement {
+        adaptive_increment_u64(n, delta)
+    } else if negative && !decrement {
+        let (result, overflow) = adaptive_decrement_u64(n, delta);
+        if result == 0 {
+            negative = false;
+        }
+        (result, overflow)
+    } else if negative && decrement {
+        adaptive_increment_u64(n, -delta)
+    } else {
+        adaptive_decrement_u64(n, -delta)
+    };
+
+    n = result;
+    if overflow {
+        negative = !negative;
+    }
+
+    if !negative {
+        format!("{}", n)
+    } else {
+        format!("-{}", n)
+    }
+}
+
+fn adaptive_increment_u64(mut n: u64, delta: i32) -> (u64, bool) {
+    if let Some(n) = n.checked_add(delta as u64) {
+        return (n, false);
+    } else {
+        let diff = u64::MAX - n;
+        n = u64::MAX - delta as u64 + diff + 1;
+        return (n, true);
+    }
+}
+
+fn adaptive_decrement_u64(mut n: u64, delta: i32) -> (u64, bool) {
+    if let Some(n) = n.checked_sub(delta as u64) {
+        return (n, false);
+    } else {
+        n = u64::MIN + delta as u64 - n;
+        return (n, true);
+    }
+}
+
+fn increment_hex_string(num: &str, delta: i32) -> String {
+    if let Ok(val) = i32::from_str_radix(&num, 16) {
+        let result = val + delta;
+        if num.to_ascii_lowercase() == num {
+            format!("{:x}", result)
+        } else {
+            format!("{:X}", result)
+        }
+    } else {
+        unreachable!()
+    }
+}
+
+fn increment_binary_string(num: &str, delta: i32) -> String {
+    if let Ok(val) = i32::from_str_radix(&num, 2) {
+        let result = val + delta;
+        format!("{:b}", result)
+    } else {
+        unreachable!()
+    }
+}
 fn find_number(
     snapshot: &MultiBufferSnapshot,
     start: Point,
