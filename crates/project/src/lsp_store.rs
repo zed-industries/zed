@@ -562,6 +562,7 @@ impl LspStore {
         let mut prev_reload_count = languages.reload_count();
         cx.spawn(move |this, mut cx| async move {
             while let Some(()) = subscription.next().await {
+                dbg!("maintaining.....");
                 if let Some(this) = this.upgrade() {
                     // If the language registry has been reloaded, then remove and
                     // re-assign the languages on all open buffers.
@@ -2516,7 +2517,7 @@ impl LspStore {
                     };
 
                     server
-                        .notify::<lsp::notification::DidOpenTextDocument>(
+                        .notify::<lsp::notification::DidOpenTextDocument>(dbg!(
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
                                     uri.clone(),
@@ -2524,8 +2525,8 @@ impl LspStore {
                                     0,
                                     initial_snapshot.text(),
                                 ),
-                            },
-                        )
+                            }
+                        ))
                         .log_err();
 
                     buffer_handle.update(cx, |buffer, cx| {
@@ -4279,6 +4280,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::CreateLanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
+        dbg!(&envelope.payload);
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let name = LanguageServerName::from_proto(envelope.payload.name);
 
@@ -4303,6 +4305,7 @@ impl LspStore {
                 .register_language(language_name.clone(), None, matcher.clone(), {
                     let language_name = language_name.clone();
                     move || {
+                        dbg!("loading...");
                         Ok((
                             LanguageConfig {
                                 name: language_name.clone(),
@@ -5874,7 +5877,7 @@ impl LspStore {
                 let version = snapshot.version;
                 let initial_snapshot = &snapshot.snapshot;
                 let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                language_server.notify::<lsp::notification::DidOpenTextDocument>(
+                language_server.notify::<lsp::notification::DidOpenTextDocument>(dbg!(
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
                             uri,
@@ -5882,8 +5885,8 @@ impl LspStore {
                             version,
                             initial_snapshot.text(),
                         ),
-                    },
-                )?;
+                    }
+                ))?;
 
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
