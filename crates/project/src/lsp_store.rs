@@ -7073,7 +7073,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
             return upstream_client
                 .request(proto::ShellEnv {
                     project_id: SSH_PROJECT_ID,
-                    worktree_id: self.worktree_id().0,
+                    worktree_id: self.worktree_id().to_proto(),
                 })
                 .await
                 .map(|response| response.env.into_iter().collect())
