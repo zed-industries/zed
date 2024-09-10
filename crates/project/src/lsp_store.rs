@@ -4373,6 +4373,43 @@ impl LspStore {
         })
     }
 
+    pub async fn handle_shell_env(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ShellEnv>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ShellEnvResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let response = this
+            .update(&mut cx, |this, cx| {
+                let Some(worktree) = this
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                else {
+                    return Err(anyhow!("worktree not found"));
+                };
+
+                let fs = this.as_local().unwrap().fs.clone();
+                let http_client = Arc::new(BlockedHttpClient);
+
+                let delegate = ProjectLspAdapterDelegate::new(
+                    this,
+                    &worktree,
+                    http_client,
+                    Some(fs),
+                    None,
+                    cx,
+                ) as Arc<dyn LspAdapterDelegate>;
+
+                Ok(cx.spawn(|_, _| async move { delegate.shell_env().await }))
+            })??
+            .await;
+
+        Ok(proto::ShellEnvResponse {
+            env: response.into_iter().collect(),
+        })
+    }
+
     async fn handle_apply_additional_edits_for_completion(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
@@ -4526,7 +4563,11 @@ impl LspStore {
         .and_then(|c| c.binary.as_ref())
         .and_then(|config| {
             if let Some(path) = &config.path {
-                Some((path.clone(), config.arguments.clone().unwrap_or_default()))
+                Some((
+                    path.clone(),
+                    config.arguments.clone().unwrap_or_default(),
+                    None,
+                ))
             } else {
                 None
             }
@@ -4552,21 +4593,19 @@ impl LspStore {
             let delegate = delegate;
             let user_binary_task = lsp_adapter.check_if_user_installed(delegate.as_ref(), &cx);
             let binary = match user_binary_task.await {
-                Some(binary) => {
-                    println!("got user binary over ssh: {:?}", binary);
-                    Some((
-                        binary.path.to_string_lossy().to_string(),
-                        binary
-                            .arguments
-                            .into_iter()
-                            .map(|arg| arg.to_string_lossy().to_string())
-                            .collect(),
-                    ))
-                }
+                Some(binary) => Some((
+                    binary.path.to_string_lossy().to_string(),
+                    binary
+                        .arguments
+                        .into_iter()
+                        .map(|arg| arg.to_string_lossy().to_string())
+                        .collect(),
+                    binary.env,
+                )),
                 None => configured_binary,
             };
 
-            let Some((path, arguments)) = binary else {
+            let Some((path, arguments, env)) = binary else {
                 return Err(anyhow!("no binary found for {}", lsp_adapter.name().0));
             };
 
@@ -4587,7 +4626,11 @@ impl LspStore {
                     project_id,
                     worktree_id,
                     name,
-                    binary: Some(proto::LanguageServerCommand { path, arguments }),
+                    binary: Some(proto::LanguageServerCommand {
+                        path,
+                        arguments,
+                        env: env.unwrap_or_default().into_iter().collect(),
+                    }),
                     initialization_options,
                     code_action_kinds,
                     language: Some(proto::AvailableLanguage {
@@ -7069,8 +7112,16 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     async fn shell_env(&self) -> HashMap<String, String> {
         if let Some(upstream_client) = &self.upstream_client {
-            // upstream_client.send(proto::WhichR)
-            // return upstream_client.which(command).await;
+            use rpc::proto::SSH_PROJECT_ID;
+
+            return upstream_client
+                .request(proto::ShellEnv {
+                    project_id: SSH_PROJECT_ID,
+                    worktree_id: self.worktree_id(),
+                })
+                .await
+                .map(|response| response.env.into_iter().collect())
+                .unwrap_or_default();
         }
 
         let task = self.load_shell_env_task.clone();
@@ -7079,10 +7130,9 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        use rpc::proto::SSH_PROJECT_ID;
-
         if let Some(upstream_client) = &self.upstream_client {
-            // let project_id = self.worktree.proj
+            use rpc::proto::SSH_PROJECT_ID;
+
             return upstream_client
                 .request(proto::WhichCommand {
                     project_id: SSH_PROJECT_ID,

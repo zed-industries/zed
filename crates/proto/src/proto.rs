@@ -370,6 +370,8 @@ messages!(
     (CreateLanguageServer, Foreground),
     (WhichCommand, Foreground),
     (WhichCommandResponse, Foreground),
+    (ShellEnv, Foreground),
+    (ShellEnvResponse, Foreground),
 );
 
 request_messages!(
@@ -494,7 +496,8 @@ request_messages!(
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
     (CreateLanguageServer, Ack),
-    (WhichCommand, WhichCommandResponse)
+    (WhichCommand, WhichCommandResponse),
+    (ShellEnv, ShellEnvResponse)
 );
 
 entity_messages!(
@@ -569,7 +572,8 @@ entity_messages!(
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
     CreateLanguageServer,
-    WhichCommand
+    WhichCommand,
+    ShellEnv
 );
 
 entity_messages!(

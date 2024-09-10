@@ -90,6 +90,7 @@ impl HeadlessProject {
 
         client.add_model_request_handler(LspStore::handle_create_language_server);
         client.add_model_request_handler(LspStore::handle_which_command);
+        client.add_model_request_handler(LspStore::handle_shell_env);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
