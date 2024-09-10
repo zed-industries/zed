@@ -988,7 +988,7 @@ impl TerminalTransaction {
 
     pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
         // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
-        let input = hunk.replace(CARRIAGE_RETURN, " ");
+        let input = Self::sanitize_input(hunk);
         self.terminal
             .update(cx, |terminal, _| terminal.input(input));
     }
@@ -1002,6 +1002,10 @@ impl TerminalTransaction {
         self.terminal.update(cx, |terminal, _| {
             terminal.input(CARRIAGE_RETURN.to_string())
         });
+    }
+
+    fn sanitize_input(input: String) -> String {
+        input.replace(['\r', '\n'], "")
     }
 }
 
