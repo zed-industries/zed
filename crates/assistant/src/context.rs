@@ -387,101 +387,46 @@ pub struct Message {
     pub role: Role,
     pub status: MessageStatus,
     pub cache: Option<MessageCacheMetadata>,
-    pub content_offsets: SmallVec<[(usize, ContentAnchorKind); 1]>,
 }
 
-impl Message {
-    fn to_request_message(&self, buffer: &Buffer) -> Option<LanguageModelRequestMessage> {
-        let mut content = Vec::new();
-
-        let mut range_start = self.offset_range.start;
-        let mut skip_text = false;
-
-        dbg!(&self.content_offsets);
-        for (content_offset, content_kind) in self.content_offsets.iter() {
-            if range_start != *content_offset && !skip_text {
-                content.extend(Self::collect_text_content(
-                    buffer,
-                    range_start..*content_offset,
-                ));
-                skip_text = false;
-            }
-
-            match content_kind {
-                ContentAnchorKind::Image { image, .. } => {
-                    if let Some(image) = image.clone().now_or_never().flatten() {
-                        content.push(language_model::MessageContent::Image(image));
-                    }
-                }
-                ContentAnchorKind::ToolUse(tool_use) => {
-                    content.push(language_model::MessageContent::ToolUse(tool_use.clone()));
-                }
-                ContentAnchorKind::ToolResult {
-                    tool_use_id,
-                    output,
-                } => {
-                    content.push(language_model::MessageContent::ToolResult(
-                        LanguageModelToolResult {
-                            tool_use_id: tool_use_id.to_string(),
-                            is_error: false,
-                            content: output.clone(),
-                        },
-                    ));
-                }
-            }
-
-            range_start = *content_offset;
-            skip_text = !skip_text;
-        }
-
-        if range_start != self.offset_range.end && !skip_text {
-            content.extend(Self::collect_text_content(
-                buffer,
-                range_start..self.offset_range.end,
-            ));
-        }
-
-        if content.is_empty() {
-            return None;
-        }
-
-        // dbg!(&content);
-
-        Some(LanguageModelRequestMessage {
-            role: self.role,
-            content,
-            cache: self.cache.as_ref().map_or(false, |cache| cache.is_anchor),
-        })
-    }
-
-    fn collect_text_content(buffer: &Buffer, range: Range<usize>) -> Option<MessageContent> {
-        let text: String = buffer.text_for_range(range.clone()).collect();
-        if text.trim().is_empty() {
-            None
-        } else {
-            Some(MessageContent::Text(text))
-        }
-    }
-}
-
+// todo!("rename this? attachment, annotation, decoration...")
 #[derive(Debug, Clone)]
-pub enum ContentAnchorKind {
+pub enum Content {
     Image {
+        anchor: language::Anchor,
         image_id: u64,
         render_image: Arc<RenderImage>,
         image: Shared<Task<Option<LanguageModelImage>>>,
     },
-    ToolUse(LanguageModelToolUse),
+    ToolUse {
+        range: Range<language::Anchor>,
+        tool_use: LanguageModelToolUse,
+    },
     ToolResult {
+        range: Range<language::Anchor>,
         tool_use_id: Arc<str>,
-        output: String,
     },
 }
 
-#[derive(Debug, Clone)]
-pub struct ContentAnchor {
-    pub anchor: language::Anchor,
-    pub kind: ContentAnchorKind,
+impl Content {
+    fn range(&self) -> Range<language::Anchor> {
+        match self {
+            Self::Image { anchor, .. } => *anchor..*anchor,
+            Self::ToolUse { range, .. } | Self::ToolResult { range, .. } => range.clone(),
+        }
+    }
+
+    fn cmp(&self, other: &Self, buffer: &BufferSnapshot) -> Ordering {
+        let self_range = self.range();
+        let other_range = other.range();
+        if self_range.end.cmp(&other_range.start, buffer).is_lt() {
+            Ordering::Less
+        } else if self_range.start.cmp(&other_range.end, buffer).is_gt() {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
 }
 
 struct PendingCompletion {
@@ -524,10 +469,9 @@ pub struct Context {
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
-    tool_results_by_tool_use_id: HashMap<Arc<str>, String>,
     message_anchors: Vec<MessageAnchor>,
     images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
-    content_anchors: Vec<ContentAnchor>,
+    contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
     pending_summary: Task<Option<()>>,
@@ -621,13 +565,12 @@ impl Context {
             pending_ops: Vec::new(),
             operations: Vec::new(),
             message_anchors: Default::default(),
-            content_anchors: Default::default(),
+            contents: Default::default(),
             images: Default::default(),
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
             pending_tool_uses_by_id: HashMap::default(),
-            tool_results_by_tool_use_id: HashMap::default(),
             slash_command_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
@@ -686,15 +629,18 @@ impl Context {
                     id: message.id,
                     start: message.offset_range.start,
                     metadata: self.messages_metadata[&message.id].clone(),
-                    image_offsets: message
-                        .content_offsets
-                        .iter()
-                        .filter_map(|(offset, kind)| match kind {
-                            ContentAnchorKind::Image { image_id, .. } => Some((*offset, *image_id)),
-                            ContentAnchorKind::ToolUse(_)
-                            | ContentAnchorKind::ToolResult { .. } => None,
-                        })
-                        .collect(),
+                    image_offsets: Vec::new(),
+                    // todo!("store this in `SavedContext`")
+                    // image_offsets: message
+                    //     .contents
+                    //     .iter()
+                    //     .filter_map(|content| match content {
+                    //         Content::Image {
+                    //             anchor, image_id, ..
+                    //         } => Some((anchor.to_offset(buffer), image_id)),
+                    //         Content::ToolUse { .. } | Content::ToolResult { .. } => None,
+                    //     })
+                    //     .collect(),
                 })
                 .collect(),
             summary: self
@@ -1956,25 +1902,6 @@ impl Context {
         }
     }
 
-    pub fn insert_tool_use_anchor(
-        &mut self,
-        id: Arc<str>,
-        anchor: language::Anchor,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(tool_use) = self.pending_tool_uses_by_id.get(&id) {
-            self.insert_content_anchor(
-                anchor,
-                ContentAnchorKind::ToolUse(LanguageModelToolUse {
-                    id: tool_use.id.to_string(),
-                    name: tool_use.name.clone(),
-                    input: tool_use.input.clone(),
-                }),
-                cx,
-            );
-        }
-    }
-
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: Arc<str>,
@@ -1993,9 +1920,6 @@ impl Context {
                             output.push(NEWLINE);
                         }
 
-                        this.tool_results_by_tool_use_id
-                            .insert(tool_use_id.clone(), output.clone());
-
                         let anchor_range = this.buffer.update(cx, |buffer, cx| {
                             let insert_start = buffer.len().to_offset(buffer);
                             let insert_end = insert_start;
@@ -2010,7 +1934,13 @@ impl Context {
                             output_range
                         });
 
-                        this.insert_tool_result_anchor(tool_use_id.clone(), anchor_range.start, cx);
+                        this.insert_content(
+                            Content::ToolResult {
+                                range: anchor_range.clone(),
+                                tool_use_id: tool_use_id.clone(),
+                            },
+                            cx,
+                        );
 
                         cx.emit(ContextEvent::ToolFinished {
                             tool_use_id,
@@ -2031,24 +1961,6 @@ impl Context {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: insert_output_task.shared(),
             };
-        }
-    }
-
-    pub fn insert_tool_result_anchor(
-        &mut self,
-        tool_use_id: Arc<str>,
-        anchor: language::Anchor,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(output) = self.tool_results_by_tool_use_id.get(&tool_use_id) {
-            self.insert_content_anchor(
-                anchor,
-                ContentAnchorKind::ToolResult {
-                    tool_use_id,
-                    output: output.clone(),
-                },
-                cx,
-            );
         }
     }
 
@@ -2197,7 +2109,6 @@ impl Context {
                     this.update(&mut cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != pending_completion_id);
-                        dbg!(&this.pending_completions.len());
                         this.summarize(false, cx);
                         this.update_cache_status_for_completion(cx);
                     })?;
@@ -2241,7 +2152,6 @@ impl Context {
                     if let Ok(stop_reason) = result {
                         match stop_reason {
                             StopReason::ToolUse => {
-                                dbg!("Stopping for tool use");
                                 // TODO: Emitting this event causes the tool uses to end up in the user message?
                                 cx.emit(ContextEvent::UsePendingTools);
                             }
@@ -2265,20 +2175,94 @@ impl Context {
 
     pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
-        let request_messages = self
-            .messages(cx)
-            .filter(|message| message.status == MessageStatus::Done)
-            .filter_map(|message| message.to_request_message(&buffer))
-            .collect();
 
-        dbg!(&request_messages);
+        let mut contents = self.contents.iter().peekable();
 
-        LanguageModelRequest {
-            messages: request_messages,
+        fn collect_text_content(buffer: &Buffer, range: Range<usize>) -> Option<String> {
+            let text: String = buffer.text_for_range(range.clone()).collect();
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        }
+
+        let mut completion_request = LanguageModelRequest {
+            messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: 1.0,
+        };
+        for message in self.messages(cx) {
+            if message.status != MessageStatus::Done {
+                continue;
+            }
+
+            let mut offset = message.offset_range.start;
+            let mut request_message = LanguageModelRequestMessage {
+                role: message.role,
+                content: Vec::new(),
+                cache: message
+                    .cache
+                    .as_ref()
+                    .map_or(false, |cache| cache.is_anchor),
+            };
+
+            while let Some(content) = contents.peek() {
+                if content
+                    .range()
+                    .end
+                    .cmp(&message.anchor_range.end, buffer)
+                    .is_lt()
+                {
+                    let content = contents.next().unwrap();
+                    let range = content.range().to_offset(buffer);
+                    request_message.content.extend(
+                        collect_text_content(buffer, offset..range.start).map(MessageContent::Text),
+                    );
+
+                    match content {
+                        Content::Image { image, .. } => {
+                            if let Some(image) = image.clone().now_or_never().flatten() {
+                                request_message
+                                    .content
+                                    .push(language_model::MessageContent::Image(image));
+                            }
+                        }
+                        Content::ToolUse { tool_use, .. } => {
+                            request_message
+                                .content
+                                .push(language_model::MessageContent::ToolUse(tool_use.clone()));
+                        }
+                        Content::ToolResult { tool_use_id, .. } => {
+                            request_message.content.push(
+                                language_model::MessageContent::ToolResult(
+                                    LanguageModelToolResult {
+                                        tool_use_id: tool_use_id.to_string(),
+                                        is_error: false,
+                                        content: collect_text_content(buffer, range.clone())
+                                            .unwrap_or_default(),
+                                    },
+                                ),
+                            );
+                        }
+                    }
+
+                    offset = range.end;
+                } else {
+                    break;
+                }
+            }
+
+            request_message.content.extend(
+                collect_text_content(buffer, offset..message.offset_range.end)
+                    .map(MessageContent::Text),
+            );
+
+            completion_request.messages.push(request_message);
         }
+
+        completion_request
     }
 
     pub fn cancel_last_assist(&mut self, cx: &mut ModelContext<Self>) -> bool {
@@ -2416,16 +2400,16 @@ impl Context {
         Some(())
     }
 
-    pub fn insert_image_anchor(
+    pub fn insert_image_content(
         &mut self,
         image_id: u64,
         anchor: language::Anchor,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some((render_image, image)) = self.images.get(&image_id) {
-            self.insert_content_anchor(
-                anchor,
-                ContentAnchorKind::Image {
+            self.insert_content(
+                Content::Image {
+                    anchor,
                     image_id,
                     image: image.clone(),
                     render_image: render_image.clone(),
@@ -2435,29 +2419,24 @@ impl Context {
         }
     }
 
-    pub fn insert_content_anchor(
-        &mut self,
-        anchor: language::Anchor,
-        kind: ContentAnchorKind,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn insert_content(&mut self, content: Content, cx: &mut ModelContext<Self>) {
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
-            .content_anchors
-            .binary_search_by(|probe| probe.anchor.cmp(&anchor, buffer))
+            .contents
+            .binary_search_by(|probe| probe.cmp(&content, buffer))
         {
-            Ok(ix) | Err(ix) => ix,
+            Ok(ix) => {
+                self.contents.remove(ix);
+                ix
+            }
+            Err(ix) => ix,
         };
-        self.content_anchors
-            .insert(insertion_ix, ContentAnchor { anchor, kind });
+        self.contents.insert(insertion_ix, content);
         cx.emit(ContextEvent::MessagesEdited);
     }
 
-    pub fn content_anchors<'a>(
-        &'a self,
-        _cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = ContentAnchor> {
-        self.content_anchors.iter().cloned()
+    pub fn contents<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = Content> {
+        self.contents.iter().cloned()
     }
 
     pub fn split_message(
@@ -2620,22 +2599,14 @@ impl Context {
                 return;
             }
 
-            let messages = self
-                .messages(cx)
-                .filter_map(|message| message.to_request_message(self.buffer.read(cx)))
-                .chain(Some(LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec![
-                        "Summarize the context into a short title without punctuation.".into(),
-                    ],
-                    cache: false,
-                }));
-            let request = LanguageModelRequest {
-                messages: messages.collect(),
-                tools: Vec::new(),
-                stop: Vec::new(),
-                temperature: 1.0,
-            };
+            let mut request = self.to_completion_request(cx);
+            request.messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    "Summarize the context into a short title without punctuation.".into(),
+                ],
+                cache: false,
+            });
 
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
@@ -2736,12 +2707,7 @@ impl Context {
     ) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
 
-        Self::messages_from_iters(
-            buffer,
-            &self.messages_metadata,
-            message_anchors.enumerate(),
-            self.content_anchors.iter(),
-        )
+        Self::messages_from_iters(buffer, &self.messages_metadata, message_anchors.enumerate())
     }
 
     pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
@@ -2752,10 +2718,8 @@ impl Context {
         buffer: &'a Buffer,
         metadata: &'a HashMap<MessageId, MessageMetadata>,
         messages: impl Iterator<Item = (usize, &'a MessageAnchor)> + 'a,
-        content_anchors: impl Iterator<Item = &'a ContentAnchor> + 'a,
     ) -> impl 'a + Iterator<Item = Message> {
         let mut messages = messages.peekable();
-        let mut content_anchors = content_anchors.peekable();
 
         iter::from_fn(move || {
             if let Some((start_ix, message_anchor)) = messages.next() {
@@ -2776,23 +2740,6 @@ impl Context {
                 let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
                 let message_end = message_end_anchor.to_offset(buffer);
 
-                let mut content_offsets = SmallVec::new();
-                while let Some(content_anchor) = content_anchors.peek() {
-                    if content_anchor
-                        .anchor
-                        .cmp(&message_end_anchor, buffer)
-                        .is_lt()
-                    {
-                        content_offsets.push((
-                            content_anchor.anchor.to_offset(buffer),
-                            content_anchor.kind.clone(),
-                        ));
-                        content_anchors.next();
-                    } else {
-                        break;
-                    }
-                }
-
                 return Some(Message {
                     index_range: start_ix..end_ix,
                     offset_range: message_start..message_end,
@@ -2801,7 +2748,6 @@ impl Context {
                     role: metadata.role,
                     status: metadata.status.clone(),
                     cache: metadata.cache.clone(),
-                    content_offsets,
                 });
             }
             None

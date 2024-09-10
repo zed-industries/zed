@@ -1,4 +1,3 @@
-use crate::ContentAnchorKind;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -12,7 +11,7 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
     InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageMetadata,
     MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
@@ -47,6 +46,7 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
+use language_model::LanguageModelToolUse;
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
@@ -1997,9 +1997,15 @@ impl ContextEditor {
                             buffer_rows_to_fold.insert(buffer_row);
 
                             self.context.update(cx, |context, cx| {
-                                context.insert_tool_use_anchor(
-                                    tool_use.id.clone(),
-                                    tool_use.source_range.start,
+                                context.insert_content(
+                                    Content::ToolUse {
+                                        range: tool_use.source_range.clone(),
+                                        tool_use: LanguageModelToolUse {
+                                            id: tool_use.id.to_string(),
+                                            name: tool_use.name.clone(),
+                                            input: tool_use.input.clone(),
+                                        },
+                                    },
                                     cx,
                                 );
                             });
@@ -3549,7 +3555,7 @@ impl ContextEditor {
                     let image_id = image.id();
                     context.insert_image(image, cx);
                     for image_position in image_positions.iter() {
-                        context.insert_image_anchor(image_id, image_position.text_anchor, cx);
+                        context.insert_image_content(image_id, image_position.text_anchor, cx);
                     }
                 }
             });
@@ -3564,12 +3570,18 @@ impl ContextEditor {
             let new_blocks = self
                 .context
                 .read(cx)
-                .content_anchors(cx)
-                .filter_map(|anchor| match anchor.kind {
-                    ContentAnchorKind::Image { render_image, .. } => {
-                        Some((anchor.anchor, render_image))
+                .contents(cx)
+                .filter_map(|content| {
+                    if let Content::Image {
+                        anchor,
+                        render_image,
+                        ..
+                    } = content
+                    {
+                        Some((anchor, render_image))
+                    } else {
+                        None
                     }
-                    ContentAnchorKind::ToolUse(_) | ContentAnchorKind::ToolResult { .. } => None,
                 })
                 .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
