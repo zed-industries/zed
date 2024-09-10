@@ -46,7 +46,7 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
         // Set up a handler when the dev server is shut down
         // with ctrl-c or kill
         let (tx, rx) = futures::channel::oneshot::channel();
-        let mut signals = Signals::new(&[SIGTERM, SIGINT]).unwrap();
+        let mut signals = Signals::new([SIGTERM, SIGINT]).unwrap();
         std::thread::spawn({
             move || {
                 if let Some(sig) = signals.forever().next() {
@@ -63,7 +63,7 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Ta
         .detach();
     }
 
-    let server_url = ClientSettings::get_global(&cx).server_url.clone();
+    let server_url = ClientSettings::get_global(cx).server_url.clone();
     cx.spawn(|cx| async move {
         client
             .authenticate_and_connect(false, &cx)
@@ -321,7 +321,7 @@ impl DevServer {
 
                 for config in dev_server_project.paths.iter() {
                     tasks.push(project.find_or_create_worktree(
-                        &shellexpand::tilde(config).to_string(),
+                        shellexpand::tilde(config).to_string(),
                         true,
                         cx,
                     ));

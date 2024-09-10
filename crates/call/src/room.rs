@@ -259,13 +259,13 @@ impl Room {
                 None
             };
 
-            match room
+            let did_join = room
                 .update(&mut cx, |room, cx| {
                     room.leave_when_empty = true;
                     room.call(called_user_id, initial_project_id, cx)
                 })?
-                .await
-            {
+                .await;
+            match did_join {
                 Ok(()) => Ok(room),
                 Err(error) => Err(error.context("room creation failed")),
             }
@@ -493,7 +493,7 @@ impl Room {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, leaving room");
-            let _ = this.update(&mut cx, |this, cx| this.leave(cx))?.await?;
+            this.update(&mut cx, |this, cx| this.leave(cx))?.await?;
         }
         Err(anyhow!(
             "can't reconnect to room: client failed to re-establish connection"
@@ -933,7 +933,7 @@ impl Room {
                     let list = this
                         .follows_by_leader_id_project_id
                         .entry((leader, project_id))
-                        .or_insert(Vec::new());
+                        .or_default();
                     if !list.contains(&follower) {
                         list.push(follower);
                     }
@@ -942,7 +942,7 @@ impl Room {
                 this.pending_room_update.take();
                 if this.should_leave() {
                     log::info!("room is empty, leaving");
-                    let _ = this.leave(cx).detach();
+                    this.leave(cx).detach();
                 }
 
                 this.user_store.update(cx, |user_store, cx| {
@@ -1017,19 +1017,11 @@ impl Room {
                     .collect::<Vec<u64>>();
                 speaker_ids.sort_unstable();
                 for (sid, participant) in &mut self.remote_participants {
-                    if let Ok(_) = speaker_ids.binary_search(sid) {
-                        participant.speaking = true;
-                    } else {
-                        participant.speaking = false;
-                    }
+                    participant.speaking = speaker_ids.binary_search(sid).is_ok();
                 }
                 if let Some(id) = self.client.user_id() {
                     if let Some(room) = &mut self.live_kit {
-                        if let Ok(_) = speaker_ids.binary_search(&id) {
-                            room.speaking = true;
-                        } else {
-                            room.speaking = false;
-                        }
+                        room.speaking = speaker_ids.binary_search(&id).is_ok();
                     }
                 }
             }

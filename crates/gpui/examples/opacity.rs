@@ -66,8 +66,6 @@ impl HelloWorld {
                     break;
                 }
             }
-
-            ()
         }));
     }
 }

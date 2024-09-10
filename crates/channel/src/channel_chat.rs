@@ -61,9 +61,9 @@ pub enum ChannelMessageId {
     Pending(usize),
 }
 
-impl Into<Option<u64>> for ChannelMessageId {
-    fn into(self) -> Option<u64> {
-        match self {
+impl From<ChannelMessageId> for Option<u64> {
+    fn from(val: ChannelMessageId) -> Self {
+        match val {
             ChannelMessageId::Saved(id) => Some(id),
             ChannelMessageId::Pending(_) => None,
         }

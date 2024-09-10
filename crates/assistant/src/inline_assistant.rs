@@ -134,8 +134,11 @@ impl InlineAssistant {
         })
         .detach();
 
-        let workspace = workspace.clone();
+        let workspace = workspace.downgrade();
         cx.observe_global::<SettingsStore>(move |cx| {
+            let Some(workspace) = workspace.upgrade() else {
+                return;
+            };
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
@@ -1918,7 +1921,7 @@ impl PromptEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
+            font_size: settings.ui_font_size.into(),
             font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
             ..Default::default()
@@ -3070,7 +3073,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range,
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3142,7 +3145,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3217,7 +3220,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3291,7 +3294,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });

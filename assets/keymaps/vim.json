@@ -214,7 +214,7 @@
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": ["vim::PushOperator", "Yank"],
-      "shift-y": "vim::YankToEndOfLine",
+      "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",
@@ -323,9 +323,14 @@
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
-      "ctrl-p": "editor::ShowCompletions",
-      "ctrl-n": "editor::ShowCompletions",
       "ctrl-r": ["vim::PushOperator", "Register"]
+    }
+  },
+  {
+    "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ShowCompletions",
+      "ctrl-n": "editor::ShowCompletions"
     }
   },
   {
@@ -488,6 +493,7 @@
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
       "x": "project_panel::RevealInFileManager",
+      "s": "project_panel::OpenWithSystem",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent",

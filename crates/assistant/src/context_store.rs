@@ -390,7 +390,7 @@ impl ContextStore {
                     context_proto
                         .operations
                         .into_iter()
-                        .map(|op| ContextOperation::from_proto(op))
+                        .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
@@ -527,7 +527,7 @@ impl ContextStore {
                     context_proto
                         .operations
                         .into_iter()
-                        .map(|op| ContextOperation::from_proto(op))
+                        .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;

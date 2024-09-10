@@ -304,10 +304,7 @@ impl AppState {
             db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            stripe_client: build_stripe_client(&config)
-                .await
-                .map(|client| Arc::new(client))
-                .log_err(),
+            stripe_client: build_stripe_client(&config).await.map(Arc::new).log_err(),
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             clickhouse_client: config

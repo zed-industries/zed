@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
@@ -7,9 +9,7 @@ use crate::{
     X11ClientStatePtr,
 };
 
-use anyhow::Context;
 use blade_graphics as gpu;
-use futures::channel::oneshot;
 use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
@@ -32,7 +32,24 @@ use std::{
 use super::{X11Display, XINPUT_MASTER_DEVICE};
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
+        XA_ATOM,
+        XdndAware,
+        XdndStatus,
+        XdndEnter,
+        XdndLeave,
+        XdndPosition,
+        XdndSelection,
+        XdndDrop,
+        XdndFinished,
+        XdndTypeList,
+        XdndActionCopy,
+        TextUriList: b"text/uri-list",
         UTF8_STRING,
+        TEXT,
+        STRING,
+        TEXT_PLAIN_UTF8: b"text/plain;charset=utf-8",
+        TEXT_PLAIN: b"text/plain",
+        XDND_DATA,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
@@ -1210,10 +1227,9 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    // TODO: on_complete not yet supported for X11 windows
-    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
+    fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene, on_complete);
+        inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1405,9 +1421,5 @@ impl PlatformWindow for X11Window {
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
-    }
-
-    fn fps(&self) -> Option<f32> {
-        None
     }
 }

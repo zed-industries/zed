@@ -700,7 +700,7 @@ impl Context {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let id = saved_context.id.clone().unwrap_or_else(|| ContextId::new());
+        let id = saved_context.id.clone().unwrap_or_else(ContextId::new);
         let mut this = Self::new(
             id,
             ReplicaId::default(),

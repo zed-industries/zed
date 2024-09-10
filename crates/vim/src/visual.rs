@@ -83,7 +83,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             return;
         };
         let ranges = start
-            .into_iter()
+            .iter()
             .zip(end)
             .zip(reversed)
             .map(|((start, end), reversed)| (*start, *end, reversed))
@@ -229,7 +229,7 @@ impl Vim {
                 head = movement::saturating_left(map, head);
             }
 
-            let Some((new_head, _)) = move_selection(&map, head, goal) else {
+            let Some((new_head, _)) = move_selection(map, head, goal) else {
                 return;
             };
             head = new_head;
@@ -479,7 +479,7 @@ impl Vim {
                 let stable_anchors = editor
                     .selections
                     .disjoint_anchors()
-                    .into_iter()
+                    .iter()
                     .map(|selection| {
                         let start = selection.start.bias_left(&display_map.buffer_snapshot);
                         start..start

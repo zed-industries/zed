@@ -34,11 +34,11 @@ pub struct ConnectionId {
     pub id: u32,
 }
 
-impl Into<PeerId> for ConnectionId {
-    fn into(self) -> PeerId {
+impl From<ConnectionId> for PeerId {
+    fn from(id: ConnectionId) -> Self {
         PeerId {
-            owner_id: self.owner_id,
-            id: self.id,
+            owner_id: id.owner_id,
+            id: id.id,
         }
     }
 }
@@ -478,7 +478,7 @@ impl Peer {
             let (response, received_at, _barrier) =
                 rx.await.map_err(|_| anyhow!("connection was closed"))?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                return Err(RpcError::from_proto(&error, type_name));
+                return Err(RpcError::from_proto(error, type_name));
             }
             Ok((response, received_at))
         }
@@ -516,7 +516,7 @@ impl Peer {
                 future::ready(match response {
                     Ok(response) => {
                         if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                            Some(Err(RpcError::from_proto(&error, T::NAME)))
+                            Some(Err(RpcError::from_proto(error, T::NAME)))
                         } else if let Some(proto::envelope::Payload::EndStream(_)) =
                             &response.payload
                         {

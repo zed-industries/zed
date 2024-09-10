@@ -110,6 +110,10 @@ impl DiagnosticSet {
     pub fn len(&self) -> usize {
         self.diagnostics.summary().count
     }
+    /// Returns true when there are no diagnostics in this diagnostic set
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Returns an iterator over the diagnostic entries in the set.
     pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry<Anchor>> {

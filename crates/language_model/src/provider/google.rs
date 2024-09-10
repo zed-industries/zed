@@ -37,6 +37,7 @@ pub struct GoogleSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
     name: String,
+    display_name: Option<String>,
     max_tokens: usize,
 }
 
@@ -51,7 +52,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
-const GOOGLE_AI_API_KEY_VAR: &'static str = "GOOGLE_AI_API_KEY";
+const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {
@@ -170,6 +171,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                 model.name.clone(),
                 google_ai::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                 },
             );

@@ -668,7 +668,7 @@ impl LanguageRegistry {
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
                                 anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
-                                    let grammar = store.load_language(&grammar_name, &wasm_bytes);
+                                    let grammar = store.load_language(grammar_name, &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();
                                     grammar
                                 })?)
@@ -699,7 +699,7 @@ impl LanguageRegistry {
     }
 
     pub fn to_vec(&self) -> Vec<Arc<Language>> {
-        self.state.read().languages.iter().cloned().collect()
+        self.state.read().languages.to_vec()
     }
 
     pub fn lsp_adapters(&self, language: &Arc<Language>) -> Vec<Arc<CachedLspAdapter>> {
@@ -971,7 +971,7 @@ impl LanguageRegistryState {
         self.available_languages
             .retain(|language| !languages_to_remove.contains(&language.name));
         self.grammars
-            .retain(|name, _| !grammars_to_remove.contains(&name));
+            .retain(|name, _| !grammars_to_remove.contains(name));
         self.version += 1;
         self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();
