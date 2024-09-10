@@ -13,7 +13,7 @@ use ui::ViewContext;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurroundsType {
     Motion(Motion),
-    Object(Object),
+    Object(Object, bool),
     Selection,
 }
 
@@ -59,8 +59,8 @@ impl Vim {
 
                 for selection in &display_selections {
                     let range = match &target {
-                        SurroundsType::Object(object) => {
-                            object.range(&display_map, selection.clone(), false)
+                        SurroundsType::Object(object, around) => {
+                            object.range(&display_map, selection.clone(), *around)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
@@ -694,6 +694,40 @@ mod test {
             indoc! {"
                 ˇ({ The quick brown }•
             fox jumps over)
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds around object
+        cx.set_state(
+            indoc! {"
+            The [quˇick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s a ] )");
+        cx.assert_state(
+            indoc! {"
+            The ˇ([quick]) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds inside object
+        cx.set_state(
+            indoc! {"
+            The [quˇick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s i ] )");
+        cx.assert_state(
+            indoc! {"
+            The [ˇ(quick)] brown
+            fox jumps over
             the lazy dog."},
             Mode::Normal,
         );
