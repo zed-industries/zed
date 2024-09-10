@@ -339,7 +339,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  bundle-linux-aarch64:
+  bundle-linux-aarch64: # this runs on ubuntu22.04
     timeout-minutes: 60
     name: Create arm64 Linux bundle
     runs-on:
