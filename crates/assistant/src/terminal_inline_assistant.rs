@@ -1005,7 +1005,7 @@ impl TerminalTransaction {
     }
 
     fn sanitize_input(input: String) -> String {
-        input.replace('\r', "").replace('\n', "")
+        input.replace(['\r', '\n'], "")
     }
 }
 
