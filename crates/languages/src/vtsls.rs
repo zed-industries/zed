@@ -7,14 +7,14 @@ use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use project::project_settings::{BinarySettings, ProjectSettings};
 use serde_json::{json, Value};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, merge_json_value_into, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -274,17 +274,29 @@ impl LspAdapter for VtslsLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(SERVER_NAME)
-                .and_then(|s| s.initialization_options.clone())
+            ProjectSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: adapter.worktree_id(),
+                    path: adapter.worktree_root_path(),
+                }),
+                cx,
+            )
+            .lsp
+            .get(SERVER_NAME)
+            .and_then(|s| s.initialization_options.clone())
         })?;
         if let Some(options) = override_options {
             return Ok(options);
         }
-        self.initialization_options(adapter)
+        let mut initialization_options = self
+            .initialization_options(adapter)
             .await
-            .map(|o| o.unwrap())
+            .map(|o| o.unwrap())?;
+
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut initialization_options)
+        }
+        Ok(initialization_options)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
