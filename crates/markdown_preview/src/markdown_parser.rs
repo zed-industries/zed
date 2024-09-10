@@ -236,14 +236,7 @@ impl<'a> MarkdownParser<'a> {
                                 source_range: _,
                                 url,
                                 link: _,
-                            } => match isahc::get(url) {
-                                //replace when ImageSource returns error for URL
-                                Ok(response) => match response.status().as_u16() {
-                                    200..299 => true,
-                                    _ => false,
-                                },
-                                Err(_) => false,
-                            },
+                            } => gpui::ImageSource::try_from(url).is_ok(),
                         };
                         if is_valid_image {
                             text.truncate(text.len() - t.len());

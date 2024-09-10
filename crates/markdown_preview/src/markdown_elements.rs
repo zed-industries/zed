@@ -321,7 +321,7 @@ impl Image {
             });
         }
         let path = PathBuf::from(&text);
-        if path.is_absolute() && path.exists() {
+        if path.is_absolute() {
             return Some(Image::Path {
                 source_range,
                 display_path: path.clone(),
@@ -332,14 +332,12 @@ impl Image {
         if let Some(file_location_directory) = file_location_directory {
             let display_path = path;
             let path = file_location_directory.join(text);
-            if path.exists() {
-                return Some(Image::Path {
-                    source_range,
-                    display_path,
-                    path,
-                    link,
-                });
-            }
+            return Some(Image::Path {
+                source_range,
+                display_path,
+                path,
+                link,
+            });
         }
         None
     }
