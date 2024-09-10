@@ -58,7 +58,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
-    any::{type_name, Any},
+    any::Any,
     cmp::Ordering,
     convert::TryInto,
     ffi::OsStr,
@@ -4191,8 +4191,7 @@ impl LspStore {
                 cx,
             );
             Ok(())
-        });
-        let result = result??;
+        })??;
         Ok(proto::Ack {})
     }
 

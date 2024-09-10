@@ -734,7 +734,7 @@ impl LanguageRegistry {
             return rx;
         };
 
-        self.load_language(&language);
+        self.load_language(&language)
     }
 
     fn get_or_load_grammar(

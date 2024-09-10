@@ -30,6 +30,7 @@ pub struct HeadlessProject {
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
+        settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
     }
