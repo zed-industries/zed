@@ -539,7 +539,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
         «
-        <step»",
+        <patch»",
         cx,
     );
     expect_steps(
@@ -549,7 +549,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step",
+        <patch",
         &[],
         cx,
     );
@@ -563,13 +563,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step«>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch«>
         <edit>»",
         cx,
     );
@@ -580,19 +574,13 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>»",
         &[&[]],
         cx,
     );
 
-    // The full suggestion is added
+    // The full patch is added
     edit(
         &context,
         "
@@ -600,20 +588,17 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>«
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn one</search>
-        <description>add a `two` function</description>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,»",
         cx,
@@ -625,26 +610,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn one</search>
-        <description>add a `two` function</description>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
+        </patch>»
 
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn one".into(),
+                old_text: "fn one".into(),
+                new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -659,20 +642,17 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>«fn zero»</search>
-        <description>add a `two` function</description>
+        <old_text>«fn zero»</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,",
         cx,
@@ -684,26 +664,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
+        </patch>»
 
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -722,20 +700,17 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,",
         &[],
@@ -753,26 +728,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
+        </patch>»
 
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -799,26 +772,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
+        </patch>»
 
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -834,48 +805,58 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         cx.executor().run_until_parked();
     }
 
+    #[track_caller]
     fn expect_steps(
         context: &Model<Context>,
         expected_marked_text: &str,
         expected_suggestions: &[&[WorkflowStepEdit]],
         cx: &mut TestAppContext,
     ) {
-        context.update(cx, |context, cx| {
-            let expected_marked_text = expected_marked_text.unindent();
-            let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
+        let expected_marked_text = expected_marked_text.unindent();
+        let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
+
+        let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
             context.buffer.read_with(cx, |buffer, _| {
-                assert_eq!(buffer.text(), expected_text);
                 let ranges = context
                     .workflow_steps
                     .iter()
                     .map(|entry| entry.range.to_offset(buffer))
                     .collect::<Vec<_>>();
-                let marked = generate_marked_text(&expected_text, &ranges, false);
-                assert_eq!(
-                    marked,
-                    expected_marked_text,
-                    "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
-                );
-                let suggestions = context
-                    .workflow_steps
-                    .iter()
-                    .map(|step| {
-                        step.edits
-                            .iter()
-                            .map(|edit| {
-                                let edit = edit.as_ref().unwrap();
-                                WorkflowStepEdit {
-                                    path: edit.path.clone(),
-                                    kind: edit.kind.clone(),
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-
-                assert_eq!(suggestions, expected_suggestions);
-            });
+                (
+                    buffer.text(),
+                    ranges,
+                    context
+                        .workflow_steps
+                        .iter()
+                        .map(|step| step.edits.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
         });
+
+        assert_eq!(buffer_text, expected_text);
+
+        let actual_marked_text = generate_marked_text(&expected_text, &ranges, false);
+        assert_eq!(actual_marked_text, expected_marked_text);
+
+        assert_eq!(
+            patches
+                .iter()
+                .map(|patch| {
+                    patch
+                        .iter()
+                        .map(|edit| {
+                            let edit = edit.as_ref().unwrap();
+                            WorkflowStepEdit {
+                                path: edit.path.clone(),
+                                kind: edit.kind.clone(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+            expected_suggestions
+        );
     }
 }
 

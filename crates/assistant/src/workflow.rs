@@ -6,7 +6,6 @@ use gpui::AsyncAppContext;
 use gpui::{Model, Task, UpdateGlobal as _, View, WeakView, WindowContext};
 use language::{Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{ops::Range, path::Path, sync::Arc};
 use text::Bias;
@@ -199,7 +198,8 @@ impl WorkflowStepEdit {
     pub fn new(
         path: Option<String>,
         operation: Option<String>,
-        search: Option<String>,
+        old_text: Option<String>,
+        new_text: Option<String>,
         description: Option<String>,
     ) -> Result<Self> {
         let path = path.ok_or_else(|| anyhow!("missing path"))?;
@@ -207,22 +207,26 @@ impl WorkflowStepEdit {
 
         let kind = match operation.as_str() {
             "update" => WorkflowStepEditKind::Update {
-                search: search.ok_or_else(|| anyhow!("missing search"))?,
+                old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
+                new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
             },
             "insert_before" => WorkflowStepEditKind::InsertBefore {
-                search: search.ok_or_else(|| anyhow!("missing search"))?,
+                old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
+                new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
             },
             "insert_after" => WorkflowStepEditKind::InsertAfter {
-                search: search.ok_or_else(|| anyhow!("missing search"))?,
+                old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
+                new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
             },
             "delete" => WorkflowStepEditKind::Delete {
-                search: search.ok_or_else(|| anyhow!("missing search"))?,
+                old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
             },
             "create" => WorkflowStepEditKind::Create {
                 description: description.ok_or_else(|| anyhow!("missing description"))?,
+                new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
             },
             _ => Err(anyhow!("unknown operation {operation:?}"))?,
         };
@@ -266,37 +270,41 @@ impl WorkflowStepEdit {
             .spawn(async move {
                 match kind {
                     WorkflowStepEditKind::Update {
-                        search,
+                        old_text,
+                        new_text,
                         description,
                     } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                        let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::Update { range, description }
                     }
-                    WorkflowStepEditKind::Create { description } => {
-                        WorkflowSuggestion::CreateFile { description }
-                    }
+                    WorkflowStepEditKind::Create {
+                        new_text,
+                        description,
+                    } => WorkflowSuggestion::CreateFile { description },
                     WorkflowStepEditKind::InsertBefore {
-                        search,
+                        old_text,
+                        new_text,
                         description,
                     } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                        let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::InsertBefore {
                             position: range.start,
                             description,
                         }
                     }
                     WorkflowStepEditKind::InsertAfter {
-                        search,
+                        old_text,
+                        new_text,
                         description,
                     } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                        let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::InsertAfter {
                             position: range.end,
                             description,
                         }
                     }
-                    WorkflowStepEditKind::Delete { search } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                    WorkflowStepEditKind::Delete { old_text } => {
+                        let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::Delete { range }
                     }
                 }
@@ -389,41 +397,30 @@ impl WorkflowStepEdit {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation")]
 pub enum WorkflowStepEditKind {
-    /// Rewrites the specified text entirely based on the given description.
-    /// This operation completely replaces the given text.
     Update {
-        /// A string in the source text to apply the update to.
-        search: String,
-        /// A brief description of the transformation to apply to the symbol.
+        old_text: String,
+        new_text: String,
         description: String,
     },
-    /// Creates a new file with the given path based on the provided description.
-    /// This operation adds a new file to the codebase.
     Create {
-        /// A brief description of the file to be created.
+        new_text: String,
         description: String,
     },
-    /// Inserts text before the specified text in the source file.
     InsertBefore {
-        /// A string in the source text to insert text before.
-        search: String,
-        /// A brief description of how the new text should be generated.
+        old_text: String,
+        new_text: String,
         description: String,
     },
-    /// Inserts text after the specified text in the source file.
     InsertAfter {
-        /// A string in the source text to insert text after.
-        search: String,
-        /// A brief description of how the new text should be generated.
+        old_text: String,
+        new_text: String,
         description: String,
     },
-    /// Deletes the specified symbol from the containing file.
     Delete {
-        /// A string in the source text to delete.
-        search: String,
+        old_text: String,
     },
 }
 

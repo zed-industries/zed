@@ -446,11 +446,11 @@ pub struct XmlTag {
 #[derive(Copy, Clone, Debug, strum::EnumString, PartialEq, Eq, strum::AsRefStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum XmlTagKind {
-    Step,
+    Patch,
     Edit,
     Path,
-    Search,
-    Within,
+    OldText,
+    NewText,
     Operation,
     Description,
 }
@@ -1471,7 +1471,7 @@ impl Context {
                 break;
             }
 
-            if tag.kind == XmlTagKind::Step && tag.is_open_tag {
+            if tag.kind == XmlTagKind::Patch && tag.is_open_tag {
                 edit_step_depth += 1;
                 let edit_start = tag.range.start;
                 let mut edits = Vec::new();
@@ -1487,8 +1487,7 @@ impl Context {
                 while let Some(tag) = tags.next() {
                     step.trailing_tag_start.get_or_insert(tag.range.start);
 
-                    if tag.kind == XmlTagKind::Step && !tag.is_open_tag {
-                        // step.trailing_tag_start = Some(tag.range.start);
+                    if tag.kind == XmlTagKind::Patch && !tag.is_open_tag {
                         edit_step_depth -= 1;
                         if edit_step_depth == 0 {
                             step.range.end = tag.range.end;
@@ -1500,7 +1499,8 @@ impl Context {
 
                     if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
                         let mut path = None;
-                        let mut search = None;
+                        let mut old_text = None;
+                        let mut new_text = None;
                         let mut operation = None;
                         let mut description = None;
 
@@ -1509,7 +1509,8 @@ impl Context {
                                 edits.push(WorkflowStepEdit::new(
                                     path,
                                     operation,
-                                    search,
+                                    old_text,
+                                    new_text,
                                     description,
                                 ));
                                 break;
@@ -1518,7 +1519,8 @@ impl Context {
                             if tag.is_open_tag
                                 && [
                                     XmlTagKind::Path,
-                                    XmlTagKind::Search,
+                                    XmlTagKind::OldText,
+                                    XmlTagKind::NewText,
                                     XmlTagKind::Operation,
                                     XmlTagKind::Description,
                                 ]
@@ -1530,15 +1532,28 @@ impl Context {
                                     if tag.kind == kind && !tag.is_open_tag {
                                         let tag = tags.next().unwrap();
                                         let content_end = tag.range.start;
+                                        let mut is_start = true;
                                         let mut content = buffer
                                             .text_for_range(content_start..content_end)
+                                            .map(|mut chunk| {
+                                                if is_start {
+                                                    chunk = chunk.trim_start();
+                                                    if !chunk.is_empty() {
+                                                        is_start = false;
+                                                    }
+                                                }
+                                                chunk
+                                            })
                                             .collect::<String>();
                                         content.truncate(content.trim_end().len());
                                         match kind {
                                             XmlTagKind::Path => path = Some(content),
                                             XmlTagKind::Operation => operation = Some(content),
-                                            XmlTagKind::Search => {
-                                                search = Some(content).filter(|s| !s.is_empty())
+                                            XmlTagKind::OldText => {
+                                                old_text = Some(content).filter(|s| !s.is_empty())
+                                            }
+                                            XmlTagKind::NewText => {
+                                                new_text = Some(content).filter(|s| !s.is_empty())
                                             }
                                             XmlTagKind::Description => {
                                                 description =
