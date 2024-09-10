@@ -180,6 +180,7 @@ async fn commands_for_summaries(
     cx: &AsyncAppContext,
 ) -> Result<Vec<CommandToRun>> {
     if summaries.is_empty() {
+        log::warn!("Inferring no context becuase there were no summaries available.");
         return Ok(Vec::new());
     }
 
