@@ -77,6 +77,7 @@ struct EvaluationProjectOutcome {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct EvaluationQueryOutcome {
+    repo: String,
     query: String,
     expected_results: Vec<EvaluationSearchResult>,
     actual_results: Vec<EvaluationSearchResult>,
@@ -371,8 +372,10 @@ async fn run_evaluation(
                     project_covered_result_count += 1
                 };
             }
+            let outcome_repo = evaluation_project.repo.clone();
 
             let query_results = EvaluationQueryOutcome {
+                repo: outcome_repo,
                 query: query.query,
                 total_result_count: query.expected_results.len(),
                 covered_result_count: project_covered_result_count,
