@@ -58,6 +58,29 @@ impl LanguageName {
     }
 }
 
+pub static LOGITY_PATH: std::sync::LazyLock<Arc<Mutex<PathBuf>>> =
+    std::sync::LazyLock::new(|| Arc::new(Mutex::new(PathBuf::from("/Users/conrad/local-log"))));
+
+#[macro_export]
+macro_rules! dbg2 {
+    ($($arg:tt)*) => {{
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let output = format!("[{}:{}] {}\n",
+            file!(),
+            line!(),
+            dbg!(format_args!($($arg)*))
+        );
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(LOGITY_PATH.as_ref().lock().clone())
+        {
+            let _ = file.write_all(output.as_bytes());
+        }
+        $($arg)*
+    }};
+}
 impl Borrow<str> for LanguageName {
     fn borrow(&self) -> &str {
         self.0.as_ref()
@@ -501,15 +524,16 @@ impl LanguageRegistry {
         name: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let name = UniCase::new(name);
-        dbg!("hi");
+        dbg2!("hi");
         let rx = self.get_or_load_language(|language_name, _| {
+            dbg2!(".");
             if UniCase::new(&language_name.0) == name {
                 1
             } else {
                 0
             }
         });
-        dbg!("Hi");
+        dbg2!("language_for_name after the channel WAT");
         async move { rx.await? }
     }
 
@@ -518,7 +542,7 @@ impl LanguageRegistry {
         string: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let string = UniCase::new(string);
-        dbg!("language_for_name_or_extension");
+        dbg2!("language_for_name_or_extension");
         let rx = self.get_or_load_language(|name, config| {
             if UniCase::new(&name.0) == string
                 || config
@@ -623,9 +647,9 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         callback: impl Fn(&LanguageName, &LanguageMatcher) -> usize,
     ) -> Option<AvailableLanguage> {
-        dbg!("asd");
+        dbg2!("asd");
         let state = self.state.read();
-        dbg!("asd");
+        dbg2!("asd");
         let available_language = state
             .available_languages
             .iter()
@@ -641,7 +665,7 @@ impl LanguageRegistry {
             .clone()
             .map(|(available_language, _)| available_language);
         drop(state);
-        dbg!("asd");
+        dbg2!("asd");
         available_language
     }
 
@@ -651,21 +675,21 @@ impl LanguageRegistry {
     ) -> oneshot::Receiver<Result<Arc<Language>>> {
         let (tx, rx) = oneshot::channel();
 
-        dbg!("a");
+        dbg2!("a");
 
         let mut state = self.state.write();
 
-        dbg!("a");
+        dbg2!("a");
         // If the language is already loaded, resolve with it immediately.
         for loaded_language in state.languages.iter() {
             if loaded_language.id == language.id {
                 tx.send(Ok(loaded_language.clone())).unwrap();
-                dbg!("a");
+                dbg2!("a");
                 return rx;
             }
         }
 
-        dbg!("a");
+        dbg2!("a");
         match state.loading_languages.entry(language.id) {
             // If the language is already being loaded, then add this
             // channel to a list that will be sent to when the load completes.
@@ -675,26 +699,28 @@ impl LanguageRegistry {
             hash_map::Entry::Vacant(entry) => {
                 let this = self.clone();
 
-                dbg!("a");
+                dbg2!("a");
                 let id = language.id;
                 let name = language.name.clone();
                 let language_load = language.load.clone();
 
-                dbg!("a");
+                dbg2!("a");
                 self.executor
                     .spawn(async move {
-                        dbg!("a");
+                        dbg2!("a");
                         let language = async {
+                            dbg2!("starting language closure");
                             let (config, queries, provider) = (language_load)()?;
 
                             if let Some(grammar) = config.grammar.clone() {
-                                dbg!("await");
+                                dbg2!("await");
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
-                                dbg!("await completed");
+                                dbg2!("await completed");
                                 Language::new_with_id(id, config, grammar)
                                     .with_context_provider(provider)
                                     .with_queries(queries)
                             } else {
+                                dbg2!("starting an alternative language path");
                                 Ok(Language::new_with_id(id, config, None)
                                     .with_context_provider(provider))
                             }
@@ -716,6 +742,7 @@ impl LanguageRegistry {
                             }
                             Err(e) => {
                                 log::error!("failed to load language {name}:\n{:?}", e);
+                                dbg2!("failed to load language");
                                 let mut state = this.state.write();
                                 state.mark_language_loaded(id);
                                 if let Some(mut txs) = state.loading_languages.remove(&id) {
@@ -732,13 +759,15 @@ impl LanguageRegistry {
                     })
                     .detach();
 
-                dbg!("a");
+                dbg2!("a");
                 entry.insert(vec![tx]);
             }
         }
 
-        dbg!("a");
+        dbg2!("a");
         drop(state);
+        dbg2!("a");
+
         rx
     }
 
@@ -746,18 +775,18 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         callback: impl Fn(&LanguageName, &LanguageMatcher) -> usize,
     ) -> oneshot::Receiver<Result<Arc<Language>>> {
-        dbg!("get_or_load_language");
+        dbg2!("get_or_load_language");
         let Some(language) = self.find_matching_language(callback) else {
-            dbg!("jhi");
+            dbg2!("jhi");
             let (tx, rx) = oneshot::channel();
             let _ = tx.send(Err(anyhow!(LanguageNotFound)));
-            dbg!("jhi");
+            dbg2!("jhi");
             return rx;
         };
 
-        dbg!("about_to_load_language");
+        dbg2!("about_to_load_language");
         let ret = self.load_language(&language);
-        dbg!("loaded_language");
+        dbg2!("loaded_language");
         ret
     }
 

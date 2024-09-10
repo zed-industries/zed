@@ -67,13 +67,33 @@ use std::{
     path::{self, Path, PathBuf},
     process::Stdio,
     str,
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::{atomic::Ordering::SeqCst, Arc, LazyLock},
     time::{Duration, Instant},
 };
 use text::{Anchor, BufferId, LineEnding};
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _,
 };
+#[macro_export]
+macro_rules! dbg2 {
+    ($($arg:tt)*) => {{
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let output = format!("[{}:{}] {}\n",
+            file!(),
+            line!(),
+            dbg!(format_args!($($arg)*))
+        );
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(language::LOGITY_PATH.as_ref().lock().clone())
+        {
+            let _ = file.write_all(output.as_bytes());
+        }
+        $($arg)*
+    }};
+}
 
 pub use fs::*;
 pub use language::Location;
@@ -4129,7 +4149,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::CreateLanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        dbg!("handle_create");
+        dbg2!("handle_create");
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let name = LanguageServerName::from_proto(envelope.payload.name);
 
@@ -4137,28 +4157,28 @@ impl LspStore {
             .payload
             .binary
             .ok_or_else(|| anyhow!("missing binary"))?;
-        dbg!("got here");
+        dbg2!("got here");
         let binary = LanguageServerBinary {
             path: PathBuf::from(binary.path),
             env: None,
             arguments: binary.arguments.into_iter().map(Into::into).collect(),
         };
-        dbg!("got here");
+        dbg2!("got here");
         let language = envelope
             .payload
             .language
             .ok_or_else(|| anyhow!("missing language"))?;
         let language_name = LanguageName::from_proto(language.name);
-        dbg!("got here");
+        dbg2!("got here");
         let matcher: LanguageMatcher = serde_json::from_str(&language.matcher)?;
-        dbg!("got here");
+        dbg2!("got here");
         let result = this.update(&mut cx, |this, cx| {
-            dbg!("got here");
+            dbg2!("got here");
             this.languages
                 .register_language(language_name.clone(), None, matcher.clone(), {
                     let language_name = language_name.clone();
                     move || {
-                        println!("{} loading", language_name);
+                        dbg2!("in loading");
                         Ok((
                             LanguageConfig {
                                 name: language_name.clone(),
@@ -4170,12 +4190,12 @@ impl LspStore {
                         ))
                     }
                 });
-            dbg!("got herE");
+            dbg2!("got herE");
             cx.background_executor()
                 .spawn(this.languages.language_for_name(language_name.0.as_ref()))
                 .detach();
 
-            dbg!("got here");
+            dbg2!("got here");
 
             let adapter = Arc::new(SshLspAdapter::new(
                 name,
@@ -4191,10 +4211,10 @@ impl LspStore {
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
             else {
-                dbg!("got here");
+                dbg2!("got here");
                 return Err(anyhow!("worktree not found"));
             };
-            dbg!("got here");
+            dbg2!("got here");
             this.start_language_server(
                 &worktree,
                 CachedLspAdapter::new(adapter),
@@ -4203,11 +4223,11 @@ impl LspStore {
             );
             Ok(())
         });
-        dbg!("hi");
+        dbg2!("hi");
         let result = result?;
-        dbg!("hi");
+        dbg2!("hi");
         let result = result?;
-        dbg!("got here");
+        dbg2!("got here");
         Ok(proto::Ack {})
     }
 
@@ -4415,7 +4435,9 @@ impl LspStore {
                 }))
                 .await
         });
+        dbg2!("CreateLagLanguageServer response received");
         cx.spawn(|this, mut cx| async move {
+            dbg2!("CreateLagLanguageServer spawned");
             if let Err(e) = task.await {
                 this.update(&mut cx, |_this, cx| {
                     cx.emit(LspStoreEvent::Notification(format!(
@@ -4436,8 +4458,9 @@ impl LspStore {
         language: LanguageName,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("got here");
+        dbg2!("got here");
         if self.mode.is_remote() {
+            dbg2!("is remote");
             return;
         }
 
@@ -4451,15 +4474,16 @@ impl LspStore {
         let worktree_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
         if self.language_server_ids.contains_key(&key) {
+            dbg2!("abort");
             return;
         }
 
         if self.mode.is_ssh() {
-            dbg!("on client");
+            dbg2!("on client");
             self.start_language_server_on_ssh_host(worktree_handle, adapter, language, cx);
             return;
         } else {
-            dbg!("on host");
+            dbg2!("on host");
         }
 
         if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {

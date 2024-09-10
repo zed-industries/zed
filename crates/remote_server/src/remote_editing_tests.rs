@@ -368,13 +368,13 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     server_cx.read(|cx| {
         let lsp_store = headless.read(cx).lsp_store.read(cx);
-        dbg!(&lsp_store.as_local().unwrap().language_servers);
+        dbg2!(&lsp_store.as_local().unwrap().language_servers);
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     });
 
     cx.read(|cx| {
         let lsp_store = project.read(cx).lsp_store().read(cx);
-        dbg!(&lsp_store.language_server_statuses);
+        dbg2!(&lsp_store.language_server_statuses);
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     })
 }
