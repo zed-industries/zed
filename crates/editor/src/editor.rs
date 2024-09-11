@@ -5372,7 +5372,7 @@ impl Editor {
             Color::Debugger
         };
 
-        IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::Play)
+        IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::DebugBreakpoint)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(color)
