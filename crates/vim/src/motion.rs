@@ -69,6 +69,7 @@ pub enum Motion {
     SentenceForward,
     StartOfParagraph,
     EndOfParagraph,
+    SectionForward,
     StartOfDocument,
     EndOfDocument,
     Matching,
@@ -234,6 +235,7 @@ actions!(
         SentenceBackward,
         StartOfParagraph,
         EndOfParagraph,
+        SectionForward,
         StartOfDocument,
         EndOfDocument,
         Matching,
@@ -316,6 +318,9 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &SentenceBackward, cx| {
         vim.motion(Motion::SentenceBackward, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &SectionForward, cx| {
+        vim.motion(Motion::SectionForward, cx)
     });
     Vim::action(editor, cx, |vim, _: &StartOfDocument, cx| {
         vim.motion(Motion::StartOfDocument, cx)
@@ -498,6 +503,7 @@ impl Motion {
             | SentenceForward
             | StartOfParagraph
             | EndOfParagraph
+            | SectionForward
             | WindowTop
             | WindowMiddle
             | WindowBottom
@@ -548,6 +554,7 @@ impl Motion {
             | EndOfParagraph
             | SentenceBackward
             | SentenceForward
+            | SectionForward
             | StartOfLineDownward
             | EndOfLineDownward
             | GoToColumn
@@ -603,6 +610,7 @@ impl Motion {
             | EndOfParagraph
             | SentenceBackward
             | SentenceForward
+            | SectionForward
             | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
@@ -700,6 +708,7 @@ impl Motion {
                 map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
                 SelectionGoal::None,
             ),
+            SectionForward => (section_forwards(map, point, times), SelectionGoal::None),
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (
@@ -1639,6 +1648,26 @@ fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usiz
     }
 
     map.max_point()
+}
+
+fn section_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usize) -> DisplayPoint {
+    let start = point.to_point(map).to_offset(&map.buffer_snapshot);
+    let mut chars = map.buffer_chars_at(start).peekable();
+
+    if chars.peek().is_some_and(|(c, _)| *c == '{') {
+        chars.next();
+    }
+
+    while let Some((ch, offset)) = chars.next() {
+        if ch == '{' && offset.to_display_point(map).column() == 0 {
+            times -= 1;
+            if times == 0 {
+                return offset.to_display_point(map);
+            }
+        }
+    }
+
+    return map.max_point();
 }
 
 fn next_non_blank(map: &DisplaySnapshot, start: usize) -> usize {
