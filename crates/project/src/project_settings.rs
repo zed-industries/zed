@@ -20,6 +20,7 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -41,7 +42,6 @@ pub struct ProjectSettings {
     pub load_direnv: DirenvSettings,
 
     /// Configuration for session-related features
-    #[serde(default)]
     pub session: SessionSettings,
 }
 
@@ -59,36 +59,31 @@ pub enum DirenvSettings {
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
-    pub git_gutter: Option<GitGutterSetting>,
+    pub git_gutter: GitGutterSetting,
     pub gutter_debounce: Option<u64>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: on
-    pub inline_blame: Option<InlineBlameSettings>,
+    pub inline_blame: InlineBlameSettings,
 }
 
 impl GitSettings {
     pub fn inline_blame_enabled(&self) -> bool {
         #[allow(unknown_lints, clippy::manual_unwrap_or_default)]
-        match self.inline_blame {
-            Some(InlineBlameSettings { enabled, .. }) => enabled,
-            _ => false,
-        }
+        self.inline_blame.enabled
     }
 
     pub fn inline_blame_delay(&self) -> Option<Duration> {
-        match self.inline_blame {
-            Some(InlineBlameSettings {
-                delay_ms: Some(delay_ms),
-                ..
-            }) if delay_ms > 0 => Some(Duration::from_millis(delay_ms)),
-            _ => None,
-        }
+        self.inline_blame
+            .delay_ms
+            .gt(&0)
+            .then(|| Duration::from_millis(self.inline_blame.delay_ms))
     }
 }
 
@@ -102,28 +97,34 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[serde(default)]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: true
-    #[serde(default = "true_value")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    pub delay_ms: u64,
     /// The minimum column number to show the inline blame information at
     ///
     /// Default: 0
-    pub min_column: Option<u32>,
+    pub min_column: u32,
 }
 
-const fn true_value() -> bool {
-    true
+impl Default for InlineBlameSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            delay_ms: 0,
+            min_column: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
