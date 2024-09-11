@@ -11,7 +11,7 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
     InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageMetadata,
     MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
@@ -34,6 +34,7 @@ use editor::{
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
@@ -50,9 +51,11 @@ use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
 };
+use language_model::{LanguageModelImage, LanguageModelToolUse};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectLspAdapterDelegate, Worktree};
+use project::lsp_store::ProjectLspAdapterDelegate;
+use project::{Project, Worktree};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
@@ -1995,6 +1998,20 @@ impl ContextEditor {
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
 
+                            self.context.update(cx, |context, cx| {
+                                context.insert_content(
+                                    Content::ToolUse {
+                                        range: tool_use.source_range.clone(),
+                                        tool_use: LanguageModelToolUse {
+                                            id: tool_use.id.to_string(),
+                                            name: tool_use.name.clone(),
+                                            input: tool_use.input.clone(),
+                                        },
+                                    },
+                                    cx,
+                                );
+                            });
+
                             Crease::new(
                                 start..end,
                                 placeholder,
@@ -3535,10 +3552,22 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
+                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                        continue;
+                    };
                     let image_id = image.id();
-                    context.insert_image(image, cx);
+                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+
                     for image_position in image_positions.iter() {
-                        context.insert_image_anchor(image_id, image_position.text_anchor, cx);
+                        context.insert_content(
+                            Content::Image {
+                                anchor: image_position.text_anchor,
+                                image_id,
+                                image: image_task.clone(),
+                                render_image: render_image.clone(),
+                            },
+                            cx,
+                        );
                     }
                 }
             });
@@ -3553,11 +3582,23 @@ impl ContextEditor {
             let new_blocks = self
                 .context
                 .read(cx)
-                .images(cx)
-                .filter_map(|image| {
+                .contents(cx)
+                .filter_map(|content| {
+                    if let Content::Image {
+                        anchor,
+                        render_image,
+                        ..
+                    } = content
+                    {
+                        Some((anchor, render_image))
+                    } else {
+                        None
+                    }
+                })
+                .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
-                    let image = image.render_image.clone();
+                    let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
+                    let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,
@@ -5313,9 +5354,17 @@ fn make_lsp_adapter_delegate(
             .worktrees(cx)
             .next()
             .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
+        let fs = if project.is_local() {
+            Some(project.fs().clone())
+        } else {
+            None
+        };
+        let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
-            Ok(ProjectLspAdapterDelegate::new(lsp_store, &worktree, cx)
-                as Arc<dyn LspAdapterDelegate>)
+            Ok(
+                ProjectLspAdapterDelegate::new(lsp_store, &worktree, http_client, fs, None, cx)
+                    as Arc<dyn LspAdapterDelegate>,
+            )
         })
     })
 }

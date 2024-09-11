@@ -4025,7 +4025,7 @@ impl Workspace {
         };
 
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
-            let (items, active) = {
+            let (items, active, pinned_count) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
@@ -4042,10 +4042,11 @@ impl Workspace {
                         })
                         .collect::<Vec<_>>(),
                     pane.has_focus(cx),
+                    pane.pinned_count(),
                 )
             };
 
-            SerializedPane::new(items, active)
+            SerializedPane::new(items, active, pinned_count)
         }
 
         fn build_serialized_pane_group(

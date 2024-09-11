@@ -146,6 +146,7 @@ actions!(
         CopyRelativePath,
         Duplicate,
         RevealInFileManager,
+        OpenWithSystem,
         Cut,
         Paste,
         Rename,
@@ -500,6 +501,7 @@ impl ProjectPanel {
                             .when(cfg!(not(target_os = "macos")), |menu| {
                                 menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
                             })
+                            .action("Open in Default App", Box::new(OpenWithSystem))
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -1494,6 +1496,13 @@ impl ProjectPanel {
     fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             cx.reveal_path(&worktree.abs_path().join(&entry.path));
+        }
+    }
+
+    fn open_system(&mut self, _: &OpenWithSystem, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let abs_path = worktree.abs_path().join(&entry.path);
+            cx.open_with_system(&abs_path);
         }
     }
 
@@ -2711,6 +2720,7 @@ impl Render for ProjectPanel {
                 })
                 .when(project.is_local_or_ssh(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
+                        .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(

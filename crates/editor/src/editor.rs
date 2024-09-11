@@ -12465,7 +12465,7 @@ fn inlay_hint_settings(
     let language = snapshot.language_at(location);
     let settings = all_language_settings(file, cx);
     settings
-        .language(language.map(|l| l.name()).as_deref())
+        .language(language.map(|l| l.name()).as_ref())
         .inlay_hints
 }
 

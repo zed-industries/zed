@@ -399,7 +399,7 @@ impl LanguageModelRequest {
             tool_choice: None,
             metadata: None,
             stop_sequences: Vec::new(),
-            temperature: None,
+            temperature: Some(self.temperature),
             top_k: None,
             top_p: None,
         }

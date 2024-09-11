@@ -695,7 +695,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        "You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed.",
+                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small),
                 )

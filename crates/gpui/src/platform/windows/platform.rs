@@ -400,6 +400,19 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
+    fn open_with_system(&self, path: &Path) {
+        let executor = self.background_executor().clone();
+        let path = path.to_owned();
+        executor
+            .spawn(async move {
+                let _ = std::process::Command::new("cmd")
+                    .args(&["/c", "start", "", path.to_str().expect("path to string")])
+                    .spawn()
+                    .expect("Failed to open file");
+            })
+            .detach();
+    }
+
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.state.borrow_mut().callbacks.quit = Some(callback);
     }

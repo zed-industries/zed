@@ -1921,7 +1921,7 @@ impl PromptEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
+            font_size: settings.ui_font_size.into(),
             font_weight: settings.ui_font.weight,
             line_height: relative(1.3),
             ..Default::default()
@@ -2373,20 +2373,7 @@ impl Codegen {
             None
         };
 
-        // Higher Temperature increases the randomness of model outputs.
-        // If Markdown or No Language is Known, increase the randomness for more creative output
-        // If Code, decrease temperature to get more deterministic outputs
-        let temperature = if let Some(language) = language_name.clone() {
-            if language.as_ref() == "Markdown" {
-                1.0
-            } else {
-                0.5
-            }
-        } else {
-            1.0
-        };
-
-        let language_name = language_name.as_deref();
+        let language_name = language_name.as_ref();
         let start = buffer.point_to_buffer_offset(edit_range.start);
         let end = buffer.point_to_buffer_offset(edit_range.end);
         let (buffer, range) = if let Some((start, end)) = start.zip(end) {
@@ -2421,7 +2408,7 @@ impl Codegen {
             messages,
             tools: Vec::new(),
             stop: vec!["|END|>".to_string()],
-            temperature,
+            temperature: 1.,
         })
     }
 

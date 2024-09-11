@@ -4,14 +4,13 @@ use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
 use language::LanguageRegistry;
 use project::{
     buffer_store::BufferStore, project_settings::SettingsObserver, search::SearchQuery,
-    worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId, WorktreeSettings,
+    worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
     proto::{self, AnyProtoClient, SSH_PEER_ID, SSH_PROJECT_ID},
     TypedEnvelope,
 };
-use settings::Settings as _;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -33,15 +32,17 @@ impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
         settings::init(cx);
         language::init(cx);
-        WorktreeSettings::register(cx);
+        project::Project::init_settings(cx);
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         // TODO: we should load the env correctly (as we do in login_shell_env_loaded when stdout is not a pty). Can we re-use the ProjectEnvironment for that?
-        let languages = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
+        let mut languages =
+            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        languages
+            .set_language_server_download_dir(PathBuf::from("/Users/conrad/what-could-go-wrong"));
+
+        let languages = Arc::new(languages);
 
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
@@ -57,18 +58,17 @@ impl HeadlessProject {
         });
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
-            LspStore::new(
+            let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                Some(environment),
+                environment,
                 languages,
                 None,
                 fs.clone(),
-                Some(session.clone().into()),
-                None,
-                Some(0),
                 cx,
-            )
+            );
+            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            lsp_store
         });
 
         let client: AnyProtoClient = session.clone().into();
@@ -88,9 +88,14 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
+        client.add_model_request_handler(LspStore::handle_create_language_server);
+        client.add_model_request_handler(LspStore::handle_which_command);
+        client.add_model_request_handler(LspStore::handle_shell_env);
+
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
+        LspStore::init(&client);
 
         HeadlessProject {
             session: client,

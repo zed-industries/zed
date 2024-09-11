@@ -715,6 +715,14 @@ impl Pane {
         }
     }
 
+    pub(crate) fn set_pinned_count(&mut self, count: usize) {
+        self.pinned_tab_count = count;
+    }
+
+    pub(crate) fn pinned_count(&self) -> usize {
+        self.pinned_tab_count
+    }
+
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
         if let Some(preview_item) = self.preview_item() {
             if preview_item.item_id() == item_id && !preview_item.preserve_preview(cx) {
@@ -1364,6 +1372,9 @@ impl Pane {
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
+        if self.is_tab_pinned(item_index) {
+            self.pinned_tab_count -= 1;
+        }
         if item_index == self.active_item_index {
             let index_to_activate = self
                 .activation_history
