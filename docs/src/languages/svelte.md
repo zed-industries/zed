@@ -31,7 +31,6 @@ You can modify how certain styles such as directives and modifiers appear in att
 
 Zed sets the following initialization options for inlay hints:
 
-
 ```json
 "inlayHints": {
   "parameterNames": {
