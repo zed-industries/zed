@@ -174,7 +174,7 @@ impl PathWithPosition {
     /// });
     /// ```
     ///
-    /// # Expected parsing results when encounter ill-formated inputs.
+    /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
     /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
@@ -502,11 +502,7 @@ mod tests {
                 column: None,
             }
         );
-    }
 
-    #[test]
-    #[cfg(not(target_os = "windows"))]
-    fn path_with_position_parse_posix_path_with_suffix() {
         assert_eq!(
             PathWithPosition::parse_str("crates/file_finder/src/file_finder.rs:1902:13:"),
             PathWithPosition {
