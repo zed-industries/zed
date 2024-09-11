@@ -1612,7 +1612,8 @@ impl EditorElement {
 
                     let position = snapshot
                         .display_snapshot
-                        .display_point_to_anchor(*point, Bias::Left);
+                        .display_point_to_anchor(*point, Bias::Left)
+                        .text_anchor;
 
                     let button = editor.render_breakpoint(position, point.row(), cx);
 

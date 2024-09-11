@@ -585,16 +585,13 @@ impl DebugAdapterClient {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Breakpoint {
-    pub position: multi_buffer::Anchor,
+    pub position: text::Anchor,
 }
 
 impl Breakpoint {
     pub fn to_source_breakpoint(&self, buffer: &Buffer) -> SourceBreakpoint {
         SourceBreakpoint {
-            line: (buffer
-                .summary_for_anchor::<Point>(&self.position.text_anchor)
-                .row
-                + 1) as u64,
+            line: (buffer.summary_for_anchor::<Point>(&self.position).row + 1) as u64,
             condition: None,
             hit_condition: None,
             log_message: None,
@@ -604,15 +601,16 @@ impl Breakpoint {
     }
 
     pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
-        buffer.summary_for_anchor::<Point>(&self.position.text_anchor)
+        buffer.summary_for_anchor::<Point>(&self.position)
+    }
+
+    pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
+        buffer_snapshot.summary_for_anchor::<Point>(&self.position)
     }
 
     pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
         SourceBreakpoint {
-            line: (snapshot
-                .summary_for_anchor::<Point>(&self.position.text_anchor)
-                .row
-                + 1) as u64,
+            line: (snapshot.summary_for_anchor::<Point>(&self.position).row + 1) as u64,
             condition: None,
             hit_condition: None,
             log_message: None,
@@ -623,10 +621,7 @@ impl Breakpoint {
 
     pub fn to_serialized(&self, buffer: &Buffer, path: Arc<Path>) -> SerializedBreakpoint {
         SerializedBreakpoint {
-            position: buffer
-                .summary_for_anchor::<Point>(&self.position.text_anchor)
-                .row
-                + 1,
+            position: buffer.summary_for_anchor::<Point>(&self.position).row + 1,
             path,
         }
     }

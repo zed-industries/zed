@@ -121,10 +121,12 @@ impl DapStore {
         for closed_breakpoint in closed_breakpoints {
             // serialized breakpoints start at index one and need to converted
             // to index zero in order to display/work properly with open breakpoints
-            let position = snapshot.anchor_at(
-                Point::new(closed_breakpoint.position.saturating_sub(1), 0),
-                Bias::Left,
-            );
+            let position = snapshot
+                .anchor_at(
+                    Point::new(closed_breakpoint.position.saturating_sub(1), 0),
+                    Bias::Left,
+                )
+                .text_anchor;
 
             open_breakpoints.insert(Breakpoint { position });
         }

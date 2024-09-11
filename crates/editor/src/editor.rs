@@ -5307,10 +5307,9 @@ impl Editor {
 
             if let Some(breakpoints) = opened_breakpoints.get(&buffer.remote_id()) {
                 for breakpoint in breakpoints {
-                    breakpoint_display_points
-                        .insert(breakpoint.position.to_display_point(&snapshot));
-                    // Breakpoints TODO debugger: Multibuffer bp toggle failing here
-                    // dued to invalid excerpt id. Multibuffer excerpt id isn't the same as a singular buffer id
+                    let point = breakpoint.point_for_buffer(&buffer);
+
+                    breakpoint_display_points.insert(point.to_display_point(&snapshot));
                 }
             };
 
@@ -5346,9 +5345,8 @@ impl Editor {
 
                 if let Some(breakpoints) = opened_breakpoints.get(&info.buffer_id) {
                     for breakpoint in breakpoints {
-                        let breakpoint_position = info // Breakpoint's position within the singular buffer
-                            .buffer
-                            .summary_for_anchor::<Point>(&breakpoint.position.text_anchor);
+                        let breakpoint_position =
+                            breakpoint.point_for_buffer_snapshot(&info.buffer);
 
                         if buffer_range.contains(&breakpoint_position) {
                             // Translated breakpoint position from singular buffer to multi buffer
@@ -5368,7 +5366,7 @@ impl Editor {
 
     fn render_breakpoint(
         &self,
-        position: Anchor,
+        anchor: text::Anchor,
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
@@ -5387,7 +5385,7 @@ impl Editor {
             .icon_color(color)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
-                editor.toggle_breakpoint_at_anchor(position, cx)
+                editor.toggle_breakpoint_at_anchor(anchor, cx);
             }))
     }
 
@@ -6243,14 +6241,15 @@ impl Editor {
             .snapshot(cx)
             .display_snapshot
             .buffer_snapshot
-            .anchor_before(Point::new(cursor_position.row, 0));
+            .anchor_before(Point::new(cursor_position.row, 0))
+            .text_anchor;
 
         self.toggle_breakpoint_at_anchor(breakpoint_position, cx);
     }
 
     pub fn toggle_breakpoint_at_anchor(
         &mut self,
-        breakpoint_position: Anchor,
+        breakpoint_position: text::Anchor,
         cx: &mut ViewContext<Self>,
     ) {
         let Some(project) = &self.project else {
