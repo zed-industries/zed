@@ -267,6 +267,7 @@ fn init_ui(
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
+    bookmarks::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();

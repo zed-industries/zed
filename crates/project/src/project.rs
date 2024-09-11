@@ -1,3 +1,4 @@
+pub mod bookmark_store;
 pub mod buffer_store;
 pub mod connection_manager;
 pub mod debounced_delay;
@@ -19,6 +20,7 @@ pub mod search_history;
 mod yarn;
 
 use anyhow::{anyhow, Context as _, Result};
+use bookmark_store::BookmarkStore;
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
@@ -174,6 +176,7 @@ pub struct Project {
     buffers_being_formatted: HashSet<BufferId>,
     environment: Model<ProjectEnvironment>,
     settings_observer: Model<SettingsObserver>,
+    bookmark_store: BookmarkStore,
 }
 
 #[derive(Default)]
@@ -696,6 +699,7 @@ impl Project {
                 buffers_being_formatted: Default::default(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+                bookmark_store: BookmarkStore::new(),
             }
         })
     }
@@ -789,6 +793,7 @@ impl Project {
                 buffers_being_formatted: Default::default(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+                bookmark_store: BookmarkStore::new(),
             };
 
             let client: AnyProtoClient = ssh.clone().into();
@@ -973,6 +978,7 @@ impl Project {
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
+                bookmark_store: BookmarkStore::new(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1417,6 +1423,34 @@ impl Project {
 
     pub fn snippets(&self) -> &Model<SnippetProvider> {
         &self.snippets
+    }
+
+    pub fn bookmarks(&self) -> &BookmarkStore {
+        &self.bookmark_store
+    }
+
+    pub fn bookmarks_mut(&mut self) -> &mut BookmarkStore {
+        &mut self.bookmark_store
+    }
+
+    pub fn toggle_bookmark(
+        &mut self,
+        buffer_id: BufferId,
+        line_no: usize,
+        content: String,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
+            return;
+        };
+
+        let project_path = if let Some(project_path) = buffer.read(cx).project_path(cx) {
+            project_path
+        } else {
+            return;
+        };
+
+        self.bookmark_store.toggle(project_path, line_no, Some(content));
     }
 
     pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {

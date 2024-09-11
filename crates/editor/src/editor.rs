@@ -4500,6 +4500,29 @@ impl Editor {
         }))
     }
 
+    pub fn toggle_bookmark(&mut self, cx: &mut ViewContext<Self>) {
+        let cursor_position: Point = self.selections.newest(cx).head();
+        let line_no = cursor_position.row as usize;
+        let content = self.snapshot(cx).line(DisplayRow(cursor_position.row));
+        let buffer_id = self
+            .snapshot(cx)
+            .display_snapshot
+            .buffer_snapshot
+            .anchor_before(Point::new(cursor_position.row, 0))
+            .buffer_id;
+
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(buffer_id) = buffer_id else {
+            return;
+        };
+        project.update(cx, |project, cx| {
+            project.toggle_bookmark(buffer_id, line_no, content, cx);
+        });
+        cx.notify();
+    }
+
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
         let mut context_menu = self.context_menu.write();
         if let Some(ContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {

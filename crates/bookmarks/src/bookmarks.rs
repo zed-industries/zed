@@ -1,0 +1,349 @@
+use editor::{scroll::Autoscroll, Bias, Editor};
+use gpui::{
+    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+};
+use picker::{Picker, PickerDelegate};
+use project::{bookmark_store::Bookmark, Project};
+use std::sync::Arc;
+use text::Point;
+use ui::{prelude::*, HighlightedLabel, ListItem};
+use util::ResultExt;
+use workspace::{ModalView, Workspace};
+
+actions!(
+    bookmarks,
+    [
+        SelectPrev,
+        Toggle,
+        JumpPrevious,
+        JumpNext,
+        ClearCurrentBuffer,
+        ClearCurrentWorktree,
+        ClearAll,
+        ListCurrentBuffer,
+        ListCurrentWorktree,
+        ListAll,
+    ]
+);
+
+impl ModalView for Bookmarks {}
+
+pub struct Bookmarks {
+    picker: View<Picker<BookmarkDelegate>>,
+}
+
+pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(Bookmarks::register).detach();
+}
+
+enum OperatorType {
+    Buffer,
+    Worktree,
+    Workspace,
+}
+
+impl Bookmarks {
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(|workspace, _: &Toggle, cx| {
+            if let Some(active_item) = workspace.active_item(cx) {
+                if let Some(editor) = active_item.downcast::<Editor>() {
+                    editor.update(cx, |editor, cx| editor.toggle_bookmark(cx))
+                }
+            }
+        });
+        workspace.register_action(|workspace, _: &ClearCurrentBuffer, cx| {
+            Self::clear(workspace, OperatorType::Buffer, cx)
+        });
+        workspace.register_action(|workspace, _: &ClearCurrentWorktree, cx| {
+            Self::clear(workspace, OperatorType::Worktree, cx)
+        });
+        workspace.register_action(|workspace, _: &ClearAll, cx| {
+            Self::clear(workspace, OperatorType::Workspace, cx)
+        });
+        workspace.register_action(|workspace, _: &JumpPrevious, cx| {
+            Self::open_bookmarks(workspace, true, cx)
+        });
+        workspace.register_action(|workspace, _: &JumpNext, cx| {
+            Self::open_bookmarks(workspace, false, cx)
+        });
+        workspace.register_action(|workspace, _: &ListCurrentBuffer, cx| {
+            Self::open(workspace, OperatorType::Buffer, cx)
+        });
+        workspace.register_action(|workspace, _: &ListCurrentWorktree, cx| {
+            Self::open(workspace, OperatorType::Worktree, cx)
+        });
+        workspace.register_action(|workspace, _: &ListAll, cx| {
+            Self::open(workspace, OperatorType::Workspace, cx)
+        });
+    }
+
+    fn clear(
+        workspace: &mut Workspace,
+        operator_type: OperatorType,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let active_item = workspace.active_item(cx);
+        let project = workspace.project().clone();
+        let project_path = active_item.as_ref().and_then(|item| item.project_path(cx));
+        if let Some(project_path) = project_path {
+            project.update(cx, |project, _cx| {
+                let bookmarks = project.bookmarks_mut();
+                match operator_type {
+                    OperatorType::Buffer => bookmarks.clear_current_editor(project_path),
+                    OperatorType::Worktree => {
+                        bookmarks.clear_current_worktree(project_path.worktree_id)
+                    }
+                    OperatorType::Workspace => bookmarks.clear_all(),
+                }
+            })
+        }
+    }
+
+    fn open_bookmarks(workspace: &mut Workspace, reverse: bool, cx: &mut ViewContext<Workspace>) {
+        let project = workspace.project().clone();
+        let bm = project.update(cx, |project, _cx| {
+            if reverse {
+                project.bookmarks_mut().prev().clone()
+            } else {
+                project.bookmarks_mut().next().clone()
+            }
+        });
+        let bm = if let Some(bm) = bm {
+            bm
+        } else {
+            return;
+        };
+        let open_task = workspace.open_path_preview(bm.project_path, None, true, false, cx);
+        let row = bm.line_no;
+        cx.spawn(|_, mut cx| async move {
+            let item = open_task.await.log_err()?;
+            if let Some(active_editor) = item.downcast::<Editor>() {
+                active_editor
+                    .downgrade()
+                    .update(&mut cx, |editor, cx| {
+                        let snapshot = editor.snapshot(cx).display_snapshot;
+                        let point = snapshot
+                            .buffer_snapshot
+                            .clip_point(Point::new(row.try_into().unwrap(), 0), Bias::Left);
+                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                            s.select_ranges([point..point])
+                        });
+                    })
+                    .log_err();
+            }
+            Some(())
+        })
+        .detach()
+    }
+
+    fn open(
+        workspace: &mut Workspace,
+        operator_type: OperatorType,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        let weak_workspace = cx.view().downgrade();
+        let active_item = workspace.active_item(cx);
+        let project_path = active_item.as_ref().and_then(|item| item.project_path(cx));
+        let bookmarks = project.read(cx).bookmarks();
+        let bookmarks = if let Some(project_path) = project_path {
+            match operator_type {
+                OperatorType::Buffer => bookmarks.get_current_editor(project_path),
+                OperatorType::Worktree => bookmarks.get_current_worktree(project_path.worktree_id),
+                OperatorType::Workspace => bookmarks.get_all(),
+            }
+        } else {
+            match operator_type {
+                OperatorType::Workspace => bookmarks.get_all(),
+                _ => return,
+            }
+        };
+        workspace.toggle_modal(cx, |cx| {
+            let delegate = BookmarkDelegate::new(
+                cx.view().downgrade(),
+                weak_workspace,
+                project,
+                bookmarks,
+                cx,
+            );
+
+            Bookmarks::new(delegate, cx)
+        });
+    }
+
+    fn new(delegate: BookmarkDelegate, cx: &mut ViewContext<Self>) -> Self {
+        Self {
+            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
+        }
+    }
+
+    fn handle_select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        cx.dispatch_action(Box::new(menu::SelectPrev));
+    }
+}
+
+impl EventEmitter<DismissEvent> for Bookmarks {}
+
+impl FocusableView for Bookmarks {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for Bookmarks {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("Bookmarks")
+            .w(rems(34.))
+            .on_action(cx.listener(Self::handle_select_prev))
+            .child(self.picker.clone())
+    }
+}
+
+pub struct BookmarkDelegate {
+    bookmarks: WeakView<Bookmarks>,
+    workspace: WeakView<Workspace>,
+    project: Model<Project>,
+    matches: Vec<Bookmark>,
+    selected_index: usize,
+}
+
+impl BookmarkDelegate {
+    fn new(
+        bookmarks: WeakView<Bookmarks>,
+        workspace: WeakView<Workspace>,
+        project: Model<Project>,
+        matches: Vec<Bookmark>,
+        _cx: &mut ViewContext<Bookmarks>,
+    ) -> Self {
+        Self {
+            bookmarks,
+            workspace,
+            project,
+            matches,
+            selected_index: 0,
+        }
+    }
+}
+
+impl PickerDelegate for BookmarkDelegate {
+    type ListItem = ListItem;
+
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+        "List Bookmarks...".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
+    fn update_matches(
+        &mut self,
+        _raw_query: String,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Task<()> {
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<BookmarkDelegate>>) {
+        if let Some(m) = self.matches.get(self.selected_index()) {
+            if let Some(workspace) = self.workspace.upgrade() {
+                let open_task = workspace.update(cx, move |workspace, cx| {
+                    let split_or_open =
+                        |workspace: &mut Workspace,
+                         project_path,
+                         cx: &mut ViewContext<Workspace>| {
+                            workspace.open_path_preview(project_path, None, true, true, cx)
+                        };
+                    split_or_open(workspace, m.project_path.clone(), cx)
+                });
+
+                let row = m.line_no;
+                let finder = self.bookmarks.clone();
+                let bm_id = m.id;
+                let project = self.project.clone();
+
+                cx.spawn(|_, mut cx| async move {
+                    let item = open_task.await.log_err()?;
+                    if let Some(active_editor) = item.downcast::<Editor>() {
+                        active_editor
+                            .downgrade()
+                            .update(&mut cx, |editor, cx| {
+                                let snapshot = editor.snapshot(cx).display_snapshot;
+                                let point = snapshot
+                                    .buffer_snapshot
+                                    .clip_point(Point::new(row.try_into().unwrap(), 0), Bias::Left);
+                                editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                                    s.select_ranges([point..point])
+                                });
+                            })
+                            .log_err();
+                    }
+                    let _ = project.update(&mut cx, |project, _cx| {
+                        project.bookmarks_mut().update_current_id(bm_id)
+                    });
+                    finder.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok()?;
+
+                    Some(())
+                })
+                .detach();
+            }
+        }
+    }
+
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<BookmarkDelegate>>) {
+        self.bookmarks
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let bookmark_match = self
+            .matches
+            .get(ix)
+            .expect("Invalid matches state: no element for index {ix}");
+
+        let file_name = bookmark_match
+            .project_path
+            .path
+            .to_string_lossy()
+            .to_string();
+        let annotation = bookmark_match
+            .annotation
+            .clone()
+            .unwrap_or_else(|| "title".to_string());
+        let text = format!("{}(row:{}, col: 0)", file_name, bookmark_match.line_no);
+        Some(
+            ListItem::new(ix).inset(true).selected(selected).child(
+                v_flex()
+                    .gap_0()
+                    .px_px()
+                    .child(
+                        ListItem::new("annotation")
+                            .start_slot(Icon::new(IconName::Bookmark))
+                            .child(SharedString::from(annotation)),
+                    )
+                    .child(
+                        HighlightedLabel::new(text, vec![])
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            ),
+        )
+    }
+}

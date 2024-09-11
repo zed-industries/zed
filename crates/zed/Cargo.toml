@@ -22,6 +22,7 @@ assistant.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 backtrace = "0.3"
+bookmarks.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
