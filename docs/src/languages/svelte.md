@@ -13,19 +13,6 @@ TBD: Rewrite Svelte docs so it doesn't begin with a json block assuming you know
 
 You can modify how certain styles such as directives and modifiers appear in attributes:
 
-```json
-// Your theme's style.syntax
-"syntax": {
-  // styling for directives (eg: class:foo or on:click) (the `on` or `class` part of the attribute)
-  "attribute.function": {
-    "color": "#ff0000"
-  },
-  // styling for modifiers at the end of attributes, eg: `on:click|preventDefault|stopPropagation`
-  "attribute.special": {
-    "color": "#00ff00"
-  }
-}
-```
 
 ## Inlay Hints
 
