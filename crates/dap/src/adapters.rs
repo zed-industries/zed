@@ -26,6 +26,7 @@ pub fn build_adapter(adapter_config: &DebugAdapterConfig) -> Result<Box<dyn Debu
         DebugAdapterKind::Custom => Err(anyhow!("Custom is not implemented")),
         DebugAdapterKind::Python => Ok(Box::new(PythonDebugAdapter::new(adapter_config))),
         DebugAdapterKind::PHP => Ok(Box::new(PhpDebugAdapter::new(adapter_config))),
+        DebugAdapterKind::Lldb => Ok(Box::new(LldbDebugAdapter::new(adapter_config))),
     }
 }
 
@@ -248,6 +249,48 @@ impl DebugAdapter for PhpDebugAdapter {
         };
 
         create_tcp_client(host, &command, &args, cx).await
+    }
+
+    fn is_installed(&self) -> Option<DebugAdapterBinary> {
+        None
+    }
+
+    fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary> {
+        Err(anyhow::format_err!("Not implemented"))
+    }
+
+    fn request_args(&self) -> Value {
+        json!({"program": format!("{}", &self.program)})
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+struct LldbDebugAdapter {
+    program: String,
+    adapter_path: Option<String>,
+}
+
+impl LldbDebugAdapter {
+    const _ADAPTER_NAME: &'static str = "lldb";
+
+    fn new(adapter_config: &DebugAdapterConfig) -> Self {
+        LldbDebugAdapter {
+            program: adapter_config.program.clone(),
+            adapter_path: adapter_config.adapter_path.clone(),
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl DebugAdapter for LldbDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::_ADAPTER_NAME.into())
+    }
+
+    async fn connect(&self, _: &mut AsyncAppContext) -> Result<TransportParams> {
+        let command = "/opt/homebrew/opt/llvm/bin/lldb-dap".to_string();
+
+        create_stdio_client(&command, &vec![])
     }
 
     fn is_installed(&self) -> Option<DebugAdapterBinary> {
