@@ -168,9 +168,9 @@ fn increment_hex_string(num: &str, delta: i32) -> String {
     if let Ok(val) = i32::from_str_radix(&num, 16) {
         let result = val + delta;
         if num.to_ascii_lowercase() == num {
-            format!("{:x}", result)
+            format!("{:0width$x}", result, width = num.len())
         } else {
-            format!("{:X}", result)
+            format!("{:0width$X}", result, width = num.len())
         }
     } else {
         unreachable!()
