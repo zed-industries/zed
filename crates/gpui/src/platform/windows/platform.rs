@@ -661,13 +661,17 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 }
 
 fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
+    println!("=> Directory: {}", directory.display());
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
-            let full_path = full_path.to_string_lossy().to_string();
-            if !full_path.is_empty() {
+            println!("  => full path: {}", full_path.display());
+            let full_path = full_path.to_string_lossy();
+            let full_path_str = full_path.trim_start_matches("\\\\?\\");
+            if !full_path_str.is_empty() {
                 let path_item: IShellItem =
-                    unsafe { SHCreateItemFromParsingName(&HSTRING::from(&full_path), None)? };
+                    unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_str), None)? };
+                println!("  => 1");
                 unsafe { dialog.SetFolder(&path_item).log_err() };
             }
         }
