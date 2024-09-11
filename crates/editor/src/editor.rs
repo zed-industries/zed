@@ -4975,9 +4975,10 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+
         if !user_requested
-            && self.enable_inline_completions
-            && !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
+            && (!self.enable_inline_completions
+                || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx))
         {
             self.discard_inline_completion(false, cx);
             return None;
