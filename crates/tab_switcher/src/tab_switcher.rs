@@ -1,4 +1,3 @@
-mod tab_switcher_settings;
 #[cfg(test)]
 mod tab_switcher_tests;
 
@@ -10,9 +9,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use serde::Deserialize;
-use settings::Settings;
 use std::sync::Arc;
-use tab_switcher_settings::TabSwitcherSettings;
 use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 use workspace::{
@@ -39,12 +36,7 @@ pub struct TabSwitcher {
 
 impl ModalView for TabSwitcher {}
 
-pub fn init_settings(cx: &mut AppContext) {
-    TabSwitcherSettings::register(cx);
-}
-
 pub fn init(cx: &mut AppContext) {
-    init_settings(cx);
     cx.observe_new_views(TabSwitcher::register).detach();
 }
 
@@ -386,10 +378,8 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
-                .when(TabSwitcherSettings::get_global(cx).show_icons, |el| {
-                    el.when_some(tab_match.item.tab_icon(cx), |el, icon| {
-                        el.start_slot(div().child(icon))
-                    })
+                .when_some(tab_match.item.tab_icon(cx), |el, icon| {
+                    el.start_slot(div().child(icon))
                 })
                 .map(|el| {
                     if self.selected_index == ix {

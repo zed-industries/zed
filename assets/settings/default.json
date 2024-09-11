@@ -981,11 +981,6 @@
   "dev": {
     // "theme": "Andromeda"
   },
-  // Tab switcher-related settings.
-  "tab_switcher": {
-    // Whether to show file icons in the tab switcher.
-    "show_icons": true
-  },
   // Task-related settings.
   "task": {
     // Whether to show task status indicator in the status bar. Default: true
