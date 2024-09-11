@@ -386,7 +386,6 @@ impl Fs for RealFs {
         // When new version of `windows-rs` release, make this operation `async`
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_str))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-
         Ok(())
     }
 
