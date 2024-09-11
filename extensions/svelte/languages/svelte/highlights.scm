@@ -1,5 +1,3 @@
-; ; Special identifiers
-; ;--------------------
 
 ; comments
 (comment) @comment
@@ -96,3 +94,9 @@
 
 ; Style quoted string attribute values
 (quoted_attribute_value) @string
+
+
+; Highlight the `as` keyword in each blocks
+(each_start
+    ("as") @tag.keyword
+)

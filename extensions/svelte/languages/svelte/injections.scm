@@ -27,6 +27,20 @@
     (#set! language "javascript")
 )
 
+; Match the contents of the script's generics="T extends string" as typescript code
+(script_element
+    (start_tag
+        (attribute
+            (attribute_name) @_attr_name
+            (#eq? @_attr_name "generics")
+            (quoted_attribute_value
+                (attribute_value) @content
+            )
+        )
+    )
+	(#set! language "typescript")
+)
+
 
 ; Mark everything as typescript because it's
 ; a more generic superset of javascript
