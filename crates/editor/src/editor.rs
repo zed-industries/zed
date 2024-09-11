@@ -80,6 +80,7 @@ use gpui::{
     VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
+use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HoveredHunk;
@@ -96,11 +97,7 @@ use language::{
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
-use project::dap_store::DapStore;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
-
-use dap::client::Breakpoint;
-use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 
 pub use lsp::CompletionContext;
 use lsp::{
@@ -118,6 +115,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
+    dap_store::{Breakpoint, DapStore},
     CodeAction, Completion, CompletionIntent, FormatTrigger, Item, Location, Project, ProjectPath,
     ProjectTransaction, TaskSourceKind,
 };
@@ -5372,14 +5370,17 @@ impl Editor {
             Color::Debugger
         };
 
-        IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::DebugBreakpoint)
-            .icon_size(IconSize::XSmall)
-            .size(ui::ButtonSize::None)
-            .icon_color(color)
-            .on_click(cx.listener(move |editor, _e, cx| {
-                editor.focus(cx);
-                editor.toggle_breakpoint_at_anchor(anchor, cx);
-            }))
+        IconButton::new(
+            ("breakpoint_indicator", row.0 as usize),
+            ui::IconName::DebugBreakpoint,
+        )
+        .icon_size(IconSize::XSmall)
+        .size(ui::ButtonSize::None)
+        .icon_color(color)
+        .on_click(cx.listener(move |editor, _e, cx| {
+            editor.focus(cx);
+            editor.toggle_breakpoint_at_anchor(anchor, cx);
+        }))
     }
 
     fn render_run_indicator(

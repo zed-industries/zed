@@ -28,13 +28,13 @@ use client::{
 use clock::ReplicaId;
 
 use dap::{
-    client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId, SerializedBreakpoint},
+    client::{DebugAdapterClient, DebugAdapterClientId},
     debugger_settings::DebuggerSettings,
     transport::Payload,
 };
 
 use collections::{BTreeSet, HashMap, HashSet};
-use dap_store::{DapStore, DapStoreEvent};
+use dap_store::{Breakpoint, DapStore, DapStoreEvent, SerializedBreakpoint};
 use debounced_delay::DebouncedDelay;
 pub use environment::ProjectEnvironment;
 use futures::{

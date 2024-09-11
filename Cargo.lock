@@ -8410,6 +8410,7 @@ dependencies = [
  "clock",
  "collections",
  "dap",
+ "dap-types",
  "dev_server_projects",
  "env_logger",
  "fs",

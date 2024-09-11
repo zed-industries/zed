@@ -8,9 +8,9 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use collections::HashMap;
-use dap::client::SerializedBreakpoint;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
+use project::dap_store::SerializedBreakpoint;
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},

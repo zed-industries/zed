@@ -1,22 +1,24 @@
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use dap::{
-    client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId, SerializedBreakpoint},
+    client::{DebugAdapterClient, DebugAdapterClientId},
     transport::Payload,
 };
+use dap_types::SourceBreakpoint;
 use gpui::{EventEmitter, ModelContext, Subscription, Task};
 use language::{Buffer, BufferSnapshot};
 use settings::WorktreeId;
 use std::{
     collections::BTreeMap,
     future::Future,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
 use task::DebugAdapterConfig;
+use text::Point;
 use util::ResultExt as _;
 
 use crate::ProjectPath;
@@ -269,5 +271,101 @@ impl DapStore {
         cx.background_executor()
             .spawn(async move { futures::future::join_all(tasks).await })
             .detach()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Breakpoint {
+    pub active_position: Option<text::Anchor>,
+    pub cache_position: u32,
+}
+
+impl Breakpoint {
+    pub fn to_source_breakpoint(&self, buffer: &Buffer) -> SourceBreakpoint {
+        let line = self
+            .active_position
+            .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
+            .unwrap_or(self.cache_position) as u64
+            + 1u64;
+
+        SourceBreakpoint {
+            line,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
+    }
+
+    pub fn set_active_position(&mut self, buffer: &Buffer) {
+        if self.active_position.is_none() {
+            self.active_position =
+                Some(buffer.anchor_at(Point::new(self.cache_position, 0), text::Bias::Left));
+        }
+    }
+
+    pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
+        self.active_position
+            .map(|position| buffer.summary_for_anchor::<Point>(&position))
+            .unwrap_or(Point::new(self.cache_position, 0))
+    }
+
+    pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
+        self.active_position
+            .map(|position| buffer_snapshot.summary_for_anchor::<Point>(&position))
+            .unwrap_or(Point::new(self.cache_position, 0))
+    }
+
+    pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
+        let line = self
+            .active_position
+            .map(|position| snapshot.summary_for_anchor::<Point>(&position).row)
+            .unwrap_or(self.cache_position) as u64
+            + 1u64;
+
+        SourceBreakpoint {
+            line,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
+    }
+
+    pub fn to_serialized(&self, buffer: Option<&Buffer>, path: Arc<Path>) -> SerializedBreakpoint {
+        match buffer {
+            Some(buffer) => SerializedBreakpoint {
+                position: self
+                    .active_position
+                    .map(|position| buffer.summary_for_anchor::<Point>(&position).row + 1u32)
+                    .unwrap_or(self.cache_position + 1u32),
+                path,
+            },
+            None => SerializedBreakpoint {
+                position: self.cache_position + 1u32,
+                path,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct SerializedBreakpoint {
+    pub position: u32,
+    pub path: Arc<Path>,
+}
+
+impl SerializedBreakpoint {
+    pub fn to_source_breakpoint(&self) -> SourceBreakpoint {
+        SourceBreakpoint {
+            line: self.position as u64,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
     }
 }

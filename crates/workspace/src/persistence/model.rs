@@ -6,12 +6,12 @@ use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use client::DevServerProjectId;
 use collections::HashMap;
-use dap::client::SerializedBreakpoint;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use gpui::{AsyncWindowContext, Model, View, WeakView};
+use project::dap_store::SerializedBreakpoint;
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
