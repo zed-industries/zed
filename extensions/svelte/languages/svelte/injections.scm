@@ -28,18 +28,23 @@
 )
 
 ; Match the contents of the script's generics="T extends string" as typescript code
-(script_element
-    (start_tag
-        (attribute
-            (attribute_name) @_attr_name
-            (#eq? @_attr_name "generics")
-            (quoted_attribute_value
-                (attribute_value) @content
-            )
-        )
-    )
-	(#set! language "typescript")
-)
+;
+; Disabled for the time-being because tree-sitter is treating the generics
+; attribute as a top-level typescript statement, where `T extends string` is
+; not a valid top-level typescript statement.
+;
+; (script_element
+;     (start_tag
+;         (attribute
+;             (attribute_name) @_attr_name
+;             (#eq? @_attr_name "generics")
+;             (quoted_attribute_value
+;                 (attribute_value) @content
+;             )
+;         )
+;     )
+; 	(#set! language "typescript")
+; )
 
 
 ; Mark everything as typescript because it's
