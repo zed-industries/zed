@@ -17,10 +17,10 @@ use std::{
     },
 };
 use task::DebugAdapterConfig;
-use text::{Bias, BufferId, Point};
+use text::{Bias, Point};
 use util::ResultExt as _;
 
-use crate::{Item, ProjectPath};
+use crate::ProjectPath;
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
@@ -39,7 +39,7 @@ pub enum DebugAdapterClientState {
 pub struct DapStore {
     next_client_id: AtomicUsize,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
-    open_breakpoints: BTreeMap<BufferId, HashSet<Breakpoint>>,
+    open_breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
     /// All breakpoints that belong to this project but are in closed files
     pub closed_breakpoints: BTreeMap<ProjectPath, Vec<SerializedBreakpoint>>,
     _subscription: Vec<Subscription>,
@@ -76,7 +76,7 @@ impl DapStore {
         })
     }
 
-    pub fn open_breakpoints(&self) -> &BTreeMap<BufferId, HashSet<Breakpoint>> {
+    pub fn open_breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
         &self.open_breakpoints
     }
 
@@ -86,37 +86,36 @@ impl DapStore {
 
     pub fn sync_open_breakpoints_to_closed_breakpoints(
         &mut self,
-        buffer_id: &BufferId,
+        project_path: &ProjectPath,
         buffer: &mut Buffer,
-        cx: &mut ModelContext<Self>,
     ) {
-        let Some(breakpoints) = self.open_breakpoints.remove(&buffer_id) else {
+        let Some(breakpoints) = self.open_breakpoints.remove(project_path) else {
             return;
         };
 
-        if let Some(project_path) = buffer.project_path(cx) {
-            self.closed_breakpoints
-                .entry(project_path.clone())
-                .or_default()
-                .extend(
-                    breakpoints
-                        .into_iter()
-                        .map(|bp| bp.to_serialized(buffer, project_path.path.clone())),
-                );
-        }
+        self.closed_breakpoints
+            .entry(project_path.clone())
+            .or_default()
+            .extend(
+                breakpoints
+                    .into_iter()
+                    .map(|bp| bp.to_serialized(buffer, project_path.path.clone())),
+            );
     }
 
     pub fn sync_closed_breakpoint_to_open_breakpoint(
         &mut self,
-        buffer_id: &BufferId,
         project_path: &ProjectPath,
-        snapshot: MultiBufferSnapshot,
+        snapshot: &MultiBufferSnapshot,
     ) {
         let Some(closed_breakpoints) = self.closed_breakpoints.remove(project_path) else {
             return;
         };
 
-        let open_breakpoints = self.open_breakpoints.entry(*buffer_id).or_default();
+        let open_breakpoints = self
+            .open_breakpoints
+            .entry(project_path.clone())
+            .or_default();
 
         for closed_breakpoint in closed_breakpoints {
             // serialized breakpoints start at index one and need to converted
@@ -222,24 +221,27 @@ impl DapStore {
 
     pub fn toggle_breakpoint_for_buffer(
         &mut self,
-        buffer_id: &BufferId,
+        project_path: &ProjectPath,
         breakpoint: Breakpoint,
         buffer_path: PathBuf,
         buffer_snapshot: BufferSnapshot,
         cx: &mut ModelContext<Self>,
     ) {
-        let breakpoint_set = self.open_breakpoints.entry(*buffer_id).or_default();
+        let breakpoint_set = self
+            .open_breakpoints
+            .entry(project_path.clone())
+            .or_default();
 
         if !breakpoint_set.remove(&breakpoint) {
             breakpoint_set.insert(breakpoint);
         }
 
-        self.send_changed_breakpoints(buffer_id, buffer_path, buffer_snapshot, cx);
+        self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx);
     }
 
     pub fn send_changed_breakpoints(
         &self,
-        buffer_id: &BufferId,
+        project_path: &ProjectPath,
         buffer_path: PathBuf,
         buffer_snapshot: BufferSnapshot,
         cx: &mut ModelContext<Self>,
@@ -250,7 +252,7 @@ impl DapStore {
             return;
         }
 
-        let Some(breakpoints) = self.open_breakpoints.get(buffer_id) else {
+        let Some(breakpoints) = self.open_breakpoints.get(project_path) else {
             return;
         };
 

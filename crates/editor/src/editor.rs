@@ -1984,22 +1984,21 @@ impl Editor {
                 this.start_git_blame_inline(false, cx);
             }
 
-            // Check if this buffer should have breakpoints added too it
-            if let Some((project_path, buffer_id, snapshot)) = buffer.read_with(cx, |buffer, cx| {
-                let snapshot = buffer.snapshot(cx);
-                let buffer = buffer.as_singleton()?.read(cx);
-                Some((buffer.project_path(cx)?, buffer.remote_id(), snapshot))
-            }) {
-                if let Some(project) = this.project.as_ref() {
+            if let Some(project) = this.project.as_ref() {
+                let snapshot = buffer.read(cx).snapshot(cx);
+                let project_paths: Vec<_> = buffer
+                    .read(cx)
+                    .all_buffers()
+                    .iter()
+                    .filter_map(|buffer| buffer.read(cx).project_path(cx))
+                    .collect();
+
+                for ref project_path in project_paths {
                     project.update(cx, |project, cx| {
-                        project.dap_store().update(cx, |store, _| {
-                            store.sync_closed_breakpoint_to_open_breakpoint(
-                                &buffer_id,
-                                &project_path,
-                                snapshot,
-                            );
-                        });
-                    });
+                        project.dap_store().update(cx, |store, _cx| {
+                            store.sync_closed_breakpoint_to_open_breakpoint(project_path, &snapshot)
+                        })
+                    })
                 }
             }
         }
@@ -5305,18 +5304,23 @@ impl Editor {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             let buffer = buffer.read(cx);
 
-            if let Some(breakpoints) = opened_breakpoints.get(&buffer.remote_id()) {
-                for breakpoint in breakpoints {
-                    let point = breakpoint.point_for_buffer(&buffer);
+            if let Some(project_path) = buffer.project_path(cx) {
+                if let Some(breakpoints) = opened_breakpoints.get(&project_path) {
+                    for breakpoint in breakpoints {
+                        let point = breakpoint.point_for_buffer(&buffer);
 
-                    breakpoint_display_points.insert(point.to_display_point(&snapshot));
-                }
+                        breakpoint_display_points.insert(point.to_display_point(&snapshot));
+                    }
+                };
             };
 
             return breakpoint_display_points;
         }
 
         let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
+        let Some(project) = self.project.as_ref() else {
+            return breakpoint_display_points;
+        };
 
         for excerpt_boundary in
             multi_buffer_snapshot.excerpt_boundaries_in_range(Point::new(0, 0)..)
@@ -5343,7 +5347,14 @@ impl Editor {
                         .buffer
                         .summary_for_anchor::<Point>(&info.range.context.end);
 
-                if let Some(breakpoints) = opened_breakpoints.get(&info.buffer_id) {
+                let Some(project_path) = project.read_with(cx, |this, cx| {
+                    this.buffer_for_id(info.buffer_id, cx)
+                        .and_then(|buffer| buffer.read_with(cx, |b, cx| b.project_path(cx)))
+                }) else {
+                    continue;
+                };
+
+                if let Some(breakpoints) = opened_breakpoints.get(&project_path) {
                     for breakpoint in breakpoints {
                         let breakpoint_position =
                             breakpoint.point_for_buffer_snapshot(&info.buffer);

@@ -345,9 +345,11 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
-            this.dap_store.update(cx, |store, cx| {
-                store.sync_open_breakpoints_to_closed_breakpoints(&buffer.remote_id(), buffer, cx);
-            });
+            if let Some(project_path) = buffer.project_path(cx) {
+                this.dap_store.update(cx, |store, _cx| {
+                    store.sync_open_breakpoints_to_closed_breakpoints(&project_path, buffer);
+                });
+            };
 
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
