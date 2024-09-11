@@ -26,7 +26,6 @@ use gpui::{
     Task, WeakModel,
 };
 use http_client::{AsyncBody, Error, HttpClient, Request, Response, Uri};
-use itertools::Itertools;
 use language::{
     language_settings::{
         all_language_settings, language_settings, AllLanguageSettings, LanguageSettings,
@@ -4488,14 +4487,6 @@ impl LspStore {
                 desired_language_server.0
             );
         }
-
-        log::info!(
-            "starting language servers for {language}: {adapters}",
-            adapters = enabled_lsp_adapters
-                .iter()
-                .map(|adapter| adapter.name.0.as_ref())
-                .join(", ")
-        );
 
         for adapter in &enabled_lsp_adapters {
             self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
