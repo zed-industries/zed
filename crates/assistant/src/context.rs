@@ -1020,7 +1020,7 @@ impl Context {
     }
 
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
-        let request = self.to_completion_request(cx);
+        let request = self.to_completion_request(&self.message_anchors, cx);
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -1163,7 +1163,7 @@ impl Context {
         }
 
         let request = {
-            let mut req = self.to_completion_request(cx);
+            let mut req = self.to_completion_request(&self.message_anchors, cx);
             // Skip the last message because it's likely to change and
             // therefore would be a waste to cache.
             req.messages.pop();
@@ -1960,20 +1960,25 @@ impl Context {
         })
     }
 
-    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+    fn generate_assistant_message(
+        &mut self,
+        assistant_message_id: MessageId,
+        cx: &mut ModelContext<Self>,
+    ) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
-        let last_message_id = self.get_last_valid_message_id(cx)?;
 
         if !provider.is_authenticated(cx) {
             log::info!("completion provider has no credentials");
             return None;
         }
-        // Compute which messages to cache, including the last one.
-        self.mark_cache_anchors(&model.cache_configuration(), false, cx);
-
-        let mut request = self.to_completion_request(cx);
-
+        let message_anchors: Vec<MessageAnchor> = self
+            .message_anchors
+            .iter()
+            .take_while(|anchor| anchor.id != assistant_message_id)
+            .cloned()
+            .collect();
+        let mut request = self.to_completion_request(&message_anchors, cx);
         if cx.has_flag::<ToolUseFeatureFlag>() {
             let tool_registry = ToolRegistry::global(cx);
             request.tools = tool_registry
@@ -1987,21 +1992,11 @@ impl Context {
                 .collect();
         }
 
-        let assistant_message = self
-            .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
-            .unwrap();
-
-        // Queue up the user's next reply.
-        let user_message = self
-            .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
-            .unwrap();
-
         let pending_completion_id = post_inc(&mut self.completion_count);
 
         let task = cx.spawn({
             |this, mut cx| async move {
                 let stream = model.stream_completion(request, &cx);
-                let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
                 let stream_completion = async {
                     let request_start = Instant::now();
@@ -2148,14 +2143,71 @@ impl Context {
 
         self.pending_completions.push(PendingCompletion {
             id: pending_completion_id,
-            assistant_message_id: assistant_message.id,
+            assistant_message_id,
             _task: task,
         });
+    }
+
+    pub fn regenerate(&mut self, cx: &mut ModelContext<Self>) {
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+
+        // Find the last assistant message
+        let last_assistant_message = self
+            .messages(cx)
+            .filter(|message| message.role == Role::Assistant)
+            .last()?;
+
+        // Mark the last assistant message as not cached
+        self.update_metadata(last_assistant_message.id, cx, |metadata| {
+            metadata.cache = None;
+        });
+
+        // FIXME: caching
+        // self.mark_cache_anchors(&model.cache_configuration(), true, cx);
+
+        // Remove the content of the last assistant message
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(last_assistant_message.offset_range.clone(), String::new())],
+                None,
+                cx,
+            );
+        });
+
+        // Update the message status to pending
+        self.update_metadata(last_assistant_message.id, cx, |metadata| {
+            metadata.status = MessageStatus::Pending;
+        });
+
+        let generated_message = self.generate_assistant_message(last_assistant_message.id, cx)?;
+    }
+
+    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let last_message_id = self.get_last_valid_message_id(cx)?;
+
+        // Compute which messages to cache, including the last one
+        self.mark_cache_anchors(&model.cache_configuration(), false, cx);
+
+        let assistant_message = self
+            .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
+            .unwrap();
+
+        // Queue up the user's next reply
+        let user_message = self
+            .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
+            .unwrap();
+
+        let generated_message = self.generate_assistant_message(assistant_message.id, cx)?;
 
         Some(user_message)
     }
 
-    pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
+    pub fn to_completion_request(
+        &self,
+        message_anchors: &[MessageAnchor],
+        cx: &AppContext,
+    ) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
 
         let mut contents = self.contents(cx).peekable();
@@ -2175,7 +2227,7 @@ impl Context {
             stop: Vec::new(),
             temperature: 1.0,
         };
-        for message in self.messages(cx) {
+        for message in self.messages_from_anchors(message_anchors.iter(), cx) {
             if message.status != MessageStatus::Done {
                 continue;
             }
@@ -2558,7 +2610,7 @@ impl Context {
                 return;
             }
 
-            let mut request = self.to_completion_request(cx);
+            let mut request = self.to_completion_request(&self.message_anchors, cx);
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![
