@@ -36,18 +36,47 @@ use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ItemSettings {
+    /// Whether to show the Git file status on a tab item.
     pub git_status: bool,
+    /// Position of the close button in a tab.
     pub close_position: ClosePosition,
+    /// Whether to show the file icon for a tab.
     pub file_icons: bool,
 }
 
-#[derive(Deserialize)]
+impl Default for ItemSettings {
+    fn default() -> Self {
+        Self {
+            git_status: false,
+            close_position: ClosePosition::Right,
+            file_icons: false,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct PreviewTabsSettings {
+    /// Whether to show opened editors as preview tabs.
+    /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
     pub enabled: bool,
+    /// Whether to open tabs in preview mode when selected from the file finder.
     pub enable_preview_from_file_finder: bool,
+    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
     pub enable_preview_from_code_navigation: bool,
+}
+
+impl Default for PreviewTabsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            enable_preview_from_file_finder: false,
+            enable_preview_from_code_navigation: false,
+        }
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -67,43 +96,10 @@ impl ClosePosition {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ItemSettingsContent {
-    /// Whether to show the Git file status on a tab item.
-    ///
-    /// Default: false
-    git_status: Option<bool>,
-    /// Position of the close button in a tab.
-    ///
-    /// Default: right
-    close_position: Option<ClosePosition>,
-    /// Whether to show the file icon for a tab.
-    ///
-    /// Default: false
-    file_icons: Option<bool>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct PreviewTabsSettingsContent {
-    /// Whether to show opened editors as preview tabs.
-    /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
-    ///
-    /// Default: true
-    enabled: Option<bool>,
-    /// Whether to open tabs in preview mode when selected from the file finder.
-    ///
-    /// Default: false
-    enable_preview_from_file_finder: Option<bool>,
-    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-    ///
-    /// Default: false
-    enable_preview_from_code_navigation: Option<bool>,
-}
-
 impl Settings for ItemSettings {
     const KEY: Option<&'static str> = Some("tabs");
 
-    type FileContent = ItemSettingsContent;
+    type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()
@@ -113,7 +109,7 @@ impl Settings for ItemSettings {
 impl Settings for PreviewTabsSettings {
     const KEY: Option<&'static str> = Some("preview_tabs");
 
-    type FileContent = PreviewTabsSettingsContent;
+    type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()

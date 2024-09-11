@@ -25,7 +25,8 @@ impl WorktreeSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct WorktreeSettingsContent {
     /// Completely ignore files matching globs from `file_scan_exclusions`
     ///
@@ -39,12 +40,42 @@ pub struct WorktreeSettingsContent {
     ///   "**/.classpath",
     ///   "**/.settings"
     /// ]
-    #[serde(default)]
-    pub file_scan_exclusions: Option<Vec<String>>,
+    pub file_scan_exclusions: Vec<String>,
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: [ "**/.env*" ]
-    pub private_files: Option<Vec<String>>,
+    pub private_files: Vec<String>,
+}
+
+impl Default for WorktreeSettingsContent {
+    fn default() -> Self {
+        Self {
+            private_files: [
+                "**/.env*",
+                "**/*.pem",
+                "**/*.key",
+                "**/*.cert",
+                "**/*.crt",
+                "**/secrets.yml",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            file_scan_exclusions: [
+                "**/.git",
+                "**/.svn",
+                "**/.hg",
+                "**/CVS",
+                "**/.DS_Store",
+                "**/Thumbs.db",
+                "**/.classpath",
+                "**/.settings",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        }
+    }
 }
 
 impl Settings for WorktreeSettings {
@@ -57,8 +88,8 @@ impl Settings for WorktreeSettings {
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
         let result: WorktreeSettingsContent = sources.json_merge()?;
-        let mut file_scan_exclusions = result.file_scan_exclusions.unwrap_or_default();
-        let mut private_files = result.private_files.unwrap_or_default();
+        let mut file_scan_exclusions = result.file_scan_exclusions;
+        let mut private_files = result.private_files;
         file_scan_exclusions.sort();
         private_files.sort();
         Ok(Self {

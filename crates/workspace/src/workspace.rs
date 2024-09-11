@@ -6418,7 +6418,7 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
+                    settings.autosave = AutosaveSetting::OnWindowChange;
                 })
             });
             item.is_dirty = true;
@@ -6438,7 +6438,7 @@ mod tests {
             cx.focus_self();
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                    settings.autosave = AutosaveSetting::OnFocusChange;
                 })
             });
             item.is_dirty = true;
@@ -6461,7 +6461,7 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                    settings.autosave = AutosaveSetting::AfterDelay { milliseconds: 500 };
                 })
             });
             item.is_dirty = true;
@@ -6480,7 +6480,7 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                    settings.autosave = AutosaveSetting::OnFocusChange;
                 })
             });
             item.is_dirty = true;
