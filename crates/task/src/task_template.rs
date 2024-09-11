@@ -185,6 +185,8 @@ impl TaskTemplate {
         let env = {
             // Start with the project environment as the base.
             let mut env = cx.project_env.clone();
+            log::error!("cx.project_env.PATH {:?}", env.get("PATH"));
+            log::error!("self.env.PATH {:?}", self.env.get("PATH"));
 
             // Extend that environment with what's defined in the TaskTemplate
             env.extend(self.env.clone());
@@ -197,8 +199,14 @@ impl TaskTemplate {
                 &mut substituted_variables,
             )?;
 
+            log::error!(
+                "env.PATH after replacing template variables in map: {:?}",
+                env.get("PATH")
+            );
+
             // Last step: set the task variables as environment variables too
             env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
+
             env
         };
 

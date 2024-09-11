@@ -118,6 +118,11 @@ impl Project {
             .read(cx)
             .get_cli_environment()
             .unwrap_or_default();
+
+        log::error!("get_cli_environment().PATH: {:?}", env.get("PATH"));
+        log::error!("settings.env: {:?}", settings.env.get("PATH"));
+        log::error!("os.env: {:?}", env::var("PATH"));
+
         // Then extend it with the explicit env variables from the settings, so they take
         // precedence.
         env.extend(settings.env.clone());
@@ -169,6 +174,7 @@ impl Project {
                     completion_rx,
                 });
 
+                log::error!("spawn_task.env.PATH: {:?}", spawn_task.env.get("PATH"));
                 env.extend(spawn_task.env);
 
                 if let Some(venv_path) = &python_venv_directory {

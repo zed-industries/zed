@@ -218,6 +218,8 @@ async fn load_shell_environment(
         additional_command.unwrap_or("")
     );
 
+    log::error!("loading shell env for project with this command: {command:?}. direnv_environment: {direnv_environment:?}");
+
     let output = smol::process::Command::new(&shell)
         .args(["-i", "-c", &command])
         .envs(direnv_environment)
@@ -232,6 +234,8 @@ async fn load_shell_environment(
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    log::error!("loaded login shell for project. stdout: {stdout:?}");
+
     let env_output_start = stdout.find(marker).ok_or_else(|| {
         anyhow!(
             "failed to parse output of `env` command in login shell: {}",
