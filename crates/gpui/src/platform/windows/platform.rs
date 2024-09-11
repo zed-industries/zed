@@ -628,11 +628,11 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog =
         unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL).unwrap() };
     let create = |p: &Path| unsafe { SHCreateItemFromParsingName(&HSTRING::from(p), None) };
-    let path_item: IShellItem = directory
-        .canonicalize()
-        .log_err()
-        .map_or_else(|| create(&directory), |p| create(&p))
-        .map_or_else(|_| create(&std::env::current_dir()?), Ok)?;
+    let canonicalized = directory.canonicalize().log_err();
+    let path_item: IShellItem = canonicalized
+        .and_then(|k| create(&k).warn_on_err())
+        .map_or_else(|| create(&directory), Ok)
+        .or_else(|_| create(&std::env::current_dir()?))?;
     unsafe { dialog.SetFolder(&path_item).log_err() };
     unsafe {
         if dialog.Show(None).is_err() {
