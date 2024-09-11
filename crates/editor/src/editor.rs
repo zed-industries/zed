@@ -6659,6 +6659,80 @@ impl Editor {
         });
     }
 
+    // Lorem ipsum
+    // dolor sit
+    // amet
+    //
+    // Consecteur
+    pub fn rewrap(&mut self, _: &Rewrap, cx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(cx).read(cx);
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter().peekable();
+        // let mut contiguous_row_selections = Vec::new();
+        // let mut new_selections = Vec::new();
+
+        while let Some(selection) = selections.next() {
+            let mut start_row = selection.start.row;
+            let mut end_row = selection.end.row;
+            if selection.is_empty() {
+                let row = selection.head().row;
+                let indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
+                let indent_end = Point::new(row, indent_size.len);
+
+                let mut line_prefix = indent_size.chars().collect::<String>();
+                if let Some(comment_prefix) =
+                    buffer
+                        .language_scope_at(selection.head())
+                        .and_then(|language| {
+                            language
+                                .line_comment_prefixes()
+                                .iter()
+                                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                                .cloned()
+                        })
+                {
+                    line_prefix.push_str(&comment_prefix);
+                }
+
+                while start_row > 0 {
+                    let prev_row = start_row - 1;
+                    if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
+                        && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+                    {
+                        start_row = prev_row;
+                    } else {
+                        break;
+                    }
+                }
+
+                while end_row < buffer.max_point().row {
+                    let next_row = end_row + 1;
+                    if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
+                        && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+                    {
+                        end_row = next_row;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            // // Find all the selections that span a contiguous row range
+            // let (start_row, end_row) = consume_contiguous_rows(
+            //     &mut contiguous_row_selections,
+            //     selection,
+            //     &display_map,
+            //     &mut selections,
+            // );
+
+            // if selection.is_empty() {
+
+            // } else {
+
+            // }
+        }
+    }
+
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
         let mut text = String::new();
         let buffer = self.buffer.read(cx).snapshot(cx);
