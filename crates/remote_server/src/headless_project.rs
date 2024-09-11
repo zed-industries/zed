@@ -43,11 +43,16 @@ impl HeadlessProject {
             Task::ready(()),
             cx.background_executor().clone(),
         ));
+        let dap_store = cx.new_model(DapStore::new);
 
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store =
-                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            let mut buffer_store = BufferStore::new(
+                worktree_store.clone(),
+                Some(SSH_PROJECT_ID),
+                dap_store.clone(),
+                cx,
+            );
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
@@ -56,7 +61,6 @@ impl HeadlessProject {
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
-        let dap_store = cx.new_model(DapStore::new);
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
             LspStore::new(

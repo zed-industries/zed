@@ -6,7 +6,7 @@ use dap::{
 };
 use gpui::{EventEmitter, ModelContext, Subscription, Task};
 use language::{Buffer, BufferSnapshot};
-use multi_buffer::MultiBufferSnapshot;
+use settings::WorktreeId;
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -17,7 +17,6 @@ use std::{
     },
 };
 use task::DebugAdapterConfig;
-use text::{Bias, Point};
 use util::ResultExt as _;
 
 use crate::ProjectPath;
@@ -39,9 +38,7 @@ pub enum DebugAdapterClientState {
 pub struct DapStore {
     next_client_id: AtomicUsize,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
-    open_breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
-    /// All breakpoints that belong to this project but are in closed files
-    pub closed_breakpoints: BTreeMap<ProjectPath, Vec<SerializedBreakpoint>>,
+    breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
     _subscription: Vec<Subscription>,
 }
 
@@ -52,8 +49,7 @@ impl DapStore {
         Self {
             next_client_id: Default::default(),
             clients: Default::default(),
-            open_breakpoints: Default::default(),
-            closed_breakpoints: Default::default(),
+            breakpoints: Default::default(),
             _subscription: vec![cx.on_app_quit(Self::shutdown_clients)],
         }
     }
@@ -76,12 +72,39 @@ impl DapStore {
         })
     }
 
-    pub fn open_breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
-        &self.open_breakpoints
+    pub fn breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
+        &self.breakpoints
     }
 
-    pub fn closed_breakpoints(&self) -> &BTreeMap<ProjectPath, Vec<SerializedBreakpoint>> {
-        &self.closed_breakpoints
+    pub fn set_active_breakpoints(&mut self, project_path: &ProjectPath, buffer: &Buffer) {
+        let entry = self.breakpoints.remove(project_path).unwrap_or_default();
+        let mut set_bp: HashSet<Breakpoint> = HashSet::default();
+
+        for mut bp in entry.into_iter() {
+            bp.set_active_position(&buffer);
+            set_bp.insert(bp);
+        }
+
+        self.breakpoints.insert(project_path.clone(), set_bp);
+    }
+
+    pub fn deserialize_breakpoints(
+        &mut self,
+        worktree_id: WorktreeId,
+        serialize_breakpoints: Vec<SerializedBreakpoint>,
+    ) {
+        for serialize_breakpoint in serialize_breakpoints {
+            self.breakpoints
+                .entry(ProjectPath {
+                    worktree_id,
+                    path: serialize_breakpoint.path.clone(),
+                })
+                .or_default()
+                .insert(Breakpoint {
+                    active_position: None,
+                    cache_position: serialize_breakpoint.position.saturating_sub(1u32),
+                });
+        }
     }
 
     pub fn sync_open_breakpoints_to_closed_breakpoints(
@@ -89,45 +112,19 @@ impl DapStore {
         project_path: &ProjectPath,
         buffer: &mut Buffer,
     ) {
-        let Some(breakpoints) = self.open_breakpoints.remove(project_path) else {
-            return;
-        };
+        if let Some(breakpoint_set) = self.breakpoints.remove(project_path) {
+            let breakpoint_iter = breakpoint_set.into_iter().map(|mut bp| {
+                bp.cache_position = bp.point_for_buffer(&buffer).row;
+                bp.active_position = None;
+                bp
+            });
 
-        self.closed_breakpoints
-            .entry(project_path.clone())
-            .or_default()
-            .extend(
-                breakpoints
-                    .into_iter()
-                    .map(|bp| bp.to_serialized(buffer, project_path.path.clone())),
-            );
-    }
+            let mut hash_set = HashSet::default();
+            for bp in breakpoint_iter {
+                hash_set.insert(bp);
+            }
 
-    pub fn sync_closed_breakpoint_to_open_breakpoint(
-        &mut self,
-        project_path: &ProjectPath,
-        snapshot: &MultiBufferSnapshot,
-    ) {
-        let Some(closed_breakpoints) = self.closed_breakpoints.remove(project_path) else {
-            return;
-        };
-
-        let open_breakpoints = self
-            .open_breakpoints
-            .entry(project_path.clone())
-            .or_default();
-
-        for closed_breakpoint in closed_breakpoints {
-            // serialized breakpoints start at index one and need to converted
-            // to index zero in order to display/work properly with open breakpoints
-            let position = snapshot
-                .anchor_at(
-                    Point::new(closed_breakpoint.position.saturating_sub(1), 0),
-                    Bias::Left,
-                )
-                .text_anchor;
-
-            open_breakpoints.insert(Breakpoint { position });
+            self.breakpoints.insert(project_path.clone(), hash_set);
         }
     }
 
@@ -227,10 +224,7 @@ impl DapStore {
         buffer_snapshot: BufferSnapshot,
         cx: &mut ModelContext<Self>,
     ) {
-        let breakpoint_set = self
-            .open_breakpoints
-            .entry(project_path.clone())
-            .or_default();
+        let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
 
         if !breakpoint_set.remove(&breakpoint) {
             breakpoint_set.insert(breakpoint);
@@ -252,7 +246,7 @@ impl DapStore {
             return;
         }
 
-        let Some(breakpoints) = self.open_breakpoints.get(project_path) else {
+        let Some(breakpoints) = self.breakpoints.get(project_path) else {
             return;
         };
 

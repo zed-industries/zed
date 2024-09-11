@@ -167,6 +167,7 @@ impl Column for Breakpoint {
             .column_int(start_index)
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
+
         Ok((Breakpoint { position }, start_index + 1))
     }
 }
@@ -184,6 +185,7 @@ impl Column for Breakpoints {
                         .column_int(index)
                         .with_context(|| format!("Failed to read BreakPoint at index {index}"))?
                         as u32;
+
                     breakpoints.push(Breakpoint { position });
                     index += 1;
                 }
@@ -494,7 +496,7 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        // dbg! Remove this comment if i don't figure this out by the end of the month
+        // dbg! Remove this comment if i don't figure this out by the end of the month 9/24
         // TODO Debugger:
         // Figure out why the below query didn't work
         // let breakpoints: Result<Vec<(String, Breakpoints)>> = self
@@ -517,7 +519,7 @@ impl WorkspaceDb {
             match breakpoints {
                 Ok(bp) => {
                     if bp.is_empty() {
-                        log::error!("Breakpoints are empty");
+                        log::error!("Breakpoints are empty after querying database for them");
                     }
 
                     let mut map: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
@@ -711,7 +713,7 @@ impl WorkspaceDb {
                             workspace.id,
                             relative_path,
                             worktree_path.clone(),
-                            Breakpoint { position: serialized_breakpoint.position },
+                            Breakpoint { position: serialized_breakpoint.position},
                         )) {
                             Err(err) => {
                                 log::error!("{err}");

@@ -1983,24 +1983,6 @@ impl Editor {
                 this.git_blame_inline_enabled = true;
                 this.start_git_blame_inline(false, cx);
             }
-
-            if let Some(project) = this.project.as_ref() {
-                let snapshot = buffer.read(cx).snapshot(cx);
-                let project_paths: Vec<_> = buffer
-                    .read(cx)
-                    .all_buffers()
-                    .iter()
-                    .filter_map(|buffer| buffer.read(cx).project_path(cx))
-                    .collect();
-
-                for ref project_path in project_paths {
-                    project.update(cx, |project, cx| {
-                        project.dap_store().update(cx, |store, _cx| {
-                            store.sync_closed_breakpoint_to_open_breakpoint(project_path, &snapshot)
-                        })
-                    })
-                }
-            }
         }
 
         this.report_editor_event("open", None, cx);
@@ -5299,7 +5281,7 @@ impl Editor {
 
         let snapshot = self.snapshot(cx);
 
-        let opened_breakpoints = dap_store.read(cx).open_breakpoints();
+        let opened_breakpoints = dap_store.read(cx).breakpoints();
 
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             let buffer = buffer.read(cx);
@@ -6275,11 +6257,23 @@ impl Editor {
             return;
         };
 
+        let Some(cache_position) = self.buffer.read_with(cx, |buffer, cx| {
+            buffer.buffer(buffer_id).map(|buffer| {
+                buffer
+                    .read(cx)
+                    .summary_for_anchor::<Point>(&breakpoint_position)
+                    .row
+            })
+        }) else {
+            return;
+        };
+
         project.update(cx, |project, cx| {
             project.toggle_breakpoint(
                 buffer_id,
                 Breakpoint {
-                    position: breakpoint_position,
+                    cache_position,
+                    active_position: Some(breakpoint_position),
                 },
                 cx,
             );

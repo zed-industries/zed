@@ -4241,16 +4241,7 @@ impl Workspace {
                             if let Some(serialized_breakpoints) =
                                 serialized_workspace.breakpoints.remove(&worktree_path)
                             {
-                                for serialized_bp in serialized_breakpoints {
-                                    store
-                                        .closed_breakpoints
-                                        .entry(ProjectPath {
-                                            worktree_id,
-                                            path: serialized_bp.path.clone(),
-                                        })
-                                        .or_default()
-                                        .push(serialized_bp);
-                                }
+                                store.deserialize_breakpoints(worktree_id, serialized_breakpoints);
                             }
                         }
                     });

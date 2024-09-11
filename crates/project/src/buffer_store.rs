@@ -1,4 +1,5 @@
 use crate::{
+    dap_store::DapStore,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Item, NoRepositoryError, ProjectPath,
@@ -36,6 +37,7 @@ pub struct BufferStore {
     remote_id: Option<u64>,
     #[allow(unused)]
     worktree_store: Model<WorktreeStore>,
+    dap_store: Model<DapStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
@@ -89,6 +91,7 @@ impl BufferStore {
     pub fn new(
         worktree_store: Model<WorktreeStore>,
         remote_id: Option<u64>,
+        dap_store: Model<DapStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.subscribe(&worktree_store, |this, _, event, cx| {
@@ -102,6 +105,7 @@ impl BufferStore {
             remote_id,
             downstream_client: None,
             worktree_store,
+            dap_store,
             opened_buffers: Default::default(),
             remote_buffer_listeners: Default::default(),
             loading_remote_buffers_by_id: Default::default(),
@@ -117,8 +121,11 @@ impl BufferStore {
         project_path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let existing_buffer = self.get_by_path(&project_path, cx);
-        if let Some(existing_buffer) = existing_buffer {
+        let buffer = self.get_by_path(&project_path, cx);
+        if let Some(existing_buffer) = buffer {
+            self.dap_store.update(cx, |store, cx| {
+                store.set_active_breakpoints(&project_path, &existing_buffer.read(cx));
+            });
             return Task::ready(Ok(existing_buffer));
         }
 
@@ -152,10 +159,15 @@ impl BufferStore {
 
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, cx| {
                         // Record the fact that the buffer is no longer loading.
                         this.loading_buffers_by_path.remove(&project_path);
                         let buffer = load_result.map_err(Arc::new)?;
+
+                        this.dap_store.update(cx, |store, cx| {
+                            store.set_active_breakpoints(&project_path, buffer.read(cx));
+                        });
+
                         Ok(buffer)
                     })?);
                     anyhow::Ok(())

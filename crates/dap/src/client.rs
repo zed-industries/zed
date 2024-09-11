@@ -25,6 +25,7 @@ use smol::{
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    hash::Hash,
     path::Path,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -583,34 +584,58 @@ impl DebugAdapterClient {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Breakpoint {
-    pub position: text::Anchor,
+    pub active_position: Option<text::Anchor>,
+    pub cache_position: u32,
 }
 
 impl Breakpoint {
     pub fn to_source_breakpoint(&self, buffer: &Buffer) -> SourceBreakpoint {
+        let line = self
+            .active_position
+            .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
+            .unwrap_or(self.cache_position) as u64
+            + 1u64;
+
         SourceBreakpoint {
-            line: (buffer.summary_for_anchor::<Point>(&self.position).row + 1) as u64,
+            line,
             condition: None,
             hit_condition: None,
             log_message: None,
             column: None,
             mode: None,
+        }
+    }
+
+    pub fn set_active_position(&mut self, buffer: &Buffer) {
+        if self.active_position.is_none() {
+            self.active_position =
+                Some(buffer.anchor_at(Point::new(self.cache_position, 0), text::Bias::Left));
         }
     }
 
     pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
-        buffer.summary_for_anchor::<Point>(&self.position)
+        self.active_position
+            .map(|position| buffer.summary_for_anchor::<Point>(&position))
+            .unwrap_or(Point::new(self.cache_position, 0))
     }
 
     pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
-        buffer_snapshot.summary_for_anchor::<Point>(&self.position)
+        self.active_position
+            .map(|position| buffer_snapshot.summary_for_anchor::<Point>(&position))
+            .unwrap_or(Point::new(self.cache_position, 0))
     }
 
     pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
+        let line = self
+            .active_position
+            .map(|position| snapshot.summary_for_anchor::<Point>(&position).row)
+            .unwrap_or(self.cache_position) as u64
+            + 1u64;
+
         SourceBreakpoint {
-            line: (snapshot.summary_for_anchor::<Point>(&self.position).row + 1) as u64,
+            line,
             condition: None,
             hit_condition: None,
             log_message: None,
@@ -619,10 +644,19 @@ impl Breakpoint {
         }
     }
 
-    pub fn to_serialized(&self, buffer: &Buffer, path: Arc<Path>) -> SerializedBreakpoint {
-        SerializedBreakpoint {
-            position: buffer.summary_for_anchor::<Point>(&self.position).row + 1,
-            path,
+    pub fn to_serialized(&self, buffer: Option<&Buffer>, path: Arc<Path>) -> SerializedBreakpoint {
+        match buffer {
+            Some(buffer) => SerializedBreakpoint {
+                position: self
+                    .active_position
+                    .map(|position| buffer.summary_for_anchor::<Point>(&position).row + 1u32)
+                    .unwrap_or(self.cache_position + 1u32),
+                path,
+            },
+            None => SerializedBreakpoint {
+                position: self.cache_position + 1u32,
+                path,
+            },
         }
     }
 }

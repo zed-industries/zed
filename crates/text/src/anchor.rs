@@ -17,6 +17,14 @@ pub struct Anchor {
 }
 
 impl Anchor {
+    pub fn offset_for_breakpoint_anchor(offset: usize) -> Self {
+        Anchor {
+            timestamp: clock::Lamport::new(0),
+            offset,
+            bias: Bias::Left,
+            buffer_id: None,
+        }
+    }
     pub const MIN: Self = Self {
         timestamp: clock::Lamport::MIN,
         offset: usize::MIN,
