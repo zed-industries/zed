@@ -58,7 +58,11 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![server_path.into(), "--stdio".into()]
+    vec![
+        "--max-old-space-size=8192".into(),
+        server_path.into(),
+        "--stdio".into(),
+    ]
 }
 
 pub struct TypeScriptLspAdapter {
