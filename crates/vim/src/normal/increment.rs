@@ -185,6 +185,7 @@ fn increment_binary_string(num: &str, delta: i32) -> String {
         unreachable!()
     }
 }
+
 fn find_number(
     snapshot: &MultiBufferSnapshot,
     start: Point,
@@ -192,10 +193,10 @@ fn find_number(
     let mut offset = start.to_offset(snapshot);
 
     let ch0 = snapshot.chars_at(offset).next();
-    if ch0.as_ref().is_some_and(char::is_ascii_digit) || matches!(ch0, Some('-' | 'b' | 'x')) {
+    if ch0.as_ref().is_some_and(char::is_ascii_hexdigit) || matches!(ch0, Some('-' | 'b' | 'x')) {
         // go backwards to the start of any number the selection is within
         for ch in snapshot.reversed_chars_at(offset) {
-            if ch.is_ascii_digit() || ch == '-' || ch == 'b' || ch == 'x' {
+            if ch.is_ascii_hexdigit() || ch == '-' || ch == 'b' || ch == 'x' {
                 offset -= ch.len_utf8();
                 continue;
             }
