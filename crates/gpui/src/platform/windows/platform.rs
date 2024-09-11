@@ -625,15 +625,15 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 }
 
 fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
-    let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
-    if let Some(full_path) = directory.canonicalize().log_err() {
-        let full_path = full_path.to_string_lossy().to_string();
-        if !full_path.is_empty() {
-            let path_item: IShellItem =
-                unsafe { SHCreateItemFromParsingName(&HSTRING::from(&full_path), None)? };
-            unsafe { dialog.SetFolder(&path_item).log_err() };
-        }
-    }
+    let dialog: IFileSaveDialog =
+        unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL).unwrap() };
+    let create = |p: &Path| unsafe { SHCreateItemFromParsingName(&HSTRING::from(p), None) };
+    let path_item: IShellItem = directory
+        .canonicalize()
+        .log_err()
+        .map_or_else(|| create(&directory), |p| create(&p))
+        .map_or_else(|_| create(&std::env::current_dir()?), Ok)?;
+    unsafe { dialog.SetFolder(&path_item).log_err() };
     unsafe {
         if dialog.Show(None).is_err() {
             // User cancelled
