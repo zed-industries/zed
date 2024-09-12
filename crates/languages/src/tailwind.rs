@@ -30,7 +30,13 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 #[cfg(target_os = "windows")]
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec!["-File".into(), server_path.into(), "--stdio".into()]
+    vec![
+        "-ExecutionPolicy".into(),
+        "Bypass".into(),
+        "-File".into(),
+        server_path.into(),
+        "--stdio".into(),
+    ]
 }
 
 pub struct TailwindLspAdapter {
