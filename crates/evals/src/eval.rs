@@ -83,6 +83,8 @@ struct EvaluationQueryOutcome {
     query: String,
     expected_results: Vec<EvaluationSearchResult>,
     actual_results: Vec<EvaluationSearchResult>,
+    covered_file_count: usize,
+    overlapped_result_count: usize,
     covered_result_count: usize,
     total_result_count: usize,
 }
@@ -289,6 +291,8 @@ async fn run_evaluation(
         .unwrap();
 
     let mut covered_result_count = 0;
+    let mut overlapped_result_count = 0;
+    let mut covered_file_count = 0;
     let mut total_result_count = 0;
     eprint!("Running evals.");
 
@@ -302,8 +306,14 @@ async fn run_evaluation(
 
         eprint!("\r\x1B[2K");
         eprint!(
-            "Running evals. {}/{} covered. Project: {}...",
-            covered_result_count, total_result_count, evaluation_project.repo
+            "Running evals. {}/{} covered. {}/{} overlapped. {}/{} files captured. Project: {}...",
+            covered_result_count,
+            total_result_count,
+            overlapped_result_count,
+            total_result_count,
+            covered_file_count,
+            total_result_count,
+            evaluation_project.repo
         );
 
         let repo_db_path =
@@ -365,14 +375,31 @@ async fn run_evaluation(
                 .unwrap();
 
             let mut project_covered_result_count = 0;
+            let mut project_overlapped_result_count = 0;
+            let mut project_covered_file_count = 0;
             for expected_result in &query.expected_results {
-                let was_covered = results.iter().any(|result| {
+                let was_file_captured = results
+                    .iter()
+                    .any(|result| result.path.as_ref() == Path::new(&expected_result.file));
+                let was_partially_covered = results.iter().any(|result| {
+                    result.path.as_ref() == Path::new(&expected_result.file)
+                        && result.row_range.contains(&expected_result.lines.start)
+                        || result.row_range.contains(&expected_result.lines.end)
+                });
+                let was_fully_covered = results.iter().any(|result| {
                     result.path.as_ref() == Path::new(&expected_result.file)
                         && result.row_range.contains(&expected_result.lines.start)
                         && result.row_range.contains(&expected_result.lines.end)
                 });
-                if was_covered {
+
+                if was_fully_covered {
                     project_covered_result_count += 1
+                };
+                if was_partially_covered {
+                    project_overlapped_result_count += 1
+                };
+                if was_file_captured {
+                    project_covered_file_count += 1
                 };
             }
             let outcome_repo = evaluation_project.repo.clone();
@@ -382,6 +409,8 @@ async fn run_evaluation(
                 query: query.query,
                 total_result_count: query.expected_results.len(),
                 covered_result_count: project_covered_result_count,
+                overlapped_result_count: project_overlapped_result_count,
+                covered_file_count: project_covered_file_count,
                 expected_results: query.expected_results,
                 actual_results: results
                     .iter()
@@ -392,7 +421,9 @@ async fn run_evaluation(
                     .collect(),
             };
 
+            overlapped_result_count += query_results.overlapped_result_count;
             covered_result_count += query_results.covered_result_count;
+            covered_file_count += query_results.covered_file_count;
             total_result_count += query_results.total_result_count;
 
             println!("{}", serde_json::to_string(&query_results).unwrap());
@@ -400,8 +431,13 @@ async fn run_evaluation(
     }
 
     eprint!(
-        "\rRan evals. {}/{} covered.",
-        covered_result_count, total_result_count
+        "Running evals. {}/{} covered. {}/{} overlapped. {}/{} files captured.",
+        covered_result_count,
+        total_result_count,
+        overlapped_result_count,
+        total_result_count,
+        covered_file_count,
+        total_result_count,
     );
 
     Ok(())
