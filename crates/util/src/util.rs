@@ -644,7 +644,7 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
 /// This is useful for turning regular alphanumerically sorted sequences as `1-abc, 10, 11-def, .., 2, 21-abc`
 /// into `1-abc, 2, 10, 11-def, .., 21-abc`
 #[derive(Debug, PartialEq, Eq)]
-pub struct NumericPrefixWithSuffix<'a>(Option<u32>, &'a str);
+pub struct NumericPrefixWithSuffix<'a>(Option<u64>, &'a str);
 
 impl<'a> NumericPrefixWithSuffix<'a> {
     pub fn from_numeric_prefixed_str(str: &'a str) -> Self {
