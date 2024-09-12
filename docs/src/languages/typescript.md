@@ -52,7 +52,7 @@ Prettier will also be used for TypeScript files by default. To disable this:
 {
   "lsp": {
     "vtsls": {
-      "initialization_options": {
+      "settings": {
         // For TypeScript:
         "typescript": { "tsserver": { "maxTsServerMemory": 16184 } },
         // For JavaScript:
@@ -62,34 +62,6 @@ Prettier will also be used for TypeScript files by default. To disable this:
   }
 }
 ```
-
-## Inlay Hints
-
-Zed sets the following initialization options to make the language server send back inlay hints
-(that is, when Zed has inlay hints enabled in the settings).
-
-You can override these settings in your configuration file:
-
-```json
-"lsp": {
-    "$LANGUAGE_SERVER_NAME": {
-        "initialization_options": {
-            "preferences": {
-              "includeInlayParameterNameHints": "all",
-              "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-              "includeInlayFunctionParameterTypeHints": true,
-              "includeInlayVariableTypeHints": true,
-              "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
-              "includeInlayPropertyDeclarationTypeHints": true,
-              "includeInlayFunctionLikeReturnTypeHints": true,
-              "includeInlayEnumMemberValueHints": true,
-            }
-        }
-    }
-}
-```
-
-See [typescript-language-server inlayhints documentation](https://github.com/typescript-language-server/typescript-language-server?tab=readme-ov-file#inlay-hints-textdocumentinlayhint) for more information.
 
 ## See also
 
