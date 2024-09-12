@@ -173,7 +173,9 @@ impl TaskTemplate {
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
     pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
-        if self.label.trim().is_empty() || self.command.trim().is_empty() {
+        if self.label.trim().is_empty()
+            || (self.command.trim().is_empty() && matches!(self.task_type, TaskType::Script))
+        {
             return None;
         }
 

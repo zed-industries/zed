@@ -138,6 +138,7 @@ impl DebugTaskDefinition {
 
 /// A group of Debug Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
 pub struct DebugTaskFile(pub Vec<DebugTaskDefinition>);
 
 impl DebugTaskFile {

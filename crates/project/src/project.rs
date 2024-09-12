@@ -94,8 +94,8 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    DebugAdapterConfig, HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate,
-    TaskVariables, VariableName,
+    DebugAdapterConfig, DebugTaskFile, HideStrategy, RevealStrategy, Shell, TaskContext,
+    TaskTemplate, TaskVariables, VariableName, VsCodeTaskFile,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId};
@@ -4170,7 +4170,13 @@ impl Project {
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree".into(),
                             },
-                            |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
+                            |tx, cx| {
+                                StaticSource::new(TrackedFile::new_convertible::<VsCodeTaskFile>(
+                                    tasks_file_rx,
+                                    tx,
+                                    cx,
+                                ))
+                            },
                             cx,
                         );
                     }
@@ -4191,7 +4197,11 @@ impl Project {
                                 id_base: "local_debug_file_for_worktree".into(),
                             },
                             |tx, cx| {
-                                StaticSource::new(TrackedFile::new(debug_task_file_rx, tx, cx))
+                                StaticSource::new(TrackedFile::new_convertible::<DebugTaskFile>(
+                                    debug_task_file_rx,
+                                    tx,
+                                    cx,
+                                ))
                             },
                             cx,
                         );

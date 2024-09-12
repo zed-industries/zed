@@ -78,6 +78,7 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
         cx.background_executor()
             .spawn({
                 let parsed_contents = parsed_contents.clone();
+
                 async move {
                     while let Some(new_contents) = tracker.next().await {
                         if Arc::strong_count(&parsed_contents) == 1 {
@@ -109,9 +110,7 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
                 }
             })
             .detach_and_log_err(cx);
-        Self {
-            parsed_contents: Default::default(),
-        }
+        Self { parsed_contents }
     }
 }
 

@@ -201,10 +201,6 @@ impl DebugAdapter for CustomDebugAdapter {
         }
     }
 
-    fn get_debug_adapter_start_command(&self) -> String {
-        "fail".to_string()
-    }
-
     fn is_installed(&self) -> Option<DebugAdapterBinary> {
         None
     }
