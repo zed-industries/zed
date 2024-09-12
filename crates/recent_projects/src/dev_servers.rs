@@ -48,6 +48,7 @@ use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspac
 use crate::open_dev_server_project;
 use crate::ssh_connections::connect_over_ssh;
 use crate::ssh_connections::open_ssh_project;
+use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionModal;
 use crate::ssh_connections::SshProject;
@@ -1023,7 +1024,7 @@ impl DevServerProjects {
     fn update_settings_file(
         &mut self,
         cx: &mut ViewContext<Self>,
-        f: impl FnOnce(&mut SshSettings) + Send + Sync + 'static,
+        f: impl FnOnce(&mut RemoteSettingsContent) + Send + Sync + 'static,
     ) {
         let Some(fs) = self
             .workspace

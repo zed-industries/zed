@@ -4,25 +4,23 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
-#[serde(default)]
-/// Diagnostics configuration.
+#[derive(Deserialize, Debug)]
 pub struct ProjectDiagnosticsSettings {
-    /// Whether to show warnings or not by default.
     pub include_warnings: bool,
 }
 
-impl Default for ProjectDiagnosticsSettings {
-    fn default() -> Self {
-        Self {
-            include_warnings: true,
-        }
-    }
+/// Diagnostics configuration.
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct ProjectDiagnosticsSettingsContent {
+    /// Whether to show warnings or not by default.
+    ///
+    /// Default: true
+    include_warnings: Option<bool>,
 }
 
 impl Settings for ProjectDiagnosticsSettings {
     const KEY: Option<&'static str> = Some("diagnostics");
-    type FileContent = Self;
+    type FileContent = ProjectDiagnosticsSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()

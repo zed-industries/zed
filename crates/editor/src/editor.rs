@@ -10640,7 +10640,7 @@ impl Editor {
         let fs = workspace.read(cx).app_state().fs.clone();
         let current_show = TabBarSettings::get_global(cx).show;
         update_settings_file::<TabBarSettings>(fs, cx, move |setting, _| {
-            setting.show = !current_show;
+            setting.show = Some(!current_show);
         });
     }
 
@@ -12563,7 +12563,7 @@ impl EditorSnapshot {
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
                 ProjectSettings::get_global(cx).git.git_gutter,
-                GitGutterSetting::TrackedFiles
+                Some(GitGutterSetting::TrackedFiles)
             )
         });
         let gutter_settings = EditorSettings::get_global(cx).gutter;

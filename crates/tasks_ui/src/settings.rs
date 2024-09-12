@@ -2,26 +2,22 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
-#[serde(default)]
-/// Task-related settings.
+#[derive(Serialize, Deserialize, PartialEq, Default)]
 pub(crate) struct TaskSettings {
-    /// Whether to show task status indicator in the status bar. Default: true
     pub(crate) show_status_indicator: bool,
 }
 
-impl Default for TaskSettings {
-    fn default() -> Self {
-        Self {
-            show_status_indicator: true,
-        }
-    }
+/// Task-related settings.
+#[derive(Serialize, Deserialize, PartialEq, Default, Clone, JsonSchema)]
+pub(crate) struct TaskSettingsContent {
+    /// Whether to show task status indicator in the status bar. Default: true
+    show_status_indicator: Option<bool>,
 }
 
 impl Settings for TaskSettings {
     const KEY: Option<&'static str> = Some("task");
 
-    type FileContent = Self;
+    type FileContent = TaskSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,

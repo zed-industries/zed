@@ -116,30 +116,27 @@ impl Drop for MacOsUnmounter {
     }
 }
 
-/// Whether or not to automatically check for updates.
-#[derive(Clone, Copy, JsonSchema, Deserialize, Serialize)]
-#[serde(default)]
-#[serde(transparent)]
 struct AutoUpdateSetting(bool);
 
-impl Default for AutoUpdateSetting {
-    fn default() -> Self {
-        Self(true)
-    }
-}
+/// Whether or not to automatically check for updates.
+///
+/// Default: true
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
+#[serde(transparent)]
+struct AutoUpdateSettingContent(bool);
 
 impl Settings for AutoUpdateSetting {
     const KEY: Option<&'static str> = Some("auto_update");
 
-    type FileContent = Self;
+    type FileContent = Option<AutoUpdateSettingContent>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let auto_update = [sources.release_channel, sources.user]
             .into_iter()
-            .find_map(|value| value.copied())
-            .unwrap_or(*sources.default);
+            .find_map(|value| value.copied().flatten())
+            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
-        Ok(auto_update)
+        Ok(Self(auto_update.0))
     }
 }
 

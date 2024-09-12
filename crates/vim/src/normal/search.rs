@@ -542,7 +542,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = false);
+            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
         });
 
         cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
@@ -655,7 +655,7 @@ mod test {
 
         // check that searching with unable search wrap
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = false);
+            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
         });
         cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
         cx.simulate_keystrokes("/ c c enter");

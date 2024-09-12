@@ -7,13 +7,10 @@ use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
-use language::{
-    CodeLabel, Language, LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate,
-};
+use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
-use rope::Rope;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -205,30 +202,6 @@ impl LspAdapter for JsonLspAdapter {
         })))
     }
 
-    async fn label_for_completion(
-        &self,
-        item: &lsp::CompletionItem,
-        language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        let text = if let Some(description) = item
-            .label_details
-            .as_ref()
-            .and_then(|label_details| label_details.description.as_ref())
-        {
-            format!("{} {}", item.label, description)
-        } else if let Some(detail) = &item.detail {
-            format!("{} {}", item.label, detail)
-        } else {
-            item.label.clone()
-        };
-        let rope = Rope::from(item.label.as_str());
-        let runs = language.highlight_text(&rope, 0..item.label.len());
-        Some(language::CodeLabel {
-            text,
-            runs,
-            filter_range: 0..item.label.len(),
-        })
-    }
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
