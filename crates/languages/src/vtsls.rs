@@ -271,17 +271,20 @@ impl LspAdapter for VtslsLspAdapter {
                 .and_then(|s| s.settings.clone())
         })?;
 
+        if let Some(options) = override_options {
+            return Ok(options);
+        }
+
         let config = serde_json::json!({
             "tsserver": {
                 "maxTsServerMemory": 8092
             },
         });
 
-        let mut options = serde_json::json!({
+        Ok(serde_json::json!({
             "typescript": config,
             "javascript": config
-        });
-        Ok(options)
+        }))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
