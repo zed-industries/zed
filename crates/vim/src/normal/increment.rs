@@ -167,13 +167,31 @@ fn adaptive_decrement_u64(mut n: u64, delta: i32) -> (u64, bool) {
 fn increment_hex_string(num: &str, delta: i32) -> String {
     if let Ok(val) = i32::from_str_radix(&num, 16) {
         let result = val + delta;
-        if num.to_ascii_lowercase() == num {
+        if should_use_lowercase(num) {
             format!("{:0width$x}", result, width = num.len())
         } else {
             format!("{:0width$X}", result, width = num.len())
         }
     } else {
         unreachable!()
+    }
+}
+
+fn should_use_lowercase(num: &str) -> bool {
+    let mut contain_lowercase = false;
+    let mut contain_alphabet = false;
+    for ch in num.chars() {
+        if !ch.is_ascii_digit() {
+            contain_alphabet = true;
+            if ch.is_ascii_lowercase() {
+                contain_lowercase = true;
+            }
+        }
+    }
+    if contain_lowercase || !contain_alphabet {
+        true
+    } else {
+        false
     }
 }
 
@@ -237,6 +255,8 @@ fn find_number(
                 begin = Some(offset);
             }
             num.push(ch);
+            println!("pushing {}", ch);
+            println!();
         } else if begin.is_some() {
             end = Some(offset);
             break;
