@@ -7,6 +7,7 @@ use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
     protocol::PromptInfo,
+    types::{SamplingContent, SamplingMessage, SamplingRole},
 };
 use gpui::{Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
@@ -127,8 +128,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     return Err(anyhow!("Context server not initialized"));
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
-                let mut prompt = result.prompt;
-
+                let mut prompt = format_messages(&result.messages);
                 // We must normalize the line endings here, since servers might return CR characters.
                 LineEnding::normalize(&mut prompt);
 
@@ -202,5 +202,55 @@ pub fn acceptable_prompt(prompt: &PromptInfo) -> bool {
         None => true,
         Some(args) if args.len() <= 1 => true,
         _ => false,
+    }
+}
+
+/// Formats a list of `SamplingMessage`s into a single string.
+///
+/// This function takes a slice of `SamplingMessage`s and converts them into a formatted string.
+/// The formatting depends on the content of the messages:
+///
+/// - If all messages are from the User, it concatenates their text content, separated by newlines.
+/// - Otherwise, it formats each message as "Role: Content", with roles being either "User" or "Assistant".
+///
+/// # Notes
+///
+/// - Image content is currently ignored for User-only messages and represented as "[Image]" for mixed messages.
+/// - Empty strings are used for image content in User-only messages to maintain consistency in newline separation.
+///
+/// # TODO
+/// We should properly render these messages with the respective User/Assistant labels that the assistant panel
+/// supports, but Slash command do not yet support within that assistant panel.
+fn format_messages(messages: &[SamplingMessage]) -> String {
+    if messages
+        .iter()
+        .all(|msg| matches!(msg.role, SamplingRole::User))
+    {
+        messages
+            .iter()
+            .map(|msg| {
+                match &msg.content {
+                    SamplingContent::Text(text) => text,
+                    SamplingContent::Image { .. } => "", // Ignore images for now
+                }
+            })
+            .collect::<Vec<&str>>()
+            .join("\n")
+    } else {
+        messages
+            .iter()
+            .map(|msg| {
+                let role = match msg.role {
+                    SamplingRole::User => "User",
+                    SamplingRole::Assistant => "Assistant",
+                };
+                let content = match &msg.content {
+                    SamplingContent::Text(text) => text,
+                    SamplingContent::Image { .. } => "",
+                };
+                format!("{}: {}", role, content)
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
