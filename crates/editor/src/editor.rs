@@ -6671,7 +6671,11 @@ impl Editor {
                 let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
-                    selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+                    if !selection.is_empty() && selection.end.column == 0 {
+                        selection.end = cmp::min(max_point, selection.end);
+                    } else {
+                        selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+                    }
                     selection.goal = SelectionGoal::None;
                 }
                 if is_first {
