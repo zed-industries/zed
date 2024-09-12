@@ -78,7 +78,7 @@ impl Spacing {
     }
 
     pub fn px(self, cx: &WindowContext) -> Pixels {
-        let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size.into();
+        let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size().into();
 
         px(ui_font_size_f32 * self.spacing_ratio(cx))
     }

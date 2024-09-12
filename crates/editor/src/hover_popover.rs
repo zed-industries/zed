@@ -337,7 +337,7 @@ fn show_hover(
                         let mut base_text_style = cx.text_style();
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
-                            font_size: Some(settings.ui_font_size.into()),
+                            font_size: Some(settings.ui_font_size().into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
 

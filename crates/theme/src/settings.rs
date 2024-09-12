@@ -19,6 +19,7 @@ use std::sync::Arc;
 use util::ResultExt as _;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
+const MAX_FONT_SIZE: Pixels = px(100.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
 #[derive(
@@ -97,6 +98,11 @@ pub struct ThemeSettings {
 impl ThemeSettings {
     const DEFAULT_LIGHT_THEME: &'static str = "One Light";
     const DEFAULT_DARK_THEME: &'static str = "One Dark";
+
+    /// Returns the safety ui_font_size.
+    pub fn ui_font_size(&self) -> Pixels {
+        self.ui_font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    }
 
     /// Returns the name of the default theme for the given [`Appearance`].
     pub fn default_theme(appearance: Appearance) -> &'static str {
@@ -492,13 +498,13 @@ pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
 }
 
 pub fn get_ui_font_size(cx: &WindowContext) -> Pixels {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size();
     cx.try_global::<AdjustedUiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
 }
 
 pub fn adjust_ui_font_size(cx: &mut WindowContext, f: fn(&mut Pixels)) {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size();
     let mut adjusted_size = cx
         .try_global::<AdjustedUiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0);

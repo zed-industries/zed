@@ -148,7 +148,7 @@ impl Render for BlameEntryTooltip {
             .as_ref()
             .and_then(|details| details.pull_request.clone());
 
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size();
         let message_max_height = cx.line_height() * 12 + (ui_font_size / 0.4);
 
         tooltip_container(cx, move |this, cx| {

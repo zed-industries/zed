@@ -338,7 +338,7 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size();
 
         div().occlude().elevation_2(cx).flex().flex_row().child(
             WithRemSize::new(ui_font_size).flex().child(
