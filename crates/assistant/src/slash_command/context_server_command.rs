@@ -230,7 +230,7 @@ fn format_messages(messages: &[SamplingMessage]) -> String {
             .iter()
             .map(|msg| {
                 match &msg.content {
-                    SamplingContent::Text(text) => text,
+                    SamplingContent::Text { text } => text,
                     SamplingContent::Image { .. } => "", // Ignore images for now
                 }
             })
@@ -245,7 +245,7 @@ fn format_messages(messages: &[SamplingMessage]) -> String {
                     SamplingRole::Assistant => "Assistant",
                 };
                 let content = match &msg.content {
-                    SamplingContent::Text(text) => text,
+                    SamplingContent::Text { text } => text,
                     SamplingContent::Image { .. } => "",
                 };
                 format!("{}: {}", role, content)

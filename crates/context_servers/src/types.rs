@@ -160,10 +160,11 @@ pub enum SamplingRole {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", content = "content")]
+#[serde(tag = "type")]
 pub enum SamplingContent {
     #[serde(rename = "text")]
-    Text(String),
+    Text { text: String },
+    // Keep the Image variant if it's still needed
     #[serde(rename = "image")]
     Image { data: String, mime_type: String },
 }
