@@ -5,10 +5,7 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::{
-    lsp_store::language_server_settings,
-    project_settings::BinarySettings,
-};
+use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use serde_json::{json, Value};
 use std::{
     any::Any,
