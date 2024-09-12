@@ -8,7 +8,7 @@ use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
 use regex::Regex;
 use serde_json::json;
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use smol::{fs, process};
 use std::{
     any::Any,
@@ -71,10 +71,16 @@ impl super::LspAdapter for GoLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+            ProjectSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: delegate.worktree_id(),
+                    path: delegate.worktree_root_path(),
+                }),
+                cx,
+            )
+            .lsp
+            .get(Self::SERVER_NAME)
+            .and_then(|s| s.binary.clone())
         });
 
         match configured_binary {

@@ -8,6 +8,7 @@ use node_runtime::NodeRuntime;
 use project::project_settings::ProjectSettings;
 use serde_json::Value;
 use settings::Settings;
+use settings::SettingsLocation;
 use std::{
     any::Any,
     borrow::Cow,
@@ -177,15 +178,21 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
+            ProjectSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: adapter.worktree_id(),
+                    path: adapter.worktree_root_path(),
+                }),
+                cx,
+            )
+            .lsp
+            .get(Self::SERVER_NAME)
+            .and_then(|s| s.settings.clone())
+            .unwrap_or_default()
         })
     }
 }

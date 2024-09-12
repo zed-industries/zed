@@ -9,7 +9,7 @@ use language_settings::all_language_settings;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
 use regex::Regex;
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -40,10 +40,16 @@ impl LspAdapter for RustLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+            ProjectSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: delegate.worktree_id(),
+                    path: delegate.worktree_root_path(),
+                }),
+                cx,
+            )
+            .lsp
+            .get(Self::SERVER_NAME)
+            .and_then(|s| s.binary.clone())
         });
 
         match configured_binary {

@@ -6,7 +6,7 @@ use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{fs::remove_matching, maybe, ResultExt};
@@ -29,10 +29,16 @@ impl super::LspAdapter for CLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+            ProjectSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: delegate.worktree_id(),
+                    path: delegate.worktree_root_path(),
+                }),
+                cx,
+            )
+            .lsp
+            .get(Self::SERVER_NAME)
+            .and_then(|s| s.binary.clone())
         });
 
         match configured_binary {

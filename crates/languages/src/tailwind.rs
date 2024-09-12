@@ -8,7 +8,7 @@ use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::project_settings::ProjectSettings;
 use serde_json::{json, Value};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use smol::fs;
 use std::{
     any::Any,
@@ -53,15 +53,21 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx
             .update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .lsp
-                    .get(Self::SERVER_NAME)
-                    .and_then(|s| s.binary.clone())
+                ProjectSettings::get(
+                    Some(SettingsLocation {
+                        worktree_id: delegate.worktree_id(),
+                        path: delegate.worktree_root_path(),
+                    }),
+                    cx,
+                )
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.binary.clone())
             })
             .ok()??;
 
@@ -171,15 +177,21 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let tailwind_user_settings = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
+            ProjectSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: delegate.worktree_id(),
+                    path: delegate.worktree_root_path(),
+                }),
+                cx,
+            )
+            .lsp
+            .get(Self::SERVER_NAME)
+            .and_then(|s| s.settings.clone())
+            .unwrap_or_default()
         })?;
 
         let mut configuration = json!({
