@@ -522,7 +522,6 @@ impl EditorElement {
             return;
         }
 
-
         let point_for_position =
             position_map.point_for_position(text_hitbox.bounds, event.position);
         let position = point_for_position.previous_valid;
