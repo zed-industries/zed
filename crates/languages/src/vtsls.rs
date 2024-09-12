@@ -5,9 +5,8 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::project_settings::{BinarySettings, ProjectSettings};
+use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use serde_json::{json, Value};
-use settings::{Settings, SettingsLocation};
 use std::{
     any::Any,
     ffi::OsString,
@@ -75,10 +74,7 @@ impl LspAdapter for VtslsLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+            language_server_settings(delegate, SERVER_NAME, cx).and_then(|s| s.binary.clone())
         });
 
         match configured_binary {
@@ -270,26 +266,18 @@ impl LspAdapter for VtslsLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        adapter: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            ProjectSettings::get(
-                Some(SettingsLocation {
-                    worktree_id: adapter.worktree_id(),
-                    path: adapter.worktree_root_path(),
-                }),
-                cx,
-            )
-            .lsp
-            .get(SERVER_NAME)
-            .and_then(|s| s.initialization_options.clone())
+            language_server_settings(delegate.as_ref(), SERVER_NAME, cx)
+                .and_then(|s| s.initialization_options.clone())
         })?;
         if let Some(options) = override_options {
             return Ok(options);
         }
         let mut initialization_options = self
-            .initialization_options(adapter)
+            .initialization_options(delegate)
             .await
             .map(|o| o.unwrap())?;
 
