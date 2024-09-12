@@ -12,7 +12,7 @@ use collections::{hash_map, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
-    Future, FutureExt as _,
+    Future,
 };
 use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
