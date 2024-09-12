@@ -222,9 +222,6 @@ impl LspAdapter for VtslsLspAdapter {
             "suggest": {
                 "completeFunctionCalls": true
             },
-            "tsserver": {
-                "maxTsServerMemory": 8092
-            },
             "inlayHints": {
                 "parameterNames": {
                     "enabled": "all",
@@ -273,7 +270,18 @@ impl LspAdapter for VtslsLspAdapter {
             language_server_settings(delegate.as_ref(), SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
         })?;
-        Ok(override_options.unwrap_or_default())
+
+        let config = serde_json::json!({
+            "tsserver": {
+                "maxTsServerMemory": 8092
+            },
+        });
+
+        let mut options = serde_json::json!({
+            "typescript": config,
+            "javascript": config
+        });
+        Ok(options)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
