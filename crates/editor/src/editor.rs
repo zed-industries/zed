@@ -5377,6 +5377,7 @@ impl Editor {
         .icon_size(IconSize::XSmall)
         .size(ui::ButtonSize::None)
         .icon_color(color)
+        .style(ButtonStyle::Transparent)
         .on_click(cx.listener(move |editor, _e, cx| {
             editor.focus(cx);
             editor.toggle_breakpoint_at_anchor(anchor, cx);
