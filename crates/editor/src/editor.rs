@@ -6228,6 +6228,15 @@ impl Editor {
     pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
         let cursor_position: Point = self.selections.newest(cx).head();
 
+        // Bias is set to right when placing a breakpoint on the first row
+        // to avoid having the breakpoint's anchor be anchor::MIN & having
+        // it's buffer_id be None
+        let bias = if cursor_position.row == 0 {
+            Bias::Right
+        } else {
+            Bias::Left
+        };
+
         // We Set the column position to zero so this function interacts correctly
         // between calls by clicking on the gutter & using an action to toggle a
         // breakpoint. Otherwise, toggling a breakpoint through an action wouldn't
@@ -6236,7 +6245,7 @@ impl Editor {
             .snapshot(cx)
             .display_snapshot
             .buffer_snapshot
-            .anchor_before(Point::new(cursor_position.row, 0))
+            .anchor_at(Point::new(cursor_position.row, 0), bias)
             .text_anchor;
 
         self.toggle_breakpoint_at_anchor(breakpoint_position, cx);
