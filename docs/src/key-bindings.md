@@ -426,7 +426,7 @@ TBD: Add Column with Linux shortcuts
 | Close clean items             | Pane           | `⌘ + K, U`              |
 | Close inactive items          | Pane           | `Alt + ⌘ + T`           |
 | Go back                       | Pane           | `Control + -`           |
-| Go forward                    | Pane           | `Control + _`           |
+| Go forward                    | Pane           | `Control + Shift + _`   |
 | Reopen closed item            | Pane           | `⌘ + Shift + T`         |
 | Split down                    | Pane           | `⌘ + K, Down`           |
 | Split left                    | Pane           | `⌘ + K, Left`           |
