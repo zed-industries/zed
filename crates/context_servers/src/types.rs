@@ -147,9 +147,32 @@ pub struct ResourcesListResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SamplingMessage {
+    pub role: SamplingRole,
+    pub content: SamplingContent,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SamplingRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", content = "content")]
+pub enum SamplingContent {
+    #[serde(rename = "text")]
+    Text(String),
+    #[serde(rename = "image")]
+    Image { data: String, mime_type: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PromptsGetResponse {
     pub description: Option<String>,
-    pub prompt: String,
+    pub messages: Vec<SamplingMessage>,
 }
 
 #[derive(Debug, Deserialize)]
