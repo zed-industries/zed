@@ -358,7 +358,7 @@ async fn run_evaluation(
         let project_index = cx
             .update(|cx| semantic_index.project_index(project.clone(), cx))
             .unwrap();
-        wait_for_indexing_complete(&project_index, cx, Some(Duration::from_secs(60))).await;
+        wait_for_indexing_complete(&project_index, cx, Some(Duration::from_secs(120))).await;
 
         for query in evaluation_project.queries {
             let results = cx
