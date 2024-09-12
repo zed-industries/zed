@@ -58,6 +58,8 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
+    /// Tells debug tasks which program to debug
+    pub program: Option<String>,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
@@ -96,7 +98,16 @@ impl ResolvedTask {
     pub fn debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
         match self.original_task.task_type.clone() {
             TaskType::Script => None,
-            TaskType::Debug(adapter_config) => Some(adapter_config),
+            TaskType::Debug(mut adapter_config) => {
+                adapter_config.program = match &self.resolved {
+                    None => adapter_config.program,
+                    Some(spawn_in_terminal) => spawn_in_terminal
+                        .program
+                        .clone()
+                        .unwrap_or(adapter_config.program),
+                };
+                Some(adapter_config)
+            }
         }
     }
 

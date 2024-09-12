@@ -1662,6 +1662,7 @@ pub async fn spawn_ssh_task(
                     hide: HideStrategy::Never,
                     env: Default::default(),
                     shell: Default::default(),
+                    program: None,
                 },
                 cx,
             )

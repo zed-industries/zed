@@ -111,6 +111,8 @@ pub struct DebugTaskDefinition {
     adapter: DebugAdapterKind,
     /// Additional initialization arguments to be sent on DAP initialization
     initialize_args: Option<Vec<String>>,
+    /// The path of the debug adapter to use
+    adapter_path: Option<String>,
 }
 
 impl DebugTaskDefinition {
@@ -120,7 +122,7 @@ impl DebugTaskDefinition {
             kind: self.adapter,
             request: self.session_type,
             program: self.program,
-            adapter_path: None,
+            adapter_path: self.adapter_path,
             initialize_args: self.initialize_args,
         });
 

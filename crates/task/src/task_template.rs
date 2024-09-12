@@ -242,6 +242,16 @@ impl TaskTemplate {
             &mut substituted_variables,
         )?;
 
+        let program = match &self.task_type {
+            TaskType::Script => None,
+            TaskType::Debug(adapter_config) => Some(substitute_all_template_variables_in_str(
+                &adapter_config.program,
+                &task_variables,
+                &variable_names,
+                &mut substituted_variables,
+            )?),
+        };
+
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
             .log_err()?;
@@ -296,6 +306,7 @@ impl TaskTemplate {
                 reveal: self.reveal,
                 hide: self.hide,
                 shell: self.shell.clone(),
+                program,
             }),
         })
     }
