@@ -49,16 +49,15 @@ impl_actions!(debug_panel_item, [DebugItemAction]);
 /// This struct is for actions that should be triggered even when
 /// the debug pane is not in focus. This is done by setting workspace
 /// as the action listener then having workspace call `handle_workspace_action`
-#[derive(Clone, Deserialize, PartialEq, Default)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct DebugItemAction {
     kind: DebugPanelItemActionKind,
 }
 
 /// Actions that can be sent to workspace
 /// currently all of these are button toggles
-#[derive(Deserialize, PartialEq, Default, Clone, Debug)]
+#[derive(Deserialize, PartialEq, Clone, Debug)]
 enum DebugPanelItemActionKind {
-    #[default]
     Continue,
     StepOver,
     StepIn,
