@@ -121,6 +121,9 @@ pub struct LanguageSettings {
     pub linked_edits: bool,
     /// Task configuration for this language.
     pub tasks: LanguageTaskConfig,
+
+    /// Rainbow brackets config
+    pub rainbow_brackets: bool,
 }
 
 impl LanguageSettings {
@@ -345,6 +348,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {}
     pub tasks: Option<LanguageTaskConfig>,
+    /// Task configuration for this language.
+    ///
+    /// Default: {}
+    pub rainbow_brackets: Option<bool>,
 }
 
 /// The contents of the inline completion settings.

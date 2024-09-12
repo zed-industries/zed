@@ -439,6 +439,7 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
+  "rainbow_brackets": true,
   "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.

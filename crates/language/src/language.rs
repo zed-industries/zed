@@ -62,7 +62,7 @@ use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
-use util::serde::default_true;
+use util::{maybe, serde::default_true};
 
 pub use buffer::Operation;
 pub use buffer::*;
@@ -848,6 +848,7 @@ impl GrammarId {
     }
 }
 
+struct HighlighBracketsQuery(Query, usize);
 pub struct Grammar {
     id: GrammarId,
     pub ts_language: tree_sitter::Language,
@@ -862,6 +863,7 @@ pub struct Grammar {
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
+    pub(crate) highlights_with_brackets_query: Option<(Query, usize)>,
 }
 
 struct IndentConfig {
@@ -962,6 +964,7 @@ impl Language {
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
+                    highlights_with_brackets_query: None,
                 })
             }),
             context_provider: None,
@@ -974,12 +977,12 @@ impl Language {
     }
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
-        if let Some(query) = queries.highlights {
+        if let Some(query) = queries.highlights.as_ref() {
             self = self
                 .with_highlights_query(query.as_ref())
                 .context("Error loading highlights query")?;
         }
-        if let Some(query) = queries.brackets {
+        if let Some(query) = queries.brackets.as_ref() {
             self = self
                 .with_brackets_query(query.as_ref())
                 .context("Error loading brackets query")?;
@@ -1019,6 +1022,34 @@ impl Language {
                 .with_runnable_query(query.as_ref())
                 .context("Error loading tests query")?;
         }
+        if let Some((brackets, highlights)) = queries.brackets.zip(queries.highlights) {
+            self = self
+                .with_highlights_and_brackets_query(&brackets, &highlights)
+                .context("Error loading rainbow brackets query")?;
+        }
+        Ok(self)
+    }
+
+    pub fn with_highlights_and_brackets_query(
+        mut self,
+        brackets: &str,
+        highlights: &str,
+    ) -> Result<Self> {
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let merged_query = format!("{brackets}\n{highlights}");
+        let brackets_count = grammar
+            .brackets_config
+            .as_ref()
+            .expect("Expected bracket query to be initialized")
+            .query
+            .pattern_count();
+
+        grammar.highlights_with_brackets_query = Some((
+            Query::new(&grammar.ts_language, &merged_query)?,
+            brackets_count,
+        ));
         Ok(self)
     }
 

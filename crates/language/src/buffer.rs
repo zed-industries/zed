@@ -2574,16 +2574,20 @@ impl BufferSnapshot {
         None
     }
 
-    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
+    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>, usize) {
+        //let settings = self.settings_at(range.start, cx).rainbow_brackets;
         let captures = self.syntax.captures(range, &self.text, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_with_brackets_query
+                .as_ref()
+                .map(|(query, _)| query)
         });
         let highlight_maps = captures
             .grammars()
             .iter()
             .map(|grammar| grammar.highlight_map())
             .collect();
-        (captures, highlight_maps)
+        (captures, highlight_maps, bracket_patterns_count)
     }
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
