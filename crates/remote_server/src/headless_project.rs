@@ -37,8 +37,7 @@ impl HeadlessProject {
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         // TODO: we should load the env correctly (as we do in login_shell_env_loaded when stdout is not a pty). Can we re-use the ProjectEnvironment for that?
-        let mut languages =
-            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages
             .set_language_server_download_dir(PathBuf::from("/Users/conrad/what-could-go-wrong"));
 

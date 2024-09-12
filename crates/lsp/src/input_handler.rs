@@ -91,7 +91,6 @@ impl LspStdoutHandler {
 
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming message: {message}");
-                dbg!(&message);
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
                 }

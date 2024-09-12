@@ -517,7 +517,6 @@ impl LanguageServer {
         let mut content_len_buffer = Vec::new();
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message:{}", message);
-            dbg!(&message);
             for handler in io_handlers.lock().values_mut() {
                 handler(IoKind::StdIn, &message);
             }

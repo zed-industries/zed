@@ -105,8 +105,7 @@ pub fn main() {
         let node_runtime = FakeNodeRuntime::new();
         theme::init(LoadThemes::JustBase, cx);
 
-        let language_registry =
-            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        let language_registry = LanguageRegistry::new(cx.background_executor().clone());
         language_registry.set_theme(cx.theme().clone());
         let language_registry = Arc::new(language_registry);
         languages::init(language_registry.clone(), node_runtime, cx);
