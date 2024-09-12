@@ -30,9 +30,7 @@ pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| {
-        super::new_linker(Extension::add_to_linker)
-    })
+    LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
 }
 
 impl From<Command> for latest::Command {
