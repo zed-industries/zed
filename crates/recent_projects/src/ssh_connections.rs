@@ -22,24 +22,8 @@ use ui::{
 use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[derive(Deserialize)]
 pub struct SshSettings {
-    /// ssh_connections is an array of ssh connections.
-    /// By default this setting is null, which disables the direct ssh connection support.
-    /// You can configure these from `project: Open Remote` in the command palette.
-    /// Zed's ssh support will pull configuration from your ~/.ssh too.
-    /// Examples:
-    /// [
-    ///   {
-    ///     "host": "example-box",
-    ///     "projects": [
-    ///       {
-    ///         "paths": ["/home/user/code/zed"]
-    ///       }
-    ///     ]
-    ///   }
-    /// ]
     pub ssh_connections: Option<Vec<SshConnection>>,
 }
 
@@ -78,10 +62,15 @@ pub struct SshProject {
     pub paths: Vec<String>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct RemoteSettingsContent {
+    pub ssh_connections: Option<Vec<SshConnection>>,
+}
+
 impl Settings for SshSettings {
     const KEY: Option<&'static str> = None;
 
-    type FileContent = Self;
+    type FileContent = RemoteSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()

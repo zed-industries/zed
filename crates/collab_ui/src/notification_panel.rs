@@ -672,7 +672,7 @@ impl Panel for NotificationPanel {
         settings::update_settings_file::<NotificationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings, _| settings.dock = position,
+            move |settings, _| settings.dock = Some(position),
         );
     }
 

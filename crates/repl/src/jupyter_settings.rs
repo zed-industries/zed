@@ -6,10 +6,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[derive(Debug, Default)]
 pub struct JupyterSettings {
-    /// Default kernels to select for each language.
     pub kernel_selections: HashMap<String, String>,
 }
 
@@ -22,10 +20,26 @@ impl JupyterSettings {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct JupyterSettingsContent {
+    /// Default kernels to select for each language.
+    ///
+    /// Default: `{}`
+    pub kernel_selections: Option<HashMap<String, String>>,
+}
+
+impl Default for JupyterSettingsContent {
+    fn default() -> Self {
+        JupyterSettingsContent {
+            kernel_selections: Some(HashMap::new()),
+        }
+    }
+}
+
 impl Settings for JupyterSettings {
     const KEY: Option<&'static str> = Some("jupyter");
 
-    type FileContent = Self;
+    type FileContent = JupyterSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
@@ -37,8 +51,10 @@ impl Settings for JupyterSettings {
         let mut settings = JupyterSettings::default();
 
         for value in sources.defaults_and_customizations() {
-            for (k, v) in &value.kernel_selections {
-                settings.kernel_selections.insert(k.clone(), v.clone());
+            if let Some(source) = &value.kernel_selections {
+                for (k, v) in source {
+                    settings.kernel_selections.insert(k.clone(), v.clone());
+                }
             }
         }
 

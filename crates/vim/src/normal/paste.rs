@@ -291,7 +291,7 @@ mod test {
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = UseSystemClipboard::Never
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -327,7 +327,7 @@ mod test {
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = UseSystemClipboard::OnYank
+                s.use_system_clipboard = Some(UseSystemClipboard::OnYank)
             });
         });
 
@@ -584,7 +584,7 @@ mod test {
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = UseSystemClipboard::Never
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -630,7 +630,7 @@ mod test {
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = UseSystemClipboard::Never
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -659,7 +659,7 @@ mod test {
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = UseSystemClipboard::Never
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -707,7 +707,7 @@ mod test {
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = UseSystemClipboard::Never
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 

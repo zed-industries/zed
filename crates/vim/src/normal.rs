@@ -1184,7 +1184,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_multiline_find = true;
+                s.use_multiline_find = Some(true);
             });
         });
 
@@ -1226,7 +1226,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_multiline_find = true;
+                s.use_multiline_find = Some(true);
             });
         });
 
@@ -1268,7 +1268,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_smartcase_find = true;
+                s.use_smartcase_find = Some(true);
             });
         });
 
