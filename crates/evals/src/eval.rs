@@ -300,8 +300,9 @@ async fn run_evaluation(
             continue;
         }
 
+        eprint!("\r\x1B[2K");
         eprint!(
-            "\rRunning evals. {}/{} covered. Project: {}...",
+            "Running evals. {}/{} covered. Project: {}...",
             covered_result_count, total_result_count, evaluation_project.repo
         );
 
