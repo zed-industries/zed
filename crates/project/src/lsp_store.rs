@@ -3499,7 +3499,7 @@ impl LspStore {
                                             .to_owned();
                                         let path = if Path::new(path).components().next().is_none()
                                         {
-                                            Arc::from(Path::new("/"))
+                                            Arc::from(Path::new(worktree_root_path))
                                         } else {
                                             PathBuf::from(path).into()
                                         };
