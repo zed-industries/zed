@@ -128,3 +128,8 @@
 - [Contributing to Zed](./contribute-to-zed.md)
 - [Conversations](./conversations.md)
 - [Feedback and Support](./feedback-and-support.md)
+
+# Build
+
+- [Index](./build/build.md)
+- [Design](./build/design.md)
