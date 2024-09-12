@@ -6659,27 +6659,26 @@ impl Editor {
         });
     }
 
-    // Lorem ipsum
-    // dolor sit
-    // amet
-    //
-    // Consecteur
     pub fn rewrap(&mut self, _: &Rewrap, cx: &mut ViewContext<Self>) {
-        let buffer = self.buffer.read(cx).read(cx);
+
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
         // let mut contiguous_row_selections = Vec::new();
         // let mut new_selections = Vec::new();
 
         while let Some(selection) = selections.next() {
+            let row = selection.head().row;
+            let indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
+            let indent_end = Point::new(row, indent_size.len);
+
+            let mut line_prefix = indent_size.chars().collect::<String>();
+
             let mut start_row = selection.start.row;
             let mut end_row = selection.end.row;
-            if selection.is_empty() {
-                let row = selection.head().row;
-                let indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
-                let indent_end = Point::new(row, indent_size.len);
 
-                let mut line_prefix = indent_size.chars().collect::<String>();
+            if selection.is_empty() {
                 if let Some(comment_prefix) =
                     buffer
                         .language_scope_at(selection.head())
@@ -6717,19 +6716,47 @@ impl Editor {
                 }
             }
 
-            // // Find all the selections that span a contiguous row range
-            // let (start_row, end_row) = consume_contiguous_rows(
-            //     &mut contiguous_row_selections,
-            //     selection,
-            //     &display_map,
-            //     &mut selections,
-            // );
+            // todo!("write tests")
+            // todo!("deal with the next selection potentially overlapping with start_row..end_row")
+            // todo!("only rewrap if we're in a comment, markdown text or plain text")
+            // todo!("bonus points 1: diff(selection_text, wrapped_text) and apply more precise edits")
+            // todo!("bonus points 2: push edits onto a vec and apply them all at once at the end.")
 
-            // if selection.is_empty() {
+            let start = Point::new(start_row, 0);
+            let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
+            let selection_text = buffer
+                .text_for_range(
+                    start..end
+                )
+                .collect::<String>();
+            let unwrapped_text = selection_text
+                .lines()
+                .map(|line| line.strip_prefix(&line_prefix).unwrap())
+                .join(" ");
+            let wrap_column = buffer
+                .settings_at(Point::new(start_row, 0), cx)
+                .preferred_line_length as usize;
+            let mut wrapped_text = String::new();
+            let mut current_line = line_prefix.clone();
+            for word in unwrapped_text.split_whitespace() {
+                if current_line.len() + word.len() >= wrap_column {
+                    wrapped_text.push_str(&current_line);
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                }
 
-            // } else {
+                if current_line.len() > line_prefix.len() {
+                    current_line.push(' ');
+                }
 
-            // }
+                current_line.push_str(word);
+            }
+
+            if !current_line.is_empty() {
+                wrapped_text.push_str(&current_line);
+            }
+
+            self.buffer.update(cx, |buffer, cx| buffer.edit([(start..end, wrapped_text)], None, cx));
         }
     }
 
