@@ -488,6 +488,7 @@ impl EditorElement {
 
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
+        let mut gutter_click_count = 0;
 
         if let Some(hovered_hunk) = hovered_hunk {
             if modifiers.control || modifiers.platform {
@@ -515,33 +516,17 @@ impl EditorElement {
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
+            gutter_click_count = event.click_count;
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_hitbox.is_hovered(cx) {
             return;
         }
 
-        if click_count == 2 && !editor.buffer().read(cx).is_singleton() {
-            match EditorSettings::get_global(cx).double_click_in_multibuffer {
-                DoubleClickInMultibuffer::Select => {
-                    // do nothing special on double click, all selection logic is below
-                }
-                DoubleClickInMultibuffer::Open => {
-                    if modifiers.alt {
-                        // if double click is made with alt, pretend it's a regular double click without opening and alt,
-                        // and run the selection logic.
-                        modifiers.alt = false;
-                    } else {
-                        // if double click is made without alt, open the corresponding excerp
-                        editor.open_excerpts(&OpenExcerpts, cx);
-                        return;
-                    }
-                }
-            }
-        }
 
         let point_for_position =
             position_map.point_for_position(text_hitbox.bounds, event.position);
         let position = point_for_position.previous_valid;
+
         if modifiers.shift && modifiers.alt {
             editor.select(
                 SelectPhase::BeginColumnar {
@@ -574,6 +559,31 @@ impl EditorElement {
                 },
                 cx,
             );
+        }
+
+        if gutter_click_count == 2 && !editor.buffer().read(cx).is_singleton() && !modifiers.alt {
+            // if double click is made on gutter without alt, open the corresponding excerp
+            editor.open_excerpts(&OpenExcerpts, cx);
+            return;
+        }
+
+        if click_count == 2 && !editor.buffer().read(cx).is_singleton() {
+            match EditorSettings::get_global(cx).double_click_in_multibuffer {
+                DoubleClickInMultibuffer::Select => {
+                    // do nothing special on double click, all selection logic is below
+                }
+                DoubleClickInMultibuffer::Open => {
+                    if modifiers.alt {
+                        // if double click is made with alt, pretend it's a regular double click without opening and alt,
+                        // and run the selection logic.
+                        modifiers.alt = false;
+                    } else {
+                        // if double click is made without alt, open the corresponding excerp
+                        editor.open_excerpts(&OpenExcerpts, cx);
+                        return;
+                    }
+                }
+            }
         }
 
         cx.stop_propagation();
