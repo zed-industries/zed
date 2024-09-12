@@ -98,6 +98,7 @@ use language::{
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
+use similar::{ChangeTag, TextDiff};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -6747,6 +6748,16 @@ impl Editor {
 
             if !current_line.is_empty() {
                 wrapped_text.push_str(&current_line);
+            }
+
+            let diff = TextDiff::from_lines(&selection_text, &wrapped_text);
+            for change in diff.iter_all_changes() {
+                let value = change.value();
+                match change.tag() {
+                    ChangeTag::Equal => {}
+                    ChangeTag::Delete => {}
+                    ChangeTag::Insert => {}
+                }
             }
 
             edits.push((start..end, wrapped_text.clone()));

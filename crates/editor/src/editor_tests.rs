@@ -3980,6 +3980,13 @@ fn test_transpose(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_rewrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // todo!("add rewrap tests")
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
