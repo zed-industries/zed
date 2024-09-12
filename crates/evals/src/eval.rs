@@ -285,12 +285,7 @@ async fn run_evaluation(
     ));
 
     let language_registry = Arc::new(LanguageRegistry::new(Task::ready(()), executor.clone()));
-
     cx.update(|cx| languages::init(language_registry.clone(), node_runtime.clone(), cx))
-        .unwrap();
-
-    let mut semantic_index = SemanticIndex::new(db_path.into(), embedding_provider, cx)
-        .await
         .unwrap();
 
     let mut covered_result_count = 0;
@@ -309,6 +304,12 @@ async fn run_evaluation(
             "\rRunning evals. {}/{} covered. Project: {}...",
             covered_result_count, total_result_count, evaluation_project.repo
         );
+
+        let repo_db_path =
+            db_path.join(format!("{}.db", evaluation_project.repo.replace('/', "_")));
+        let mut semantic_index = SemanticIndex::new(repo_db_path, embedding_provider.clone(), cx)
+            .await
+            .unwrap();
 
         let repo_dir = repos_dir.join(&evaluation_project.repo);
         if !repo_dir.exists() || repo_dir.join(SKIP_EVAL_PATH).exists() {
