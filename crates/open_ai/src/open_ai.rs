@@ -65,6 +65,10 @@ pub enum Model {
     FourOmni,
     #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
     FourOmniMini,
+    #[serde(rename = "o1-preview", alias = "o1-preview-2024-09-12")]
+    O1Preview,
+    #[serde(rename = "o1-mini", alias = "o1-mini-2024-09-12")]
+    O1Mini,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -83,6 +87,8 @@ impl Model {
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
+            "o1-preview" => Ok(Self::O1Preview),
+            "o1-mini" => Ok(Self::O1Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -94,6 +100,8 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::O1Preview => "o1-preview",
+            Self::O1Mini => "o1-mini",
             Self::Custom { name, .. } => name,
         }
     }
@@ -105,6 +113,8 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::O1Preview => "o1-preview",
+            Self::O1Mini => "o1-mini",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -118,6 +128,8 @@ impl Model {
             Self::FourTurbo => 128000,
             Self::FourOmni => 128000,
             Self::FourOmniMini => 128000,
+            Self::O1Preview => 128000,
+            Self::O1Mini => 128000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
