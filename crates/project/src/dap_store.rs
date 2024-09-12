@@ -1,10 +1,10 @@
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
+use dap::SourceBreakpoint;
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
     transport::Payload,
 };
-use dap_types::SourceBreakpoint;
 use gpui::{EventEmitter, ModelContext, Subscription, Task};
 use language::{Buffer, BufferSnapshot};
 use settings::WorktreeId;

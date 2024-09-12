@@ -3333,9 +3333,7 @@ dependencies = [
  "dap-types",
  "futures 0.3.30",
  "gpui",
- "language",
  "log",
- "multi_buffer",
  "parking_lot",
  "schemars",
  "serde",
@@ -3343,7 +3341,6 @@ dependencies = [
  "settings",
  "smol",
  "task",
- "text",
 ]
 
 [[package]]
@@ -8410,7 +8407,6 @@ dependencies = [
  "clock",
  "collections",
  "dap",
- "dap-types",
  "dev_server_projects",
  "env_logger",
  "fs",
