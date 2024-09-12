@@ -1173,6 +1173,7 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
+                                        // TODO: Use UI font
                                         Label::new(text.clone())
                                             .ml_4()
                                             .size(LabelSize::Small)

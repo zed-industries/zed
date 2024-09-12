@@ -518,19 +518,22 @@ async fn parse_blocks(
     let rendered_block = cx
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
+            let ui_font_family = settings.ui_font.family.clone();
             let buffer_font_family = settings.buffer_font.family.clone();
-            let mut base_style = cx.text_style();
-            base_style.refine(&TextStyleRefinement {
-                font_family: Some(buffer_font_family.clone()),
+
+            let mut base_text_style = cx.text_style();
+            base_text_style.refine(&TextStyleRefinement {
+                font_family: Some(ui_font_family.clone()),
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });
 
             let markdown_style = MarkdownStyle {
-                base_text_style: base_style,
-                code_block: StyleRefinement::default().mt(rems(1.)).mb(rems(1.)),
+                base_text_style,
+                code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
                 inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
+                    font_family: Some(buffer_font_family),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
