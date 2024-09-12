@@ -219,7 +219,7 @@ async fn load_shell_environment(
     );
 
     let output = smol::process::Command::new(&shell)
-        .args(["-i", "-c", &command])
+        .args(["-l", "-i", "-c", &command])
         .envs(direnv_environment)
         .output()
         .await

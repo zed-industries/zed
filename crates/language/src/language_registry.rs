@@ -833,7 +833,7 @@ impl LanguageRegistry {
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
         log::info!(
-            "starting language server {:?}, path: {root_path:?}, id: {server_id}",
+            "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0
         );
 

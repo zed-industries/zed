@@ -272,7 +272,7 @@ impl LanguageServer {
         };
 
         log::info!(
-            "starting language server. binary path: {:?}, working directory: {:?}, args: {:?}",
+            "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
             &binary.arguments
