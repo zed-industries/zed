@@ -8,10 +8,9 @@ use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
-use settings::{Settings, SettingsLocation};
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
@@ -240,16 +239,8 @@ impl LspAdapter for TypeScriptLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            ProjectSettings::get(
-                Some(SettingsLocation {
-                    worktree_id: delegate.worktree_id(),
-                    path: delegate.worktree_root_path(),
-                }),
-                cx,
-            )
-            .lsp
-            .get(Self::SERVER_NAME)
-            .and_then(|s| s.initialization_options.clone())
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
+                .and_then(|s| s.initialization_options.clone())
         })?;
         if let Some(options) = override_options {
             return Ok(options);
@@ -340,17 +331,9 @@ impl LspAdapter for EsLintLspAdapter {
         let workspace_root = delegate.worktree_root_path();
 
         let eslint_user_settings = cx.update(|cx| {
-            ProjectSettings::get(
-                Some(SettingsLocation {
-                    worktree_id: delegate.worktree_id(),
-                    path: delegate.worktree_root_path(),
-                }),
-                cx,
-            )
-            .lsp
-            .get(Self::SERVER_NAME)
-            .and_then(|s| s.settings.clone())
-            .unwrap_or_default()
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+                .unwrap_or_default()
         })?;
 
         let mut code_action_on_save = json!({

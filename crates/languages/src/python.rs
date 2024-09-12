@@ -5,10 +5,9 @@ use gpui::AsyncAppContext;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use serde_json::Value;
-use settings::Settings;
-use settings::SettingsLocation;
+
 use std::{
     any::Any,
     borrow::Cow,
@@ -182,17 +181,9 @@ impl LspAdapter for PythonLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {
-            ProjectSettings::get(
-                Some(SettingsLocation {
-                    worktree_id: adapter.worktree_id(),
-                    path: adapter.worktree_root_path(),
-                }),
-                cx,
-            )
-            .lsp
-            .get(Self::SERVER_NAME)
-            .and_then(|s| s.settings.clone())
-            .unwrap_or_default()
+            language_server_settings(adapter.as_ref(), Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+                .unwrap_or_default()
         })
     }
 }

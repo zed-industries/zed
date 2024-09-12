@@ -6,9 +6,8 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
-use settings::{Settings, SettingsLocation};
 use smol::fs;
 use std::{
     any::Any,
@@ -58,16 +57,8 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx
             .update(|cx| {
-                ProjectSettings::get(
-                    Some(SettingsLocation {
-                        worktree_id: delegate.worktree_id(),
-                        path: delegate.worktree_root_path(),
-                    }),
-                    cx,
-                )
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+                language_server_settings(delegate, Self::SERVER_NAME, cx)
+                    .and_then(|s| s.binary.clone())
             })
             .ok()??;
 
@@ -181,17 +172,9 @@ impl LspAdapter for TailwindLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let tailwind_user_settings = cx.update(|cx| {
-            ProjectSettings::get(
-                Some(SettingsLocation {
-                    worktree_id: delegate.worktree_id(),
-                    path: delegate.worktree_root_path(),
-                }),
-                cx,
-            )
-            .lsp
-            .get(Self::SERVER_NAME)
-            .and_then(|s| s.settings.clone())
-            .unwrap_or_default()
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+                .unwrap_or_default()
         })?;
 
         let mut configuration = json!({
