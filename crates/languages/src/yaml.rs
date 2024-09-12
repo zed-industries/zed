@@ -146,7 +146,7 @@ impl LspAdapter for YamlLspAdapter {
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
-                .and_then(|s| s.initialization_options.clone())
+                .and_then(|s| s.settings.clone())
         })?;
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut options);

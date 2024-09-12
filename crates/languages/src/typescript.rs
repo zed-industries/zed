@@ -240,7 +240,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
-                .and_then(|s| s.initialization_options.clone())
+                .and_then(|s| s.settings.clone())
         })?;
         if let Some(options) = override_options {
             return Ok(options);

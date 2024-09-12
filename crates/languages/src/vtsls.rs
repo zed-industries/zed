@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, merge_json_value_into, ResultExt};
+use util::{maybe, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -271,20 +271,9 @@ impl LspAdapter for VtslsLspAdapter {
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), SERVER_NAME, cx)
-                .and_then(|s| s.initialization_options.clone())
+                .and_then(|s| s.settings.clone())
         })?;
-        if let Some(options) = override_options {
-            return Ok(options);
-        }
-        let mut initialization_options = self
-            .initialization_options(delegate)
-            .await
-            .map(|o| o.unwrap())?;
-
-        if let Some(override_options) = override_options {
-            merge_json_value_into(override_options, &mut initialization_options)
-        }
-        Ok(initialization_options)
+        Ok(override_options.unwrap_or_default())
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
