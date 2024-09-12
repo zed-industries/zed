@@ -4638,8 +4638,9 @@ impl LspStore {
             .as_local()
             .unwrap()
             .environment
-            .read(cx)
-            .get_cli_environment();
+            .update(cx, |environment, cx| {
+                environment.get_environment(Some(worktree_id), Some(worktree_path), cx)
+            });
 
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),

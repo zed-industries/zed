@@ -828,7 +828,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cli_environment: Option<HashMap<String, String>>,
+        cli_environment: Shared<Task<Option<HashMap<String, String>>>>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -853,6 +853,7 @@ impl LanguageRegistry {
                 // If we want to install a binary globally, we need to wait for
                 // the login shell to be set on our process.
                 login_shell_env_loaded.await;
+                let cli_environment = cli_environment.await;
 
                 let binary_result = adapter
                     .clone()
