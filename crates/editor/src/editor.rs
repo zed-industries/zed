@@ -6660,13 +6660,11 @@ impl Editor {
     }
 
     pub fn rewrap(&mut self, _: &Rewrap, cx: &mut ViewContext<Self>) {
-
-
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
-        // let mut contiguous_row_selections = Vec::new();
-        // let mut new_selections = Vec::new();
+
+        let mut edits = Vec::new();
 
         while let Some(selection) = selections.next() {
             let row = selection.head().row;
@@ -6720,15 +6718,10 @@ impl Editor {
             // todo!("deal with the next selection potentially overlapping with start_row..end_row")
             // todo!("only rewrap if we're in a comment, markdown text or plain text")
             // todo!("bonus points 1: diff(selection_text, wrapped_text) and apply more precise edits")
-            // todo!("bonus points 2: push edits onto a vec and apply them all at once at the end.")
 
             let start = Point::new(start_row, 0);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
-            let selection_text = buffer
-                .text_for_range(
-                    start..end
-                )
-                .collect::<String>();
+            let selection_text = buffer.text_for_range(start..end).collect::<String>();
             let unwrapped_text = selection_text
                 .lines()
                 .map(|line| line.strip_prefix(&line_prefix).unwrap())
@@ -6756,8 +6749,11 @@ impl Editor {
                 wrapped_text.push_str(&current_line);
             }
 
-            self.buffer.update(cx, |buffer, cx| buffer.edit([(start..end, wrapped_text)], None, cx));
+            edits.push((start..end, wrapped_text.clone()));
         }
+
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
     }
 
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
