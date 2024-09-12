@@ -401,14 +401,19 @@ impl Platform for WindowsPlatform {
     }
 
     fn open_with_system(&self, path: &Path) {
-        let executor = self.background_executor().clone();
-        let path = path.to_owned();
-        executor
+        let Ok(full_path) = path.canonicalize() else {
+            log::error!("unable to parse file full path: {}", path.display());
+            return;
+        };
+        self.background_executor()
             .spawn(async move {
-                let _ = std::process::Command::new("cmd")
-                    .args(&["/c", "start", "", path.to_str().expect("path to string")])
-                    .spawn()
-                    .expect("Failed to open file");
+                let Some(full_path_str) = full_path.to_str() else {
+                    return;
+                };
+                if full_path_str.is_empty() {
+                    return;
+                };
+                open_target(full_path_str);
             })
             .detach();
     }
