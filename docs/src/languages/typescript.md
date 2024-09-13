@@ -52,7 +52,7 @@ Prettier will also be used for TypeScript files by default. To disable this:
 {
   "lsp": {
     "vtsls": {
-      "initialization_options": {
+      "settings": {
         // For TypeScript:
         "typescript": { "tsserver": { "maxTsServerMemory": 16184 } },
         // For JavaScript:

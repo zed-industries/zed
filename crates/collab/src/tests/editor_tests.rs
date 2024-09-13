@@ -2261,11 +2261,11 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     cx_a.update(editor::init);
     cx_b.update(editor::init);
     // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
-    let inline_blame_off_settings = InlineBlameSettings {
+    let inline_blame_off_settings = Some(InlineBlameSettings {
         enabled: false,
-        delay_ms: 0,
-        min_column: 0,
-    };
+        delay_ms: None,
+        min_column: None,
+    });
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |settings| {

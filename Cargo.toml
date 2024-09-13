@@ -393,7 +393,7 @@ semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_json_lenient = { version = "0.1", features = [
+serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
 ] }
@@ -483,6 +483,7 @@ version = "0.58"
 features = [
     "implement",
     "Foundation_Numerics",
+    "Storage",
     "System",
     "System_Threading",
     "UI_ViewManagement",
