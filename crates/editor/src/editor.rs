@@ -277,7 +277,7 @@ pub enum Navigated {
 
 impl Navigated {
     pub fn from_bool(yes: bool) -> Navigated {
-        if yes {
+        if yes {_a
             Navigated::Yes
         } else {
             Navigated::No

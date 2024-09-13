@@ -141,6 +141,9 @@ pub trait ToLspPosition {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct LanguageServerName(pub Arc<str>);
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct ActionName(Arc<str>);
+
 impl LanguageServerName {
     pub fn from_proto(s: String) -> Self {
         Self(Arc::from(s))

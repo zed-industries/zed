@@ -30,8 +30,8 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
-    WeakModel,
+    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
+    Subscription, Task, WeakModel,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
@@ -100,6 +100,64 @@ pub fn is_version_compatible(
     }
 
     true
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ExtensionAction {
+    extension: Arc<str>,
+    name: Arc<str>,
+}
+
+impl gpui::Action for ExtensionAction {
+    fn boxed_clone(&self) -> Box<dyn gpui::Action> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self as _
+    }
+
+    fn partial_eq(&self, action: &dyn gpui::Action) -> bool {
+        if let Some(other) =  action.as_any().downcast_ref::<ExtensionAction>() else {
+            return false
+        }
+        other == self
+    }
+
+    fn name(&self) -> &str {
+       "extension::Action"
+    }
+
+    fn debug_name() -> &'static str
+    where
+        Self: Sized {
+        "extension::ActionDebugName"
+    }
+
+    fn build(value: serde_json::Value) -> Result<Box<dyn gpui::Action>>
+    where
+        Self: Sized {
+        todo!()
+    }
+}
+
+pub struct EditorActionRegistry {
+    wasm_host: Arc<WasmHost>,
+    editors: Vec<WeakModel<Editor>>,
+    actions: Vec<String>,
+}
+
+impl EditorActionRegistry {
+    fn add_action(&self,action: String) -> {
+        self.wasm_host.on_main_thread(|cx| {
+            for editor in self.editors {
+                editor.update(&mut cx, |editor, cx| {
+                    editor.register_action
+                })
+
+            }
+        })
+    }
 }
 
 pub struct ExtensionStore {
@@ -939,7 +997,7 @@ impl ExtensionStore {
     ///
     /// First, this unloads any themes, languages, or grammars that are
     /// no longer in the manifest, or whose files have changed on disk.
-    /// Then it loads any themes, languages, or grammars that are newly
+    /// Then it loads any themes, languages, edits, or grammars that are newly
     /// added to the manifest, or whose files have changed on disk.
     fn extensions_updated(
         &mut self,
@@ -1064,6 +1122,7 @@ impl ExtensionStore {
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
         let mut snippets_to_add = Vec::new();
+        let mut actions_to_add = Vec::new();
         for extension_id in &extensions_to_load {
             let Some(extension) = new_index.extensions.get(extension_id) else {
                 continue;
@@ -1084,6 +1143,11 @@ impl ExtensionStore {
             snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
                 let mut path = self.installed_dir.clone();
                 path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
+                path
+            }));
+            actions_to_add.extend(extension.manifest.actions.iter().map(|actions_path| {
+                let mut path = self.installed_dir.clone();
+                path.extend([Path::new(extension_id.as_ref()), actions_path.as_path()]);
                 path
             }));
         }

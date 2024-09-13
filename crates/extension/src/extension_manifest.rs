@@ -75,6 +75,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
     #[serde(default)]
+    pub actions: BTreeMap<ActionName, ActionManifestEntry>,
+    #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
@@ -118,6 +120,9 @@ pub struct LanguageServerManifestEntry {
     #[serde(default)]
     pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
 }
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct ActionManifestEntry {}
 
 impl LanguageServerManifestEntry {
     /// Returns the list of languages for the language server.
