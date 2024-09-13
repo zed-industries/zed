@@ -122,11 +122,13 @@ mod tests {
     use chunking::Chunk;
     use embedding_index::{ChunkedFile, EmbeddingIndex};
     use feature_flags::FeatureFlagAppExt;
+    use fs::FakeFs;
     use futures::{future::BoxFuture, FutureExt};
     use gpui::TestAppContext;
     use indexing::IndexingEntrySet;
     use language::language_settings::AllLanguageSettings;
     use project::{Project, ProjectEntryId};
+    use serde_json::json;
     use settings::SettingsStore;
     use smol::{channel, stream::StreamExt};
     use std::{future, path::Path, sync::Arc};
@@ -212,11 +214,21 @@ mod tests {
         .await
         .unwrap();
 
-        let project_path = Path::new("./fixture");
+        let fs = FakeFs::new(cx.executor());
+        let project_path = Path::new("/fake_project");
 
-        let project = cx
-            .spawn(|mut cx| async move { Project::example([project_path], &mut cx).await })
-            .await;
+        fs.insert_tree(
+            project_path,
+            json!({
+                "fixture": {
+                    "main.rs": include_str!("../fixture/main.rs"),
+                    "needle.md": include_str!("../fixture/needle.md"),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [project_path], cx).await;
 
         cx.update(|cx| {
             let language_registry = project.read(cx).languages().clone();
@@ -278,7 +290,7 @@ mod tests {
         // Find result that is greater than 0.5
         let search_result = results.iter().find(|result| result.score > 0.9).unwrap();
 
-        assert_eq!(search_result.path.to_string_lossy(), "needle.md");
+        assert_eq!(search_result.path.to_string_lossy(), "fixture/needle.md");
 
         let content = cx
             .update(|cx| {
