@@ -929,7 +929,7 @@ impl DevServerProjects {
                                 .on_click(
                                     cx.listener(move |this, _, cx| this.delete_ssh_server(ix, cx)),
                                 )
-                                .tooltip(|cx| Tooltip::text("Remove dev server", cx))
+                                .tooltip(|cx| Tooltip::text("Remove Dev Server", cx))
                         })),
                 ),
             )
@@ -1162,9 +1162,10 @@ impl DevServerProjects {
             })
         });
 
-        const MANUAL_SETUP_MESSAGE: &str = "Click create to generate a token for this server. The next step will provide instructions for setting zed up on that machine.";
+        const MANUAL_SETUP_MESSAGE: &str =
+            "Generate a token for this server and follow the steps to set Zed up on that machine.";
         const SSH_SETUP_MESSAGE: &str =
-            "Enter the command you use to ssh into this server.\nFor example: `ssh me@my.server` or `ssh me@secret-box:2222`.";
+            "Enter the command you use to SSH into this server.\nFor example: `ssh me@my.server` or `ssh me@secret-box:2222`.";
 
         Modal::new("create-dev-server", Some(self.scroll_handle.clone()))
             .header(
@@ -1346,9 +1347,9 @@ impl DevServerProjects {
     ) -> Div {
         self.markdown.update(cx, |markdown, cx| {
             if kind == NewServerKind::Manual {
-                markdown.reset(format!("Please log into '{}'. If you don't yet have zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen to start zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
+                markdown.reset(format!("Please log into '{}'. If you don't yet have Zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen, to start Zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
             } else {
-                markdown.reset("Please wait while we connect over SSH.\n\nIf you run into problems, please [file a bug](https://github.com/zed-industries/zed), and in the meantime try using manual setup.".to_string(), cx);
+                markdown.reset("Please wait while we connect over SSH.\n\nIf you run into problems, please [file a bug](https://github.com/zed-industries/zed), and in the meantime try using the manual setup.".to_string(), cx);
             }
         });
 
@@ -1420,8 +1421,8 @@ impl DevServerProjects {
             )
             .when(is_signed_out, |modal| {
                 modal
-                    .section(Section::new().child(v_flex().mb_4().child(Label::new(
-                        "You are not currently signed in to Zed. Currently the remote development features are only available to signed in users. Please sign in to continue.",
+                    .section(Section::new().child(div().child(Label::new(
+                        "To continue with the remote development features, you need to sign in to Zed.",
                     ))))
                     .footer(
                         ModalFooter::new().end_slot(
@@ -1452,7 +1453,7 @@ impl DevServerProjects {
                                 .empty_message("No dev servers registered.")
                                 .header(Some(
                                     ListHeader::new("Connections").end_slot(
-                                        Button::new("register-dev-server-button", "Connect")
+                                        Button::new("register-dev-server-button", "Connect New Server")
                                             .icon(IconName::Plus)
                                             .icon_position(IconPosition::Start)
                                             .tooltip(|cx| {
