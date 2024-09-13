@@ -707,25 +707,39 @@ fn write_to_clipboard_inner(
     unsafe {
         OpenClipboard(None)?;
         EmptyClipboard()?;
-        let encode_wide = item
-            .text()
-            .unwrap_or_default()
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
-        set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
-
-        if let Some((metadata, text)) = item.metadata().zip(item.text()) {
-            let hash_result = {
-                let hash = ClipboardString::text_hash(&text);
-                hash.to_ne_bytes()
-            };
-            let encode_wide = std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4);
-            set_data_to_clipboard(encode_wide, hash_format)?;
-
-            let metadata_wide = metadata.encode_utf16().chain(Some(0)).collect_vec();
-            set_data_to_clipboard(&metadata_wide, metadata_format)?;
+    }
+    for entry in item.entries() {
+        match entry {
+            ClipboardEntry::String(string) => {
+                write_string_to_clipboard(string, hash_format, metadata_format)?;
+            }
+            ClipboardEntry::Image(image) => {
+                write_image_to_clipboard(image)?;
+            }
         }
+    }
+    Ok(())
+}
+
+fn write_string_to_clipboard(
+    item: &ClipboardString,
+    hash_format: u32,
+    metadata_format: u32,
+) -> Result<()> {
+    let encode_wide = item.text.encode_utf16().chain(Some(0)).collect_vec();
+    set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
+
+    if let Some(metadata) = item.metadata.as_ref() {
+        let hash_result = {
+            let hash = ClipboardString::text_hash(&item.text);
+            hash.to_ne_bytes()
+        };
+        let encode_wide =
+            unsafe { std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4) };
+        set_data_to_clipboard(encode_wide, hash_format)?;
+
+        let metadata_wide = metadata.encode_utf16().chain(Some(0)).collect_vec();
+        set_data_to_clipboard(&metadata_wide, metadata_format)?;
     }
     Ok(())
 }
@@ -741,6 +755,18 @@ fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
     Ok(())
 }
 
+fn write_image_to_clipboard(item: &Image) -> Result<()> {
+    unsafe {
+        let data = item.bytes();
+        let global = GlobalAlloc(GMEM_MOVEABLE, data.len())?;
+        let handle = GlobalLock(global);
+        std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
+        let _ = GlobalUnlock(global);
+        SetClipboardData(CF_DIB.0 as u32, HANDLE(global.0))?;
+    }
+    Ok(())
+}
+
 fn read_from_clipboard(hash_format: u32, metadata_format: u32) -> Option<ClipboardItem> {
     let result = read_from_clipboard_inner(hash_format, metadata_format).log_err();
     unsafe { CloseClipboard().log_err() };
@@ -750,22 +776,37 @@ fn read_from_clipboard(hash_format: u32, metadata_format: u32) -> Option<Clipboa
 fn read_from_clipboard_inner(hash_format: u32, metadata_format: u32) -> Result<ClipboardItem> {
     unsafe {
         OpenClipboard(None)?;
-        let text = {
-            let handle = GetClipboardData(CF_UNICODETEXT.0 as u32)?;
-            let text = PCWSTR(handle.0 as *const u16);
-            String::from_utf16_lossy(text.as_wide())
-        };
-        let Some(hash) = read_hash_from_clipboard(hash_format) else {
-            return Ok(ClipboardItem::new_string(text));
-        };
-        let Some(metadata) = read_metadata_from_clipboard(metadata_format) else {
-            return Ok(ClipboardItem::new_string(text));
-        };
-        if hash == ClipboardString::text_hash(&text) {
-            Ok(ClipboardItem::new_string_with_metadata(text, metadata))
-        } else {
-            Ok(ClipboardItem::new_string(text))
+        let mut entries = Vec::new();
+        if let Some(string) = read_string_from_clipboard(hash_format, metadata_format).log_err() {
+            entries.push(string);
         }
+        if entries.is_empty() {
+            anyhow::bail!("No content in clipboard");
+        } else {
+            Ok(ClipboardItem { entries })
+        }
+    }
+}
+
+fn read_string_from_clipboard(hash_format: u32, metadata_format: u32) -> Result<ClipboardEntry> {
+    let text = unsafe {
+        let handle = GetClipboardData(CF_UNICODETEXT.0 as u32)?;
+        let text = PCWSTR(handle.0 as *const u16);
+        String::from_utf16_lossy(text.as_wide())
+    };
+    let Some(hash) = read_hash_from_clipboard(hash_format) else {
+        return Ok(ClipboardEntry::String(ClipboardString::new(text)));
+    };
+    let Some(metadata) = read_metadata_from_clipboard(metadata_format) else {
+        return Ok(ClipboardEntry::String(ClipboardString::new(text)));
+    };
+    if hash == ClipboardString::text_hash(&text) {
+        Ok(ClipboardEntry::String(ClipboardString {
+            text,
+            metadata: Some(metadata),
+        }))
+    } else {
+        Ok(ClipboardEntry::String(ClipboardString::new(text)))
     }
 }
 
@@ -787,6 +828,14 @@ fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
         let text = PCWSTR(handle.0 as *const u16);
         Some(String::from_utf16_lossy(text.as_wide()))
     }
+}
+
+fn read_image_from_clipboard() -> Result<ClipboardEntry> {
+    let image = unsafe {
+        let handle = GetClipboardData(CF_DIB.0 as u32)?;
+        let text = PCWSTR(handle.0 as *const u16);
+        String::from_utf16_lossy(text.as_wide())
+    };
 }
 
 // clipboard
