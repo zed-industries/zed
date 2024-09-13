@@ -718,6 +718,20 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn open_with_system(&self, path: &Path) {
+        let path = path.to_path_buf();
+        self.0
+            .lock()
+            .background_executor
+            .spawn(async move {
+                std::process::Command::new("open")
+                    .arg(path)
+                    .spawn()
+                    .expect("Failed to open file");
+            })
+            .detach();
+    }
+
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().quit = Some(callback);
     }

@@ -3,6 +3,7 @@ use crate::{
         ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
         WeakItemHandle,
     },
+    move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
@@ -149,6 +150,7 @@ actions!(
         GoBack,
         GoForward,
         JoinIntoNext,
+        JoinAll,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -188,6 +190,7 @@ pub enum Event {
         item_id: EntityId,
     },
     Split(SplitDirection),
+    JoinAll,
     JoinIntoNext,
     ChangeItemTitle,
     Focus,
@@ -220,6 +223,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Split")
                 .field("direction", direction)
                 .finish(),
+            Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
             Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
             Event::Focus => f.write_str("Focus"),
@@ -679,6 +683,10 @@ impl Pane {
         cx.emit(Event::JoinIntoNext);
     }
 
+    fn join_all(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::JoinAll);
+    }
+
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
@@ -713,6 +721,14 @@ impl Pane {
         if PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = item_id;
         }
+    }
+
+    pub(crate) fn set_pinned_count(&mut self, count: usize) {
+        self.pinned_tab_count = count;
+    }
+
+    pub(crate) fn pinned_count(&self) -> usize {
+        self.pinned_tab_count
     }
 
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
@@ -1364,6 +1380,9 @@ impl Pane {
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
+        if self.is_tab_pinned(item_index) {
+            self.pinned_tab_count -= 1;
+        }
         if item_index == self.active_item_index {
             let index_to_activate = self
                 .activation_history
@@ -1746,9 +1765,7 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |this, cx| {
-                        this.move_item(pane.clone(), pane, id, destination_index, cx)
-                    });
+                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
                 })
                 .ok()?;
 
@@ -1766,9 +1783,7 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |this, cx| {
-                        this.move_item(pane.clone(), pane, id, destination_index, cx)
-                    });
+                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
                 })
                 .ok()?;
 
@@ -2338,7 +2353,7 @@ impl Pane {
                             }
                         })
                     }
-                    workspace.move_item(from_pane.clone(), to_pane.clone(), item_id, ix, cx);
+                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                 });
             })
             .log_err();
@@ -2545,6 +2560,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
             .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
             .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
+            .on_action(cx.listener(|pane, _: &JoinAll, cx| pane.join_all(cx)))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
                 pane.activate_item(action.0, true, true, cx);

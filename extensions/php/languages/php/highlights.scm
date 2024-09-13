@@ -133,8 +133,5 @@
 "trait" @keyword
 "try" @keyword
 "use" @keyword
-"var" @keyword
 "while" @keyword
 "xor" @keyword
-"yield" @keyword
-"yield from" @keyword

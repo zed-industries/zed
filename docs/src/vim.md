@@ -25,7 +25,9 @@ There are four types of features in vim mode that use Zed's core functionality, 
 
 ## Enabling and disabling vim mode
 
-When you first open Zed, a checkbox will appear on the welcome screen, allowing you to enable vim mode. If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
+When you first open Zed, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
+
+If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
 
 ## Zed-specific features
 
@@ -234,4 +236,4 @@ Zed uses a different regular expression engine from Vim. This means that you wil
 
 > **Note**: To help with the transition, the command palette will fix parentheses and replace groups for you when you write a Vim-style substitute command, `:%s//`. So, Zed will convert `%s:/\(a\)(b)/\1/` into a search for "(a)\(b\)" and a replacement of "$1".
 
-> **Note**: To see the entire regular expression syntax supported by Zed, [see the regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).
+For the full syntax supported by Zed's regex engine [see the regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).

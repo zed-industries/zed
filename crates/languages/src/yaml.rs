@@ -7,7 +7,7 @@ use language::{
 };
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
 use smol::fs;
@@ -44,14 +44,12 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx
             .update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .lsp
-                    .get(Self::SERVER_NAME)
+                language_server_settings(delegate, Self::SERVER_NAME, cx)
                     .and_then(|s| s.binary.clone())
             })
             .ok()??;
@@ -141,16 +139,14 @@ impl LspAdapter for YamlLspAdapter {
 
         let tab_size = cx.update(|cx| {
             AllLanguageSettings::get(Some(location), cx)
-                .language(Some("YAML"))
+                .language(Some(&"YAML".into()))
                 .tab_size
         })?;
         let mut options = serde_json::json!({"[yaml]": {"editor.tabSize": tab_size}});
 
         let project_options = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.initialization_options.clone())
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
         })?;
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut options);

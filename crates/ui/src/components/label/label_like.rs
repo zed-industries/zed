@@ -1,4 +1,4 @@
-use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled};
+use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled, UnderlineStyle};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
@@ -42,6 +42,9 @@ pub trait LabelCommon {
     /// Sets the italic property of the label.
     fn italic(self, italic: bool) -> Self;
 
+    /// Sets the underline property of the label
+    fn underline(self, underline: bool) -> Self;
+
     /// Sets the alpha property of the label, overwriting the alpha value of the color.
     fn alpha(self, alpha: f32) -> Self;
 }
@@ -57,6 +60,7 @@ pub struct LabelLike {
     italic: bool,
     children: SmallVec<[AnyElement; 2]>,
     alpha: Option<f32>,
+    underline: bool,
 }
 
 impl Default for LabelLike {
@@ -77,6 +81,7 @@ impl LabelLike {
             italic: false,
             children: SmallVec::new(),
             alpha: None,
+            underline: false,
         }
     }
 }
@@ -123,6 +128,11 @@ impl LabelCommon for LabelLike {
         self
     }
 
+    fn underline(mut self, underline: bool) -> Self {
+        self.underline = underline;
+        self
+    }
+
     fn alpha(mut self, alpha: f32) -> Self {
         self.alpha = Some(alpha);
         self
@@ -165,6 +175,16 @@ impl RenderOnce for LabelLike {
                 this.line_height(relative(1.))
             })
             .when(self.italic, |this| this.italic())
+            .when(self.underline, |mut this| {
+                this.text_style()
+                    .get_or_insert_with(Default::default)
+                    .underline = Some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: None,
+                    wavy: false,
+                });
+                this
+            })
             .text_color(color)
             .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
             .children(self.children)

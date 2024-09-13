@@ -342,6 +342,24 @@ impl Fs for RealFs {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        use windows::{
+            core::HSTRING,
+            Storage::{StorageDeleteOption, StorageFile},
+        };
+        // todo(windows)
+        // When new version of `windows-rs` release, make this operation `async`
+        let path = path.canonicalize()?.to_string_lossy().to_string();
+        let path_str = path.trim_start_matches("\\\\?\\");
+        if path_str.is_empty() {
+            anyhow::bail!("File path is empty!");
+        }
+        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_str))?.get()?;
+        file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
+        Ok(())
+    }
+
     #[cfg(target_os = "macos")]
     async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.trash_file(path, options).await
@@ -350,6 +368,25 @@ impl Fs for RealFs {
     #[cfg(target_os = "linux")]
     async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.trash_file(path, options).await
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        use windows::{
+            core::HSTRING,
+            Storage::{StorageDeleteOption, StorageFolder},
+        };
+
+        let path = path.canonicalize()?.to_string_lossy().to_string();
+        let path_str = path.trim_start_matches("\\\\?\\");
+        if path_str.is_empty() {
+            anyhow::bail!("Folder path is empty!");
+        }
+        // todo(windows)
+        // When new version of `windows-rs` release, make this operation `async`
+        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_str))?.get()?;
+        folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
+        Ok(())
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {

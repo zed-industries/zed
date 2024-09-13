@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use editor::Editor;
 use gpui::{prelude::*, AppContext, Entity, View, WeakView, WindowContext};
-use language::{BufferSnapshot, Language, Point};
+use language::{BufferSnapshot, Language, LanguageName, Point};
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
@@ -99,7 +99,7 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
 pub enum SessionSupport {
     ActiveSession(View<Session>),
     Inactive(Box<KernelSpecification>),
-    RequiresSetup(Arc<str>),
+    RequiresSetup(LanguageName),
     Unsupported,
 }
 
@@ -268,7 +268,7 @@ fn runnable_ranges(
     range: Range<Point>,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language() {
-        if language.name().as_ref() == "Markdown" {
+        if language.name() == "Markdown".into() {
             return (markdown_code_blocks(buffer, range.clone()), None);
         }
     }
@@ -305,7 +305,7 @@ fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Ran
 }
 
 fn language_supported(language: &Arc<Language>) -> bool {
-    match language.name().as_ref() {
+    match language.name().0.as_ref() {
         "TypeScript" | "Python" => true,
         _ => false,
     }

@@ -1,10 +1,11 @@
 use collections::HashMap;
 use gpui::{AnyElement, IntoElement};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToPoint};
+use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::WindowContext;
+use ui::{IconName, SharedString, WindowContext};
 
 use crate::FoldPlaceholder;
 
@@ -49,6 +50,31 @@ impl CreaseSnapshot {
         None
     }
 
+    pub fn creases_in_range<'a>(
+        &'a self,
+        range: Range<MultiBufferRow>,
+        snapshot: &'a MultiBufferSnapshot,
+    ) -> impl '_ + Iterator<Item = &'a Crease> {
+        let start = snapshot.anchor_before(Point::new(range.start.0, 0));
+        let mut cursor = self.creases.cursor::<ItemSummary>();
+        cursor.seek(&start, Bias::Left, snapshot);
+
+        std::iter::from_fn(move || {
+            while let Some(item) = cursor.item() {
+                cursor.next(snapshot);
+                let crease_start = item.crease.range.start.to_point(snapshot);
+                let crease_end = item.crease.range.end.to_point(snapshot);
+                if crease_end.row > range.end.0 {
+                    continue;
+                }
+                if crease_start.row >= range.start.0 && crease_end.row < range.end.0 {
+                    return Some(&item.crease);
+                }
+            }
+            None
+        })
+    }
+
     pub fn crease_items_with_offsets(
         &self,
         snapshot: &MultiBufferSnapshot,
@@ -87,6 +113,14 @@ pub struct Crease {
     pub placeholder: FoldPlaceholder,
     pub render_toggle: RenderToggleFn,
     pub render_trailer: RenderTrailerFn,
+    pub metadata: Option<CreaseMetadata>,
+}
+
+/// Metadata about a [`Crease`], that is used for serialization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreaseMetadata {
+    pub icon: IconName,
+    pub label: SharedString,
 }
 
 impl Crease {
@@ -124,7 +158,13 @@ impl Crease {
             render_trailer: Arc::new(move |row, folded, cx| {
                 render_trailer(row, folded, cx).into_any_element()
             }),
+            metadata: None,
         }
+    }
+
+    pub fn with_metadata(mut self, metadata: CreaseMetadata) -> Self {
+        self.metadata = Some(metadata);
+        self
     }
 }
 
@@ -303,5 +343,55 @@ mod test {
         assert!(crease_snapshot
             .query_row(MultiBufferRow(3), &snapshot)
             .is_none());
+    }
+
+    #[gpui::test]
+    fn test_creases_in_range(cx: &mut AppContext) {
+        let text = "line1\nline2\nline3\nline4\nline5\nline6\nline7";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let mut crease_map = CreaseMap::default();
+
+        let creases = [
+            Crease::new(
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
+                FoldPlaceholder::test(),
+                |_row, _folded, _toggle, _cx| div(),
+                |_row, _folded, _cx| div(),
+            ),
+            Crease::new(
+                snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
+                FoldPlaceholder::test(),
+                |_row, _folded, _toggle, _cx| div(),
+                |_row, _folded, _cx| div(),
+            ),
+            Crease::new(
+                snapshot.anchor_before(Point::new(5, 0))..snapshot.anchor_after(Point::new(5, 5)),
+                FoldPlaceholder::test(),
+                |_row, _folded, _toggle, _cx| div(),
+                |_row, _folded, _cx| div(),
+            ),
+        ];
+        crease_map.insert(creases, &snapshot);
+
+        let crease_snapshot = crease_map.snapshot();
+
+        let range = MultiBufferRow(0)..MultiBufferRow(7);
+        let creases: Vec<_> = crease_snapshot.creases_in_range(range, &snapshot).collect();
+        assert_eq!(creases.len(), 3);
+
+        let range = MultiBufferRow(2)..MultiBufferRow(5);
+        let creases: Vec<_> = crease_snapshot.creases_in_range(range, &snapshot).collect();
+        assert_eq!(creases.len(), 1);
+        assert_eq!(creases[0].range.start.to_point(&snapshot).row, 3);
+
+        let range = MultiBufferRow(0)..MultiBufferRow(2);
+        let creases: Vec<_> = crease_snapshot.creases_in_range(range, &snapshot).collect();
+        assert_eq!(creases.len(), 1);
+        assert_eq!(creases[0].range.start.to_point(&snapshot).row, 1);
+
+        let range = MultiBufferRow(6)..MultiBufferRow(7);
+        let creases: Vec<_> = crease_snapshot.creases_in_range(range, &snapshot).collect();
+        assert_eq!(creases.len(), 0);
     }
 }
