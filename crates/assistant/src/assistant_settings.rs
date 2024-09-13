@@ -519,6 +519,7 @@ impl Settings for AssistantSettings {
                 &mut settings.default_model,
                 value.default_model.map(Into::into),
             );
+            // merge(&mut settings.infer_context, value.infer_context); TODO re-enable this once we ship context inference
         }
 
         Ok(settings)

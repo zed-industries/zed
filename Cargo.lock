@@ -304,6 +304,9 @@ name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -1710,6 +1713,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d82033247fd8e890df8f740e407ad4d038debb9eb1f40533fffb32e7d17dc6f7"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+]
+
+[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2751,6 +2767,12 @@ dependencies = [
  "once_cell",
  "tiny-keccak",
 ]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "context_servers"
@@ -4187,6 +4209,7 @@ dependencies = [
 name = "feature_flags"
 version = "0.1.0"
 dependencies = [
+ "futures 0.3.30",
  "gpui",
 ]
 
@@ -9814,10 +9837,13 @@ name = "semantic_index"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
+ "blake3",
  "client",
  "clock",
  "collections",
  "env_logger",
+ "feature_flags",
  "fs",
  "futures 0.3.30",
  "futures-batch",
@@ -9825,6 +9851,7 @@ dependencies = [
  "heed",
  "http_client",
  "language",
+ "language_model",
  "languages",
  "log",
  "open_ai",

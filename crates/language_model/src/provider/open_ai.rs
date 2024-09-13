@@ -239,7 +239,7 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
             let request = stream_completion(
                 http_client.as_ref(),
                 &api_url,

@@ -149,16 +149,16 @@ spec:
                 secretKeyRef:
                   name: google-ai
                   key: api_key
-            - name: QWEN2_7B_API_KEY
+            - name: RUNPOD_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: hugging-face
+                  name: runpod
                   key: api_key
-            - name: QWEN2_7B_API_URL
+            - name: RUNPOD_API_SUMMARY_URL
               valueFrom:
                 secretKeyRef:
-                  name: hugging-face
-                  key: qwen2_api_url
+                  name: runpod
+                  key: summary
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

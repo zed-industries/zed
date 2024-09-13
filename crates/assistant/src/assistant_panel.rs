@@ -4723,6 +4723,20 @@ impl Render for ContextEditorToolbarItem {
         let weak_self = cx.view().downgrade();
         let right_side = h_flex()
             .gap_2()
+            // TODO display this in a nicer way, once we have a design for it.
+            // .children({
+            //     let project = self
+            //         .workspace
+            //         .upgrade()
+            //         .map(|workspace| workspace.read(cx).project().downgrade());
+            //
+            //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
+            //         project.and_then(|project| db.remaining_summaries(&project, cx))
+            //     });
+
+            //     scan_items_remaining
+            //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
+            // })
             .child(
                 ModelSelector::new(
                     self.fs.clone(),
