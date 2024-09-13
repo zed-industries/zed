@@ -1549,7 +1549,7 @@ pub(crate) fn end_of_line(
             Bias::Left,
         )
     } else {
-        map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
+        map.clip_ignoring_line_ends(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
     }
 }
 

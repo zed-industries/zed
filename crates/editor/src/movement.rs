@@ -73,7 +73,7 @@ pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
 /// if that point is already at the end of line.
 pub fn saturating_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     *point.column_mut() += 1;
-    map.clip_point(point, Bias::Right)
+    map.clip_ignoring_line_ends(point, Bias::Right)
 }
 
 /// Returns a display point for the preceding displayed line (which might be a soft-wrapped line).
