@@ -164,11 +164,7 @@ impl SlashCommand for FileSlashCommand {
                     Some(ArgumentCompletion {
                         label,
                         new_text: text,
-                        after_completion: if path_match.is_dir {
-                            AfterCompletion::Compose
-                        } else {
-                            AfterCompletion::Run
-                        },
+                        after_completion: AfterCompletion::Compose,
                         replace_previous_arguments: false,
                     })
                 })

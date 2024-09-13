@@ -1000,7 +1000,7 @@ impl ExtensionsPage {
                             this.update_settings::<VimModeSetting>(
                                 selection,
                                 cx,
-                                |setting, value| *setting = Some(value),
+                                |setting, value| *setting = VimModeSetting(value),
                             );
                         }),
                     )),

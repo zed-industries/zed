@@ -56,6 +56,8 @@ extend-ignore-re = [
     "rename = \"sesssion_id\"",
     "doas",
     # ProtoLS crate with tree-sitter Protobuf grammar.
-    "protols"
+    "protols",
+    # x11rb SelectionNotifyEvent struct field
+    "requestor"
 ]
 check-filename = true

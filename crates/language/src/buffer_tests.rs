@@ -72,7 +72,7 @@ fn test_select_language(cx: &mut AppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".into(),
+            name: LanguageName::new("Rust"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
@@ -83,7 +83,7 @@ fn test_select_language(cx: &mut AppContext) {
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Make".into(),
+            name: LanguageName::new("Make"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                 ..Default::default()
@@ -97,15 +97,13 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.rs"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Rust".into())
     );
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.mk"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Make".into())
     );
 
@@ -113,8 +111,7 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("src/Makefile"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Make".into())
     );
 
@@ -122,22 +119,19 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("zed/cars"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/a.cars"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/sumk"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
 }
@@ -158,23 +152,22 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ..Default::default()
     });
 
-    cx.read(|cx| languages.language_for_file(&file("the/script"), None, cx))
-        .await
-        .unwrap_err();
-    cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
-        .await
-        .unwrap_err();
+    assert!(cx
+        .read(|cx| languages.language_for_file(&file("the/script"), None, cx))
+        .is_none());
+    assert!(cx
+        .read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
+        .is_none());
+
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
             &file("the/script"),
             Some(&"#!/bin/env node".into()),
             cx
         ))
-        .await
         .unwrap()
-        .name()
-        .as_ref(),
-        "JavaScript"
+        .name(),
+        "JavaScript".into()
     );
 }
 
@@ -242,19 +235,16 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
 
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "TypeScript");
+    assert_eq!(language.name(), "TypeScript".into());
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "C++");
+    assert_eq!(language.name(), "C++".into());
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "Dockerfile");
+    assert_eq!(language.name(), "Dockerfile".into());
 }
 
 fn file(path: &str) -> Arc<dyn File> {
@@ -2245,10 +2235,10 @@ fn test_language_at_with_hidden_languages(cx: &mut AppContext) {
 
         for point in [Point::new(0, 4), Point::new(0, 16)] {
             let config = snapshot.language_scope_at(point).unwrap();
-            assert_eq!(config.language_name().as_ref(), "Markdown");
+            assert_eq!(config.language_name(), "Markdown".into());
 
             let language = snapshot.language_at(point).unwrap();
-            assert_eq!(language.name().as_ref(), "Markdown");
+            assert_eq!(language.name().0.as_ref(), "Markdown");
         }
 
         buffer
@@ -2757,7 +2747,7 @@ fn ruby_lang() -> Language {
 fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: "HTML".into(),
+            name: LanguageName::new("HTML"),
             block_comment: Some(("<!--".into(), "-->".into())),
             ..Default::default()
         },

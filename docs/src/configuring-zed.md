@@ -1134,6 +1134,21 @@ These values take in the same options as the root-level settings with the same n
 
 `boolean` values
 
+## Search
+
+- Description: Search options to enable by default when opening new project and buffer searches.
+- Setting: `search`
+- Default:
+
+```
+"search": {
+  "whole_word": false,
+  "case_sensitive": false,
+  "include_ignored": false,
+  "regex": false
+},
+```
+
 ## Show Call Status Icon
 
 - Description: Whether or not to show the call status icon in the status bar.

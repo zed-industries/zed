@@ -22,8 +22,24 @@ use ui::{
 use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
-#[derive(Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct SshSettings {
+    /// ssh_connections is an array of ssh connections.
+    /// By default this setting is null, which disables the direct ssh connection support.
+    /// You can configure these from `project: Open Remote` in the command palette.
+    /// Zed's ssh support will pull configuration from your ~/.ssh too.
+    /// Examples:
+    /// [
+    ///   {
+    ///     "host": "example-box",
+    ///     "projects": [
+    ///       {
+    ///         "paths": ["/home/user/code/zed"]
+    ///       }
+    ///     ]
+    ///   }
+    /// ]
     pub ssh_connections: Option<Vec<SshConnection>>,
 }
 
@@ -62,15 +78,10 @@ pub struct SshProject {
     pub paths: Vec<String>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct RemoteSettingsContent {
-    pub ssh_connections: Option<Vec<SshConnection>>,
-}
-
 impl Settings for SshSettings {
     const KEY: Option<&'static str> = None;
 
-    type FileContent = RemoteSettingsContent;
+    type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()
@@ -291,11 +302,24 @@ impl SshClientDelegate {
 
             self.update_status(Some("building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args(["build", "--package", "remote_server"])).await?;
-            run_cmd(Command::new("strip").args(["target/debug/remote_server"])).await?;
-            run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+            // run_cmd(Command::new("strip").args(["target/remote_server/debug/remote_server"]))
+            // .await?;
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
 
-            let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
             return Ok((path, version));
 
             async fn run_cmd(command: &mut Command) -> Result<()> {

@@ -1283,10 +1283,7 @@ impl EditorElement {
                 .row,
         );
 
-        let git_gutter_setting = ProjectSettings::get_global(cx)
-            .git
-            .git_gutter
-            .unwrap_or_default();
+        let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
         let display_hunks = buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
@@ -1366,12 +1363,10 @@ impl EditorElement {
             };
             let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
 
-            let min_column_in_pixels = ProjectSettings::get_global(cx)
-                .git
-                .inline_blame
-                .and_then(|settings| settings.min_column)
-                .map(|col| self.column_pixels(col as usize, cx))
-                .unwrap_or(px(0.));
+            let min_column_in_pixels = self.column_pixels(
+                ProjectSettings::get_global(cx).git.inline_blame.min_column as usize,
+                cx,
+            );
             let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
 
             cmp::max(padded_line_end, min_start)
@@ -3331,7 +3326,7 @@ impl EditorElement {
             .unwrap_or_else(|| {
                 matches!(
                     ProjectSettings::get_global(cx).git.git_gutter,
-                    Some(GitGutterSetting::TrackedFiles)
+                    GitGutterSetting::TrackedFiles
                 )
             });
         if show_git_gutter {

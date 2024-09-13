@@ -6,9 +6,8 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
-use settings::Settings;
 use smol::fs;
 use std::{
     any::Any,
@@ -53,14 +52,12 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx
             .update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .lsp
-                    .get(Self::SERVER_NAME)
+                language_server_settings(delegate, Self::SERVER_NAME, cx)
                     .and_then(|s| s.binary.clone())
             })
             .ok()??;
@@ -171,13 +168,11 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let tailwind_user_settings = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;

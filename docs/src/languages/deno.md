@@ -10,6 +10,15 @@ To use the Deno Language Server with TypeScript and TSX files, you will likely w
 
 ```json
 {
+  "lsp": {
+    "deno": {
+      "settings": {
+        "deno": {
+          "enable": true
+        }
+      }
+    }
+  },
   "languages": {
     "TypeScript": {
       "language_servers": [

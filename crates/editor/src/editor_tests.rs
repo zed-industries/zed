@@ -20,8 +20,8 @@ use language::{
     },
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
-    ParsedMarkdown, Point,
+    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
+    LanguageName, Override, ParsedMarkdown, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
@@ -6964,7 +6964,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+                settings.auto_signature_help = true;
             });
         });
     });
@@ -7105,8 +7105,8 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(false);
+                settings.auto_signature_help = false;
+                settings.show_signature_help_after_edits = false;
             });
         });
     });
@@ -7232,8 +7232,8 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(true);
+                settings.auto_signature_help = false;
+                settings.show_signature_help_after_edits = true;
             });
         });
     });
@@ -7274,8 +7274,8 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
-                settings.show_signature_help_after_edits = Some(false);
+                settings.auto_signature_help = true;
+                settings.show_signature_help_after_edits = false;
             });
         });
     });
@@ -7318,7 +7318,7 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+                settings.auto_signature_help = true;
             });
         });
     });
@@ -7759,7 +7759,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.show_completions_on_input = Some(false);
+                settings.show_completions_on_input = false;
             });
         })
     });
@@ -9587,12 +9587,12 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let server_restarts = Arc::new(AtomicUsize::new(0));
     let closure_restarts = Arc::clone(&server_restarts);
     let language_server_name = "test language server";
-    let language_name: Arc<str> = "Rust".into();
+    let language_name: LanguageName = "Rust".into();
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: Arc::clone(&language_name),
+            name: language_name.clone(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
@@ -9629,7 +9629,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
         language_settings.languages.insert(
-            Arc::clone(&language_name),
+            language_name.clone(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
                 ..Default::default()

@@ -1996,7 +1996,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                     project_settings.file_scan_exclusions =
-                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                        vec!["excluded_dir".to_string(), "**/.git".to_string()];
                 });
             });
         });
@@ -2251,14 +2251,8 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     );
                 });
             })
@@ -2374,14 +2368,8 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     )
                 });
             })

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{AppContext, FontFeatures, FontWeight};
-use project::project_settings::{InlineBlameSettings, ProjectSettings};
+use project::project_settings::ProjectSettings;
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, ThemeSettings};
 use ui::{
@@ -296,14 +296,7 @@ impl EditableSettingControl for InlineGitBlameControl {
         value: Self::Value,
         _cx: &AppContext,
     ) {
-        if let Some(inline_blame) = settings.git.inline_blame.as_mut() {
-            inline_blame.enabled = value;
-        } else {
-            settings.git.inline_blame = Some(InlineBlameSettings {
-                enabled: false,
-                ..Default::default()
-            });
-        }
+        settings.git.inline_blame.enabled = value;
     }
 }
 
@@ -349,14 +342,7 @@ impl EditableSettingControl for LineNumbersControl {
         value: Self::Value,
         _cx: &AppContext,
     ) {
-        if let Some(gutter) = settings.gutter.as_mut() {
-            gutter.line_numbers = Some(value);
-        } else {
-            settings.gutter = Some(crate::editor_settings::GutterContent {
-                line_numbers: Some(value),
-                ..Default::default()
-            });
-        }
+        settings.gutter.line_numbers = value;
     }
 }
 
@@ -402,7 +388,7 @@ impl EditableSettingControl for RelativeLineNumbersControl {
         value: Self::Value,
         _cx: &AppContext,
     ) {
-        settings.relative_line_numbers = Some(value);
+        settings.relative_line_numbers = value;
     }
 }
 

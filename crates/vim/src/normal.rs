@@ -248,7 +248,7 @@ impl Vim {
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
-                        target: Some(SurroundsType::Object(object)),
+                        target: Some(SurroundsType::Object(object, around)),
                     });
                 }
                 Some(Operator::ToggleComments) => self.toggle_comments_object(object, around, cx),
@@ -1184,7 +1184,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_multiline_find = Some(true);
+                s.use_multiline_find = true;
             });
         });
 
@@ -1226,7 +1226,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_multiline_find = Some(true);
+                s.use_multiline_find = true;
             });
         });
 
@@ -1268,7 +1268,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_smartcase_find = Some(true);
+                s.use_smartcase_find = true;
             });
         });
 
