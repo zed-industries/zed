@@ -43,6 +43,7 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: usize,
     pub max_output_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -175,6 +176,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
+                    max_completion_tokens: model.max_completion_tokens,
                 },
             );
         }
