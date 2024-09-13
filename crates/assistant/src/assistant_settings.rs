@@ -163,11 +163,13 @@ impl AssistantSettingsContent {
                                                     display_name,
                                                     max_tokens,
                                                     max_output_tokens,
+                                                    max_completion_tokens: None,
                                                 } => Some(open_ai::AvailableModel {
                                                     name,
                                                     display_name,
                                                     max_tokens,
                                                     max_output_tokens,
+                                                    max_completion_tokens: None,
                                                 }),
                                                 _ => None,
                                             })
