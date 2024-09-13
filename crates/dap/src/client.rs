@@ -62,7 +62,6 @@ pub struct ThreadState {
     /// BTreeMap<scope.variables_reference, Vec<VariableContainer>>
     pub variables: BTreeMap<u64, Vec<VariableContainer>>,
     pub fetched_variable_ids: HashSet<u64>,
-    pub current_stack_frame_id: u64,
     // we update this value only once we stopped,
     // we will use this to indicated if we should show a warning when debugger thread was exited
     pub stopped: bool,
@@ -238,12 +237,6 @@ impl DebugAdapterClient {
     pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {
         if let Some(thread_state) = self.thread_states().get_mut(&thread_id) {
             thread_state.status = status;
-        };
-    }
-
-    pub fn update_current_stack_frame(&self, thread_id: u64, stack_frame_id: u64) {
-        if let Some(thread_state) = self.thread_states().get_mut(&thread_id) {
-            thread_state.current_stack_frame_id = stack_frame_id;
         };
     }
 

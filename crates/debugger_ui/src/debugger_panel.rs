@@ -87,8 +87,7 @@ impl DebugPanel {
                                 }
                                 Payload::Request(request) => {
                                     if StartDebugging::COMMAND == request.command {
-                                        Self::handle_start_debugging_request(this, client, cx)
-                                            .log_err();
+                                        Self::handle_start_debugging_request(this, client, cx);
                                     }
                                 }
                                 _ => unreachable!(),
@@ -205,12 +204,14 @@ impl DebugPanel {
         this: &mut Self,
         client: Arc<DebugAdapterClient>,
         cx: &mut ViewContext<Self>,
-    ) -> Result<()> {
-        this.workspace.update(cx, |workspace, cx| {
-            workspace.project().update(cx, |project, cx| {
-                project.start_debug_adapter_client(client.config(), cx);
+    ) {
+        this.workspace
+            .update(cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    project.start_debug_adapter_client(client.config(), cx);
+                })
             })
-        })
+            .log_err();
     }
 
     fn handle_debug_client_events(
@@ -491,7 +492,6 @@ impl DebugPanel {
                 }
 
                 this.update(&mut cx, |this, cx| {
-                    thread_state.current_stack_frame_id = current_stack_frame.clone().id;
                     thread_state.stack_frames = stack_trace_response.stack_frames;
                     thread_state.status = ThreadStatus::Stopped;
                     thread_state.stopped = true;
@@ -518,6 +518,7 @@ impl DebugPanel {
                                     this.workspace.clone(),
                                     client.clone(),
                                     thread_id,
+                                    current_stack_frame.clone().id,
                                     cx,
                                 )
                             });
@@ -603,14 +604,11 @@ impl DebugPanel {
         _: &ExitedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        cx.spawn(|this, mut cx| async move {
-            for thread_state in client.thread_states().values_mut() {
-                thread_state.status = ThreadStatus::Exited;
-            }
+        for thread_state in client.thread_states().values_mut() {
+            thread_state.status = ThreadStatus::Exited;
+        }
 
-            this.update(&mut cx, |_, cx| cx.notify())
-        })
-        .detach_and_log_err(cx);
+        cx.notify();
     }
 
     fn handle_terminated_event(

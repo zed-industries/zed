@@ -33,15 +33,16 @@ enum ThreadItem {
 
 pub struct DebugPanelItem {
     thread_id: u64,
-    variable_list: View<VariableList>,
     console: View<Console>,
     focus_handle: FocusHandle,
     stack_frame_list: ListState,
     output_editor: View<Editor>,
+    current_stack_frame_id: u64,
     active_thread_item: ThreadItem,
-    client: Arc<DebugAdapterClient>,
-    _subscriptions: Vec<Subscription>,
     workspace: WeakView<Workspace>,
+    client: Arc<DebugAdapterClient>,
+    variable_list: View<VariableList>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl_actions!(debug_panel_item, [DebugItemAction]);
@@ -74,6 +75,7 @@ impl DebugPanelItem {
         workspace: WeakView<Workspace>,
         client: Arc<DebugAdapterClient>,
         thread_id: u64,
+        current_stack_frame_id: u64,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -137,6 +139,7 @@ impl DebugPanelItem {
             output_editor,
             _subscriptions,
             stack_frame_list,
+            current_stack_frame_id,
             active_thread_item: ThreadItem::Variables,
         }
     }
@@ -252,6 +255,10 @@ impl DebugPanelItem {
         self.thread_id
     }
 
+    pub fn curren_stack_frame_id(&self) -> u64 {
+        self.current_stack_frame_id
+    }
+
     fn stack_frame_for_index(&self, ix: usize) -> StackFrame {
         self.client
             .thread_state_by_id(self.thread_id)
@@ -270,13 +277,12 @@ impl DebugPanelItem {
     }
 
     fn update_stack_frame_id(&mut self, stack_frame_id: u64, cx: &mut ViewContext<Self>) {
-        self.client
-            .update_current_stack_frame(self.thread_id, stack_frame_id);
+        self.current_stack_frame_id = stack_frame_id;
 
         let thread_state = self.current_thread_state();
 
         self.variable_list.update(cx, |variable_list, _| {
-            variable_list.build_entries(thread_state, true, false);
+            variable_list.build_entries(thread_state, stack_frame_id, true, false);
         });
     }
 
@@ -292,8 +298,7 @@ impl DebugPanelItem {
         let stack_frame = self.stack_frame_for_index(ix);
 
         let source = stack_frame.source.clone();
-        let is_selected_frame =
-            stack_frame.id == self.current_thread_state().current_stack_frame_id;
+        let is_selected_frame = stack_frame.id == self.current_stack_frame_id;
 
         let formatted_path = format!(
             "{}:{}",

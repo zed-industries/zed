@@ -1137,11 +1137,9 @@ impl Project {
         debug_task: task::ResolvedTask,
         cx: &mut ModelContext<Self>,
     ) {
-        let adapter_config = debug_task
-            .debug_adapter_config()
-            .expect("Debug tasks need to specify adapter configuration");
-
-        self.start_debug_adapter_client(adapter_config, cx);
+        if let Some(adapter_config) = debug_task.debug_adapter_config() {
+            self.start_debug_adapter_client(adapter_config, cx);
+        }
     }
 
     pub fn start_debug_adapter_client(
