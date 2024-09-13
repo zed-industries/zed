@@ -1427,10 +1427,9 @@ impl DevServerProjects {
                     ))))
                     .footer(
                         ModalFooter::new().end_slot(
-                            Button::new("sign_in", "Sign in")
+                            Button::new("sign_in", "Sign in with GitHub")
                                 .icon(IconName::Github)
                                 .icon_position(IconPosition::Start)
-                                .style(ButtonStyle::Filled)
                                 .full_width()
                                 .on_click(cx.listener(|_, _, cx| {
                                     let client = Client::global(cx).clone();
@@ -1449,9 +1448,9 @@ impl DevServerProjects {
             .when(!is_signed_out, |modal| {
                 modal.section(
                     Section::new().child(
-                        div().mb_4().child(
+                        div().child(
                             List::new()
-                                .empty_message("No dev servers registered.")
+                                .empty_message("No dev servers registered yet.")
                                 .header(Some(
                                     ListHeader::new("Connections").end_slot(
                                         Button::new("register-dev-server-button", "Connect New Server")
@@ -1524,6 +1523,7 @@ impl Render for DevServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .track_focus(&self.focus_handle)
+            .p_2()
             .elevation_3(cx)
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
@@ -1590,7 +1590,7 @@ pub fn reconnect_to_dev_server(
     cx: &mut WindowContext,
 ) -> Task<Result<()>> {
     let Some(ssh_connection_string) = dev_server.ssh_connection_string else {
-        return Task::ready(Err(anyhow!("can't reconnect, no ssh_connection_string")));
+        return Task::ready(Err(anyhow!("Can't reconnect, no ssh_connection_string")));
     };
     let dev_server_store = dev_server_projects::Store::global(cx);
     let get_access_token = dev_server_store.update(cx, |store, cx| {
