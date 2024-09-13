@@ -12273,6 +12273,7 @@ dependencies = [
  "story",
  "strum 0.25.0",
  "theme",
+ "ui_macros",
  "windows 0.58.0",
 ]
 
@@ -12285,6 +12286,16 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+]
+
+[[package]]
+name = "ui_macros"
+version = "0.1.0"
+dependencies = [
+ "convert_case 0.6.0",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
