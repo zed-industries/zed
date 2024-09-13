@@ -3,7 +3,7 @@ use std::{
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use ::util::ResultExt;
@@ -25,11 +25,12 @@ use windows::{
         System::{
             Com::*,
             DataExchange::{
-                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
-                RegisterClipboardFormatW, SetClipboardData,
+                CloseClipboard, EmptyClipboard, GetClipboardData, GetPriorityClipboardFormat,
+                IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
+                SetClipboardData,
             },
             LibraryLoader::*,
-            Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+            Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
             Ole::*,
             SystemInformation::*,
             Threading::*,
@@ -780,6 +781,9 @@ fn read_from_clipboard_inner(hash_format: u32, metadata_format: u32) -> Result<C
         if let Some(string) = read_string_from_clipboard(hash_format, metadata_format).log_err() {
             entries.push(string);
         }
+        if let Some(image) = read_image_from_clipboard().log_err() {
+            entries.push(image);
+        }
         if entries.is_empty() {
             anyhow::bail!("No content in clipboard");
         } else {
@@ -830,12 +834,32 @@ fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
     }
 }
 
+static PNG_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| unsafe { RegisterClipboardFormatW(windows::core::w!("PNG")) });
+
 fn read_image_from_clipboard() -> Result<ClipboardEntry> {
-    let image = unsafe {
-        let handle = GetClipboardData(CF_DIB.0 as u32)?;
-        let text = PCWSTR(handle.0 as *const u16);
-        String::from_utf16_lossy(text.as_wide())
-    };
+    unsafe {
+        let handle = GetClipboardData(*PNG_FORMAT)?;
+        let image_ptr = GlobalLock(HGLOBAL(handle.0));
+        // let image_info = &*(image_ptr as *mut BITMAPINFOHEADER);
+        // let image_size = image_info.biHeight as usize
+        //     * image_info.biWidth as usize
+        //     * (image_info.biBitCount as usize / 8);
+        let iamge_size = GlobalSize(HGLOBAL(handle.0));
+        // let data_handle = GetClipboardData(CF_HDROP.0 as u32).unwrap();
+        let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
+        // let bytes = Vec::from_raw_parts(
+        //     (handle.0 as *mut u8).add(image_info.biSize as usize),
+        //     image_size,
+        //     image_size,
+        // );
+        let id = hash(&bytes);
+        Ok(ClipboardEntry::Image(Image {
+            format: ImageFormat::Png,
+            bytes,
+            id,
+        }))
+    }
 }
 
 // clipboard
