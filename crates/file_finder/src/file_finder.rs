@@ -32,9 +32,12 @@ use std::{
     },
 };
 use text::Point;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{prelude::*, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::{paths::PathWithPosition, post_inc, ResultExt};
-use workspace::{item::PreviewTabsSettings, notifications::NotifyResultExt, ModalView, Workspace};
+use workspace::{
+    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, SplitDirection,
+    Workspace,
+};
 
 actions!(file_finder, [SelectPrev]);
 
@@ -168,6 +171,53 @@ impl FileFinder {
         self.init_modifiers = Some(cx.modifiers());
         cx.dispatch_action(Box::new(menu::SelectPrev));
     }
+
+    fn go_to_file_split_left(&mut self, _: &pane::SplitLeft, cx: &mut ViewContext<Self>) {
+        self.go_to_file_split_inner(SplitDirection::Left, cx)
+    }
+
+    fn go_to_file_split_right(&mut self, _: &pane::SplitRight, cx: &mut ViewContext<Self>) {
+        self.go_to_file_split_inner(SplitDirection::Right, cx)
+    }
+
+    fn go_to_file_split_up(&mut self, _: &pane::SplitUp, cx: &mut ViewContext<Self>) {
+        self.go_to_file_split_inner(SplitDirection::Up, cx)
+    }
+
+    fn go_to_file_split_down(&mut self, _: &pane::SplitDown, cx: &mut ViewContext<Self>) {
+        self.go_to_file_split_inner(SplitDirection::Down, cx)
+    }
+
+    fn go_to_file_split_inner(
+        &mut self,
+        split_direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            let delegate = &mut picker.delegate;
+            if let Some(workspace) = delegate.workspace.upgrade() {
+                if let Some(m) = delegate.matches.get(delegate.selected_index()) {
+                    let path = match &m {
+                        Match::History { path, .. } => {
+                            let worktree_id = path.project.worktree_id;
+                            ProjectPath {
+                                worktree_id,
+                                path: Arc::clone(&path.project.path),
+                            }
+                        }
+                        Match::Search(m) => ProjectPath {
+                            worktree_id: WorktreeId::from_usize(m.0.worktree_id),
+                            path: m.0.path.clone(),
+                        },
+                    };
+                    let open_task = workspace.update(cx, move |workspace, cx| {
+                        workspace.split_path_preview(path, false, Some(split_direction), cx)
+                    });
+                    open_task.detach_and_log_err(cx);
+                }
+            }
+        })
+    }
 }
 
 impl EventEmitter<DismissEvent> for FileFinder {}
@@ -185,6 +235,10 @@ impl Render for FileFinder {
             .w(rems(34.))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
+            .on_action(cx.listener(Self::go_to_file_split_left))
+            .on_action(cx.listener(Self::go_to_file_split_right))
+            .on_action(cx.listener(Self::go_to_file_split_up))
+            .on_action(cx.listener(Self::go_to_file_split_down))
             .child(self.picker.clone())
     }
 }
@@ -958,7 +1012,7 @@ impl PickerDelegate for FileFinderDelegate {
                             let allow_preview =
                                 PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                             if secondary {
-                                workspace.split_path_preview(project_path, allow_preview, cx)
+                                workspace.split_path_preview(project_path, allow_preview, None, cx)
                             } else {
                                 workspace.open_path_preview(
                                     project_path,
@@ -1123,6 +1177,44 @@ impl PickerDelegate for FileFinderDelegate {
                                 .color(Color::Muted),
                         ),
                 ),
+        )
+    }
+
+    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        let action_source = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.active_pane().focus_handle(cx))
+            .ok()?;
+        Some(
+            h_flex()
+                .w_full()
+                .border_t_1()
+                .py_2()
+                .pr_2()
+                .border_color(cx.theme().colors().border)
+                .justify_end()
+                .gap_4()
+                .child(
+                    Button::new("split_right", "Split right")
+                        .label_size(LabelSize::Small)
+                        .key_binding(KeyBinding::for_action_in(
+                            &pane::SplitRight,
+                            &action_source,
+                            cx,
+                        ))
+                        .on_click(|_, cx| cx.dispatch_action(pane::SplitRight.boxed_clone())),
+                )
+                .child(
+                    Button::new("split_down", "Split down")
+                        .label_size(LabelSize::Small)
+                        .key_binding(KeyBinding::for_action_in(
+                            &pane::SplitDown,
+                            &action_source,
+                            cx,
+                        ))
+                        .on_click(|_, cx| cx.dispatch_action(pane::SplitDown.boxed_clone())),
+                )
+                .into_any(),
         )
     }
 }

@@ -649,7 +649,11 @@
   },
   {
     "context": "FileFinder",
-    "bindings": { "cmd-shift-p": "file_finder::SelectPrev" }
+    "bindings": {
+      "cmd-shift-p": "file_finder::SelectPrev",
+      "cmd-shift-r": "pane::SplitRight",
+      "cmd-shift-b": "pane::SplitDown"
+    }
   },
   {
     "context": "TabSwitcher",
