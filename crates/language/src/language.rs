@@ -1410,6 +1410,10 @@ impl Language {
 }
 
 impl LanguageScope {
+    pub fn path_suffixes(&self) -> &[String] {
+        &self.language.path_suffixes()
+    }
+
     pub fn language_name(&self) -> LanguageName {
         self.language.config.name.clone()
     }
