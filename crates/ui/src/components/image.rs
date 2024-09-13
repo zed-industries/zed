@@ -1,10 +1,9 @@
-use gpui::{svg, IntoElement, Rems, RenderOnce, SharedString, Size, Styled, WindowContext};
+use gpui::{svg, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
+use ui_macros::{path_str, DerivePathStr};
 
 use crate::Color;
-
-const VECTOR_ASSETS_DIR: &str = "vectors";
 
 #[derive(
     Debug,
@@ -17,23 +16,13 @@ const VECTOR_ASSETS_DIR: &str = "vectors";
     IntoStaticStr,
     Serialize,
     Deserialize,
-    PathStaticStr,
+    DerivePathStr,
 )]
 #[strum(serialize_all = "snake_case")]
-#[derive_path_static_str(prefix = "vectors", suffix = "svg", delimiter = "/")]
+#[path_str(prefix = "images", suffix = ".svg")]
 pub enum VectorName {
     ZedLogo,
     ZedXCopilot,
-}
-
-impl VectorName {
-    fn as_str(&self) -> &'static str {
-        self.into()
-    }
-
-    pub fn path_str(&self) -> &'static str {
-        path_str::<{ VECTOR_ASSETS_DIR }>(self)
-    }
 }
 
 /// A vector image, such as an SVG.
@@ -43,7 +32,7 @@ impl VectorName {
 /// than conforming to the standard size of an icons.
 #[derive(IntoElement)]
 pub struct Vector {
-    path: SharedString,
+    path: &'static str,
     color: Color,
     size: Size<Rems>,
 }
@@ -108,27 +97,19 @@ pub mod story {
 
     impl Render for VectorStory {
         fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-            Story::container().child(StorySection::new().children(
-                // iter over all the segments
-                VectorName::iter().map(|vector| {
-                    StoryItem::new(format!("{:?}", vector), Vector::square(vector, rems(8.)))
-                }),
-            ))
+            Story::container().child(StorySection::new().children(VectorName::iter().map(
+                |vector| StoryItem::new(format!("{:?}", vector), Vector::square(vector, rems(8.))),
+            )))
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use strum::IntoEnumIterator;
-
     use super::*;
 
     #[test]
-    fn vector_name_path() {
-        for vector_name in VectorName::iter() {
-            let expected_path = format!("{}/{}.svg", VECTOR_ASSETS_DIR, vector_name.as_str());
-            assert_eq!(vector_name.path(), expected_path);
-        }
+    fn vector_path() {
+        assert_eq!(VectorName::ZedLogo.path(), "images/zed_logo.svg");
     }
 }
