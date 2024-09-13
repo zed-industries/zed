@@ -1156,6 +1156,64 @@ impl Terminal {
         }
     }
 
+    pub fn last_command(&self) -> Vec<String> {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+
+        let mut current_line = Line(terminal.bottommost_line().0.saturating_sub(1));
+
+        dbg!(&current_line);
+
+        let mut lines = Vec::new();
+
+        let mut found_start = false;
+        let mut found_end = false;
+        loop {
+            let mut line_buffer = String::new();
+            let line = &terminal.grid()[current_line];
+
+            let s = line.into_iter().next().and_then(|cell| cell.cell_type());
+            current_line = Line(current_line.0.saturating_sub(1));
+            let Some(cell_type) = s else {
+                if current_line == terminal.topmost_line() {
+                    break;
+                }
+                continue;
+            };
+
+            match cell_type {
+                alacritty_terminal::term::cell::Osc133CellType::Prompt => {
+                    if !found_start {
+                        continue;
+                    }
+                    found_end = true;
+                }
+                alacritty_terminal::term::cell::Osc133CellType::Output => {
+                    found_start = true;
+                    if found_end {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+
+            for cell in line {
+                line_buffer.push(cell.c);
+            }
+            let line = line_buffer.trim_end();
+            if !line.is_empty() {
+                lines.push(line.to_string());
+            }
+            if current_line == terminal.topmost_line() {
+                break;
+            }
+        }
+
+        lines.reverse();
+        dbg!(&lines);
+        lines
+    }
+
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
         let term = self.term.clone();
         let terminal = term.lock_unfair();

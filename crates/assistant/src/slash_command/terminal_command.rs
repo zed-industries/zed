@@ -74,11 +74,7 @@ impl SlashCommand for TerminalSlashCommand {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(DEFAULT_CONTEXT_LINES);
 
-        let lines = active_terminal
-            .read(cx)
-            .model()
-            .read(cx)
-            .last_n_non_empty_lines(line_count);
+        let lines = active_terminal.read(cx).model().read(cx).last_command();
 
         let mut text = String::new();
         text.push_str("Terminal output:\n");
