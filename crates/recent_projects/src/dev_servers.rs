@@ -1192,6 +1192,7 @@ impl DevServerProjects {
                     .child(
                         v_flex()
                             .w_full()
+                            .px_2()
                             .gap_y(Spacing::Large.rems(cx))
                             .when(ssh_prompt.is_none(), |el| {
                                 el.child(
