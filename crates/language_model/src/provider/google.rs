@@ -447,10 +447,10 @@ impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
         const INSTRUCTIONS: [&str; 4] = [
-            "To use the Google AI assistant, you need to add your Google AI API key.",
-            "You can create an API key at:",
+            "To use Zed's assistant with Google AI, you need to add your an API key. Follow these steps:",
             "",
-            "Paste your Google AI API key below and hit enter to use the assistant:",
+            "- Create one by visiting:",
+            "- Paste your API key below and hit enter to use the assistant",
         ];
 
         let env_var_set = self.state.read(cx).api_key_from_env;
@@ -471,8 +471,8 @@ impl Render for ConfigurationView {
                         .on_click(move |_, cx| cx.open_url(GOOGLE_CONSOLE_URL))
                     )
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
                 .child(Label::new(INSTRUCTIONS[3]))
+                .child(Label::new(INSTRUCTIONS[4]))
                 .child(
                     h_flex()
                         .w_full()
