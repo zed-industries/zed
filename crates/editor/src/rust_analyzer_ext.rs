@@ -13,7 +13,7 @@ use crate::{
 static RUST_ANALYZER_NAME: &str = "rust-analyzer";
 
 fn is_rust_language(language: &Language) -> bool {
-    language.name().as_ref() == "Rust"
+    language.name() == "Rust".into()
 }
 
 pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {

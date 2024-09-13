@@ -7,9 +7,8 @@ use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use language_settings::all_language_settings;
 use lsp::LanguageServerBinary;
-use project::project_settings::{BinarySettings, ProjectSettings};
+use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use regex::Regex;
-use settings::Settings;
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -40,10 +39,7 @@ impl LspAdapter for RustLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+            language_server_settings(delegate, Self::SERVER_NAME, cx).and_then(|s| s.binary.clone())
         });
 
         match configured_binary {
@@ -451,7 +447,7 @@ impl ContextProvider for RustContextProvider {
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         let package_to_run = all_language_settings(file.as_ref(), cx)
-            .language(Some("Rust"))
+            .language(Some(&"Rust".into()))
             .tasks
             .variables
             .get(DEFAULT_RUN_NAME_STR);

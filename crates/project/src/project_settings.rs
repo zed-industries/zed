@@ -19,7 +19,7 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///

@@ -609,7 +609,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let mut fake_servers = language_registry.fake_language_servers("Gleam");
+    let mut fake_servers = language_registry.fake_language_servers("Gleam".into());
 
     let buffer = project
         .update(cx, |project, cx| {

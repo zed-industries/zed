@@ -370,7 +370,11 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
+            if let open_ai::Model::Custom { .. } = model {
+                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+            } else {
+                tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
+            }
         })
         .boxed()
 }
@@ -487,7 +491,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const OPENAI_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
+        const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
         const INSTRUCTIONS: [&str; 6] = [
             "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
             " - You can create an API key at: ",

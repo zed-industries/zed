@@ -4975,9 +4975,10 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+
         if !user_requested
-            && self.enable_inline_completions
-            && !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
+            && (!self.enable_inline_completions
+                || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx))
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -6670,7 +6671,11 @@ impl Editor {
                 let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
-                    selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+                    if !selection.is_empty() && selection.end.column == 0 {
+                        selection.end = cmp::min(max_point, selection.end);
+                    } else {
+                        selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+                    }
                     selection.goal = SelectionGoal::None;
                 }
                 if is_first {
@@ -12465,7 +12470,7 @@ fn inlay_hint_settings(
     let language = snapshot.language_at(location);
     let settings = all_language_settings(file, cx);
     settings
-        .language(language.map(|l| l.name()).as_deref())
+        .language(language.map(|l| l.name()).as_ref())
         .inlay_hints
 }
 

@@ -1504,3 +1504,9 @@ pub struct KeystrokeEvent {
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
 }
+
+impl Drop for AppContext {
+    fn drop(&mut self) {
+        println!("Dropping the App Context");
+    }
+}

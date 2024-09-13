@@ -683,7 +683,7 @@ impl LspLogView {
                 self.project
                     .read(cx)
                     .supplementary_language_servers(cx)
-                    .filter_map(|(&server_id, name)| {
+                    .filter_map(|(server_id, name)| {
                         let state = log_store.language_servers.get(&server_id)?;
                         Some(LogMenuItem {
                             server_id,
