@@ -1,6 +1,6 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, ContentMask,
+    div, fill, hsla, point, px, relative, size, AnyElement, AvailableSpace, Bounds, ContentMask,
     DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
     HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
     LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
@@ -225,7 +225,17 @@ impl TerminalElement {
                     if matches!(bg, Named(NamedColor::Background)) {
                         //Continue to next cell, resetting variables if necessary
                         cur_alac_color = None;
-                        if let Some(rect) = cur_rect {
+                        if let Some(mut rect) = cur_rect {
+                            if let Some(ty) = cell.cell.cell_type() {
+                                dbg!(&ty);
+                                let color = match ty {
+                                    terminal::alacritty_terminal::term::cell::Osc133CellType::Prompt => hsla(1.0, 1.0, 0.0, 0.5),
+                                    terminal::alacritty_terminal::term::cell::Osc133CellType::Input => hsla(0.0, 1.0, 0.0, 0.5),
+                                    terminal::alacritty_terminal::term::cell::Osc133CellType::Output => hsla(0.0, 0.0, 1.0, 0.5),
+                                };
+                                rect.color = color;
+                            }
+
                             rects.push(rect);
                             cur_rect = None
                         }
@@ -251,8 +261,18 @@ impl TerminalElement {
                                     );
                                 } else {
                                     cur_alac_color = Some(bg);
-                                    if cur_rect.is_some() {
-                                        rects.push(cur_rect.take().unwrap());
+                                    if let Some(mut rect) = cur_rect.take() {
+                                        dbg!("About to psuh");
+                                        if let Some(ty) = cell.cell.cell_type() {
+                                            dbg!(&ty);
+                                            let color = match ty {
+                                                terminal::alacritty_terminal::term::cell::Osc133CellType::Prompt => hsla(1.0, 1.0, 0.0, 0.5),
+                                                terminal::alacritty_terminal::term::cell::Osc133CellType::Input => hsla(0.0, 1.0, 0.0, 0.5),
+                                                terminal::alacritty_terminal::term::cell::Osc133CellType::Output => hsla(0.0, 0.0, 1.0, 0.5),
+                                            };
+                                            rect.color = color;
+                                        }
+                                        rects.push(rect);
                                     }
                                     cur_rect = Some(LayoutRect::new(
                                         AlacPoint::new(
@@ -280,8 +300,17 @@ impl TerminalElement {
                 {
                     if !is_blank(&cell) {
                         let cell_text = cell.c.to_string();
-                        let cell_style =
+                        let mut cell_style =
                             TerminalElement::cell_style(&cell, fg, theme, text_style, hyperlink);
+
+                        if let Some(ty) = cell.cell.cell_type() {
+                            let color = match ty {
+                                terminal::alacritty_terminal::term::cell::Osc133CellType::Prompt => Hsla::red(),
+                                terminal::alacritty_terminal::term::cell::Osc133CellType::Input => Hsla::green(),
+                                terminal::alacritty_terminal::term::cell::Osc133CellType::Output => Hsla::blue(),
+                            };
+                            cell_style.background_color = Some(color);
+                        }
 
                         let layout_cell = text_system
                             .shape_line(
@@ -299,8 +328,8 @@ impl TerminalElement {
                 }
             }
 
-            if cur_rect.is_some() {
-                rects.push(cur_rect.take().unwrap());
+            if let Some(rect) = cur_rect.take() {
+                rects.push(rect);
             }
         }
         (cells, rects)

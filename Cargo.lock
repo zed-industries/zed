@@ -88,7 +88,6 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.24.1-dev"
-source = "git+https://github.com/alacritty/alacritty?rev=91d034ff8b53867143c005acfaa14609147c9a2c#91d034ff8b53867143c005acfaa14609147c9a2c"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.6.0",
@@ -200,7 +199,7 @@ dependencies = [
  "anstyle-wincon",
  "colorchoice",
  "is_terminal_polyfill",
- "utf8parse",
+ "utf8parse 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -215,7 +214,7 @@ version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb47de1e80c2b463c735db5b217a0ddc39d612e7ac9e2e96a5aed1f57616c1cb"
 dependencies = [
- "utf8parse",
+ "utf8parse 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -12436,6 +12435,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
+name = "utf8parse"
+version = "0.2.2"
+source = "git+https://github.com/zed-industries/vte?branch=osc-133-2#018e5445f02271669136718db865e9bf43aa1ea3"
+
+[[package]]
 name = "util"
 version = "0.1.0"
 dependencies = [
@@ -12629,22 +12633,20 @@ dependencies = [
 [[package]]
 name = "vte"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40eb22ae96f050e0c0d6f7ce43feeae26c348fc4dea56928ca81537cfaa6188b"
+source = "git+https://github.com/zed-industries/vte?branch=osc-133-2#018e5445f02271669136718db865e9bf43aa1ea3"
 dependencies = [
  "bitflags 2.6.0",
  "cursor-icon",
  "log",
  "serde",
- "utf8parse",
+ "utf8parse 0.2.2 (git+https://github.com/zed-industries/vte?branch=osc-133-2)",
  "vte_generate_state_changes",
 ]
 
 [[package]]
 name = "vte_generate_state_changes"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e369bee1b05d510a7b4ed645f5faa90619e05437111783ea5848f28d97d3c2e"
+source = "git+https://github.com/zed-industries/vte?branch=osc-133-2#018e5445f02271669136718db865e9bf43aa1ea3"
 dependencies = [
  "proc-macro2",
  "quote",

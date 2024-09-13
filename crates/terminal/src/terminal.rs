@@ -700,6 +700,9 @@ impl Terminal {
             AlacTermEvent::ChildExit(error_code) => {
                 self.register_task_finished(Some(*error_code), cx);
             }
+            AlacTermEvent::Osc133(command) => {
+                dbg!(command);
+            }
         }
     }
 
