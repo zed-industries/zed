@@ -12,4 +12,4 @@ language = "Svelte"
 
 [grammars.svelte]
 repository = "https://github.com/tree-sitter-grammars/tree-sitter-svelte"
-commit = "bd37c2424ade25a4f68504b563605695e276c870"
+commit = "3f06f705410683adb17d146b5eca28c62fe81ba6"
