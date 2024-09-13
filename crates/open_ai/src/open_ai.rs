@@ -63,17 +63,22 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo-0613")]
+    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo")]
     ThreePointFiveTurbo,
-    #[serde(rename = "gpt-4", alias = "gpt-4-0613")]
+    #[serde(rename = "gpt-4", alias = "gpt-4")]
     Four,
-    #[serde(rename = "gpt-4-turbo-preview", alias = "gpt-4-1106-preview")]
+    #[serde(rename = "gpt-4-turbo", alias = "gpt-4-turbo")]
     FourTurbo,
-    #[serde(rename = "gpt-4o", alias = "gpt-4o-2024-05-13")]
+    #[serde(rename = "gpt-4o", alias = "gpt-4o")]
     #[default]
     FourOmni,
-    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
+    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini")]
     FourOmniMini,
+    #[serde(rename = "o1-preview", alias = "o1-preview")]
+    O1Preview,
+    #[serde(rename = "o1-mini", alias = "o1-mini")]
+    O1Mini,
+
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -93,6 +98,8 @@ impl Model {
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
+            "o1-preview" => Ok(Self::O1Preview),
+            "o1-mini" => Ok(Self::O1Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -101,9 +108,11 @@ impl Model {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
-            Self::FourTurbo => "gpt-4-turbo-preview",
+            Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::O1Preview => "o1-preview",
+            Self::O1Mini => "o1-mini",
             Self::Custom { name, .. } => name,
         }
     }
@@ -115,6 +124,8 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::O1Preview => "o1-preview",
+            Self::O1Mini => "o1-mini",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -123,11 +134,13 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::ThreePointFiveTurbo => 4096,
+            Self::ThreePointFiveTurbo => 16385,
             Self::Four => 8192,
             Self::FourTurbo => 128000,
             Self::FourOmni => 128000,
             Self::FourOmniMini => 128000,
+            Self::O1Preview => 128000,
+            Self::O1Mini => 128000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
