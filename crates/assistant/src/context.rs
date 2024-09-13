@@ -162,6 +162,7 @@ impl ContextOperation {
                                 )?,
                                 icon: section.icon_name.parse()?,
                                 label: section.label.into(),
+                                metadata: None,
                             })
                         })
                         .collect::<Result<Vec<_>>>()?,
@@ -641,6 +642,7 @@ impl Context {
                             range,
                             icon: section.icon,
                             label: section.label.clone(),
+                            metadata: None,
                         })
                     } else {
                         None
@@ -1825,6 +1827,7 @@ impl Context {
                                         ..buffer.anchor_before(start + section.range.end),
                                     icon: section.icon,
                                     label: section.label,
+                                    metadata: None,
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
@@ -2977,6 +2980,7 @@ impl SavedContext {
                             ..buffer.anchor_before(section.range.end),
                         icon: section.icon,
                         label: section.label,
+                        metadata: None,
                     }
                 })
                 .collect(),

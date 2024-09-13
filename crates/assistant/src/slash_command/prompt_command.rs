@@ -95,6 +95,7 @@ impl SlashCommand for PromptSlashCommand {
                     range,
                     icon: IconName::Library,
                     label: title,
+                    metadata: None,
                 }],
                 run_commands_in_text: true,
             })

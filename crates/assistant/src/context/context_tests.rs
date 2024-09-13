@@ -1089,6 +1089,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             range: section_start..section_end,
                             icon: ui::IconName::Ai,
                             label: "section".into(),
+                            metadata: None,
                         });
                     }
 

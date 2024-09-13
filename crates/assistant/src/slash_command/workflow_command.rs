@@ -68,6 +68,7 @@ impl SlashCommand for WorkflowSlashCommand {
                     range,
                     icon: IconName::Route,
                     label: "Workflow".into(),
+                    metadata: None,
                 }],
                 run_commands_in_text: false,
             })

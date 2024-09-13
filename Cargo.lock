@@ -451,6 +451,7 @@ dependencies = [
  "language",
  "parking_lot",
  "serde",
+ "serde_json",
  "workspace",
 ]
 

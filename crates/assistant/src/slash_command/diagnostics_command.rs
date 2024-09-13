@@ -182,6 +182,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
                         range: 0..1,
                         icon: IconName::Library,
                         label: "No Diagnostics".into(),
+                        metadata: None,
                     }],
                     text: "\n".to_string(),
                     run_commands_in_text: true,
@@ -228,6 +229,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
                         PlaceholderType::File(file_path) => file_path.into(),
                         PlaceholderType::Diagnostic(_, message) => message.into(),
                     },
+                    metadata: None,
                 })
                 .collect();
 

@@ -106,4 +106,5 @@ pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
     pub icon: IconName,
     pub label: SharedString,
+    pub metadata: Option<serde_json::Value>,
 }

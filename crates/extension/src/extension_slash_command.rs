@@ -121,6 +121,7 @@ impl SlashCommand for ExtensionSlashCommand {
                         range: section.range.into(),
                         icon: IconName::Code,
                         label: section.label.into(),
+                        metadata: None,
                     })
                     .collect(),
                 run_commands_in_text: false,

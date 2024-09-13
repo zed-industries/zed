@@ -349,6 +349,7 @@ impl SlashCommand for DocsSlashCommand {
                         range,
                         icon: IconName::FileDoc,
                         label: format!("docs ({provider}): {key}",).into(),
+                        metadata: None,
                     })
                     .collect(),
                 run_commands_in_text: false,

@@ -141,6 +141,7 @@ impl SlashCommand for ContextServerSlashCommand {
                                 .description
                                 .unwrap_or(format!("Result from {}", prompt_name)),
                         ),
+                        metadata: None,
                     }],
                     text: prompt,
                     run_commands_in_text: false,

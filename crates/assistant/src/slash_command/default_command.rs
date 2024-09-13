@@ -70,6 +70,7 @@ impl SlashCommand for DefaultSlashCommand {
                     range: 0..text.len(),
                     icon: IconName::Library,
                     label: "Default".into(),
+                    metadata: None,
                 }],
                 text,
                 run_commands_in_text: true,

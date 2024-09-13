@@ -454,6 +454,7 @@ pub fn build_entry_output_section(
         range,
         icon,
         label: label.into(),
+        metadata: None,
     }
 }
 
