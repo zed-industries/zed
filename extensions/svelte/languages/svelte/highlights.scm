@@ -5,7 +5,7 @@
 ; property attribute
 (attribute_directive) @attribute.function
 (attribute_identifier) @attribute
-(modifier) @attribute.special
+(attribute_modifier) @attribute.special
 
 ; Style component attributes as @property
 (start_tag
