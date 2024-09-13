@@ -700,6 +700,13 @@ impl Terminal {
             AlacTermEvent::ChildExit(error_code) => {
                 self.register_task_finished(Some(*error_code), cx);
             }
+            AlacTermEvent::Osc133(command) => {
+                let term = self.term.lock();
+                let line = term.grid().cursor.point.line;
+                let col = term.grid().cursor.point.column;
+
+                println!("OSC133 command: {:?} {:?} {:?}", command, line, col);
+            }
         }
     }
 
