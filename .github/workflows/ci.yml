@@ -110,8 +110,7 @@ jobs:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     runs-on:
-      - self-hosted
-      - deploy
+      - hosted-linux-x86-1
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
