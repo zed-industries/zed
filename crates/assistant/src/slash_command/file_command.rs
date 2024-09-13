@@ -5,6 +5,7 @@ use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::Write,
     ops::Range,
@@ -431,6 +432,11 @@ pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32
     text
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct FileCommandMetadata {
+    path: String,
+}
+
 pub fn build_entry_output_section(
     range: Range<usize>,
     path: Option<&Path>,
@@ -456,7 +462,12 @@ pub fn build_entry_output_section(
         range,
         icon,
         label: label.into(),
-        metadata: None,
+        metadata: path.map(|path| {
+            serde_json::to_value(FileCommandMetadata {
+                path: path.to_string_lossy().to_string(),
+            })
+            .unwrap()
+        }),
     }
 }
 
