@@ -388,7 +388,7 @@ pub async fn stream_completion(
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     if request.model == "o1-preview" || request.model == "o1-mini" {
         let response = complete(client, api_url, api_key, request, low_speed_timeout).await;
-        let response_stream_event = response.map(|res| adapt_response_to_stream(res));
+        let response_stream_event = response.map(adapt_response_to_stream);
         return Ok(stream::once(future::ready(response_stream_event)).boxed());
     }
 
