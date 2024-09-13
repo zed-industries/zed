@@ -25,44 +25,100 @@ This command adds or removes the following property from your user settings:
 
 ## Customizing key bindings
 
-You can edit your personal key bindings with `:keymap`. For Vim-specific shortcuts, you may find the following template a good place to start.
+In this section, we'll learn how to customize the key bindings of Zed's vim mode. You'll learn:
+
+- How to select the correct context for your new key bindings.
+- Useful contexts for vim mode key bindings.
+- Common key bindings to customize for extra productivity.
+
+> **Note**: You can find a complete list of vim mode's default key bindings in Zed's code repository: [vim mode default keymap](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
+
+### Selecting the correct context
+
+Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
+
+```json
+{
+  "context": "Editor",
+  "bindings": {
+    "ctrl-s": "file::Save"
+  }
+}
+```
+
+> **Note**: You can edit your personal key bindings with the `:keymap` command ({#kb zed::OpenKeymap}).
+
+Contexts are nested, so when you're editing a file, the context is the `"Editor"` context, which is inside the `"Pane"` context, which is inside the `"Workspace"` context. That's why any key bindings you add to the `"Workspace"` context will work when you're editing a file. Here's an example:
+
+```json
+// This key binding will work when you're editing a file. It comes built into Zed by default as the workspace: save command.
+{
+  "context": "Workspace",
+  "bindings": {
+    "ctrl-s": "file::Save"
+  }
+}
+```
+
+Contexts are expressions. They support boolean operators like `&&` (and) and `||` (or). For example, you can use the context `"Editor && vim_mode == normal"` to create key bindings that only work when you're editing a file *and* you're in vim's normal mode.
+
+Vim mode adds several contexts to the `"Editor"` context:
+
+| Operator             | Description                                                                                                                                                                        |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VimControl           | Indicates that vim keybindings should work. Currently an alias for `vim_mode == normal \|\| vim_mode == visual \|\| vim_mode == operator`, but the definition may change over time |
+| vim_mode == normal   | Normal mode                                                                                                                                                                        |
+| vim_mode == visual   | Visual mode                                                                                                                                                                        |
+| vim_mode == insert   | Insert mode                                                                                                                                                                        |
+| vim_mode == replace  | Replace mode                                                                                                                                                                       |
+| vim_mode == waiting  | Waiting for an arbitrary key (e.g., after typing `f` or `t`)                                                                                                                       |
+| vim_mode == operator | Waiting for another binding to trigger (e.g., after typing `c` or `d`)                                                                                                             |
+| vim_operator         | Set to `none` unless `vim_mode == operator`, in which case it is set to the current operator's default keybinding (e.g., after typing `d`, `vim_operator == d`)                    |
+
+> **Note**: Contexts are matched only on one level at a time. So it is possible to use the expression `"Editor && vim_mode == normal"`, but `"Workspace && vim_mode == normal"` will never match because we set the vim context at the `"Editor"` level.
+
+### Useful contexts for vim mode key bindings
+
+Here's a template with useful vim mode contexts to get started customizing your vim mode key bindings. You can copy it and integrate it into your user keymap.
 
 ```json
 [
   {
     "context": "VimControl && !menu",
     "bindings": {
-      // put key-bindings here if you want them to work in normal & visual mode
+      // Put key-bindings here if you want them to work in normal & visual mode.
     }
   },
   {
     "context": "vim_mode == normal && !menu",
     "bindings": {
-      // "shift-y": ["workspace::SendKeystrokes", "y $"] // use nvim's Y behavior
+      // "shift-y": ["workspace::SendKeystrokes", "y $"] // Use neovim's yank behavior: yank to end of line.
     }
   },
   {
     "context": "vim_mode == insert",
     "bindings": {
-      // "j k": "vim::NormalBefore" // remap jk in insert mode to escape.
+      // "j k": "vim::NormalBefore" // In insert mode, make jk escape to normal mode.
     }
   },
   {
     "context": "EmptyPane || SharedScreen",
     "bindings": {
-      // put key-bindings here (in addition to above) if you want them to
-      // work when no editor exists
+      // Put key-bindings here (in addition to above) if you want them to
+      // work when no editor exists.
       // "space f": "file_finder::Toggle"
     }
   }
 ]
 ```
 
-If you would like to emulate Vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) action in the correct context.
+> **Note**: If you would like to emulate Vim's `map` commands (`nmap`, etc.), you can use the action [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) in the correct context.
 
-You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
+### Optional key bindings
 
-If you want to navigate between the editor and docks (terminal, project panel, AI assistant, ...) just like you navigate between splits you can use the following key bindings:
+By default, you can navigate between the different files open in the editor with shortcuts like `ctrl+w` followed by one of `hjkl` to move to the left, down, up, or right respectively.
+
+But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, assistant panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user key map.
 
 ```json
 {
@@ -77,7 +133,7 @@ If you want to navigate between the editor and docks (terminal, project panel, A
 }
 ```
 
-Subword motion is not enabled by default. To enable it, add these bindings to your keymap.
+Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json
 [
@@ -93,7 +149,7 @@ Subword motion is not enabled by default. To enable it, add these bindings to yo
 ]
 ```
 
-Surrounding the selection in visual mode is also not enabled by default (`shift-s` normally behaves like `c`). To enable it, add the following to your keymap.
+Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
 
 ```json
 {
@@ -111,7 +167,7 @@ Surrounding the selection in visual mode is also not enabled by default (`shift-
 
 ### Restoring common text editing keybindings
 
-If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: <kbd>Ctrl</kbd>+<kbd>v</kbd> to copy, <kbd>Ctrl</kbd>+<kbd>f</kbd> to search, etc. You can restore them by copying this data into your keymap:
+If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to copy, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
 
 ```json
 {

@@ -120,16 +120,6 @@ These ex commands open Zed's various panels and windows.
 | Open the terminal            | `:te[rm]`        |
 | Open the extensions window   | `:Ext[ensions]`  |
 
-### Contexts
-
-Zed's keyboard bindings are evaluated only when the `"context"` matches the location you are in on the screen. Locations are nested, so when you're editing you're in the `"Workspace"` location is at the top, containing a `"Pane"` which contains an `"Editor"`. Contexts are matched only on one level at a time. So it is possible to combine `Editor && vim_mode == normal`, but `Workspace && vim_mode == normal` will never match because we set the vim context at the `Editor` level.
-
-Vim mode adds several contexts to the `Editor`:
-
-- `vim_mode` is similar to, but not identical to, the current mode. It starts as one of `normal`, `visual`, `insert` or `replace` (depending on your mode). If you are mid-way through typing a sequence, `vim_mode` will be either `waiting` if it's waiting for an arbitrary key (for example after typing `f` or `t`), or `operator` if it's waiting for another binding to trigger (for example after typing `c` or `d`).
-- `vim_operator` is set to `none` unless `vim_mode == operator` in which case it is set to the current operator's default keybinding (for example after typing `d`, `vim_operator == d`).
-- `"VimControl"` indicates that vim keybindings should work. It is currently an alias for `vim_mode == normal || vim_mode == visual || vim_mode == operator`, but the definition may change over time.
-
 ## Command palette
 
 Vim mode allows you to enable Zed’s command palette with `:`. This means that you can use vim's command palette to run any action that Zed supports.
