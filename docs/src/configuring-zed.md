@@ -1073,7 +1073,7 @@ The proxy protocol is specified by the URI scheme. Supported URI schemes are: `h
 
 By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
 
-For example, to set a `http` proxy, add the following to your settings:
+For example, to set an `http` proxy, add the following to your settings:
 
 ```json
 {
