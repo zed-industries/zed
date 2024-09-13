@@ -241,11 +241,6 @@ pub struct LanguageModelRequest {
 
 impl LanguageModelRequest {
     pub fn into_open_ai(self, model: String, max_output_tokens: Option<u32>) -> open_ai::Request {
-        let stream = if model.starts_with("o1-") {
-            false
-        } else {
-            true
-        };
         open_ai::Request {
             model,
             messages: self
@@ -264,7 +259,7 @@ impl LanguageModelRequest {
                     },
                 })
                 .collect(),
-            stream,
+            stream: !model.starts_with("o1-"),
             stop: self.stop,
             temperature: self.temperature,
             max_tokens: max_output_tokens,
