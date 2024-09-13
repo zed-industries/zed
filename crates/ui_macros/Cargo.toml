@@ -16,5 +16,4 @@ proc-macro = true
 proc-macro2 = "1.0.66"
 quote = "1.0.9"
 syn = { version = "1.0.72", features = ["full", "extra-traits"] }
-strum = { version = "0.24", features = ["derive"] }
 convert_case.workspace = true
