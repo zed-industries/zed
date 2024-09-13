@@ -2,14 +2,14 @@
 
 Zed includes a mode that provides modal editing features modeled after the popular text editor Vim.
 
-> **Note**: This page focuses on configuration options. If you're new to vim mode, the [Vim Mode](vim.md) page provides an overview of the modal editing features Zed provides.
-
 In this guide, you'll learn how to:
 
 - Enable or disable vim mode.
 - Customize key bindings.
 - Change vim mode settings.
 - Useful optional key bindings to add to your configuration for faster navigation.
+
+> **Note**: This page focuses on configuration options. If you're new to vim mode, the [Vim Mode](vim.md) page provides an overview of the modal editing features Zed provides. If you've not customized key bindings in Zed before, you can learn more about it in the [Key Bindings](key-bindings.md) page.
 
 ## Enabling and disabling vim mode
 
@@ -46,8 +46,6 @@ Zed's key bindings are evaluated only when the `"context"` property matches your
 }
 ```
 
-> **Note**: You can edit your personal key bindings with the `:keymap` command ({#kb zed::OpenKeymap}).
-
 Contexts are nested, so when you're editing a file, the context is the `"Editor"` context, which is inside the `"Pane"` context, which is inside the `"Workspace"` context. That's why any key bindings you add to the `"Workspace"` context will work when you're editing a file. Here's an example:
 
 ```json
@@ -79,14 +77,14 @@ Vim mode adds several contexts to the `"Editor"` context:
 
 ### Useful contexts for vim mode key bindings
 
-Here's a template with useful vim mode contexts to get started customizing your vim mode key bindings. You can copy it and integrate it into your user keymap.
+Here's a template with useful vim mode contexts to help you customize your vim mode key bindings. You can copy it and integrate it into your user keymap.
 
 ```json
 [
   {
     "context": "VimControl && !menu",
     "bindings": {
-      // Put key-bindings here if you want them to work in normal & visual mode.
+      // Put key bindings here if you want them to work in normal & visual mode.
     }
   },
   {
@@ -104,7 +102,7 @@ Here's a template with useful vim mode contexts to get started customizing your 
   {
     "context": "EmptyPane || SharedScreen",
     "bindings": {
-      // Put key-bindings here (in addition to above) if you want them to
+      // Put key bindings here (in addition to the context above) if you want them to
       // work when no editor exists.
       // "space f": "file_finder::Toggle"
     }
@@ -116,9 +114,9 @@ Here's a template with useful vim mode contexts to get started customizing your 
 
 ### Optional key bindings
 
-By default, you can navigate between the different files open in the editor with shortcuts like `ctrl+w` followed by one of `hjkl` to move to the left, down, up, or right respectively.
+By default, you can navigate between the different files open in the editor with shortcuts like `ctrl+w` followed by one of `hjkl` to move to the left, down, up, or right, respectively.
 
-But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, assistant panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user key map.
+But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, assistant panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user keymap.
 
 ```json
 {
@@ -238,8 +236,6 @@ Here are a few general Zed settings that can help you fine-tune your Vim experie
 | gutter.line_numbers     | Controls the display of line numbers in the gutter. Set the `"line_numbers"` property to `false` to hide line numbers.                                        | `true`                 |
 | command_aliases         | Object that defines aliases for commands in the command palette. You can use it to define shortcut names for commands you use often. Read below for examples. | `{}`                   |
 
-> **Note**: The `command_aliases` setting is represented as a single object value in the table for brevity. In practice, it defines multiple aliases: `w` for `w`, `wq` for `wq`, and `q` for `q`.
-
 Here's an example of these settings changed:
 
 ```json
@@ -252,7 +248,7 @@ Here's an example of these settings changed:
   "scrollbar": { "show": "never" },
   // Prevent the buffer from scrolling beyond the last line
   "scroll_beyond_last_line": "off",
-  // Allow cursor to reach edges of screen
+  // Allow the cursor to reach the edges of the screen
   "vertical_scroll_margin": 0,
   "gutter": {
     // Disable line numbers completely:
@@ -265,3 +261,5 @@ Here's an example of these settings changed:
   }
 }
 ```
+
+The `command_aliases` property is a single object that maps keys or key sequences to vim mode commands. The example above defines multiple aliases: `W` for `w`, `Wq` for `wq`, and `Q` for `q`.

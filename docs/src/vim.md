@@ -221,7 +221,7 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can surround text objects with `ys` (yank surround), change surrounding with `cs`, and delete surrounding with `ds`.
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
-- You can add key bindings to your keymap to navigate "camelCase" names.
+- You can add key bindings to your keymap to navigate "camelCase" names. You can learn how in the [configuring vim mode](./vim-configuration) page.
 
 ## Regex differences
 
