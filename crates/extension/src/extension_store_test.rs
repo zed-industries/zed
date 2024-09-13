@@ -145,6 +145,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-ruby".into(),
                         name: "Zed Ruby".into(),
                         version: "1.0.0".into(),
+                        editor_actions: Default::default(),
                         schema_version: SchemaVersion::ZERO,
                         description: None,
                         authors: Vec::new(),
@@ -170,6 +171,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 "zed-monokai".into(),
                 ExtensionIndexEntry {
                     manifest: Arc::new(ExtensionManifest {
+                        editor_actions: Default::default(),
                         id: "zed-monokai".into(),
                         name: "Zed Monokai".into(),
                         version: "2.0.0".into(),
@@ -336,6 +338,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         "zed-gruvbox".into(),
         ExtensionIndexEntry {
             manifest: Arc::new(ExtensionManifest {
+                editor_actions: Default::default(),
                 id: "zed-gruvbox".into(),
                 name: "Zed Gruvbox".into(),
                 version: "1.0.0".into(),

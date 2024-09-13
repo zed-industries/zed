@@ -5,6 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use editor::MultiBufferSnapshot;
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
@@ -32,10 +33,28 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.2.0",
     with: {
          "worktree": ExtensionWorktree,
+         "buffer": ExtensionBuffer,
+         "char-iterator": ExtensionCharIterator,
          "key-value-store": ExtensionKeyValueStore,
          "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
     },
 });
+
+pub struct BoopCharIterator {
+    snapshot: multi_buffer::MultiBufferSnapshot,
+    offset: usize,
+}
+
+impl Iterator for BoopCharIterator {
+    type Item = (char, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let offset = self.offset;
+        let char = self.snapshot.chars_at(self.offset).next()?;
+        self.offset = offset + char.len_utf8();
+        Some((char, offset as u64))
+    }
+}
 
 pub use self::zed::extension::*;
 
@@ -43,6 +62,18 @@ mod settings {
     include!(concat!(env!("OUT_DIR"), "/since_v0.2.0/settings.rs"));
 }
 
+pub struct ExtensionBuffer {
+    snapshot: MultiBufferSnapshot,
+    selections: Vec<Selection>,
+}
+
+impl ExtensionBuffer {
+    fn selections(&self) -> Vec<Selection> {
+        self.selections.clone()
+    }
+}
+
+pub type ExtensionCharIterator = Arc<Mutex<BoopCharIterator>>;
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 pub type ExtensionKeyValueStore = Arc<IndexedDocsDatabase>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
@@ -547,5 +578,55 @@ impl ExtensionImports for WasmState {
 
         #[cfg(not(unix))]
         Ok(Ok(()))
+    }
+}
+
+#[async_trait]
+impl HostBuffer for WasmState {
+    async fn selections(&mut self, buffer: Resource<Buffer>) -> wasmtime::Result<Vec<Selection>> {
+        let buffer = self.table.get(&buffer)?;
+
+        // Assuming Buffer has a selections() method that returns Vec<Selection>
+        Ok(buffer.selections())
+    }
+
+    async fn chars_at(
+        &mut self,
+        buffer: Resource<Buffer>,
+        offset: u64,
+    ) -> wasmtime::Result<Resource<CharIterator>> {
+        todo!("Implement chars_at")
+    }
+
+    async fn chars_before(
+        &mut self,
+        buffer: Resource<Buffer>,
+        offset: u64,
+    ) -> wasmtime::Result<Resource<CharIterator>> {
+        todo!("Implement chars_before")
+    }
+
+    async fn edits(&mut self, buffer: Resource<Buffer>) -> wasmtime::Result<Vec<Edit>> {
+        todo!("Implement edits")
+    }
+
+    fn drop(&mut self, buffer: Resource<Buffer>) -> wasmtime::Result<()> {
+        todo!("Implement drop for Buffer")
+    }
+}
+
+#[async_trait]
+impl HostCharIterator for WasmState {
+    async fn next(
+        &mut self,
+        iterator: Resource<CharIterator>,
+    ) -> wasmtime::Result<Option<(char, u64)>> {
+        let char_iterator = self.table.get(&iterator)?;
+        let mut state = char_iterator.lock().await;
+        Ok(state.next())
+    }
+
+    fn drop(&mut self, _: Resource<CharIterator>) -> wasmtime::Result<()> {
+        Ok(())
     }
 }

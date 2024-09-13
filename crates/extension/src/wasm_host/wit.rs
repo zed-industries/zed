@@ -5,7 +5,7 @@ mod since_v0_1_0;
 mod since_v0_2_0;
 use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
-use since_v0_2_0 as latest;
+use since_v0_2_0::{self as latest, ExtensionBuffer};
 
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
@@ -136,6 +136,21 @@ impl Extension {
             Extension::V006(ext) => ext.call_init_extension(store).await,
             Extension::V004(ext) => ext.call_init_extension(store).await,
             Extension::V001(ext) => ext.call_init_extension(store).await,
+        }
+    }
+
+    pub async fn call_run_editor_action(
+        &self,
+        store: &mut Store<WasmState>,
+        action_name: &str,
+        resource: Resource<ExtensionBuffer>,
+    ) -> Result<()> {
+        match self {
+            Extension::V020(ext) => {
+                ext.call_run_editor_action(store, action_name, resource)
+                    .await
+            }
+            _ => anyhow::bail!("not implemented"),
         }
     }
 

@@ -1,0 +1,9 @@
+id = "uppercase"
+name = "Uppercase"
+description = "Make sentences uppercase"
+version = "0.0.5"
+schema_version = 1
+authors = []
+repository = "https://github.com/zed-industries/zed"
+
+[editor_commands."UppercaseSentence"]

@@ -80,6 +80,9 @@ pub struct ExtensionManifest {
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
+
+    #[serde(default)]
+    pub editor_actions: BTreeMap<Arc<str>, EditorActionManifestEntry>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -138,6 +141,11 @@ impl LanguageServerManifestEntry {
 pub struct SlashCommandManifestEntry {
     pub description: String,
     pub requires_argument: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct EditorActionManifestEntry {
+    pub name: String, // <extension_id>:: "Name"
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -206,6 +214,7 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         slash_commands: BTreeMap::default(),
+        editor_actions: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
     }

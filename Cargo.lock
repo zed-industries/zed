@@ -4038,6 +4038,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
+ "editor",
  "env_logger",
  "fs",
  "futures 0.3.30",
@@ -4048,6 +4049,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "multi_buffer",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -14515,6 +14517,14 @@ name = "zed_uiua"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.1.0",
+]
+
+[[package]]
+name = "zed_uppercase"
+version = "0.0.5"
+dependencies = [
+ "serde_json",
+ "zed_extension_api 0.2.0",
 ]
 
 [[package]]

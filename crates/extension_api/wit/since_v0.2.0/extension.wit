@@ -83,11 +83,35 @@ world extension {
         shell-env: func() -> env-vars;
     }
 
+    resource buffer {
+        selections: func() -> list<selection>;
+        chars-at: func(offset: u64) -> char-iterator;
+        chars-before: func(offset: u64) -> char-iterator;
+        edits: func() -> list<edit>;
+    }
+
+    record edit {
+        range: range,
+        text: string,
+    }
+
+    resource char-iterator {
+        next: func() -> option<tuple<char, u64>>;
+    }
+
+    record selection {
+        range: range,
+        reversed: bool,
+    }
+
     /// A key-value store.
     resource key-value-store {
         /// Inserts an entry under the specified key.
         insert: func(key: string, value: string) -> result<_, string>;
     }
+
+    /// Runs the editor action
+    export run-editor-action: func(name: string, buffer: buffer);
 
     /// Returns the command used to start up the language server.
     export language-server-command: func(language-server-id: string, worktree: borrow<worktree>) -> result<command, string>;

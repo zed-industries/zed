@@ -28,7 +28,7 @@ pub use wit::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
+    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree, Buffer
 };
 
 // Undocumented WIT re-exports.
@@ -40,6 +40,7 @@ pub use wit::Guest;
 
 /// Constructs for interacting with language servers over the
 /// Language Server Protocol (LSP).
+
 pub mod lsp {
     pub use crate::wit::zed::extension::lsp::{
         Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind,
@@ -56,6 +57,9 @@ pub fn set_language_server_installation_status(
 ) {
     wit::set_language_server_installation_status(&language_server_id.0, status)
 }
+
+// regsister editor action
+// handle action (editor)
 
 /// A Zed extension.
 pub trait Extension: Send + Sync {
@@ -147,6 +151,9 @@ pub trait Extension: Send + Sync {
     ) -> Result<(), String> {
         Err("`index_docs` not implemented".to_string())
     }
+
+    /// Returns the output from running the provided slash command.
+    fn run_editor_action(&self, _name: String, buffer: Buffer) {}
 }
 
 /// Registers the provided type as a Zed extension.
@@ -186,7 +193,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.1.0",
+        path: "./wit/since_v0.2.0",
     });
 }
 
@@ -280,6 +287,13 @@ impl wit::Guest for Component {
         database: &KeyValueStore,
     ) -> Result<(), String> {
         extension().index_docs(provider, package, database)
+    }
+
+    fn run_editor_action(
+        name: String,
+        buffer: Buffer
+    ) {
+        extension().run_editor_action(name, buffer)
     }
 }
 

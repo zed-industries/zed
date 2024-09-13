@@ -158,6 +158,7 @@ members = [
     "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
+    "extensions/uppercase",
     "extensions/uiua",
     "extensions/vue",
     "extensions/zig",
