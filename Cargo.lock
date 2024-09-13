@@ -14500,7 +14500,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.1.0",
+ "zed_extension_api 0.2.0",
 ]
 
 [[package]]
