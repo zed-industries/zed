@@ -1,11 +1,9 @@
 mod appearance_settings_controls;
 
-use std::any::TypeId;
-
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
+use gpui::{actions, ActionTypeId, AppContext, EventEmitter, FocusHandle, FocusableView, View};
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
@@ -37,7 +35,7 @@ pub fn init(cx: &mut AppContext) {
             }
         });
 
-        let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];
+        let settings_ui_actions = [ActionTypeId::of::<OpenSettingsEditor>()];
 
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&settings_ui_actions);

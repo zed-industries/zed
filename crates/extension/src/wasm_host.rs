@@ -104,6 +104,25 @@ impl WasmHost {
         })
     }
 
+    pub fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T>
+    where
+        T: 'static + Send,
+        Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, T>,
+    {
+        let (return_tx, return_rx) = oneshot::channel();
+        self.main_thread_message_tx
+            .clone()
+            .unbounded_send(Box::new(move |cx| {
+                async {
+                    let result = f(cx).await;
+                    return_tx.send(result).ok();
+                }
+                .boxed_local()
+            }))
+            .expect("main thread message channel should not be closed yet");
+        async move { return_rx.await.expect("main thread message channel") }
+    }
+
     pub fn load_extension(
         self: &Arc<Self>,
         wasm_bytes: Vec<u8>,
@@ -270,19 +289,7 @@ impl WasmState {
         T: 'static + Send,
         Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, T>,
     {
-        let (return_tx, return_rx) = oneshot::channel();
-        self.host
-            .main_thread_message_tx
-            .clone()
-            .unbounded_send(Box::new(move |cx| {
-                async {
-                    let result = f(cx).await;
-                    return_tx.send(result).ok();
-                }
-                .boxed_local()
-            }))
-            .expect("main thread message channel should not be closed yet");
-        async move { return_rx.await.expect("main thread message channel") }
+        self.host.on_main_thread(f)
     }
 
     fn work_dir(&self) -> PathBuf {

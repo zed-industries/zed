@@ -75,14 +75,11 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
     #[serde(default)]
-    pub actions: BTreeMap<ActionName, ActionManifestEntry>,
-    #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
-
     #[serde(default)]
     pub editor_actions: BTreeMap<Arc<str>, EditorActionManifestEntry>,
 }
@@ -200,6 +197,7 @@ fn manifest_from_old_manifest(
         authors: manifest_json.authors,
         schema_version: SchemaVersion::ZERO,
         lib: Default::default(),
+        editor_actions: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
             themes.sort();
@@ -219,7 +217,6 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         slash_commands: BTreeMap::default(),
-        editor_actions: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
     }

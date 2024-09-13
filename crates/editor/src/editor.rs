@@ -72,14 +72,14 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
-    div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
-    ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle,
-    FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
-    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
-    VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, ActionTypeId,
+    AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter,
+    FocusHandle, FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla,
+    InteractiveText, KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement,
+    Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task,
+    TextStyle, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -128,6 +128,7 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
+use std::any::Any;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -277,7 +278,7 @@ pub enum Navigated {
 
 impl Navigated {
     pub fn from_bool(yes: bool) -> Navigated {
-        if yes {_a
+        if yes {
             Navigated::Yes
         } else {
             Navigated::No
@@ -12051,10 +12052,12 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn register_action<A: Action>(
+    pub fn register_runtime_action(
         &mut self,
-        listener: impl Fn(&A, &mut WindowContext) + 'static,
+        action_type_id: ActionTypeId,
+        listener: impl Fn(&dyn Any, &mut WindowContext) + 'static,
     ) -> Subscription {
+        dbg!("register runtime action", action_type_id.clone());
         let id = self.next_editor_action_id.post_inc();
         let listener = Arc::new(listener);
         self.editor_actions.borrow_mut().insert(
@@ -12062,8 +12065,8 @@ impl Editor {
             Box::new(move |cx| {
                 let cx = cx.window_context();
                 let listener = listener.clone();
-                cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {
-                    let action = action.downcast_ref().unwrap();
+                cx.on_action(action_type_id.clone(), move |action, phase, cx| {
+                    eprintln!("Action fired; phase is {phase:?}");
                     if phase == DispatchPhase::Bubble {
                         listener(action, cx)
                     }
@@ -12074,6 +12077,16 @@ impl Editor {
         let editor_actions = self.editor_actions.clone();
         Subscription::new(move || {
             editor_actions.borrow_mut().remove(&id);
+        })
+    }
+
+    pub fn register_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) -> Subscription {
+        self.register_runtime_action(ActionTypeId::of::<A>(), move |action, cx| {
+            let action = action.downcast_ref().unwrap();
+            listener(action, cx)
         })
     }
 

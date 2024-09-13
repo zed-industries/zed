@@ -50,18 +50,13 @@
 ///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 ///
 use crate::{
-    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, WindowContext,
+    Action, ActionRegistry, ActionTypeId, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext,
+    Keymap, Keystroke, ModifiersChangedEvent, WindowContext,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
-use std::{
-    any::{Any, TypeId},
-    cell::RefCell,
-    mem,
-    ops::Range,
-    rc::Rc,
-};
+use std::{any::Any, cell::RefCell, mem, ops::Range, rc::Rc};
+use util::ResultExt;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
@@ -74,7 +69,7 @@ pub(crate) struct DispatchTree {
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
     keymap: Rc<RefCell<Keymap>>,
-    action_registry: Rc<ActionRegistry>,
+    action_registry: Rc<RefCell<ActionRegistry>>,
 }
 
 #[derive(Default)]
@@ -128,12 +123,12 @@ type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut WindowCon
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
-    pub(crate) action_type: TypeId,
+    pub(crate) action_type: ActionTypeId,
     pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
 }
 
 impl DispatchTree {
-    pub fn new(keymap: Rc<RefCell<Keymap>>, action_registry: Rc<ActionRegistry>) -> Self {
+    pub fn new(keymap: Rc<RefCell<Keymap>>, action_registry: Rc<RefCell<ActionRegistry>>) -> Self {
         Self {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
@@ -332,7 +327,7 @@ impl DispatchTree {
 
     pub fn on_action(
         &mut self,
-        action_type: TypeId,
+        action_type: ActionTypeId,
         listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
     ) {
         self.active_node()
@@ -364,12 +359,16 @@ impl DispatchTree {
         let mut actions = Vec::<Box<dyn Action>>::new();
         for node_id in self.dispatch_path(target) {
             let node = &self.nodes[node_id.0];
+            dbg!(&node.context, &node.action_listeners.len());
             for DispatchActionListener { action_type, .. } in &node.action_listeners {
-                if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id())
-                {
+                if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.action_type_id()) {
                     // Intentionally silence these errors without logging.
                     // If an action cannot be built by default, it's not available.
-                    let action = self.action_registry.build_action_type(action_type).ok();
+                    let action = self
+                        .action_registry
+                        .borrow()
+                        .build_action_type(action_type)
+                        .log_err();
                     if let Some(action) = action {
                         actions.insert(ix, action);
                     }
@@ -385,7 +384,7 @@ impl DispatchTree {
             if node
                 .action_listeners
                 .iter()
-                .any(|listener| listener.action_type == action.as_any().type_id())
+                .any(|listener| listener.action_type == action.action_type_id())
             {
                 return true;
             }
@@ -574,7 +573,9 @@ impl DispatchTree {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::{Action, ActionRegistry, DispatchTree, KeyBinding, KeyContext, Keymap};
+    use crate::{
+        Action, ActionRegistry, ActionTypeId, DispatchTree, KeyBinding, KeyContext, Keymap,
+    };
 
     #[derive(PartialEq, Eq)]
     struct TestAction;
@@ -606,7 +607,14 @@ mod tests {
             self
         }
 
-        fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>
+        fn action_type_id(&self) -> crate::ActionTypeId {
+            ActionTypeId::TypeId(std::any::TypeId::of::<TestAction>())
+        }
+
+        fn build(
+            _type_id: ActionTypeId,
+            _value: serde_json::Value,
+        ) -> anyhow::Result<Box<dyn Action>>
         where
             Self: Sized,
         {

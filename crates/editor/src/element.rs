@@ -29,7 +29,6 @@ use crate::{
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
-use gpui::Subscription;
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
@@ -40,6 +39,7 @@ use gpui::{
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
     ViewContext, WeakView, WindowContext,
 };
+use gpui::{ActionTypeId, Subscription};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -6258,7 +6258,7 @@ pub fn register_action<T: Action>(
     listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
 ) {
     let view = view.clone();
-    cx.on_action(TypeId::of::<T>(), move |action, phase, cx| {
+    cx.on_action(ActionTypeId::of::<T>(), move |action, phase, cx| {
         let action = action.downcast_ref().unwrap();
         if phase == DispatchPhase::Bubble {
             view.update(cx, |editor, cx| {

@@ -210,10 +210,9 @@ impl CommandPaletteDelegate {
             positions,
         }) = intercept_result
         {
-            if let Some(idx) = matches
-                .iter()
-                .position(|m| commands[m.candidate_id].action.type_id() == action.type_id())
-            {
+            if let Some(idx) = matches.iter().position(|m| {
+                commands[m.candidate_id].action.action_type_id() == action.action_type_id()
+            }) {
                 matches.remove(idx);
             }
             commands.push(Command {

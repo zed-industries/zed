@@ -46,5 +46,9 @@ fn test_action_macros() {
         {
             unimplemented!()
         }
+
+        fn action_type_id(&self) -> gpui::ActionTypeId {
+            gpui::ActionTypeId::TypeId(std::any::TypeId::of::<Self>())
+        }
     }
 }

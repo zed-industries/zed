@@ -18,7 +18,7 @@ pub struct KeymapVersion(usize);
 #[derive(Default)]
 pub struct Keymap {
     bindings: Vec<KeyBinding>,
-    binding_indices_by_action_id: HashMap<TypeId, SmallVec<[usize; 3]>>,
+    binding_indices_by_action_id: HashMap<crate::ActionTypeId, SmallVec<[usize; 3]>>,
     version: KeymapVersion,
 }
 
@@ -38,7 +38,7 @@ impl Keymap {
     /// Add more bindings to the keymap.
     pub fn add_bindings<T: IntoIterator<Item = KeyBinding>>(&mut self, bindings: T) {
         for binding in bindings {
-            let action_id = binding.action().as_any().type_id();
+            let action_id = binding.action().action_type_id();
             self.binding_indices_by_action_id
                 .entry(action_id)
                 .or_default()
@@ -66,7 +66,7 @@ impl Keymap {
         &'a self,
         action: &'a dyn Action,
     ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
-        let action_id = action.type_id();
+        let action_id = action.action_type_id();
         self.binding_indices_by_action_id
             .get(&action_id)
             .map_or(&[] as _, SmallVec::as_slice)
@@ -122,7 +122,7 @@ impl Keymap {
         let bindings = bindings
             .into_iter()
             .map_while(|(binding, _)| {
-                if binding.action.as_any().type_id() == (NoAction {}).type_id() {
+                if binding.action.action_type_id() == (NoAction {}).action_type_id() {
                     None
                 } else {
                     Some(binding)

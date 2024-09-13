@@ -18,7 +18,8 @@ use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
-use collections::{btree_map, BTreeMap, HashSet};
+use collections::{btree_map, BTreeMap, HashMap, HashSet};
+use editor::Editor;
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -30,8 +31,9 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
-    Subscription, Task, WeakModel,
+    actions, Action, ActionTypeId, AnyWindowHandle, AppContext, AsyncAppContext,
+    BackgroundExecutor, Context, EventEmitter, Global, Model, ModelContext, Subscription, Task,
+    WeakModel, WeakView, WindowHandle,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
@@ -48,6 +50,7 @@ use settings::Settings;
 use snippet_provider::SnippetRegistry;
 use std::ops::RangeInclusive;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
     path::{self, Path, PathBuf},
@@ -55,6 +58,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::{ThemeRegistry, ThemeSettings};
+use ui::SharedString;
 use url::Url;
 use util::{maybe, ResultExt};
 use wasm_host::{
@@ -104,9 +108,12 @@ pub fn is_version_compatible(
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExtensionAction {
-    extension: Arc<str>,
     name: Arc<str>,
+    action_type_id: ActionTypeId,
 }
+
+static NAME_TO_TYPE_ID: LazyLock<Arc<parking_lot::Mutex<HashMap<String, ActionTypeId>>>> =
+    LazyLock::new(|| Default::default());
 
 impl gpui::Action for ExtensionAction {
     fn boxed_clone(&self) -> Box<dyn gpui::Action> {
@@ -118,45 +125,121 @@ impl gpui::Action for ExtensionAction {
     }
 
     fn partial_eq(&self, action: &dyn gpui::Action) -> bool {
-        if let Some(other) =  action.as_any().downcast_ref::<ExtensionAction>() else {
-            return false
-        }
+        let Some(other) = action.as_any().downcast_ref::<ExtensionAction>() else {
+            return false;
+        };
         other == self
     }
 
     fn name(&self) -> &str {
-       "extension::Action"
+        &self.name
     }
 
     fn debug_name() -> &'static str
     where
-        Self: Sized {
+        Self: Sized,
+    {
         "extension::ActionDebugName"
     }
 
-    fn build(value: serde_json::Value) -> Result<Box<dyn gpui::Action>>
+    fn action_type_id(&self) -> gpui::ActionTypeId {
+        self.action_type_id.clone()
+    }
+
+    fn build(name: &str, value: serde_json::Value) -> Result<Box<dyn gpui::Action>>
     where
-        Self: Sized {
-        todo!()
+        Self: Sized,
+    {
+        let Some(action_type_id) = NAME_TO_TYPE_ID.lock().get(name).cloned() else {
+            anyhow::bail!("lol")
+        };
+
+        Ok(Box::new(Self {
+            name: name.into(),
+            action_type_id,
+        }))
     }
 }
 
 pub struct EditorActionRegistry {
+    executor: BackgroundExecutor,
     wasm_host: Arc<WasmHost>,
-    editors: Vec<WeakModel<Editor>>,
+    editors: Vec<(AnyWindowHandle, WeakView<Editor>)>,
     actions: Vec<String>,
 }
 
 impl EditorActionRegistry {
-    fn add_action(&self,action: String) -> {
-        self.wasm_host.on_main_thread(|cx| {
-            for editor in self.editors {
-                editor.update(&mut cx, |editor, cx| {
-                    editor.register_action
-                })
+    fn new(wasm_host: Arc<WasmHost>, cx: &mut AppContext) -> Self {
+        EditorActionRegistry {
+            executor: cx.background_executor().clone(),
+            wasm_host: wasm_host.clone(),
+            editors: Default::default(),
+            actions: Default::default(),
+        }
+    }
 
-            }
-        })
+    fn add_editor(
+        &mut self,
+        editor: &mut Editor,
+        handle: WeakView<Editor>,
+        window: AnyWindowHandle,
+        cx: &mut AppContext,
+    ) {
+        self.editors.push((window, handle));
+        dbg!(&self.actions);
+        for action in self.actions.iter() {
+            let Some(type_id) = NAME_TO_TYPE_ID.lock().get(action).cloned() else {
+                panic!("yikes");
+            };
+            dbg!("Registering runtime action");
+            editor
+                .register_runtime_action(type_id.clone(), |any, cx| {
+                    dbg!("oh wow!");
+                })
+                .detach();
+        }
+    }
+
+    fn add_actions(&mut self, actions: Vec<String>) {
+        self.actions.extend(actions.clone());
+        for action in actions.into_iter() {
+            let editors = self.editors.clone();
+            let task = self.wasm_host.on_main_thread(|cx| {
+                {
+                    async move {
+                        cx.update(|cx| {
+                            let type_id = NAME_TO_TYPE_ID
+                                .lock()
+                                .entry(action.clone())
+                                .or_insert_with(|| {
+                                    cx.register_action_type(action.into(), ExtensionAction::build)
+                                })
+                                .clone();
+                            dbg!(&type_id, &editors.len());
+                            for (window, editor) in editors {
+                                window
+                                    .update(cx, |_, cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor
+                                                .register_runtime_action(
+                                                    type_id.clone(),
+                                                    |any, cx| {
+                                                        dbg!("oh wow!");
+                                                    },
+                                                )
+                                                .detach()
+                                        })
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .log_err()
+                    }
+                }
+                .boxed_local()
+            });
+            self.executor.spawn(task).detach();
+        }
     }
 }
 
@@ -172,6 +255,7 @@ pub struct ExtensionStore {
     outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
     index_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
+    editor_actions_registry: EditorActionRegistry,
     theme_registry: Arc<ThemeRegistry>,
     slash_command_registry: Arc<SlashCommandRegistry>,
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
@@ -297,11 +381,37 @@ impl ExtensionStore {
         let installed_dir = extensions_dir.join("installed");
         let index_path = extensions_dir.join("index.json");
 
+        let handle = cx.handle();
+        cx.observe_new_views(move |editor: &mut Editor, cx| {
+            let editor_handle = cx.view().downgrade();
+            let window = cx.window_handle();
+            handle.update(cx, |extension_store, cx| {
+                dbg!("registering!");
+                extension_store.editor_actions_registry.add_editor(
+                    editor,
+                    editor_handle,
+                    window,
+                    cx,
+                )
+            })
+        })
+        .detach();
+
+        let wasm_host = WasmHost::new(
+            fs.clone(),
+            http_client.clone(),
+            node_runtime,
+            language_registry.clone(),
+            work_dir,
+            cx,
+        );
+
         let (reload_tx, mut reload_rx) = unbounded();
         let mut this = Self {
             extension_index: Default::default(),
             installed_dir,
             index_path,
+            editor_actions_registry: EditorActionRegistry::new(wasm_host.clone(), cx),
             builder: Arc::new(ExtensionBuilder::new(
                 // Construct a real HTTP client for the extension builder, as we
                 // don't want to use a fake one in the tests.
@@ -311,15 +421,8 @@ impl ExtensionStore {
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
-            wasm_host: WasmHost::new(
-                fs.clone(),
-                http_client.clone(),
-                node_runtime,
-                language_registry.clone(),
-                work_dir,
-                cx,
-            ),
             wasm_extensions: Vec::new(),
+            wasm_host,
             fs,
             http_client,
             telemetry,
@@ -1145,12 +1248,24 @@ impl ExtensionStore {
                 path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
                 path
             }));
-            actions_to_add.extend(extension.manifest.actions.iter().map(|actions_path| {
-                let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), actions_path.as_path()]);
-                path
-            }));
+            actions_to_add.extend(
+                extension
+                    .manifest
+                    .editor_actions
+                    .iter()
+                    .map(|(k, v)| dbg!(format!("{}::{}", extension_id, v.name))),
+            );
+            actions_to_add.extend(
+                extension
+                    .manifest
+                    .editor_actions
+                    .iter()
+                    .map(|(k, v)| dbg!(format!("editor::{}", v.name))),
+            );
         }
+
+        dbg!("hello!", &actions_to_add);
+        self.editor_actions_registry.add_actions(actions_to_add);
 
         self.language_registry
             .register_wasm_grammars(grammars_to_add);

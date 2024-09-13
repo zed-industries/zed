@@ -11,8 +11,8 @@ use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
-    ModelContext, Task, WeakModel,
+    actions, ActionTypeId, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter,
+    Global, Model, ModelContext, Task, WeakModel,
 };
 use http_client::github::latest_github_release;
 use http_client::HttpClient;
@@ -69,13 +69,13 @@ pub fn init(
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
         let copilot_action_types = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
+            ActionTypeId::of::<Suggest>(),
+            ActionTypeId::of::<NextSuggestion>(),
+            ActionTypeId::of::<PreviousSuggestion>(),
+            ActionTypeId::of::<Reinstall>(),
         ];
-        let copilot_auth_action_types = [TypeId::of::<SignOut>()];
-        let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
+        let copilot_auth_action_types = [ActionTypeId::of::<SignOut>()];
+        let copilot_no_auth_action_types = [ActionTypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
         let filter = CommandPaletteFilter::global_mut(cx);
 

@@ -3,7 +3,7 @@ pub mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
+    actions, point, quad, ActionTypeId, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
     Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
@@ -761,7 +761,7 @@ impl Element for MarkdownElement {
         context.add("Markdown");
         cx.set_key_context(context);
         let view = self.markdown.clone();
-        cx.on_action(std::any::TypeId::of::<crate::Copy>(), {
+        cx.on_action(ActionTypeId::of::<crate::Copy>(), {
             let text = rendered_markdown.text.clone();
             move |_, phase, cx| {
                 let text = text.clone();

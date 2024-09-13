@@ -3,7 +3,10 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 pub use no_action::NoAction;
 use serde_json::json;
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    sync::atomic::AtomicUsize,
+};
 
 /// Actions are used to implement keyboard-driven UI.
 /// When you declare an action, you can bind keys to the action in the keymap and
@@ -52,6 +55,9 @@ pub trait Action: 'static + Send {
     /// Get the name of this action, for displaying in UI
     fn name(&self) -> &str;
 
+    /// Get the type_id of this action (to uniquely identify it)
+    fn action_type_id(&self) -> ActionTypeId;
+
     /// Get the name of this action for debugging
     fn debug_name() -> &'static str
     where
@@ -59,7 +65,7 @@ pub trait Action: 'static + Send {
 
     /// Build this action from a JSON value. This is used to construct actions from the keymap.
     /// A value of `{}` will be passed for actions that don't have any parameters.
-    fn build(value: serde_json::Value) -> Result<Box<dyn Action>>
+    fn build(name: &str, value: serde_json::Value) -> Result<Box<dyn Action>>
     where
         Self: Sized;
 }
@@ -72,19 +78,33 @@ impl std::fmt::Debug for dyn Action {
     }
 }
 
-impl dyn Action {
-    /// Get the type id of this action
-    pub fn type_id(&self) -> TypeId {
-        self.as_any().type_id()
-    }
-}
-
-type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>;
+/// ActionBuilder is a constructor
+pub type ActionBuilder = fn(name: &str, json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>;
 
 pub(crate) struct ActionRegistry {
     builders_by_name: HashMap<SharedString, ActionBuilder>,
-    names_by_type_id: HashMap<TypeId, SharedString>,
+    names_by_type_id: HashMap<ActionTypeId, SharedString>,
     all_names: Vec<SharedString>, // So we can return a static slice.
+    next_action_type_id: AtomicUsize,
+}
+
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+/// ActionTypeId uniquely identifies an action
+pub enum ActionTypeId {
+    /// TypeId is for staticly defined ones
+    TypeId(TypeId),
+    /// Runtime is for runtime defined ones
+    Runtime(usize),
+}
+
+impl ActionTypeId {
+    /// of returns the static type id for an action type
+    pub fn of<T>() -> Self
+    where
+        T: 'static,
+    {
+        ActionTypeId::TypeId(std::any::TypeId::of::<T>())
+    }
 }
 
 impl Default for ActionRegistry {
@@ -93,6 +113,7 @@ impl Default for ActionRegistry {
             builders_by_name: Default::default(),
             names_by_type_id: Default::default(),
             all_names: Default::default(),
+            next_action_type_id: Default::default(),
         };
 
         this.load_actions();
@@ -111,7 +132,7 @@ pub type MacroActionBuilder = fn() -> ActionData;
 #[doc(hidden)]
 pub struct ActionData {
     pub name: &'static str,
-    pub type_id: TypeId,
+    pub type_id: ActionTypeId,
     pub build: ActionBuilder,
 }
 
@@ -122,6 +143,13 @@ pub struct ActionData {
 pub static __GPUI_ACTIONS: [MacroActionBuilder];
 
 impl ActionRegistry {
+    pub fn next_action_type_id(&self) -> ActionTypeId {
+        let action_id = self
+            .next_action_type_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ActionTypeId::Runtime(action_id)
+    }
+
     /// Load all registered actions into the registry.
     pub(crate) fn load_actions(&mut self) {
         for builder in __GPUI_ACTIONS {
@@ -134,7 +162,7 @@ impl ActionRegistry {
     pub(crate) fn load_action<A: Action>(&mut self) {
         self.insert_action(ActionData {
             name: A::debug_name(),
-            type_id: TypeId::of::<A>(),
+            type_id: ActionTypeId::TypeId(TypeId::of::<A>()),
             build: A::build,
         });
     }
@@ -146,8 +174,19 @@ impl ActionRegistry {
         self.all_names.push(name);
     }
 
+    pub fn register_action_type(
+        &mut self,
+        name: SharedString,
+        build: ActionBuilder,
+    ) -> ActionTypeId {
+        let type_id = self.next_action_type_id();
+        self.names_by_type_id.insert(type_id.clone(), name.clone());
+        self.builders_by_name.insert(name, build);
+        type_id
+    }
+
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
-    pub fn build_action_type(&self, type_id: &TypeId) -> Result<Box<dyn Action>> {
+    pub fn build_action_type(&self, type_id: &ActionTypeId) -> Result<Box<dyn Action>> {
         let name = self
             .names_by_type_id
             .get(type_id)
@@ -167,12 +206,12 @@ impl ActionRegistry {
             .builders_by_name
             .get(name)
             .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
-        (build_action)(params.unwrap_or_else(|| json!({})))
+        (build_action)(name, params.unwrap_or_else(|| json!({})))
             .with_context(|| format!("Attempting to build action {}", name))
     }
 
-    pub fn all_action_names(&self) -> &[SharedString] {
-        self.all_names.as_slice()
+    pub fn all_action_names(&self) -> Vec<SharedString> {
+        self.all_names.clone()
     }
 }
 
@@ -190,7 +229,7 @@ macro_rules! actions {
             pub struct $name;
 
             gpui::__impl_action!($namespace, $name, $name,
-                fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                fn build(_: &str,_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                     Ok(Box::new(Self))
                 }
             );
@@ -226,6 +265,7 @@ macro_rules! action_as {
             $name,
             $visual_name,
             fn build(
+                _: &str,
                 _: gpui::private::serde_json::Value,
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(Box::new(Self))
@@ -242,7 +282,7 @@ macro_rules! impl_actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
         $(
             gpui::__impl_action!($namespace, $name, $name,
-                fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                fn build(_: &str, value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                     Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
                 }
             );
@@ -262,6 +302,7 @@ macro_rules! impl_action_as {
             $name,
             $visual_name,
             fn build(
+                _: &str,
                 value: gpui::private::serde_json::Value,
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(std::boxed::Box::new(
@@ -314,6 +355,10 @@ macro_rules! __impl_action {
 
             fn as_any(&self) -> &dyn ::std::any::Any {
                 self
+            }
+
+            fn action_type_id(&self) -> gpui::ActionTypeId {
+                gpui::ActionTypeId::TypeId(self.as_any().type_id())
             }
         }
     };

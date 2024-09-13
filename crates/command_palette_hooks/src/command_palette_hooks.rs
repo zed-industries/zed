@@ -2,11 +2,9 @@
 
 #![deny(missing_docs)]
 
-use std::any::TypeId;
-
 use collections::HashSet;
 use derive_more::{Deref, DerefMut};
-use gpui::{Action, AppContext, BorrowAppContext, Global};
+use gpui::{Action, ActionTypeId, AppContext, BorrowAppContext, Global};
 
 /// Initializes the command palette hooks.
 pub fn init(cx: &mut AppContext) {
@@ -18,7 +16,7 @@ pub fn init(cx: &mut AppContext) {
 #[derive(Default)]
 pub struct CommandPaletteFilter {
     hidden_namespaces: HashSet<&'static str>,
-    hidden_action_types: HashSet<TypeId>,
+    hidden_action_types: HashSet<ActionTypeId>,
 }
 
 #[derive(Deref, DerefMut, Default)]
@@ -52,7 +50,7 @@ impl CommandPaletteFilter {
         let namespace = name.split("::").next().unwrap_or("malformed action name");
 
         self.hidden_namespaces.contains(namespace)
-            || self.hidden_action_types.contains(&action.type_id())
+            || self.hidden_action_types.contains(&action.action_type_id())
     }
 
     /// Hides all actions in the given namespace.
@@ -66,12 +64,13 @@ impl CommandPaletteFilter {
     }
 
     /// Hides all actions with the given types.
-    pub fn hide_action_types(&mut self, action_types: &[TypeId]) {
-        self.hidden_action_types.extend(action_types);
+    pub fn hide_action_types(&mut self, action_types: &[ActionTypeId]) {
+        self.hidden_action_types
+            .extend(action_types.iter().cloned());
     }
 
     /// Shows all actions with the given types.
-    pub fn show_action_types<'a>(&mut self, action_types: impl Iterator<Item = &'a TypeId>) {
+    pub fn show_action_types<'a>(&mut self, action_types: impl Iterator<Item = &'a ActionTypeId>) {
         for action_type in action_types {
             self.hidden_action_types.remove(action_type);
         }

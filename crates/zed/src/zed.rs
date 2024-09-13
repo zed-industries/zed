@@ -17,8 +17,9 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
-    ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
+    actions, point, px, ActionTypeId, AppContext, AsyncAppContext, Context, FocusableView,
+    MenuItem, PromptLevel, ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext,
+    WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 
@@ -552,7 +553,7 @@ pub fn initialize_workspace(
 }
 
 fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
-    let zed_pro_actions = [TypeId::of::<OpenAccountSettings>()];
+    let zed_pro_actions = [ActionTypeId::of::<OpenAccountSettings>()];
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_action_types(&zed_pro_actions);

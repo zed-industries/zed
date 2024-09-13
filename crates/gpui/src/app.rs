@@ -28,13 +28,14 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    current_platform, hash, init_app_menus, Action, ActionBuilder, ActionRegistry, ActionTypeId,
+    Any, AnyView, AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, MacroActionBuilder, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    Task, TextSystem, View, ViewContext, Window, WindowAppearance, WindowContext, WindowHandle,
+    WindowId,
 };
 
 mod async_context;
@@ -218,7 +219,7 @@ pub struct AppContext {
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
-    pub(crate) actions: Rc<ActionRegistry>,
+    pub(crate) actions: Rc<RefCell<ActionRegistry>>,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
@@ -233,7 +234,7 @@ pub struct AppContext {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) global_action_listeners:
-        FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
+        FxHashMap<ActionTypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: FxHashSet<EntityId>,
     pub(crate) pending_global_notifications: FxHashSet<TypeId>,
@@ -271,7 +272,7 @@ impl AppContext {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
-                actions: Rc::new(ActionRegistry::default()),
+                actions: Rc::new(RefCell::new(ActionRegistry::default())),
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
@@ -1078,7 +1079,7 @@ impl AppContext {
     /// Register a global listener for actions invoked via the keyboard.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners
-            .entry(TypeId::of::<A>())
+            .entry(ActionTypeId::TypeId(TypeId::of::<A>()))
             .or_default()
             .push(Rc::new(move |action, phase, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -1086,6 +1087,15 @@ impl AppContext {
                     listener(action, cx)
                 }
             }));
+    }
+
+    /// yeah
+    pub fn register_action_type(
+        &mut self,
+        name: SharedString,
+        build: ActionBuilder,
+    ) -> ActionTypeId {
+        self.actions.borrow_mut().register_action_type(name, build)
     }
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to
@@ -1110,15 +1120,15 @@ impl AppContext {
         name: &str,
         data: Option<serde_json::Value>,
     ) -> Result<Box<dyn Action>> {
-        self.actions.build_action(name, data)
+        self.actions.borrow().build_action(name, data)
     }
 
     /// Get a list of all action names that have been registered.
     /// in the application. Note that registration only allows for
     /// actions to be built dynamically, and is unrelated to binding
     /// actions in the element tree.
-    pub fn all_action_names(&self) -> &[SharedString] {
-        self.actions.all_action_names()
+    pub fn all_action_names(&self) -> Vec<SharedString> {
+        self.actions.borrow().all_action_names()
     }
 
     /// Register a callback to be invoked when the application is about to quit.
@@ -1166,7 +1176,7 @@ impl AppContext {
         action_available
             || self
                 .global_action_listeners
-                .contains_key(&action.as_any().type_id())
+                .contains_key(&action.action_type_id())
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
@@ -1209,7 +1219,7 @@ impl AppContext {
 
         if let Some(mut global_listeners) = self
             .global_action_listeners
-            .remove(&action.as_any().type_id())
+            .remove(&action.action_type_id())
         {
             for listener in &global_listeners {
                 listener(action.as_any(), DispatchPhase::Capture, self);
@@ -1220,18 +1230,18 @@ impl AppContext {
 
             global_listeners.extend(
                 self.global_action_listeners
-                    .remove(&action.as_any().type_id())
+                    .remove(&action.action_type_id())
                     .unwrap_or_default(),
             );
 
             self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
+                .insert(action.action_type_id(), global_listeners);
         }
 
         if self.propagate_event {
             if let Some(mut global_listeners) = self
                 .global_action_listeners
-                .remove(&action.as_any().type_id())
+                .remove(&action.action_type_id())
             {
                 for listener in global_listeners.iter().rev() {
                     listener(action.as_any(), DispatchPhase::Bubble, self);
@@ -1242,12 +1252,12 @@ impl AppContext {
 
                 global_listeners.extend(
                     self.global_action_listeners
-                        .remove(&action.as_any().type_id())
+                        .remove(&action.action_type_id())
                         .unwrap_or_default(),
                 );
 
                 self.global_action_listeners
-                    .insert(action.as_any().type_id(), global_listeners);
+                    .insert(action.action_type_id(), global_listeners);
             }
         }
     }

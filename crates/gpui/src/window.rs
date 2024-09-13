@@ -1,7 +1,7 @@
 use crate::{
-    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
-    AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    point, prelude::*, px, size, transparent_black, Action, ActionTypeId, AnyDrag, AnyElement,
+    AnyTooltip, AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds,
+    BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
     IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
@@ -3488,7 +3488,7 @@ impl<'a> WindowContext<'a> {
         self.propagate_event = true;
         if let Some(mut global_listeners) = self
             .global_action_listeners
-            .remove(&action.as_any().type_id())
+            .remove(&action.action_type_id())
         {
             for listener in &global_listeners {
                 listener(action.as_any(), DispatchPhase::Capture, self);
@@ -3499,12 +3499,12 @@ impl<'a> WindowContext<'a> {
 
             global_listeners.extend(
                 self.global_action_listeners
-                    .remove(&action.as_any().type_id())
+                    .remove(&action.action_type_id())
                     .unwrap_or_default(),
             );
 
             self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
+                .insert(action.action_type_id(), global_listeners);
         }
 
         if !self.propagate_event {
@@ -3519,9 +3519,8 @@ impl<'a> WindowContext<'a> {
                 listener,
             } in node.action_listeners.clone()
             {
-                let any_action = action.as_any();
-                if action_type == any_action.type_id() {
-                    listener(any_action, DispatchPhase::Capture, self);
+                if action_type == action.action_type_id() {
+                    listener(action.as_any(), DispatchPhase::Capture, self);
 
                     if !self.propagate_event {
                         return;
@@ -3538,10 +3537,9 @@ impl<'a> WindowContext<'a> {
                 listener,
             } in node.action_listeners.clone()
             {
-                let any_action = action.as_any();
-                if action_type == any_action.type_id() {
+                if action_type == action.action_type_id() {
                     self.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    listener(any_action, DispatchPhase::Bubble, self);
+                    listener(action.as_any(), DispatchPhase::Bubble, self);
 
                     if !self.propagate_event {
                         return;
@@ -3553,7 +3551,7 @@ impl<'a> WindowContext<'a> {
         // Bubble phase for global actions.
         if let Some(mut global_listeners) = self
             .global_action_listeners
-            .remove(&action.as_any().type_id())
+            .remove(&action.action_type_id())
         {
             for listener in global_listeners.iter().rev() {
                 self.propagate_event = false; // Actions stop propagation by default during the bubble phase
@@ -3566,12 +3564,12 @@ impl<'a> WindowContext<'a> {
 
             global_listeners.extend(
                 self.global_action_listeners
-                    .remove(&action.as_any().type_id())
+                    .remove(&action.action_type_id())
                     .unwrap_or_default(),
             );
 
             self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
+                .insert(action.action_type_id(), global_listeners);
         }
     }
 
@@ -3684,8 +3682,10 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .available_actions(node_id);
         for action_type in self.global_action_listeners.keys() {
-            if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
-                let action = self.actions.build_action_type(action_type).ok();
+            if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.action_type_id()) {
+                let action = RefCell::borrow(&self.actions)
+                    .build_action_type(action_type)
+                    .log_err();
                 if let Some(action) = action {
                     actions.insert(ix, action);
                 }
@@ -3765,7 +3765,7 @@ impl<'a> WindowContext<'a> {
     /// a specific need to register a global listener.
     pub fn on_action(
         &mut self,
-        action_type: TypeId,
+        action_type: ActionTypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         self.window
@@ -4420,7 +4420,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Register a callback to be invoked when the given Action type is dispatched to the window.
     pub fn on_action(
         &mut self,
-        action_type: TypeId,
+        action_type: ActionTypeId,
         listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
         let handle = self.view().clone();

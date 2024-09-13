@@ -119,7 +119,7 @@ impl KeymapFile {
         Ok(())
     }
 
-    pub fn generate_json_schema(action_names: &[SharedString]) -> serde_json::Value {
+    pub fn generate_json_schema(action_names: Vec<SharedString>) -> serde_json::Value {
         let mut root_schema = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
             .into_generator()

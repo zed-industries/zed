@@ -16,9 +16,9 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    point, px, size, Action, ActionTypeId, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext,
+    Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId,
+    Hitbox, HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, View, Visibility, WindowContext,
@@ -286,7 +286,7 @@ impl Interactivity {
         listener: impl Fn(&A, &mut WindowContext) + 'static,
     ) {
         self.action_listeners.push((
-            TypeId::of::<A>(),
+            ActionTypeId::TypeId(TypeId::of::<A>()),
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Capture {
@@ -304,7 +304,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) {
         self.action_listeners.push((
-            TypeId::of::<A>(),
+            ActionTypeId::TypeId(TypeId::of::<A>()),
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Bubble {
@@ -327,7 +327,7 @@ impl Interactivity {
     ) {
         let action = action.boxed_clone();
         self.action_listeners.push((
-            (*action).type_id(),
+            (*action).action_type_id(),
             Box::new(move |_, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     (listener)(&*action, cx)
@@ -1268,7 +1268,7 @@ pub struct Interactivity {
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
-    pub(crate) action_listeners: Vec<(TypeId, ActionListener)>,
+    pub(crate) action_listeners: Vec<(ActionTypeId, ActionListener)>,
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
