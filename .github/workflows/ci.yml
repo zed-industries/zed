@@ -271,8 +271,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Linux bundle
     runs-on:
-      - self-hosted
-      - deploy
+      - hosted-linux-x86-1
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
