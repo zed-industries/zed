@@ -19,7 +19,7 @@ use gpui::{AppContext, AsyncAppContext};
 use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
-    channel::{bounded, unbounded, Receiver, Sender},
+    channel::{bounded, Receiver, Sender},
     process::Child,
 };
 use std::{
@@ -71,8 +71,8 @@ pub struct ThreadState {
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
     adapter: Arc<Box<dyn DebugAdapter>>,
-    _process: Option<Child>,
-    server_tx: Sender<Payload>,
+    transport: Arc<Transport>,
+    _process: Arc<Mutex<Option<Child>>>,
     sequence_count: AtomicU64,
     config: DebugAdapterConfig,
     /// thread_id -> thread_state
@@ -104,15 +104,6 @@ impl TransportParams {
 }
 
 impl DebugAdapterClient {
-    /// Creates & returns a new debug adapter client
-    ///
-    /// # Parameters
-    /// - `id`: The id that [`Project`](project::Project) uses to keep track of specific clients
-    /// - `config`: The adapter specific configurations from debugger task that is starting
-    /// - `command`: The command that starts the debugger
-    /// - `args`: Arguments of the command that starts the debugger
-    /// - `cwd`: The absolute path of the project that is being debugged
-    /// - `cx`: The context that the new client belongs too
     pub async fn new<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
@@ -125,23 +116,23 @@ impl DebugAdapterClient {
         let adapter = Arc::new(build_adapter(&config).context("Creating debug adapter")?);
         let transport_params = adapter.connect(cx).await?;
 
-        let server_tx = Self::handle_transport(
+        let transport = Self::handle_transport(
             transport_params.rx,
             transport_params.tx,
             transport_params.err,
             event_handler,
             cx,
-        )?;
+        );
 
         Ok(Arc::new(Self {
             id,
             config,
-            server_tx,
             adapter,
+            transport,
             capabilities: Default::default(),
             thread_states: Default::default(),
             sequence_count: AtomicU64::new(1),
-            _process: transport_params.process,
+            _process: Arc::new(Mutex::new(transport_params.process)),
         }))
     }
 
@@ -151,101 +142,42 @@ impl DebugAdapterClient {
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         event_handler: F,
         cx: &mut AsyncAppContext,
-    ) -> Result<Sender<Payload>>
+    ) -> Arc<Transport>
     where
         F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
-        let (client_tx, client_rx) = unbounded::<Payload>();
+        let transport = Transport::start(rx, tx, err, cx);
 
-        cx.update(|cx| {
-            cx.background_executor()
-                .spawn(Self::handle_recv(server_rx, client_tx.clone()))
-                .detach_and_log_err(cx);
-
-            cx.spawn({
-                |mut cx| async move { Self::handle_events(client_rx, event_handler, &mut cx).await }
-            })
-            .detach_and_log_err(cx);
-
-            server_tx
+        let server_rx = transport.server_rx.clone();
+        let server_tr = transport.server_tx.clone();
+        cx.spawn(|mut cx| async move {
+            Self::handle_recv(server_rx, server_tr, event_handler, &mut cx).await
         })
+        .detach();
+
+        transport
     }
 
-    /// Set's up a client's event handler.
-    ///
-    /// This function should only be called once or else errors will arise
-    /// # Parameters
-    /// `client`: A pointer to the client to pass the event handler too
-    /// `event_handler`: The function that is called to handle events
-    ///     should be DebugPanel::handle_debug_client_events
-    /// `cx`: The context that this task will run in
-    pub async fn handle_events<F>(
-        client_rx: Receiver<Payload>,
+    async fn handle_recv<F>(
+        server_rx: Receiver<Payload>,
+        client_tx: Sender<Payload>,
         mut event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<()>
     where
         F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        while let Ok(payload) = client_rx.recv().await {
-            cx.update(|cx| event_handler(payload, cx))?;
-        }
-
-        anyhow::Ok(())
-    }
-
-    // async fn handle_run_in_terminal_request(
-    //     this: &Arc<Self>,
-    //     request: crate::transport::Request,
-    //     cx: &mut AsyncAppContext,
-    // ) -> Result<()> {
-    //     let arguments: RunInTerminalRequestArguments =
-    //         serde_json::from_value(request.arguments.unwrap_or_default())?;
-
-    //     let mut args = arguments.args.clone();
-    //     let mut command = process::Command::new(args.remove(0));
-
-    //     let envs = arguments.env.as_ref().and_then(|e| e.as_object()).map(|e| {
-    //         e.iter()
-    //             .map(|(key, value)| ((key.clone(), value.clone().to_string())))
-    //             .collect::<Vec<(String, String)>>()
-    //     });
-
-    //     if let Some(envs) = envs {
-    //         command.envs(envs);
-    //     }
-
-    //     let process = command
-    //         .current_dir(arguments.cwd)
-    //         .args(args)
-    //         .spawn()
-    //         .with_context(|| "failed to spawn run in terminal command.")?;
-
-    //     this.server_tx
-    //         .send(Payload::Response(Response {
-    //             request_seq: request.seq,
-    //             success: true,
-    //             command: RunInTerminal::COMMAND.into(),
-    //             message: None,
-    //             body: Some(serde_json::to_value(RunInTerminalResponse {
-    //                 process_id: Some(process.id() as u64),
-    //                 shell_process_id: None,
-    //             })?),
-    //         }))
-    //         .await?;
-
-    //     anyhow::Ok(())
-    // }
-
-    async fn handle_recv(server_rx: Receiver<Payload>, client_tx: Sender<Payload>) -> Result<()> {
         while let Ok(payload) = server_rx.recv().await {
             match payload {
-                Payload::Event(ev) => client_tx.send(Payload::Event(ev)).await?,
+                Payload::Event(ev) => cx.update(|cx| event_handler(Payload::Event(ev), cx))?,
                 Payload::Response(_) => unreachable!(),
-                Payload::Request(req) => client_tx.send(Payload::Request(req)).await?,
+                Payload::Request(req) => {
+                    cx.update(|cx| event_handler(Payload::Request(req), cx))?
+                }
             };
         }
+
+        drop(client_tx);
 
         anyhow::Ok(())
     }
@@ -264,7 +196,10 @@ impl DebugAdapterClient {
             arguments: Some(serialized_arguments),
         };
 
-        self.server_tx.send(Payload::Request(request)).await?;
+        self.transport
+            .server_tx
+            .send(Payload::Request(request))
+            .await?;
 
         let response = callback_rx.recv().await??;
 
@@ -527,14 +462,29 @@ impl DebugAdapterClient {
         }
     }
 
-    pub async fn shutdown(&self, should_terminate: bool) -> Result<()> {
-        if should_terminate {
-            let _ = self.terminate().await;
+    pub async fn shutdown(&self) -> Result<()> {
+        let _ = self.terminate().await;
+
+        self.transport.server_tx.close();
+        self.transport.server_rx.close();
+
+        let mut adapter = self._process.lock().take();
+
+        async move {
+            let mut pending_requests = self.transport.pending_requests.lock().await;
+
+            pending_requests.clear();
+
+            if let Some(mut adapter) = adapter.take() {
+                adapter.kill()?;
+            }
+
+            drop(pending_requests);
+            drop(adapter);
+
+            anyhow::Ok(())
         }
-
-        // TODO debugger: close channels & kill process
-
-        anyhow::Ok(())
+        .await
     }
 
     pub async fn terminate(&self) -> Result<()> {

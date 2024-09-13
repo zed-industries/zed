@@ -5,7 +5,7 @@ use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
     transport::Payload,
 };
-use gpui::{EventEmitter, ModelContext, Subscription, Task};
+use gpui::{EventEmitter, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
 use settings::WorktreeId;
 use std::{
@@ -41,18 +41,18 @@ pub struct DapStore {
     next_client_id: AtomicUsize,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
-    _subscription: Vec<Subscription>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
     pub fn new(cx: &mut ModelContext<Self>) -> Self {
+        cx.on_app_quit(Self::shutdown_clients).detach();
+
         Self {
             next_client_id: Default::default(),
             clients: Default::default(),
             breakpoints: Default::default(),
-            _subscription: vec![cx.on_app_quit(Self::shutdown_clients)],
         }
     }
 
@@ -121,12 +121,10 @@ impl DapStore {
                 bp
             });
 
-            let mut hash_set = HashSet::default();
-            for bp in breakpoint_iter {
-                hash_set.insert(bp);
-            }
-
-            self.breakpoints.insert(project_path.clone(), hash_set);
+            self.breakpoints.insert(
+                project_path.clone(),
+                breakpoint_iter.collect::<HashSet<_>>(),
+            );
         }
     }
 
@@ -179,10 +177,8 @@ impl DapStore {
             .drain()
             .map(|(_, client_state)| async {
                 match client_state {
-                    DebugAdapterClientState::Starting(task) => {
-                        task.await?.shutdown(true).await.ok()
-                    }
-                    DebugAdapterClientState::Running(client) => client.shutdown(true).await.ok(),
+                    DebugAdapterClientState::Starting(task) => task.await?.shutdown().await.ok(),
+                    DebugAdapterClientState::Running(client) => client.shutdown().await.ok(),
                 }
             })
             .collect::<Vec<_>>();
@@ -195,7 +191,6 @@ impl DapStore {
     pub fn shutdown_client(
         &mut self,
         client_id: DebugAdapterClientId,
-        should_terminate: bool,
         cx: &mut ModelContext<Self>,
     ) {
         let Some(debug_client) = self.clients.remove(&client_id) else {
@@ -207,12 +202,8 @@ impl DapStore {
         cx.background_executor()
             .spawn(async move {
                 match debug_client {
-                    DebugAdapterClientState::Starting(task) => {
-                        task.await?.shutdown(should_terminate).await.ok()
-                    }
-                    DebugAdapterClientState::Running(client) => {
-                        client.shutdown(should_terminate).await.ok()
-                    }
+                    DebugAdapterClientState::Starting(task) => task.await?.shutdown().await.ok(),
+                    DebugAdapterClientState::Running(client) => client.shutdown().await.ok(),
                 }
             })
             .detach();

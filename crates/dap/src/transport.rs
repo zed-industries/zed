@@ -88,7 +88,9 @@ where
 
 #[derive(Debug)]
 pub struct Transport {
-    pending_requests: Mutex<HashMap<u64, Sender<Result<Response>>>>,
+    pub server_tx: Sender<Payload>,
+    pub server_rx: Receiver<Payload>,
+    pub pending_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
 }
 
 impl Transport {
@@ -97,33 +99,37 @@ impl Transport {
         server_stdin: Box<dyn AsyncWrite + Unpin + Send>,
         server_stderr: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         cx: &mut AsyncAppContext,
-    ) -> (Receiver<Payload>, Sender<Payload>) {
+    ) -> Arc<Self> {
         let (client_tx, server_rx) = unbounded::<Payload>();
         let (server_tx, client_rx) = unbounded::<Payload>();
 
-        let transport = Arc::new(Self {
-            pending_requests: Mutex::new(HashMap::default()),
-        });
+        let pending_requests = Arc::new(Mutex::new(HashMap::default()));
 
-        let _ = cx.update(|cx| {
-            let transport = transport.clone();
+        cx.background_executor()
+            .spawn(Self::receive(
+                pending_requests.clone(),
+                server_stdout,
+                client_tx,
+            ))
+            .detach();
 
-            cx.background_executor()
-                .spawn(Self::receive(transport.clone(), server_stdout, client_tx))
-                .detach_and_log_err(cx);
+        if let Some(stderr) = server_stderr {
+            cx.background_executor().spawn(Self::err(stderr)).detach();
+        }
 
-            cx.background_executor()
-                .spawn(Self::send(transport.clone(), server_stdin, client_rx))
-                .detach_and_log_err(cx);
+        cx.background_executor()
+            .spawn(Self::send(
+                pending_requests.clone(),
+                server_stdin,
+                client_rx,
+            ))
+            .detach();
 
-            if let Some(stderr) = server_stderr {
-                cx.background_executor()
-                    .spawn(Self::err(stderr))
-                    .detach_and_log_err(cx);
-            }
-        });
-
-        (server_rx, server_tx)
+        Arc::new(Self {
+            server_rx,
+            server_tx,
+            pending_requests,
+        })
     }
 
     async fn recv_server_message(
@@ -182,21 +188,19 @@ impl Transport {
     }
 
     async fn send_payload_to_server(
-        &self,
+        pending_requests: &Mutex<HashMap<u64, Sender<Result<Response>>>>,
         server_stdin: &mut Box<dyn AsyncWrite + Unpin + Send>,
         mut payload: Payload,
     ) -> Result<()> {
         if let Payload::Request(request) = &mut payload {
             if let Some(back) = request.back_ch.take() {
-                self.pending_requests.lock().await.insert(request.seq, back);
+                pending_requests.lock().await.insert(request.seq, back);
             }
         }
-        self.send_string_to_server(server_stdin, serde_json::to_string(&payload)?)
-            .await
+        Self::send_string_to_server(server_stdin, serde_json::to_string(&payload)?).await
     }
 
     async fn send_string_to_server(
-        &self,
         server_stdin: &mut Box<dyn AsyncWrite + Unpin + Send>,
         request: String,
     ) -> Result<()> {
@@ -217,26 +221,18 @@ impl Transport {
     }
 
     async fn process_server_message(
-        &self,
+        pending_requests: &Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
         client_tx: &Sender<Payload>,
         payload: Payload,
     ) -> Result<()> {
         match payload {
             Payload::Response(res) => {
-                if let Some(tx) = self.pending_requests.lock().await.remove(&res.request_seq) {
-                    if !tx.is_closed() {
-                        tx.send(Self::process_response(res)).await?;
-                    } else {
-                        log::warn!(
-                            "Response stream associated with request seq: {} is closed",
-                            &res.request_seq
-                        ); // TODO: Fix this case so it never happens
-                    }
+                if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
+                    tx.send(Self::process_response(res)).await?;
                 } else {
                     client_tx.send(Payload::Response(res)).await?;
                 };
             }
-
             Payload::Request(_) => {
                 client_tx.send(payload).await?;
             }
@@ -248,31 +244,28 @@ impl Transport {
     }
 
     async fn receive(
-        transport: Arc<Self>,
+        pending_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
         mut server_stdout: Box<dyn AsyncBufRead + Unpin + Send>,
         client_tx: Sender<Payload>,
     ) -> Result<()> {
         let mut recv_buffer = String::new();
-        loop {
-            transport
-                .process_server_message(
-                    &client_tx,
-                    Self::recv_server_message(&mut server_stdout, &mut recv_buffer).await?,
-                )
+
+        while let Ok(msg) = Self::recv_server_message(&mut server_stdout, &mut recv_buffer).await {
+            Self::process_server_message(&pending_requests, &client_tx, msg)
                 .await
                 .context("Process server message failed in transport::receive")?;
         }
+
+        anyhow::Ok(())
     }
 
     async fn send(
-        transport: Arc<Self>,
+        pending_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
         mut server_stdin: Box<dyn AsyncWrite + Unpin + Send>,
         client_rx: Receiver<Payload>,
     ) -> Result<()> {
         while let Ok(payload) = client_rx.recv().await {
-            transport
-                .send_payload_to_server(&mut server_stdin, payload)
-                .await?;
+            Self::send_payload_to_server(&pending_requests, &mut server_stdin, payload).await?;
         }
 
         Ok(())

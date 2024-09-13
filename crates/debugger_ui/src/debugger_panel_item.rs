@@ -639,9 +639,7 @@ impl Render for DebugPanelItem {
                                             .client
                                             .capabilities()
                                             .supports_restart_request
-                                            .unwrap_or_default()
-                                            || thread_status != ThreadStatus::Stopped
-                                                && thread_status != ThreadStatus::Running,
+                                            .unwrap_or_default(),
                                     )
                                     .tooltip(move |cx| Tooltip::text("Restart", cx)),
                             )
