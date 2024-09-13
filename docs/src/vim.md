@@ -16,7 +16,7 @@ So, Zed's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal 
 
 There are four types of features in vim mode that use Zed's core functionality, leading to some differences in behavior:
 
-1. **Motions**: vim mode uses Zed's semantic parsing to tune the behavior of motions per language. For example, in Rust, jumping to matching bracket with `%` works with the pipe character `|`. In Javascript, `w` considers `$` to be a word character.
+1. **Motions**: vim mode uses Zed's semantic parsing to tune the behavior of motions per language. For example, in Rust, jumping to matching bracket with `%` works with the pipe character `|`. In JavaScript, `w` considers `$` to be a word character.
 2. **Visual block selections**: vim mode uses Zed's multiple cursor to emulate visual block selections, making block selections a lot more flexible. For example, anything you insert after a block selection updates on every line in real-time, and you can add or remove cursors anytime.
 3. **Macros**: vim mode uses Zed's recording system for vim macros. So, you can capture and replay more complex actions, like autocompletion.
 4. **Search and replace**: vim mode uses Zed's search system, so, the syntax for regular expressions is slightly different compared to Vim. Head to [Regex differences](#regex-differences) for details.
@@ -106,11 +106,11 @@ The following commands help you bring up Zed's completion menu, request a sugges
 
 ## Command palette
 
-Vim mode allows you to open Zed's command palette with `:`. You can then type to access any usual Zed command. Additionally, vim mode adds aliases for popular vim commands to ensure your muscle memory transfers to Zed. For example, you can write `:w` or `:write` to save the file.
+Vim mode allows you to open Zed's command palette with `:`. You can then type to access any usual Zed command. Additionally, vim mode adds aliases for popular Vim commands to ensure your muscle memory transfers to Zed. For example, you can write `:w` or `:write` to save the file.
 
 Below, you'll find tables listing the commands you can use in the command palette. We put optional characters in square brackets to indicate that you can omit them.
 
-> **Note**: We don't emulate the full power of vim's command line yet. In particular, commands currently do not support arguments. Please reach out on [Zed's GitHub repository](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+> **Note**: We don't emulate the full power of Vim's command line yet. In particular, commands currently do not support arguments. Please [file issues on GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
 
 ### File and window management
 
@@ -234,4 +234,4 @@ Zed uses a different regular expression engine from Vim. This means that you wil
 
 > **Note**: To help with the transition, the command palette will fix parentheses and replace groups for you when you write a Vim-style substitute command, `:%s//`. So, Zed will convert `%s:/\(a\)(b)/\1/` into a search for "(a)\(b\)" and a replacement of "$1".
 
-> **Note**: To see the entire regular expression syntax supported by Zed, see the [regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).
+> **Note**: To see the entire regular expression syntax supported by Zed, [see the regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).
