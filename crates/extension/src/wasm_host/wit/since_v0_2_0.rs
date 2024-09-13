@@ -9,6 +9,7 @@ use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
 use isahc::config::{Configurable, RedirectPolicy};
+use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
@@ -22,13 +23,13 @@ use std::{
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 2, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 2, 0);
 
 wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
-    path: "../extension_api/wit/since_v0.1.0",
+    path: "../extension_api/wit/since_v0.2.0",
     with: {
          "worktree": ExtensionWorktree,
          "key-value-store": ExtensionKeyValueStore,
@@ -39,7 +40,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
-    include!(concat!(env!("OUT_DIR"), "/since_v0.1.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.2.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
@@ -399,8 +400,9 @@ impl ExtensionImports for WasmState {
 
                 cx.update(|cx| match category.as_str() {
                     "language" => {
+                        let key = key.map(|k| LanguageName::new(&k));
                         let settings =
-                            AllLanguageSettings::get(location, cx).language(key.as_deref());
+                            AllLanguageSettings::get(location, cx).language(key.as_ref());
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
                         })?)
