@@ -238,7 +238,7 @@ Here are a few general Zed settings that can help you fine-tune your Vim experie
 | gutter.line_numbers     | Controls the display of line numbers in the gutter. Set the `"line_numbers"` property to `false` to hide line numbers.                                        | `true`                 |
 | command_aliases         | Object that defines aliases for commands in the command palette. You can use it to define shortcut names for commands you use often. Read below for examples. | `{}`                   |
 
-> **Note**: the `command_aliases` setting is represented as a single object value in the table for brevity. in practice, it defines multiple aliases: `w` for `w`, `wq` for `wq`, and `q` for `q`.
+> **Note**: The `command_aliases` setting is represented as a single object value in the table for brevity. In practice, it defines multiple aliases: `w` for `w`, `wq` for `wq`, and `q` for `q`.
 
 Here's an example of these settings changed:
 

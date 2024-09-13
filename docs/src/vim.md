@@ -17,7 +17,7 @@ So, Zed's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal 
 There are four types of features in vim mode that use Zed's core functionality, leading to some differences in behavior:
 
 1. **Motions**: vim mode uses Zed's semantic parsing to tune the behavior of motions per language. For example, in Rust, jumping to matching bracket with `%` works with the pipe character `|`. In Javascript, `w` considers `$` to be a word character.
-2. **Visual block selections**: vim mode uses Zed's multiple cursor to emulate visual block selections, making block selections a lot more flexible. For example, anything you insert after a block selection updates on every line in real-time, and you can adding or remove cursors anytime.
+2. **Visual block selections**: vim mode uses Zed's multiple cursor to emulate visual block selections, making block selections a lot more flexible. For example, anything you insert after a block selection updates on every line in real-time, and you can add or remove cursors anytime.
 3. **Macros**: vim mode uses Zed's recording system for vim macros. So, you can capture and replay more complex actions, like autocompletion.
 4. **Search and replace**: vim mode uses Zed's search system, so, the syntax for regular expressions is slightly different compared to Vim. Head to [Regex differences](#regex-differences) for details.
 
@@ -104,6 +104,41 @@ The following commands help you bring up Zed's completion menu, request a sugges
 | Open the code actions menu                                                   | `ctrl-x ctrl-l`  |
 | Hides all suggestions                                                        | `ctrl-x ctrl-z`  |
 
+## Command palette
+
+Vim mode allows you to open Zed's command palette with `:`. You can then type to access any usual Zed command. Additionally, vim mode adds aliases for popular vim commands to ensure your muscle memory transfers to Zed. For example, you can write `:w` or `:write` to save the file.
+
+Below, you'll find tables listing the commands you can use in the command palette. We put optional characters in square brackets to indicate that you can omit them.
+
+> **Note**: We don't emulate the full power of vim's command line yet. In particular, commands currently do not support arguments. Please reach out on [Zed's GitHub repository](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+
+### File and window management
+
+This table shows commands for managing windows, tabs, and panes. As commands don't support arguments currently, you cannot specify a filename when saving or creating a new file.
+
+| Command        | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| `:w[rite][!]`  | Save the current file                                |
+| `:wq[!]`       | Save the file and close the buffer                   |
+| `:q[uit][!]`   | Close the buffer                                     |
+| `:wa[ll][!]`   | Save all open files                                  |
+| `:wqa[ll][!]`  | Save all open files and close all buffers            |
+| `:qa[ll][!]`   | Close all buffers                                    |
+| `:[e]x[it][!]` | Close the buffer                                     |
+| `:up[date]`    | Save the current file                                |
+| `:cq`          | Quit completely (close all running instances of Zed) |
+| `:vs[plit]`    | Split the pane vertically                            |
+| `:sp[lit]`     | Split the pane horizontally                          |
+| `:new`         | Create a new file in a horizontal split              |
+| `:vne[w]`      | Create a new file in a vertical split                |
+| `:tabedit`     | Create a new file in a new tab                       |
+| `:tabnew`      | Create a new file in a new tab                       |
+| `:tabn[ext]`   | Go to the next tab                                   |
+| `:tabp[rev]`   | Go to previous tab                                   |
+| `:tabc[lose]`  | Close the current tab                                |
+
+> **Note:** The `!` character is used to force the command to execute without saving changes or prompting before overwriting a file.
+
 ### Ex commands
 
 These ex commands open Zed's various panels and windows.
@@ -120,79 +155,64 @@ These ex commands open Zed's various panels and windows.
 | Open the terminal            | `:te[rm]`        |
 | Open the extensions window   | `:Ext[ensions]`  |
 
-## Command palette
+### Navigating diagnostics
 
-Vim mode allows you to enable Zed’s command palette with `:`. This means that you can use vim's command palette to run any action that Zed supports.
+These commands navigate diagnostics.
 
-Additionally vim mode contains a number of aliases for popular vim commands to ensure that muscle memory works. For example `:w<enter>` will save the file.
+| Command                  | Description                    |
+| ------------------------ | ------------------------------ |
+| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic      |
+| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostics |
+| `:cc` or `:ll`           | Open the errors page           |
 
-We do not (yet) emulate the full power of vim’s command line, in particular we we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+### Git
 
-As mentioned above, one thing to be aware of is that the regex engine is slightly different from vim's in `:%s/a/b`.
+These commands interact with the version control system git.
 
-Currently supported vim-specific commands:
+| Command         | Description                                             |
+| --------------- | ------------------------------------------------------- |
+| `:dif[fupdate]` | View the diff under the cursor (`d o` in normal mode)   |
+| `:rev[ert]`     | Revert the diff under the cursor (`d p` in normal mode) |
 
-```
-# window management
-:w[rite][!], :wq[!], :q[uit][!], :wa[ll][!], :wqa[ll][!], :qa[ll][!], :[e]x[it][!], :up[date]
-    to save/close tab(s) and pane(s) (no filename is supported yet)
-:cq
-    to quit completely.
-:vs[plit], :sp[lit]
-    to split vertically/horizontally (no filename is supported yet)
-:new, :vne[w]
-    to create a new file in a new pane above or to the left
-:tabedit, :tabnew
-    to create a new file in a new tab.
-:tabn[ext], :tabp[rev]
-    to go to previous/next tabs
-:tabc[lose]
-    to close the current tab
+### Jump
 
-# navigating diagnostics
-:cn[ext], :cp[rev], :ln[ext], :lp[rev]
-    to go to the next/prev diagnostics
-:cc, :ll
-    to open the errors page
+These commands jump to specific positions in the file.
 
-# handling git diff
-:dif[fupdate]
-    to view the diff under the cursor ("d o" in normal mode)
-:rev[ert]
-    to revert the diff under the cursor ("d p" in normal mode)
+| Command             | Description                         |
+| ------------------- | ----------------------------------- |
+| `:<number>`         | Jump to a line number               |
+| `:$`                | Jump to the end of the file         |
+| `:/foo` and `:?foo` | Jump to next/prev line matching foo |
 
-# jump to position
-:<number>
-    to jump to a line number
-:$
-    to jump to the end of the file
-:/foo and :?foo
-    to jump to next/prev line matching foo
+### Replacement
 
-# replacement (/g is always assumed and Zed uses different regex syntax to vim)
-:[range]s/foo/bar/
-  to replace instances of foo with bar
+This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, in the [regex differences](#regex-differences) section. Also, by default, Zed always replaces all occurrences of the search pattern in the current line.
 
-# editing
-:j[oin]
-    to join the current line
-:d[elete][l][p]
-    to delete the current line
-:s[ort] [i]
-    to sort the current selection (with i, case-insensitively)
-:y[ank]
-```
+| Command              | Description                       |
+| -------------------- | --------------------------------- |
+| `:[range]s/foo/bar/` | Replace instances of foo with bar |
+
+### Editing
+
+These commands help you edit text.
+
+| Command           | Description                                             |
+| ----------------- | ------------------------------------------------------- |
+| `:j[oin]`         | Join the current line                                   |
+| `:d[elete][l][p]` | Delete the current line                                 |
+| `:s[ort] [i]`     | Sort the current selection (with i, case-insensitively) |
+| `:y[ank]`         | Yank (copy) the current selection or line               |
+
+## Command mnemonics
 
 As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
 
-```
-:diffs  Toggle all Hunk [Diffs]
-:cpp    [C]o[p]y [P]ath to file
-:crp    [C]opy [r]elative [P]ath
-:reveal [Reveal] in finder
-:zlog   Open [Z]ed Log
-:clank  [C]ancel [lan]guage server work[k]
-```
+- `:diffs` for "toggle all hunk diffs"
+- `:cpp` for "copy path to file"
+- `:crp` for "copy relative path"
+- `:reveal` for "reveal in finder"
+- `:zlog` for "open zed log"
+- `:clank` for "cancel language server work"
 
 ## Supported plugins
 
