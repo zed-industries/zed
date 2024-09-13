@@ -7873,7 +7873,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.1.0",
+ "zed_extension_api 0.2.0",
 ]
 
 [[package]]
@@ -10254,7 +10254,7 @@ dependencies = [
 name = "slash_commands_example"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
@@ -14317,72 +14317,63 @@ name = "zed_astro"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_clojure"
 version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_csharp"
 version = "0.0.2"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_dart"
 version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_deno"
 version = "0.0.2"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_elixir"
 version = "0.0.9"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_elm"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_emmet"
 version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_erlang"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "zed_extension_api"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wit-bindgen",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
@@ -14397,81 +14388,90 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_extension_api"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "zed_gleam"
 version = "0.2.0"
 dependencies = [
  "html_to_markdown 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_glsl"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_haskell"
 version = "0.1.1"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_html"
 version = "0.1.2"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_lua"
 version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_ocaml"
 version = "0.0.2"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_php"
 version = "0.2.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_prisma"
 version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_purescript"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_ruby"
 version = "0.2.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_ruff"
 version = "0.0.2"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
@@ -14479,42 +14479,42 @@ name = "zed_snippets"
 version = "0.0.5"
 dependencies = [
  "serde_json",
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_svelte"
 version = "0.1.1"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_terraform"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.2.0",
 ]
 
 [[package]]
 name = "zed_toml"
 version = "0.1.1"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_uiua"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
@@ -14522,14 +14522,14 @@ name = "zed_vue"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_zig"
 version = "0.3.0"
 dependencies = [
- "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
