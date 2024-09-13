@@ -271,7 +271,6 @@ pub enum IconName {
     XCircle,
     ZedAssistant,
     ZedAssistantFilled,
-    ZedXCopilot,
     Visible,
 }
 
@@ -443,7 +442,6 @@ impl IconName {
             IconName::XCircle => "icons/error.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
             IconName::ZedAssistantFilled => "icons/zed_assistant_filled.svg",
-            IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
             IconName::Visible => "icons/visible.svg",
         }
     }
