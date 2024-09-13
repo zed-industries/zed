@@ -7,7 +7,7 @@ use assistant_slash_command::{
 };
 use chrono::Local;
 use gpui::{Task, WeakView};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -43,6 +43,8 @@ impl SlashCommand for NowSlashCommand {
     fn run(
         self: Arc<Self>,
         _arguments: &[String],
+        _context_slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,

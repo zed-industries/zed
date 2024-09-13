@@ -1906,7 +1906,17 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
-            let output = command.run(arguments, workspace, self.lsp_adapter_delegate.clone(), cx);
+            let context = self.context.read(cx);
+            let sections = context.slash_command_output_sections().to_vec();
+            let snapshot = context.buffer().read(cx).snapshot();
+            let output = command.run(
+                arguments,
+                sections,
+                snapshot,
+                workspace,
+                self.lsp_adapter_delegate.clone(),
+                cx,
+            );
             self.context.update(cx, |context, cx| {
                 context.insert_command_output(
                     command_range,

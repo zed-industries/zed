@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fs::Fs;
 use gpui::{AppContext, Model, Task, WeakView};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
 use std::{
     fmt::Write,
@@ -118,6 +118,8 @@ impl SlashCommand for ProjectSlashCommand {
     fn run(
         self: Arc<Self>,
         _arguments: &[String],
+        _context_slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,

@@ -2,7 +2,7 @@ mod slash_command_registry;
 
 use anyhow::Result;
 use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
-use language::{CodeLabel, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
@@ -77,6 +77,8 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        context_slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
