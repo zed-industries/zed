@@ -1061,6 +1061,34 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+## Network Proxy
+
+- Description: Configure a network proxy for Zed.
+- Setting: `proxy`
+- Default: `null`
+
+**Options**
+
+The proxy protocol is specified by the URI scheme. Supported URI schemes are: `http`, `https`, `socks4`, `socks4a`, `socks5`, `socks5h`. `http` will be used when no scheme is specified.
+
+By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
+
+For example, to set a `http` proxy, add the following to your settings:
+
+```json
+{
+  "proxy": "http://127.0.0.1:10809"
+}
+```
+
+Or to set a `socks5` proxy:
+
+```json
+{
+  "proxy": "socks5://localhost:10808"
+}
+```
+
 ## Preview tabs
 
 - Description:
@@ -1481,10 +1509,10 @@ See Buffer Font Features
 {
   "terminal": {
     "font_features": {
-      "calt": false,
+      "calt": false
       // See Buffer Font Features for more features
-    },
-  },
+    }
+  }
 }
 ```
 
@@ -1501,8 +1529,8 @@ See Buffer Font Features
 ```jsonc
 {
   "terminal": {
-    "line_height": "comfortable",
-  },
+    "line_height": "comfortable"
+  }
 }
 ```
 
@@ -1511,8 +1539,8 @@ See Buffer Font Features
 ```jsonc
 {
   "terminal": {
-    "line_height": "standard",
-  },
+    "line_height": "standard"
+  }
 }
 ```
 
@@ -1522,9 +1550,9 @@ See Buffer Font Features
 {
   "terminal": {
     "line_height": {
-      "custom": 2,
-    },
-  },
+      "custom": 2
+    }
+  }
 }
 ```
 
