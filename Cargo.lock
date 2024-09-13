@@ -2320,7 +2320,7 @@ dependencies = [
  "anyhow",
  "clap",
  "collections",
- "core-foundation 0.9.4",
+ "core-foundation 0.10.0",
  "core-services",
  "exec",
  "fork",
@@ -4535,7 +4535,7 @@ name = "fsevent"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.6.0",
- "core-foundation 0.9.4",
+ "core-foundation 0.10.0",
  "fsevent-sys 3.1.0",
  "parking_lot",
  "tempfile",
@@ -5008,7 +5008,7 @@ dependencies = [
  "cbindgen",
  "cocoa 0.26.0",
  "collections",
- "core-foundation 0.9.4",
+ "core-foundation 0.10.0",
  "core-foundation-sys",
  "core-graphics 0.23.2",
  "core-text",
@@ -6503,7 +6503,7 @@ dependencies = [
  "async-broadcast",
  "async-trait",
  "collections",
- "core-foundation 0.9.4",
+ "core-foundation 0.10.0",
  "futures 0.3.30",
  "gpui",
  "live_kit_server",
@@ -6816,7 +6816,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bindgen 0.70.1",
- "core-foundation 0.9.4",
+ "core-foundation 0.10.0",
  "foreign-types 0.5.0",
  "metal",
  "objc",
@@ -11507,7 +11507,7 @@ dependencies = [
 name = "time_format"
 version = "0.1.0"
 dependencies = [
- "core-foundation 0.9.4",
+ "core-foundation 0.10.0",
  "core-foundation-sys",
  "sys-locale",
  "time",
