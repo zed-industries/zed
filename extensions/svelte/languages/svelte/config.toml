@@ -15,3 +15,10 @@ brackets = [
 ]
 prettier_parser_name = "svelte"
 prettier_plugins = ["prettier-plugin-svelte"]
+
+# Add tailwindcss-language-server to the list of language servers to opt into
+# for the purpose of providing tailwindcss-specific features.
+scope_opt_in_language_servers = ["tailwindcss-language-server"]
+[overrides.string]
+word_characters = ["-"]
+opt_into_language_servers = ["tailwindcss-language-server"]
