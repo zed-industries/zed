@@ -196,3 +196,7 @@ path = "examples/opacity.rs"
 [[example]]
 name = "uniform_list"
 path = "examples/uniform_list.rs"
+
+[[example]]
+name = "mouse_event"
+path = "examples/mouse_event.rs"

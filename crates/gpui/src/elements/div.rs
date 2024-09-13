@@ -228,6 +228,22 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback when mouse is moved out of the element, during the bubble phase
+    /// The imperative API equivalent to [`InteractiveElement::on_mouse_leave`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    pub fn on_mouse_leave(
+        &mut self,
+        listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_leave_listeners
+            .push(Box::new(move |event, phase, _, cx| {
+                if phase == DispatchPhase::Bubble {
+                    (listener)(event, cx);
+                }
+            }));
+    }
+
     /// Bind the given callback to the mouse drag event of the given type. Note that this
     /// will be called for all move events, inside or outside of this element, as long as the
     /// drag was started with this element under the mouse. Useful for implementing draggable
@@ -697,6 +713,18 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_move(listener);
+        self
+    }
+
+    /// Bind the given callback when mouse is moved out of the element, during the bubble phase
+    /// The fluent API equivalent to [`Interactivity::on_mouse_leave`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    fn on_mouse_leave(
+        mut self,
+        listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().on_mouse_leave(listener);
         self
     }
 
@@ -1264,6 +1292,7 @@ pub struct Interactivity {
     pub(crate) mouse_down_listeners: Vec<MouseDownListener>,
     pub(crate) mouse_up_listeners: Vec<MouseUpListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
+    pub(crate) mouse_leave_listeners: Vec<MouseMoveListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
@@ -1410,6 +1439,7 @@ impl Interactivity {
             || !self.mouse_up_listeners.is_empty()
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
+            || !self.mouse_leave_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.drag_listener.is_some()
@@ -1697,6 +1727,22 @@ impl Interactivity {
         for listener in self.mouse_move_listeners.drain(..) {
             let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                listener(event, phase, &hitbox, cx);
+            })
+        }
+
+        for listener in self.mouse_leave_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            let was_hovered = hitbox.is_hovered(cx);
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                if !was_hovered {
+                    return;
+                }
+
+                if hitbox.is_hovered(cx) {
+                    return;
+                }
+
                 listener(event, phase, &hitbox, cx);
             })
         }
