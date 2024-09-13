@@ -3346,7 +3346,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types#04f7b33db5f825cd874b5be73919609f4c5d8169"
+source = "git+https://github.com/zed-industries/dap-types#d4e23edcf7c8ded91a3bdfd32a216bcab68b710c"
 dependencies = [
  "serde",
  "serde_json",

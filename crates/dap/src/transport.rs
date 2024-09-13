@@ -1,14 +1,7 @@
 use anyhow::{anyhow, Context, Result};
-use dap_types::{
-    BreakpointEvent, Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent,
-    InvalidatedEvent, LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent,
-    ProgressEndEvent, ProgressStartEvent, ProgressUpdateEvent, StoppedEvent, TerminatedEvent,
-    ThreadEvent,
-};
+use dap_types::messages::{Message, Response};
 use futures::{AsyncBufRead, AsyncWrite};
 use gpui::AsyncAppContext;
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::Value;
 use smol::{
     channel::{unbounded, Receiver, Sender},
     io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt},
@@ -16,80 +9,11 @@ use smol::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum Payload {
-    Event(Box<Events>),
-    Response(Response),
-    Request(Request),
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "event", content = "body")]
-#[serde(rename_all = "camelCase")]
-pub enum Events {
-    Initialized(Option<Capabilities>),
-    Stopped(StoppedEvent),
-    Continued(ContinuedEvent),
-    Exited(ExitedEvent),
-    Terminated(Option<TerminatedEvent>),
-    Thread(ThreadEvent),
-    Output(OutputEvent),
-    Breakpoint(BreakpointEvent),
-    Module(ModuleEvent),
-    LoadedSource(LoadedSourceEvent),
-    Process(ProcessEvent),
-    Capabilities(CapabilitiesEvent),
-    ProgressStart(ProgressStartEvent),
-    ProgressUpdate(ProgressUpdateEvent),
-    ProgressEnd(ProgressEndEvent),
-    Invalidated(InvalidatedEvent),
-    Memory(MemoryEvent),
-    #[serde(untagged)]
-    Other(HashMap<String, Value>),
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Request {
-    #[serde(skip)]
-    pub back_ch: Option<Sender<Result<Response>>>,
-    pub seq: u64,
-    pub command: String,
-    pub arguments: Option<Value>,
-}
-
-impl PartialEq for Request {
-    fn eq(&self, other: &Self) -> bool {
-        self.seq == other.seq && self.command == other.command && self.arguments == other.arguments
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
-pub struct Response {
-    pub request_seq: u64,
-    pub success: bool,
-    pub command: String,
-    pub message: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_empty_object")]
-    pub body: Option<Value>,
-}
-
-fn deserialize_empty_object<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    if value == Value::Object(serde_json::Map::new()) {
-        Ok(None)
-    } else {
-        Ok(Some(value))
-    }
-}
-
 #[derive(Debug)]
 pub struct Transport {
-    pub server_tx: Sender<Payload>,
-    pub server_rx: Receiver<Payload>,
+    pub server_tx: Sender<Message>,
+    pub server_rx: Receiver<Message>,
+    pub current_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
     pub pending_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
 }
 
@@ -100,9 +24,10 @@ impl Transport {
         server_stderr: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         cx: &mut AsyncAppContext,
     ) -> Arc<Self> {
-        let (client_tx, server_rx) = unbounded::<Payload>();
-        let (server_tx, client_rx) = unbounded::<Payload>();
+        let (client_tx, server_rx) = unbounded::<Message>();
+        let (server_tx, client_rx) = unbounded::<Message>();
 
+        let current_requests = Arc::new(Mutex::new(HashMap::default()));
         let pending_requests = Arc::new(Mutex::new(HashMap::default()));
 
         cx.background_executor()
@@ -119,6 +44,7 @@ impl Transport {
 
         cx.background_executor()
             .spawn(Self::send(
+                current_requests.clone(),
                 pending_requests.clone(),
                 server_stdin,
                 client_rx,
@@ -128,6 +54,7 @@ impl Transport {
         Arc::new(Self {
             server_rx,
             server_tx,
+            current_requests,
             pending_requests,
         })
     }
@@ -135,7 +62,7 @@ impl Transport {
     async fn recv_server_message(
         reader: &mut Box<dyn AsyncBufRead + Unpin + Send>,
         buffer: &mut String,
-    ) -> Result<Payload> {
+    ) -> Result<Message> {
         let mut content_length = None;
         loop {
             buffer.truncate(0);
@@ -172,7 +99,7 @@ impl Transport {
             .with_context(|| "reading after a loop")?;
 
         let msg = std::str::from_utf8(&content).context("invalid utf8 from server")?;
-        Ok(serde_json::from_str::<Payload>(msg)?)
+        Ok(serde_json::from_str::<Message>(msg)?)
     }
 
     async fn recv_server_error(
@@ -188,13 +115,16 @@ impl Transport {
     }
 
     async fn send_payload_to_server(
+        current_requests: &Mutex<HashMap<u64, Sender<Result<Response>>>>,
         pending_requests: &Mutex<HashMap<u64, Sender<Result<Response>>>>,
         server_stdin: &mut Box<dyn AsyncWrite + Unpin + Send>,
-        mut payload: Payload,
+        mut payload: Message,
     ) -> Result<()> {
-        if let Payload::Request(request) = &mut payload {
-            if let Some(back) = request.back_ch.take() {
-                pending_requests.lock().await.insert(request.seq, back);
+        if let Message::Request(request) = &mut payload {
+            {
+                if let Some(sender) = current_requests.lock().await.remove(&request.seq) {
+                    pending_requests.lock().await.insert(request.seq, sender);
+                }
             }
         }
         Self::send_string_to_server(server_stdin, serde_json::to_string(&payload)?).await
@@ -216,28 +146,29 @@ impl Transport {
         if response.success {
             Ok(response)
         } else {
+            dbg!(response);
             Err(anyhow!("Received failed response"))
         }
     }
 
     async fn process_server_message(
         pending_requests: &Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
-        client_tx: &Sender<Payload>,
-        payload: Payload,
+        client_tx: &Sender<Message>,
+        message: Message,
     ) -> Result<()> {
-        match payload {
-            Payload::Response(res) => {
+        match message {
+            Message::Response(res) => {
                 if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
                     tx.send(Self::process_response(res)).await?;
                 } else {
-                    client_tx.send(Payload::Response(res)).await?;
+                    client_tx.send(Message::Response(res)).await?;
                 };
             }
-            Payload::Request(_) => {
-                client_tx.send(payload).await?;
+            Message::Request(_) => {
+                client_tx.send(message).await?;
             }
-            Payload::Event(_) => {
-                client_tx.send(payload).await?;
+            Message::Event(_) => {
+                client_tx.send(message).await?;
             }
         }
         Ok(())
@@ -246,7 +177,7 @@ impl Transport {
     async fn receive(
         pending_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
         mut server_stdout: Box<dyn AsyncBufRead + Unpin + Send>,
-        client_tx: Sender<Payload>,
+        client_tx: Sender<Message>,
     ) -> Result<()> {
         let mut recv_buffer = String::new();
 
@@ -260,12 +191,19 @@ impl Transport {
     }
 
     async fn send(
+        current_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
         pending_requests: Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>,
         mut server_stdin: Box<dyn AsyncWrite + Unpin + Send>,
-        client_rx: Receiver<Payload>,
+        client_rx: Receiver<Message>,
     ) -> Result<()> {
         while let Ok(payload) = client_rx.recv().await {
-            Self::send_payload_to_server(&pending_requests, &mut server_stdin, payload).await?;
+            Self::send_payload_to_server(
+                &current_requests,
+                &pending_requests,
+                &mut server_stdin,
+                payload,
+            )
+            .await?;
         }
 
         Ok(())

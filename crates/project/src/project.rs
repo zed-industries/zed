@@ -30,7 +30,7 @@ use clock::ReplicaId;
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
     debugger_settings::DebuggerSettings,
-    transport::Payload,
+    messages::Message,
 };
 
 use collections::{BTreeSet, HashMap, HashSet};
@@ -256,7 +256,7 @@ pub enum Event {
     DebugClientStopped(DebugAdapterClientId),
     DebugClientEvent {
         client_id: DebugAdapterClientId,
-        payload: Payload,
+        message: Message,
     },
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -2319,10 +2319,10 @@ impl Project {
             DapStoreEvent::DebugClientStopped(client_id) => {
                 cx.emit(Event::DebugClientStopped(*client_id));
             }
-            DapStoreEvent::DebugClientEvent { client_id, payload } => {
+            DapStoreEvent::DebugClientEvent { client_id, message } => {
                 cx.emit(Event::DebugClientEvent {
                     client_id: *client_id,
-                    payload: payload.clone(),
+                    message: message.clone(),
                 });
             }
         }

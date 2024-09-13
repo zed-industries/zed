@@ -1,10 +1,10 @@
 use crate::debugger_panel_item::DebugPanelItem;
 use anyhow::Result;
+use dap::client::DebugAdapterClient;
 use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus, VariableContainer};
 use dap::debugger_settings::DebuggerSettings;
+use dap::messages::{Events, Message};
 use dap::requests::{Request, Scopes, StackTrace, StartDebugging};
-use dap::transport::Payload;
-use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
     Capabilities, ContinuedEvent, ExitedEvent, OutputEvent, ScopesArguments, StackFrame,
     StackTraceArguments, StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
@@ -76,16 +76,16 @@ impl DebugPanel {
                 cx.subscribe(&pane, Self::handle_pane_event),
                 cx.subscribe(&project, {
                     move |this: &mut Self, _, event, cx| match event {
-                        project::Event::DebugClientEvent { payload, client_id } => {
+                        project::Event::DebugClientEvent { message, client_id } => {
                             let Some(client) = this.debug_client_by_id(*client_id, cx) else {
                                 return cx.emit(DebugPanelEvent::ClientStopped(*client_id));
                             };
 
-                            match payload {
-                                Payload::Event(event) => {
+                            match message {
+                                Message::Event(event) => {
                                     this.handle_debug_client_events(client, event, cx);
                                 }
-                                Payload::Request(request) => {
+                                Message::Request(request) => {
                                     if StartDebugging::COMMAND == request.command {
                                         Self::handle_start_debugging_request(this, client, cx);
                                     }

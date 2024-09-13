@@ -1,10 +1,8 @@
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
+use dap::client::{DebugAdapterClient, DebugAdapterClientId};
+use dap::messages::Message;
 use dap::SourceBreakpoint;
-use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId},
-    transport::Payload,
-};
 use gpui::{EventEmitter, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
 use settings::WorktreeId;
@@ -28,7 +26,7 @@ pub enum DapStoreEvent {
     DebugClientStopped(DebugAdapterClientId),
     DebugClientEvent {
         client_id: DebugAdapterClientId,
-        payload: Payload,
+        message: Message,
     },
 }
 
@@ -136,10 +134,10 @@ impl DapStore {
             let client = DebugAdapterClient::new(
                 client_id,
                 config,
-                move |payload, cx| {
+                move |message, cx| {
                     dap_store
                         .update(cx, |_, cx| {
-                            cx.emit(DapStoreEvent::DebugClientEvent { client_id, payload })
+                            cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
                         })
                         .log_err();
                 },

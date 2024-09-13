@@ -1,8 +1,9 @@
-use crate::transport::{Payload, Response, Transport};
+use crate::transport::Transport;
 use anyhow::{anyhow, Context, Result};
 
 use crate::adapters::{build_adapter, DebugAdapter};
 use dap_types::{
+    messages::{Message, Response},
     requests::{
         Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
         Restart, SetBreakpoints, StepBack, StepIn, StepOut, Terminate, TerminateThreads, Variables,
@@ -110,7 +111,7 @@ impl DebugAdapterClient {
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<Self>>
     where
-        F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let adapter = Arc::new(build_adapter(&config).context("Creating debug adapter")?);
         let transport_params = adapter.connect(cx).await?;
@@ -143,7 +144,7 @@ impl DebugAdapterClient {
         cx: &mut AsyncAppContext,
     ) -> Arc<Transport>
     where
-        F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let transport = Transport::start(rx, tx, err, cx);
 
@@ -158,20 +159,20 @@ impl DebugAdapterClient {
     }
 
     async fn handle_recv<F>(
-        server_rx: Receiver<Payload>,
-        client_tx: Sender<Payload>,
+        server_rx: Receiver<Message>,
+        client_tx: Sender<Message>,
         mut event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<()>
     where
-        F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         while let Ok(payload) = server_rx.recv().await {
             match payload {
-                Payload::Event(ev) => cx.update(|cx| event_handler(Payload::Event(ev), cx))?,
-                Payload::Response(_) => unreachable!(),
-                Payload::Request(req) => {
-                    cx.update(|cx| event_handler(Payload::Request(req), cx))?
+                Message::Event(ev) => cx.update(|cx| event_handler(Message::Event(ev), cx))?,
+                Message::Response(_) => unreachable!(),
+                Message::Request(req) => {
+                    cx.update(|cx| event_handler(Message::Request(req), cx))?
                 }
             };
         }
@@ -188,16 +189,25 @@ impl DebugAdapterClient {
 
         let (callback_tx, callback_rx) = bounded::<Result<Response>>(1);
 
-        let request = crate::transport::Request {
-            back_ch: Some(callback_tx),
-            seq: self.next_sequence_id(),
+        let sequence_id = self.next_sequence_id();
+
+        let request = crate::messages::Request {
+            seq: sequence_id,
             command: R::COMMAND.to_string(),
             arguments: Some(serialized_arguments),
         };
 
+        {
+            self.transport
+                .current_requests
+                .lock()
+                .await
+                .insert(sequence_id, callback_tx);
+        }
+
         self.transport
             .server_tx
-            .send(Payload::Request(request))
+            .send(Message::Request(request))
             .await?;
 
         let response = callback_rx.recv().await??;
@@ -464,14 +474,17 @@ impl DebugAdapterClient {
         let mut adapter = self._process.lock().take();
 
         async move {
+            let mut current_requests = self.transport.current_requests.lock().await;
             let mut pending_requests = self.transport.pending_requests.lock().await;
 
+            current_requests.clear();
             pending_requests.clear();
 
             if let Some(mut adapter) = adapter.take() {
                 adapter.kill()?;
             }
 
+            drop(current_requests);
             drop(pending_requests);
             drop(adapter);
 
