@@ -199,7 +199,7 @@
   "void"
   "while"
   "with"
-  "yield",
+  "yield"
 ] @keyword
 
 (template_substitution
