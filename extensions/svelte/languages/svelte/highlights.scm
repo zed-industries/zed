@@ -100,3 +100,8 @@
 (each_start
     ("as") @tag.keyword
 )
+
+
+; Highlight the snippet name as a function
+; (e.g. {#snippet foo(bar)}
+(snippet_name) @function
