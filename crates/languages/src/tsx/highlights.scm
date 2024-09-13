@@ -181,6 +181,7 @@
   "import"
   "in"
   "instanceof"
+  "is"
   "let"
   "new"
   "of"
@@ -198,7 +199,7 @@
   "void"
   "while"
   "with"
-  "yield"
+  "yield",
 ] @keyword
 
 (template_substitution
