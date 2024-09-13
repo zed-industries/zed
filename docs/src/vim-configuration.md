@@ -9,7 +9,7 @@ In this guide, you'll learn how to:
 - Change vim mode settings.
 - Useful optional key bindings to add to your configuration for faster navigation.
 
-> **Note**: This page focuses on configuration options. If you're new to vim mode, the [Vim Mode](vim.md) page provides an overview of the modal editing features Zed provides. If you've not customized key bindings in Zed before, you can learn more about it in the [Key Bindings](key-bindings.md) page.
+> **Note**: This page focuses on configuration options. If you're new to vim mode, [see the Vim Mode page](vim.md) for an overview of the modal editing features Zed provides. If you've not customized key bindings in Zed before, [visit the Key Bindings page](key-bindings.md) to learn more about it.
 
 ## Enabling and disabling vim mode
 
@@ -33,7 +33,7 @@ In this section, we'll learn how to customize the key bindings of Zed's vim mode
 - Useful contexts for vim mode key bindings.
 - Common key bindings to customize for extra productivity.
 
-> **Note**: You can find a complete list of vim mode's default key bindings in Zed's code repository: [vim mode default keymap](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
+> **Note**: You can find a complete list of vim mode's default key bindings in Zed's code repository. [See the vim mode default keymap](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
 ### Selecting the correct context
 
@@ -60,7 +60,7 @@ Contexts are nested, so when you're editing a file, the context is the `"Editor"
 }
 ```
 
-Contexts are expressions. They support boolean operators like `&&` (and) and `||` (or). For example, you can use the context `"Editor && vim_mode == normal"` to create key bindings that only work when you're editing a file *and* you're in vim's normal mode.
+Contexts are expressions. They support boolean operators like `&&` (and) and `||` (or). For example, you can use the context `"Editor && vim_mode == normal"` to create key bindings that only work when you're editing a file _and_ you're in vim's normal mode.
 
 Vim mode adds several contexts to the `"Editor"` context:
 
@@ -112,7 +112,7 @@ Here's a template with useful vim mode contexts to help you customize your vim m
 ]
 ```
 
-> **Note**: If you would like to emulate Vim's `map` commands (`nmap`, etc.), you can use the action [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) in the correct context.
+> **Note**: If you would like to emulate Vim's `map` commands (`nmap`, etc.), you can use the action `workspace::SendKeystrokes` in the correct context. [See the key bindings page](./key-bindings.md#remapping-keys) for more information.
 
 ### Optional key bindings
 

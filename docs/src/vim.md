@@ -2,7 +2,7 @@
 
 Zed includes a Vim emulation layer known as "vim mode". On this page, you will learn how to turn Zed's vim mode on or off, what tools and commands Zed provides to help you navigate and edit your code, and generally how to make the most of vim mode in Zed.
 
-> **Note**: This page focuses on exploring the features offered by vim mode in Zed. If you're looking to configure vim mode instead, head to the page [Configuring Vim Mode](vim-configuration.md).
+> **Note**: This page focuses on exploring the features offered by vim mode in Zed. If you're looking to configure vim mode instead, [visit the Configuring Vim Mode page](vim-configuration.md).
 
 ## Zed's vim mode design
 
@@ -10,7 +10,7 @@ Vim mode tries to offer a familiar experience to Vim users: it replicates the be
 
 This includes support for semantic navigation, multiple cursors, or other features usually provided by plugins like surrounding text.
 
-So, Zed's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal design with Zed's modern features to provide a more fluid experience. It's also [configurable](vim-configuration.md), so you can add your own key bindings or override the defaults.
+So, Zed's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal design with Zed's modern features to provide a more fluid experience. It's also configurable, so you can add your own key bindings or override the defaults.
 
 ### Core differences
 
@@ -19,9 +19,9 @@ There are four types of features in vim mode that use Zed's core functionality, 
 1. **Motions**: vim mode uses Zed's semantic parsing to tune the behavior of motions per language. For example, in Rust, jumping to matching bracket with `%` works with the pipe character `|`. In JavaScript, `w` considers `$` to be a word character.
 2. **Visual block selections**: vim mode uses Zed's multiple cursor to emulate visual block selections, making block selections a lot more flexible. For example, anything you insert after a block selection updates on every line in real-time, and you can add or remove cursors anytime.
 3. **Macros**: vim mode uses Zed's recording system for vim macros. So, you can capture and replay more complex actions, like autocompletion.
-4. **Search and replace**: vim mode uses Zed's search system, so, the syntax for regular expressions is slightly different compared to Vim. Head to [Regex differences](#regex-differences) for details.
+4. **Search and replace**: vim mode uses Zed's search system, so, the syntax for regular expressions is slightly different compared to Vim. [Head to the Regex differences section](#regex-differences) for details.
 
-> **Note:** The foundations of Zed's vim mode should already cover many use cases, and we're always looking to improve it. If you find missing features that you rely on in your workflow, please [file an issue](https://github.com/zed-industries/zed/issues).
+> **Note:** The foundations of Zed's vim mode should already cover many use cases, and we're always looking to improve it. If you find missing features that you rely on in your workflow, please [file an issue on GitHub](https://github.com/zed-industries/zed/issues).
 
 ## Enabling and disabling vim mode
 
@@ -188,7 +188,7 @@ These commands jump to specific positions in the file.
 
 ### Replacement
 
-This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, in the [regex differences](#regex-differences) section. Also, by default, Zed always replaces all occurrences of the search pattern in the current line.
+This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Also, by default, Zed always replaces all occurrences of the search pattern in the current line.
 
 | Command              | Description                       |
 | -------------------- | --------------------------------- |
@@ -223,7 +223,7 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can surround text objects with `ys` (yank surround), change surrounding with `cs`, and delete surrounding with `ds`.
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
-- You can add key bindings to your keymap to navigate "camelCase" names. You can learn how in the [configuring vim mode](./vim-configuration) page.
+- You can add key bindings to your keymap to navigate "camelCase" names. [Visit the Configuring Vim Mode page](./vim-configuration) to learn how.
 
 ## Regex differences
 
