@@ -1,6 +1,7 @@
 use crate::restorable_workspace_locations;
 use crate::{handle_open_request, init_headless, init_ui};
 use anyhow::{anyhow, Context, Result};
+use assistant::PromptBuilder;
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -21,7 +22,7 @@ use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
-use workspace::{AppState, Workspace};
+use workspace::{AppState, OpenOptions, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -188,7 +189,7 @@ fn connect_to_cli(
 }
 
 pub async fn open_paths_with_positions(
-    path_positions: &Vec<PathWithPosition>,
+    path_positions: &[PathWithPosition],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
@@ -245,6 +246,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
     mut cx: AsyncAppContext,
 ) {
     if let Some(request) = requests.next().await {
@@ -255,6 +257,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 dev_server_token,
+                env,
             } => {
                 if let Some(dev_server_token) = dev_server_token {
                     match cx
@@ -289,7 +292,12 @@ pub async fn handle_cli_connection(
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
                             Ok(open_request) => {
-                                handle_open_request(open_request, app_state.clone(), cx);
+                                handle_open_request(
+                                    open_request,
+                                    app_state.clone(),
+                                    prompt_builder.clone(),
+                                    cx,
+                                );
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
                             }
                             Err(e) => {
@@ -307,7 +315,7 @@ pub async fn handle_cli_connection(
                 }
 
                 if let Err(e) = cx
-                    .update(|cx| init_ui(app_state.clone(), cx))
+                    .update(|cx| init_ui(app_state.clone(), prompt_builder.clone(), cx))
                     .and_then(|r| r)
                 {
                     responses
@@ -325,6 +333,7 @@ pub async fn handle_cli_connection(
                     &responses,
                     wait,
                     app_state.clone(),
+                    env,
                     &mut cx,
                 )
                 .await;
@@ -342,14 +351,15 @@ async fn open_workspaces(
     responses: &IpcSender<CliResponse>,
     wait: bool,
     app_state: Arc<AppState>,
-    mut cx: &mut AsyncAppContext,
+    env: Option<collections::HashMap<String, String>>,
+    cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let grouped_paths = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
-            let locations = restorable_workspace_locations(&mut cx, &app_state).await;
+            let locations = restorable_workspace_locations(cx, &app_state).await;
             locations
                 .into_iter()
                 .flat_map(|locations| {
@@ -390,7 +400,11 @@ async fn open_workspaces(
         // If not the first launch, show an empty window with empty editor
         else {
             cx.update(|cx| {
-                workspace::open_new(app_state, cx, |workspace, cx| {
+                let open_options = OpenOptions {
+                    env,
+                    ..Default::default()
+                };
+                workspace::open_new(open_options, app_state, cx, |workspace, cx| {
                     Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
@@ -407,8 +421,9 @@ async fn open_workspaces(
                 open_new_workspace,
                 wait,
                 responses,
+                env.as_ref(),
                 &app_state,
-                &mut cx,
+                cx,
             )
             .await;
 
@@ -430,6 +445,7 @@ async fn open_workspace(
     open_new_workspace: Option<bool>,
     wait: bool,
     responses: &IpcSender<CliResponse>,
+    env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> bool {
@@ -440,6 +456,7 @@ async fn open_workspace(
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
+            env: env.cloned(),
             ..Default::default()
         },
         cx,
@@ -662,6 +679,7 @@ mod tests {
                     open_new_workspace,
                     false,
                     &response_tx,
+                    None,
                     &app_state,
                     &mut cx,
                 )

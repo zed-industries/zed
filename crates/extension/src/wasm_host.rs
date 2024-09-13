@@ -173,11 +173,11 @@ impl WasmHost {
             .preopened_dir(&extension_work_dir, ".", dir_perms, file_perms)?
             .preopened_dir(
                 &extension_work_dir,
-                &extension_work_dir.to_string_lossy(),
+                extension_work_dir.to_string_lossy(),
                 dir_perms,
                 file_perms,
             )?
-            .env("PWD", &extension_work_dir.to_string_lossy())
+            .env("PWD", extension_work_dir.to_string_lossy())
             .env("RUST_BACKTRACE", "full")
             .build())
     }

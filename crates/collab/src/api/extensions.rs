@@ -52,7 +52,7 @@ async fn get_extensions(
         let extension_id = filter.to_lowercase();
         let mut exact_match = None;
         extensions.retain(|extension| {
-            if extension.id.as_ref() == &extension_id {
+            if extension.id.as_ref() == extension_id {
                 exact_match = Some(extension.clone());
                 false
             } else {
@@ -185,7 +185,7 @@ async fn download_extension(
         .clone()
         .zip(app.config.blob_store_bucket.clone())
     else {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -202,7 +202,7 @@ async fn download_extension(
         .await?;
 
     if !version_exists {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_FOUND,
             "unknown extension version".into(),
         ))?;
@@ -319,14 +319,14 @@ async fn fetch_extensions_from_blob_store(
                 if let Some(extension) = fetch_extension_manifest(
                     blob_store_client,
                     blob_store_bucket,
-                    &extension_id,
-                    &published_version,
+                    extension_id,
+                    published_version,
                 )
                 .await
                 .log_err()
                 {
                     new_versions
-                        .entry(&extension_id)
+                        .entry(extension_id)
                         .or_default()
                         .push(extension);
                 }

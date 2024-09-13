@@ -65,6 +65,12 @@ pub struct ConfirmCompletion {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ComposeCompletion {
+    #[serde(default)]
+    pub item_ix: Option<usize>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
@@ -132,15 +138,34 @@ pub struct ShowCompletions {
     pub(super) trigger: Option<String>,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct HandleInput(pub String);
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToNextWordEnd {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToPreviousWordStart {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
 impl_actions!(
     editor,
     [
         ConfirmCodeAction,
         ConfirmCompletion,
+        ComposeCompletion,
+        DeleteToNextWordEnd,
+        DeleteToPreviousWordStart,
         ExpandExcerpts,
         ExpandExcerptsUp,
         ExpandExcerptsDown,
         FoldAt,
+        HandleInput,
         MoveDownByLines,
         MovePageDown,
         MovePageUp,
@@ -188,6 +213,7 @@ gpui::actions!(
         CopyHighlightJson,
         CopyPath,
         CopyPermalinkToLine,
+        CopyFileLocation,
         CopyRelativePath,
         Cut,
         CutToEndOfLine,
@@ -196,9 +222,7 @@ gpui::actions!(
         DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
-        DeleteToNextWordEnd,
         DeleteToPreviousSubwordStart,
-        DeleteToPreviousWordStart,
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,
@@ -210,6 +234,8 @@ gpui::actions!(
         Format,
         GoToDefinition,
         GoToDefinitionSplit,
+        GoToDeclaration,
+        GoToDeclarationSplit,
         GoToDiagnostic,
         GoToHunk,
         GoToImplementation,
@@ -249,6 +275,7 @@ gpui::actions!(
         OpenExcerptsSplit,
         OpenPermalinkToLine,
         OpenUrl,
+        OpenFile,
         Outdent,
         PageDown,
         PageUp,
@@ -260,10 +287,12 @@ gpui::actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
+        RevertFile,
         RevertSelectedHunks,
         ScrollCursorBottom,
         ScrollCursorCenter,
         ScrollCursorTop,
+        ScrollCursorCenterTopBottom,
         SelectAll,
         SelectAllMatches,
         SelectDown,
@@ -291,6 +320,7 @@ gpui::actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        SwitchSourceHeader,
         Tab,
         TabPrev,
         ToggleAutoSignatureHelp,
@@ -299,7 +329,9 @@ gpui::actions!(
         ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
+        ToggleInlineCompletions,
         ToggleLineNumbers,
+        ToggleRelativeLineNumbers,
         ToggleIndentGuides,
         ToggleSoftWrap,
         ToggleTabBar,

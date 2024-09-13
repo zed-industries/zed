@@ -184,6 +184,33 @@ pub fn prompts_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the prompt templates directory.
+///
+/// This is where the prompt templates for core features can be overridden with templates.
+///
+/// # Arguments
+///
+/// * `dev_mode` - If true, assumes the current working directory is the Zed repository.
+pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
+    if let Some(path) = repo_path {
+        let dev_path = path.join("assets").join("prompts");
+        if dev_path.exists() {
+            return dev_path;
+        }
+    }
+
+    static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    PROMPT_TEMPLATES_DIR
+        .get_or_init(|| {
+            if cfg!(target_os = "macos") {
+                config_dir().join("prompt_overrides")
+            } else {
+                support_dir().join("prompt_overrides")
+            }
+        })
+        .clone()
+}
+
 /// Returns the path to the semantic search's embeddings directory.
 ///
 /// This is where the embeddings used to power semantic search are stored.
@@ -210,20 +237,6 @@ pub fn languages_dir() -> &'static PathBuf {
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
     COPILOT_DIR.get_or_init(|| support_dir().join("copilot"))
-}
-
-pub fn copilot_chat_config_path() -> &'static PathBuf {
-    static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-    COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        if cfg!(target_os = "windows") {
-            home_dir().join("AppData")
-        } else {
-            home_dir().join(".config")
-        }
-        .join("github-copilot")
-        .join("hosts.json")
-    })
 }
 
 /// Returns the path to the Supermaven directory.

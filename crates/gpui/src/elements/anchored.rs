@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, Bounds, Element, GlobalElementId, IntoElement, LayoutId, ParentElement,
-    Pixels, Point, Size, Style, WindowContext,
+    point, AnyElement, Bounds, Edges, Element, GlobalElementId, IntoElement, LayoutId,
+    ParentElement, Pixels, Point, Size, Style, WindowContext,
 };
 
 /// The state that the anchored element element uses to track its children.
@@ -58,6 +58,12 @@ impl Anchored {
     /// Snap to window edge instead of switching anchor corner when an overflow would occur.
     pub fn snap_to_window(mut self) -> Self {
         self.fit_mode = AnchoredFitMode::SnapToWindow;
+        self
+    }
+
+    /// Snap to window edge and leave some margins.
+    pub fn snap_to_window_with_margin(mut self, edges: impl Into<Edges<Pixels>>) -> Self {
+        self.fit_mode = AnchoredFitMode::SnapToWindowWithMargin(edges.into());
         self
     }
 }
@@ -153,22 +159,27 @@ impl Element for Anchored {
             }
         }
 
+        let edges = match self.fit_mode {
+            AnchoredFitMode::SnapToWindowWithMargin(edges) => edges,
+            _ => Edges::default(),
+        };
+
         // Snap the horizontal edges of the anchored element to the horizontal edges of the window if
         // its horizontal bounds overflow, aligning to the left if it is wider than the limits.
         if desired.right() > limits.right() {
-            desired.origin.x -= desired.right() - limits.right();
+            desired.origin.x -= desired.right() - limits.right() + edges.right;
         }
         if desired.left() < limits.left() {
-            desired.origin.x = limits.origin.x;
+            desired.origin.x = limits.origin.x + edges.left;
         }
 
         // Snap the vertical edges of the anchored element to the vertical edges of the window if
         // its vertical bounds overflow, aligning to the top if it is taller than the limits.
         if desired.bottom() > limits.bottom() {
-            desired.origin.y -= desired.bottom() - limits.bottom();
+            desired.origin.y -= desired.bottom() - limits.bottom() + edges.bottom;
         }
         if desired.top() < limits.top() {
-            desired.origin.y = limits.origin.y;
+            desired.origin.y = limits.origin.y + edges.top;
         }
 
         let offset = desired.origin - bounds.origin;
@@ -211,18 +222,20 @@ enum Axis {
 /// Which algorithm to use when fitting the anchored element to be inside the window.
 #[derive(Copy, Clone, PartialEq)]
 pub enum AnchoredFitMode {
-    /// Snap the anchored element to the window edge
+    /// Snap the anchored element to the window edge.
     SnapToWindow,
-    /// Switch which corner anchor this anchored element is attached to
+    /// Snap to window edge and leave some margins.
+    SnapToWindowWithMargin(Edges<Pixels>),
+    /// Switch which corner anchor this anchored element is attached to.
     SwitchAnchor,
 }
 
 /// Which algorithm to use when positioning the anchored element.
 #[derive(Copy, Clone, PartialEq)]
 pub enum AnchoredPositionMode {
-    /// Position the anchored element relative to the window
+    /// Position the anchored element relative to the window.
     Window,
-    /// Position the anchored element relative to its parent
+    /// Position the anchored element relative to its parent.
     Local,
 }
 

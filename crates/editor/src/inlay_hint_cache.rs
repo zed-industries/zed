@@ -466,7 +466,7 @@ impl InlayHintCache {
                                             to_insert.push(Inlay::hint(
                                                 cached_hint_id.id(),
                                                 anchor,
-                                                &cached_hint,
+                                                cached_hint,
                                             ));
                                         }
                                     }
@@ -490,7 +490,7 @@ impl InlayHintCache {
                         to_insert.push(Inlay::hint(
                             cached_hint_id.id(),
                             anchor,
-                            &maybe_missed_cached_hint,
+                            maybe_missed_cached_hint,
                         ));
                     }
                 }
@@ -835,7 +835,7 @@ fn new_update_task(
 
         let query_range_failed =
             |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
-                log::error!("inlay hint update task for range {range:?} failed: {e:#}");
+                log::error!("inlay hint update task for range failed: {e:#?}");
                 editor
                     .update(cx, |editor, cx| {
                         if let Some(task_ranges) = editor
@@ -844,7 +844,7 @@ fn new_update_task(
                             .get_mut(&query.excerpt_id)
                         {
                             let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
-                            task_ranges.invalidate_range(&buffer_snapshot, &range);
+                            task_ranges.invalidate_range(&buffer_snapshot, range);
                         }
                     })
                     .ok()
@@ -3424,7 +3424,7 @@ pub mod tests {
 
     pub fn cached_hint_labels(editor: &Editor) -> Vec<String> {
         let mut labels = Vec::new();
-        for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
+        for excerpt_hints in editor.inlay_hint_cache().hints.values() {
             let excerpt_hints = excerpt_hints.read();
             for id in &excerpt_hints.ordered_hints {
                 labels.push(excerpt_hints.hints_by_id[id].text());

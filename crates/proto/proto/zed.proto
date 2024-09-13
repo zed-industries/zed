@@ -48,6 +48,8 @@ message Envelope {
 
         GetDefinition get_definition = 32;
         GetDefinitionResponse get_definition_response = 33;
+        GetDeclaration get_declaration = 237;
+        GetDeclarationResponse get_declaration_response = 238;
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
 
@@ -126,8 +128,10 @@ message Envelope {
         Unfollow unfollow = 101;
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
-        UpdateUserPlan update_user_plan = 234; // current max
+        UpdateUserPlan update_user_plan = 234;
         UpdateDiffBase update_diff_base = 104;
+        AcceptTermsOfService accept_terms_of_service = 239;
+        AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
         OnTypeFormatting on_type_formatting = 105;
         OnTypeFormattingResponse on_type_formatting_response = 106;
@@ -195,10 +199,6 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        CompleteWithLanguageModel complete_with_language_model = 226;
-        CompleteWithLanguageModelResponse complete_with_language_model_response = 227;
-        StreamCompleteWithLanguageModel stream_complete_with_language_model = 228;
-        StreamCompleteWithLanguageModelResponse stream_complete_with_language_model_response = 229;
         CountLanguageModelTokens count_language_model_tokens = 230;
         CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
@@ -264,17 +264,37 @@ message Envelope {
 
         GetSignatureHelp get_signature_help = 217;
         GetSignatureHelpResponse get_signature_help_response = 218;
+
         ListRemoteDirectory list_remote_directory = 219;
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
         UpdateDevServerProject update_dev_server_project = 221;
-
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
+
+        GetLlmToken get_llm_token = 235;
+        GetLlmTokenResponse get_llm_token_response = 236;
+
+        LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
+
+        FindSearchCandidates find_search_candidates = 243;
+        FindSearchCandidatesResponse find_search_candidates_response = 244;
+
+        CloseBuffer close_buffer = 245;
+        UpdateUserSettings update_user_settings = 246;
+
+        CreateLanguageServer create_language_server = 247;
+
+        WhichCommand which_command = 248;
+        WhichCommandResponse which_command_response = 249;
+
+        ShellEnv shell_env = 250;
+        ShellEnvResponse shell_env_response = 251; // current max
     }
 
     reserved 158 to 161;
     reserved 166 to 169;
-    reserved 224 to 225;
+    reserved 224 to 229;
 }
 
 // Messages
@@ -311,6 +331,7 @@ enum ErrorCode {
     DevServerOffline = 15;
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
+    RateLimitExceeded = 18;
     reserved 6;
 }
 
@@ -644,6 +665,7 @@ message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
+    optional string relative_worktree_source_path = 4;
 }
 
 message DeleteProjectEntry {
@@ -692,9 +714,20 @@ message GetDefinition {
      uint64 buffer_id = 2;
      Anchor position = 3;
      repeated VectorClockEntry version = 4;
- }
+}
 
 message GetDefinitionResponse {
+    repeated LocationLink links = 1;
+}
+
+message GetDeclaration {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+}
+
+message GetDeclarationResponse {
     repeated LocationLink links = 1;
 }
 
@@ -846,6 +879,11 @@ message SaveBuffer {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     optional ProjectPath new_path = 4;
+}
+
+message CloseBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
 }
 
 message ProjectPath {
@@ -1216,6 +1254,26 @@ message SearchProject {
 message SearchProjectResponse {
     repeated Location locations = 1;
     bool limit_reached = 2;
+}
+
+message SearchQuery {
+    string query = 2;
+    bool regex = 3;
+    bool whole_word = 4;
+    bool case_sensitive = 5;
+    string files_to_include = 6;
+    string files_to_exclude = 7;
+    bool include_ignored = 8;
+}
+
+message FindSearchCandidates {
+    uint64 project_id = 1;
+    SearchQuery query = 2;
+    uint64 limit = 3;
+}
+
+message FindSearchCandidatesResponse {
+    repeated uint64 buffer_ids = 1;
 }
 
 message CodeAction {
@@ -1679,6 +1737,7 @@ message GetPrivateUserInfoResponse {
     string metrics_id = 1;
     bool staff = 2;
     repeated string flags = 3;
+    optional uint64 accepted_tos_at = 4;
 }
 
 enum Plan {
@@ -1688,6 +1747,12 @@ enum Plan {
 
 message UpdateUserPlan {
     Plan plan = 1;
+}
+
+message AcceptTermsOfService {}
+
+message AcceptTermsOfServiceResponse {
+    uint64 accepted_tos_at = 1;
 }
 
 // Entities
@@ -1789,6 +1854,7 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     optional GitStatus git_status = 9;
+    bool is_fifo = 10;
 }
 
 message RepositoryEntry {
@@ -2054,6 +2120,15 @@ message LspExtExpandMacroResponse {
     string expansion = 2;
 }
 
+message LspExtSwitchSourceHeader {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message LspExtSwitchSourceHeaderResponse {
+    string target_file = 1;
+}
+
 message SetRoomParticipantRole {
     uint64 room_id = 1;
     uint64 user_id = 2;
@@ -2065,24 +2140,6 @@ enum LanguageModelRole {
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
     reserved 3;
-}
-
-message CompleteWithLanguageModel {
-    LanguageModelProvider provider = 1;
-    string request = 2;
-}
-
-message CompleteWithLanguageModelResponse {
-    string completion = 1;
-}
-
-message StreamCompleteWithLanguageModel {
-    LanguageModelProvider provider = 1;
-    string request = 2;
-}
-
-message StreamCompleteWithLanguageModelResponse {
-    string event = 1;
 }
 
 message CountLanguageModelTokens {
@@ -2098,6 +2155,7 @@ enum LanguageModelProvider {
     Anthropic = 0;
     OpenAI = 1;
     Google = 2;
+    Zed = 3;
 }
 
 message GetCachedEmbeddings {
@@ -2305,6 +2363,7 @@ message ContextMessageStatus {
         Done done = 1;
         Pending pending = 2;
         Error error = 3;
+        Canceled canceled = 4;
     }
 
     message Done {}
@@ -2314,6 +2373,8 @@ message ContextMessageStatus {
     message Error {
         string message = 1;
     }
+
+    message Canceled {}
 }
 
 message ContextMessage {
@@ -2423,12 +2484,77 @@ message SynchronizeContextsResponse {
     repeated ContextVersion contexts = 1;
 }
 
+message GetLlmToken {}
+
+message GetLlmTokenResponse {
+    string token = 1;
+}
+
 // Remote FS
 
 message AddWorktree {
+    uint64 project_id = 2;
     string path = 1;
 }
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
 }
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string content = 2;
+}
+
+message LanguageServerCommand {
+   string path = 1;
+   repeated string arguments = 2;
+   map<string, string> env = 3;
+}
+
+message AvailableLanguage {
+    string name = 7;
+    string matcher = 8;
+}
+
+message CreateLanguageServer {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string name = 3;
+
+    LanguageServerCommand binary = 4;
+    optional string initialization_options = 5;
+    optional string code_action_kinds = 6;
+
+    AvailableLanguage language = 7;
+}
+
+message WhichCommand {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string command = 3;
+}
+
+message WhichCommandResponse {
+    optional string path = 1;
+}
+
+message ShellEnv {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+}
+
+message ShellEnvResponse {
+    map<string, string> env = 1;
+}
+
+// message RestartLanguageServer {
+
+// }
+// message DestroyLanguageServer {
+
+// }
+
+// message LspWorkspaceConfiguration {
+
+// }

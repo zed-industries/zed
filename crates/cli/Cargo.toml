@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+collections.workspace = true
 ipc-channel = "0.18"
 once_cell.workspace = true
 parking_lot.workspace = true
@@ -26,6 +27,7 @@ paths.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 util.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 exec.workspace =  true

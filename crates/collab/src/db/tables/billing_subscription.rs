@@ -11,6 +11,7 @@ pub struct Model {
     pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
+    pub stripe_cancel_at: Option<DateTime>,
     pub created_at: DateTime,
 }
 
@@ -38,7 +39,7 @@ impl ActiveModelBehavior for ActiveModel {}
 #[derive(
     Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash, Serialize,
 )]
-#[sea_orm(rs_type = "String", db_type = "String(None)")]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 #[serde(rename_all = "snake_case")]
 pub enum StripeSubscriptionStatus {
     #[default]

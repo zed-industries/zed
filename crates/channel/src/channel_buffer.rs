@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
 use language::proto::serialize_version;
 use rpc::{
-    proto::{self, PeerId},
+    proto::{self, AnyProtoClient, PeerId},
     TypedEnvelope,
 };
 use std::{sync::Arc, time::Duration};
@@ -14,7 +14,7 @@ use util::ResultExt;
 
 pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 
-pub(crate) fn init(client: &Arc<Client>) {
+pub(crate) fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborators);
 }
@@ -177,13 +177,10 @@ impl ChannelBuffer {
         match event {
             language::Event::Operation(operation) => {
                 if *ZED_ALWAYS_ACTIVE {
-                    match operation {
-                        language::Operation::UpdateSelections { selections, .. } => {
-                            if selections.is_empty() {
-                                return;
-                            }
+                    if let language::Operation::UpdateSelections { selections, .. } = operation {
+                        if selections.is_empty() {
+                            return;
                         }
-                        _ => {}
                     }
                 }
                 let operation = language::proto::serialize_operation(operation);

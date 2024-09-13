@@ -4,8 +4,8 @@ use crate::{
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
-use cocoa::appkit::{CGFloat, CGPoint};
-use collections::{BTreeSet, HashMap};
+use cocoa::appkit::CGFloat;
+use collections::HashMap;
 use core_foundation::{
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
@@ -16,6 +16,7 @@ use core_graphics::{
     base::{kCGImageAlphaPremultipliedLast, CGGlyph},
     color_space::CGColorSpace,
     context::CGContext,
+    display::CGPoint,
 };
 use core_text::{
     font::CTFont,
@@ -93,26 +94,18 @@ impl PlatformTextSystem for MacTextSystem {
     }
 
     fn all_font_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
         let collection = core_text::font_collection::create_for_all_families();
         let Some(descriptors) = collection.get_descriptors() else {
-            return Vec::new();
+            return names;
         };
-        let mut names = BTreeSet::new();
         for descriptor in descriptors.into_iter() {
             names.extend(lenient_font_attributes::family_name(&descriptor));
         }
         if let Ok(fonts_in_memory) = self.0.read().memory_source.all_families() {
             names.extend(fonts_in_memory);
         }
-        names.into_iter().collect()
-    }
-
-    fn all_font_families(&self) -> Vec<String> {
-        self.0
-            .read()
-            .system_source
-            .all_families()
-            .expect("core text should never return an error")
+        names
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {

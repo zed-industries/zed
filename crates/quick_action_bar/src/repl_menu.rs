@@ -62,7 +62,7 @@ impl QuickActionBar {
                 return self.render_repl_launch_menu(spec, cx);
             }
             SessionSupport::RequiresSetup(language) => {
-                return self.render_repl_setup(&language, cx);
+                return self.render_repl_setup(&language.0, cx);
             }
             SessionSupport::Unsupported => return None,
         };
@@ -134,7 +134,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::run(editor.clone(), cx).log_err();
+                                repl::run(editor.clone(), true, cx).log_err();
                             }
                         },
                     )
@@ -173,8 +173,6 @@ impl QuickActionBar {
                             url: format!("{}#change-kernel", ZED_REPL_DOCUMENTATION),
                         }),
                     )
-                    // TODO: Add Restart action
-                    // .action("Restart", Box::new(gpui::NoAction))
                     .custom_entry(
                         move |_cx| {
                             Label::new("Shut Down Kernel")
@@ -186,6 +184,20 @@ impl QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 repl::shutdown(editor.clone(), cx);
+                            }
+                        },
+                    )
+                    .custom_entry(
+                        move |_cx| {
+                            Label::new("Restart Kernel")
+                                .size(LabelSize::Small)
+                                .color(Color::Error)
+                                .into_any_element()
+                        },
+                        {
+                            let editor = editor.clone();
+                            move |cx| {
+                                repl::restart(editor.clone(), cx);
                             }
                         },
                     )
@@ -304,7 +316,16 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         }
     };
 
-    let menu_state = match &session.kernel {
+    match &session.kernel {
+        Kernel::Restarting => ReplMenuState {
+            tooltip: format!("Restarting {}", kernel_name).into(),
+            icon_is_animating: true,
+            popover_disabled: true,
+            icon_color: Color::Muted,
+            indicator: Some(Indicator::dot().color(Color::Muted)),
+            status: session.kernel.status(),
+            ..fill_fields()
+        },
         Kernel::RunningKernel(kernel) => match &kernel.execution_state {
             ExecutionState::Idle => ReplMenuState {
                 tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
@@ -355,7 +376,5 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             status: KernelStatus::Shutdown,
             ..fill_fields()
         },
-    };
-
-    menu_state
+    }
 }

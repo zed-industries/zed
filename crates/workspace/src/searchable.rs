@@ -65,6 +65,9 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
 
     fn toggle_filtered_search_ranges(&mut self, _enabled: bool, _cx: &mut ViewContext<Self>) {}
 
+    fn get_matches(&self, _: &mut WindowContext) -> Vec<Self::Match> {
+        Vec::new()
+    }
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;

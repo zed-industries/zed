@@ -29,31 +29,16 @@ impl zed::Extension for RubyExtension {
     ) -> Result<zed::Command> {
         match language_server_id.as_ref() {
             Solargraph::LANGUAGE_SERVER_ID => {
-                let solargraph = self.solargraph.get_or_insert_with(|| Solargraph::new());
-
-                Ok(zed::Command {
-                    command: solargraph.server_script_path(worktree)?,
-                    args: vec!["stdio".into()],
-                    env: worktree.shell_env(),
-                })
+                let solargraph = self.solargraph.get_or_insert_with(Solargraph::new);
+                solargraph.language_server_command(language_server_id, worktree)
             }
             RubyLsp::LANGUAGE_SERVER_ID => {
-                let ruby_lsp = self.ruby_lsp.get_or_insert_with(|| RubyLsp::new());
-
-                Ok(zed::Command {
-                    command: ruby_lsp.server_script_path(worktree)?,
-                    args: vec![],
-                    env: worktree.shell_env(),
-                })
+                let ruby_lsp = self.ruby_lsp.get_or_insert_with(RubyLsp::new);
+                ruby_lsp.language_server_command(language_server_id, worktree)
             }
             Rubocop::LANGUAGE_SERVER_ID => {
-                let rubocop = self.rubocop.get_or_insert_with(|| Rubocop::new());
-
-                Ok(zed::Command {
-                    command: rubocop.server_script_path(worktree)?,
-                    args: vec!["--lsp".into()],
-                    env: worktree.shell_env(),
-                })
+                let rubocop = self.rubocop.get_or_insert_with(Rubocop::new);
+                rubocop.language_server_command(language_server_id, worktree)
             }
             language_server_id => Err(format!("unknown language server: {language_server_id}")),
         }

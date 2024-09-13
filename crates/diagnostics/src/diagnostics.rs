@@ -432,7 +432,7 @@ impl ProjectDiagnosticsEditor {
                                 .unwrap();
 
                             prev_excerpt_id = excerpt_id;
-                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                            first_excerpt_id.get_or_insert(prev_excerpt_id);
                             group_state.excerpts.push(excerpt_id);
                             let header_position = (excerpt_id, language::Anchor::MIN);
 
@@ -449,6 +449,7 @@ impl ProjectDiagnosticsEditor {
                                     style: BlockStyle::Sticky,
                                     render: diagnostic_header_renderer(primary),
                                     disposition: BlockDisposition::Above,
+                                    priority: 0,
                                 });
                             }
 
@@ -470,6 +471,7 @@ impl ProjectDiagnosticsEditor {
                                             diagnostic, None, true, true,
                                         ),
                                         disposition: BlockDisposition::Below,
+                                        priority: 0,
                                     });
                                 }
                             }
@@ -489,7 +491,7 @@ impl ProjectDiagnosticsEditor {
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group_state)) = to_keep {
                     prev_excerpt_id = *group_state.excerpts.last().unwrap();
-                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                    first_excerpt_id.get_or_insert(prev_excerpt_id);
                     path_state.diagnostic_groups.push(group_state);
                 }
             }
@@ -508,6 +510,7 @@ impl ProjectDiagnosticsEditor {
                         style: block.style,
                         render: block.render,
                         disposition: block.disposition,
+                        priority: 0,
                     })
                 }),
                 Some(Autoscroll::fit()),
@@ -773,7 +776,7 @@ impl Item for ProjectDiagnosticsEditor {
     }
 }
 
-const DIAGNOSTIC_HEADER: &'static str = "diagnostic header";
+const DIAGNOSTIC_HEADER: &str = "diagnostic header";
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);

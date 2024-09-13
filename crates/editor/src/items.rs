@@ -356,7 +356,7 @@ async fn update_editor_from_message(
                 .collect::<Vec<_>>();
             removed_excerpt_ids.sort_by({
                 let multibuffer = multibuffer.read(cx);
-                move |a, b| a.cmp(&b, &multibuffer)
+                move |a, b| a.cmp(b, &multibuffer)
             });
 
             let mut insertions = message.inserted_excerpts.into_iter().peekable();
@@ -604,7 +604,7 @@ impl Item for Editor {
                     .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
             })
             .flatten()
-            .map(|icon| Icon::from_path(icon))
+            .map(Icon::from_path)
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
@@ -631,7 +631,7 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
         });
 
         h_flex()
@@ -678,6 +678,12 @@ impl Item for Editor {
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
         self.nav_history = Some(history);
+    }
+
+    fn discarded(&self, _project: Model<Project>, cx: &mut ViewContext<Self>) {
+        for buffer in self.buffer().clone().read(cx).all_buffers() {
+            buffer.update(cx, |buffer, cx| buffer.discarded(cx))
+        }
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
@@ -823,7 +829,7 @@ impl Item for Editor {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(&variant.syntax()), cx)?;
+            multibuffer.symbols_containing(cursor, Some(variant.syntax()), cx)?;
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
@@ -838,7 +844,13 @@ impl Item for Editor {
                         .unwrap_or_default(),
                 )
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| "untitled".to_string())
+                .unwrap_or_else(|| {
+                    if multibuffer.is_singleton() {
+                        multibuffer.title(cx).to_string()
+                    } else {
+                        "untitled".to_string()
+                    }
+                })
         });
 
         let settings = ThemeSettings::get_global(cx);
@@ -893,6 +905,10 @@ impl Item for Editor {
 
             _ => {}
         }
+    }
+
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.buffer.read(cx).preserve_preview(cx)
     }
 }
 
@@ -1134,16 +1150,37 @@ pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
+    fn get_matches(&self, _: &mut WindowContext) -> Vec<Range<Anchor>> {
+        self.background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map_or(Vec::new(), |(_color, ranges)| {
+                ranges.iter().cloned().collect()
+            })
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        if self
+            .clear_background_highlights::<BufferSearchHighlights>(cx)
+            .is_some()
+        {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn update_matches(&mut self, matches: &[Range<Anchor>], cx: &mut ViewContext<Self>) {
+        let existing_range = self
+            .background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map(|(_, range)| range.as_ref());
+        let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
             cx,
         );
+        if updated {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn has_filtered_search_ranges(&mut self) -> bool {
@@ -1188,7 +1225,7 @@ impl SearchableItem for Editor {
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
-                let (range, kind) = snapshot.surrounding_word(selection.start);
+                let (range, kind) = snapshot.surrounding_word(selection.start, true);
                 if kind == Some(CharKind::Word) {
                     let text: String = snapshot.text_for_range(range).collect();
                     if !text.trim().is_empty() {
@@ -1217,7 +1254,7 @@ impl SearchableItem for Editor {
         self.unfold_ranges(matches.to_vec(), false, false, cx);
         let mut ranges = Vec::new();
         for m in matches {
-            ranges.push(self.range_for_match(&m))
+            ranges.push(self.range_for_match(m))
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
@@ -1298,7 +1335,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_gt()
                 {
-                    count = count - 1
+                    count -= 1
                 }
 
                 (current_index + count) % matches.len()
@@ -1309,7 +1346,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_lt()
                 {
-                    count = count - 1;
+                    count -= 1;
                 }
 
                 if current_index >= count {
@@ -1331,7 +1368,7 @@ impl SearchableItem for Editor {
             .background_highlights
             .get(&TypeId::of::<SearchWithinRange>())
             .map_or(vec![], |(_color, ranges)| {
-                ranges.iter().map(|range| range.clone()).collect::<Vec<_>>()
+                ranges.iter().cloned().collect::<Vec<_>>()
             });
 
         cx.background_executor().spawn(async move {
@@ -1374,7 +1411,7 @@ impl SearchableItem for Editor {
                     if !search_range.is_empty() {
                         ranges.extend(
                             query
-                                .search(&search_buffer, Some(search_range.clone()))
+                                .search(search_buffer, Some(search_range.clone()))
                                 .await
                                 .into_iter()
                                 .map(|match_range| {
@@ -1668,8 +1705,8 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert_eq!(
-                    buffer.language().map(|lang| lang.name()).as_deref(),
-                    Some("Rust")
+                    buffer.language().map(|lang| lang.name()),
+                    Some("Rust".into())
                 ); // Language should be set to Rust
                 assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });

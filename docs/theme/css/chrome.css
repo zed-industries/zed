@@ -279,7 +279,7 @@ pre:hover > .buttons {
 }
 pre > .buttons :hover {
   color: var(--sidebar-active);
-  border-color: var(--icons-hover);
+  border-color: var(--border-hover);
   background-color: var(--theme-hover);
 }
 pre > .buttons i {
@@ -287,19 +287,28 @@ pre > .buttons i {
 }
 pre > .buttons button {
   cursor: inherit;
-  margin: 0px 5px;
-  padding: 3px 5px;
+  margin: 0 4px;
+  height: 26px;
+  width: 26px;
   font-size: 14px;
-
   border-style: solid;
   border-width: 1px;
   border-radius: 4px;
-  border-color: var(--icons);
+  border-color: var(--border);
   background-color: var(--theme-popup-bg);
   transition: 100ms;
   transition-property: color, border-color, background-color;
   color: var(--icons);
 }
+
+pre > .playground {
+  border: none;
+  margin: 0;
+  box-shadow: none;
+  /* HACK: This serves to visually hide nested <pre> elements in "playground" code snippets.
+  A more robust solution would involve modifying the rendered HTML. */
+}
+
 @media (pointer: coarse) {
   pre > .buttons button {
     /* On mobile, make it easier to tap buttons. */
@@ -537,6 +546,7 @@ ul#searchresults span.teaser em {
   list-style: none outside none;
   padding-inline-start: 0;
   line-height: 2.2em;
+  margin: 0;
 }
 
 .chapter ol {
@@ -665,9 +675,19 @@ ul#searchresults span.teaser em {
 }
 
 .download-button {
-  background: #dde4f1;
-  color: var(--link-color);
+  background: hsl(220, 60%, 95%);
+  color: hsl(220, 60%, 30%);
   padding: 4px 8px;
-  border: 1px solid #a8bee9;
-  font-size: 14px;
+  border: 1px solid hsla(220, 60%, 40%, 0.2);
+  font-size: 1.4rem;
+  border-radius: 4px;
+  box-shadow: hsla(220, 40%, 60%, 0.1) 0px -2px 0px 0px inset;
+  transition: 100ms;
+  transition-property: box-shadow, border-color, background-color;
+}
+
+.download-button:hover {
+  background: hsl(220, 60%, 93%);
+  border-color: hsla(220, 60%, 50%, 0.2);
+  box-shadow: none;
 }

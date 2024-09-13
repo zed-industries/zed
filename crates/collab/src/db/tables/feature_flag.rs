@@ -8,6 +8,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: FlagId,
     pub flag: String,
+    pub enabled_for_all: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
