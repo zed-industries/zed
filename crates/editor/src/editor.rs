@@ -6751,17 +6751,37 @@ impl Editor {
             }
 
             let diff = TextDiff::from_lines(&selection_text, &wrapped_text);
+            let mut start = start;
             for change in diff.iter_all_changes() {
                 let value = change.value();
+
+                let end_column = (start.column + value.len() as u32)
+                    .min(buffer.line_len(MultiBufferRow(start.row)));
+                let end = Point::new(start.row, end_column);
+                let edit_range = start..end;
+
                 match change.tag() {
                     ChangeTag::Equal => {}
-                    ChangeTag::Delete => {}
-                    ChangeTag::Insert => {}
+                    ChangeTag::Delete => {
+                        edits.push((edit_range, String::new()));
+                    }
+                    ChangeTag::Insert => {
+                        edits.push((edit_range, value.to_string()));
+                    }
+                }
+
+                // TODO: This logic isn't quite right, as we can have a delete and an insert
+                // on the same line, which right now is advancing the row count too far.
+                if value.ends_with('\n') {
+                    start.row += 1;
+                    start.column = 0;
+                } else {
+                    start = end;
                 }
             }
-
-            edits.push((start..end, wrapped_text.clone()));
         }
+
+        dbg!(&edits);
 
         self.buffer
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
