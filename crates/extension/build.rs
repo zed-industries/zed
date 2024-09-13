@@ -6,8 +6,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     copy_extension_api_rust_files()
 }
 
-// rust-analyzer doesn't support include! for files from outside the crate.
-// Copy them to the OUT_DIR, so we can include them from there, which is supported.
+/// rust-analyzer doesn't support include! for files from outside the crate.
+/// Copy them to the OUT_DIR, so we can include them from there, which is supported.
 fn copy_extension_api_rust_files() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = env::var("OUT_DIR")?;
     let input_dir = PathBuf::from("../extension_api/wit");
