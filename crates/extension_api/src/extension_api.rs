@@ -1,7 +1,5 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
-// Make a change to (maybe?) force a rebuild?
-
 pub mod http_client;
 pub mod settings;
 
