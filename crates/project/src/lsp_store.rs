@@ -3,7 +3,7 @@ use crate::{
     environment::ProjectEnvironment,
     lsp_command::{self, *},
     lsp_ext_command,
-    project_settings::ProjectSettings,
+    project_settings::{LspSettings, ProjectSettings},
     relativize_path, resolve_path,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
@@ -3499,7 +3499,7 @@ impl LspStore {
                                             .to_owned();
                                         let path = if Path::new(path).components().next().is_none()
                                         {
-                                            Arc::from(Path::new("/"))
+                                            Arc::from(Path::new(worktree_root_path))
                                         } else {
                                             PathBuf::from(path).into()
                                         };
@@ -7035,6 +7035,23 @@ impl HttpClient for BlockedHttpClient {
         None
     }
 }
+
+pub fn language_server_settings<'a, 'b: 'a>(
+    delegate: &'a dyn LspAdapterDelegate,
+    language: &str,
+    cx: &'b AppContext,
+) -> Option<&'a LspSettings> {
+    ProjectSettings::get(
+        Some(SettingsLocation {
+            worktree_id: delegate.worktree_id(),
+            path: delegate.worktree_root_path(),
+        }),
+        cx,
+    )
+    .lsp
+    .get(language)
+}
+
 #[async_trait]
 impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut AppContext) {

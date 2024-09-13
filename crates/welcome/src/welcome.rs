@@ -188,7 +188,7 @@ impl Render for WelcomePage {
                                     this.update_settings::<VimModeSetting>(
                                         selection,
                                         cx,
-                                        |setting, value| *setting = VimModeSetting(value),
+                                        |setting, value| *setting = Some(value),
                                     );
                                 }),
                             ))

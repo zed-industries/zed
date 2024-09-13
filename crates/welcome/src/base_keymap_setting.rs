@@ -87,15 +87,15 @@ impl BaseKeymap {
 impl Settings for BaseKeymap {
     const KEY: Option<&'static str> = Some("base_keymap");
 
-    type FileContent = Self;
+    type FileContent = Option<Self>;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        if let Some(user_value) = sources.user.copied() {
+        if let Some(Some(user_value)) = sources.user.copied() {
             return Ok(user_value);
         }
-        Ok(*sources.default)
+        sources.default.ok_or_else(Self::missing_default)
     }
 }

@@ -5,58 +5,22 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[derive(Deserialize)]
 pub struct WorkspaceSettings {
-    /// Scale by which to zoom the active pane.
-    /// When set to 1.0, the active pane has the same size as others,
-    /// but when set to a larger value, the active pane takes up more space.
     pub active_pane_magnification: f32,
-    /// Direction to split horizontally.
     pub pane_split_direction_horizontal: PaneSplitDirectionHorizontal,
-    /// Direction to split vertically.
     pub pane_split_direction_vertical: PaneSplitDirectionVertical,
-    /// Centered layout related settings.
     pub centered_layout: CenteredLayoutSettings,
-    /// Whether or not to prompt the user to confirm before closing the application.
     pub confirm_quit: bool,
-    /// Whether or not to show the call status icon in the status bar.
     pub show_call_status_icon: bool,
-    /// When to automatically save edited buffers.
     pub autosave: AutosaveSetting,
-    /// Controls previous session restoration in freshly launched Zed instance.
     pub restore_on_startup: RestoreOnStartupBehavior,
-    /// The size of the workspace split drop targets on the outer edges.
-    /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     pub drop_target_size: f32,
-    /// Whether to close the window when using 'close active item' on a workspace with no tabs
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
-    /// Whether to use the system provided dialogs for Open and Save As.
-    /// When set to false, Zed will use the built-in keyboard-first pickers.
     pub use_system_path_prompts: bool,
-    /// Aliases for the command palette. When you type a key in this map,
-    /// it will be assumed to equal the value.
     pub command_aliases: HashMap<String, String>,
 }
 
-impl Default for WorkspaceSettings {
-    fn default() -> Self {
-        Self {
-            active_pane_magnification: 1.0,
-            pane_split_direction_horizontal: PaneSplitDirectionHorizontal::Up,
-            pane_split_direction_vertical: PaneSplitDirectionVertical::Left,
-            centered_layout: CenteredLayoutSettings::default(),
-            confirm_quit: false,
-            show_call_status_icon: true,
-            autosave: AutosaveSetting::Off,
-            restore_on_startup: RestoreOnStartupBehavior::default(),
-            drop_target_size: 0.2,
-            when_closing_with_no_tabs: CloseWindowWhenNoItems::default(),
-            use_system_path_prompts: true,
-            command_aliases: HashMap::default(),
-        }
-    }
-}
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseWindowWhenNoItems {
@@ -91,22 +55,77 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceSettingsContent {
+    /// Scale by which to zoom the active pane.
+    /// When set to 1.0, the active pane has the same size as others,
+    /// but when set to a larger value, the active pane takes up more space.
+    ///
+    /// Default: `1.0`
+    pub active_pane_magnification: Option<f32>,
+    // Direction to split horizontally.
+    //
+    // Default: "up"
+    pub pane_split_direction_horizontal: Option<PaneSplitDirectionHorizontal>,
+    // Direction to split vertically.
+    //
+    // Default: "left"
+    pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
+    // Centered layout related settings.
+    pub centered_layout: Option<CenteredLayoutSettings>,
+    /// Whether or not to prompt the user to confirm before closing the application.
+    ///
+    /// Default: false
+    pub confirm_quit: Option<bool>,
+    /// Whether or not to show the call status icon in the status bar.
+    ///
+    /// Default: true
+    pub show_call_status_icon: Option<bool>,
+    /// When to automatically save edited buffers.
+    ///
+    /// Default: off
+    pub autosave: Option<AutosaveSetting>,
+    /// Controls previous session restoration in freshly launched Zed instance.
+    /// Values: none, last_workspace, last_session
+    /// Default: last_session
+    pub restore_on_startup: Option<RestoreOnStartupBehavior>,
+    /// The size of the workspace split drop targets on the outer edges.
+    /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
+    ///
+    /// Default: `0.2` (20% of the smaller dimension of the workspace)
+    pub drop_target_size: Option<f32>,
+    /// Whether to close the window when using 'close active item' on a workspace with no tabs
+    ///
+    /// Default: auto ("on" on macOS, "off" otherwise)
+    pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Whether to use the system provided dialogs for Open and Save As.
+    /// When set to false, Zed will use the built-in keyboard-first pickers.
+    ///
+    /// Default: true
+    pub use_system_path_prompts: Option<bool>,
+    /// Aliases for the command palette. When you type a key in this map,
+    /// it will be assumed to equal the value.
+    ///
+    /// Default: true
+    pub command_aliases: Option<HashMap<String, String>>,
+}
+
+#[derive(Deserialize)]
 pub struct TabBarSettings {
-    /// Whether or not to show the tab bar in the editor.
     pub show: bool,
-    /// Whether or not to show the navigation history buttons in the tab bar.
     pub show_nav_history_buttons: bool,
 }
 
-impl Default for TabBarSettings {
-    fn default() -> Self {
-        Self {
-            show_nav_history_buttons: true,
-            show: true,
-        }
-    }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct TabBarSettingsContent {
+    /// Whether or not to show the tab bar in the editor.
+    ///
+    /// Default: true
+    pub show: Option<bool>,
+    /// Whether or not to show the navigation history buttons in the tab bar.
+    ///
+    /// Default: true
+    pub show_nav_history_buttons: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -144,26 +163,17 @@ pub struct CenteredLayoutSettings {
     ///
     /// Default: 0.2
     pub left_padding: Option<f32>,
-    /// The relative width of the right padding of the central pane from the
-    /// workspace when the centered layout is used.
+    // The relative width of the right padding of the central pane from the
+    // workspace when the centered layout is used.
     ///
     /// Default: 0.2
     pub right_padding: Option<f32>,
 }
 
-impl Default for CenteredLayoutSettings {
-    fn default() -> Self {
-        Self {
-            left_padding: Some(0.2),
-            right_padding: Some(0.2),
-        }
-    }
-}
-
 impl Settings for WorkspaceSettings {
     const KEY: Option<&'static str> = None;
 
-    type FileContent = Self;
+    type FileContent = WorkspaceSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()
@@ -173,7 +183,7 @@ impl Settings for WorkspaceSettings {
 impl Settings for TabBarSettings {
     const KEY: Option<&'static str> = Some("tab_bar");
 
-    type FileContent = Self;
+    type FileContent = TabBarSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()

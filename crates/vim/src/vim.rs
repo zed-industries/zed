@@ -46,8 +46,6 @@ use crate::state::ReplayableAction;
 /// Whether or not to enable Vim mode.
 ///
 /// Default: false
-#[derive(Copy, Clone, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(default, transparent)]
 pub struct VimModeSetting(pub bool);
 
 /// An Action to Switch between modes
@@ -101,7 +99,7 @@ pub fn init(cx: &mut AppContext) {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
-                *setting = VimModeSetting(!currently_enabled);
+                *setting = Some(!currently_enabled)
             })
         });
 
@@ -1070,10 +1068,12 @@ impl Vim {
 impl Settings for VimModeSetting {
     const KEY: Option<&'static str> = Some("vim_mode");
 
-    type FileContent = Self;
+    type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(sources.user.copied().unwrap_or(*sources.default))
+        Ok(Self(sources.user.copied().flatten().unwrap_or(
+            sources.default.ok_or_else(Self::missing_default)?,
+        )))
     }
 }
 
@@ -1089,8 +1089,7 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[derive(Deserialize)]
 struct VimSettings {
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
@@ -1099,22 +1098,19 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
 }
 
-impl Default for VimSettings {
-    fn default() -> Self {
-        Self {
-            toggle_relative_line_numbers: false,
-            use_system_clipboard: UseSystemClipboard::Always,
-            use_multiline_find: false,
-            use_smartcase_find: false,
-            custom_digraphs: Default::default(),
-        }
-    }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+struct VimSettingsContent {
+    pub toggle_relative_line_numbers: Option<bool>,
+    pub use_system_clipboard: Option<UseSystemClipboard>,
+    pub use_multiline_find: Option<bool>,
+    pub use_smartcase_find: Option<bool>,
+    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
 }
 
 impl Settings for VimSettings {
     const KEY: Option<&'static str> = Some("vim");
 
-    type FileContent = Self;
+    type FileContent = VimSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()

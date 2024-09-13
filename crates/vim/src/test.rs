@@ -1300,7 +1300,7 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
         store.update_user_settings::<WorkspaceSettings>(cx, |s| {
             let mut aliases = HashMap::default();
             aliases.insert("Q".to_string(), "upper".to_string());
-            s.command_aliases = aliases
+            s.command_aliases = Some(aliases)
         });
     });
 

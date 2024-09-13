@@ -6671,7 +6671,11 @@ impl Editor {
                 let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
-                    selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+                    if !selection.is_empty() && selection.end.column == 0 {
+                        selection.end = cmp::min(max_point, selection.end);
+                    } else {
+                        selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+                    }
                     selection.goal = SelectionGoal::None;
                 }
                 if is_first {
@@ -10640,7 +10644,7 @@ impl Editor {
         let fs = workspace.read(cx).app_state().fs.clone();
         let current_show = TabBarSettings::get_global(cx).show;
         update_settings_file::<TabBarSettings>(fs, cx, move |setting, _| {
-            setting.show = !current_show;
+            setting.show = Some(!current_show);
         });
     }
 
@@ -12563,7 +12567,7 @@ impl EditorSnapshot {
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
                 ProjectSettings::get_global(cx).git.git_gutter,
-                GitGutterSetting::TrackedFiles
+                Some(GitGutterSetting::TrackedFiles)
             )
         });
         let gutter_settings = EditorSettings::get_global(cx).gutter;

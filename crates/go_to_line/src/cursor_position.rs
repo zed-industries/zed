@@ -180,10 +180,18 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
+/// Whether or not to automatically check for updates.
+///
+/// Values: short, long
+/// Default: short
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
+#[serde(transparent)]
+pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
+
 impl Settings for LineIndicatorFormat {
     const KEY: Option<&'static str> = Some("line_indicator_format");
 
-    type FileContent = Self;
+    type FileContent = Option<LineIndicatorFormatContent>;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
@@ -191,9 +199,9 @@ impl Settings for LineIndicatorFormat {
     ) -> anyhow::Result<Self> {
         let format = [sources.release_channel, sources.user]
             .into_iter()
-            .find_map(|value| value.copied())
-            .unwrap_or(*sources.default);
+            .find_map(|value| value.copied().flatten())
+            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
-        Ok(format)
+        Ok(format.0)
     }
 }
