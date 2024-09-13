@@ -95,7 +95,7 @@ impl VariableList {
         let debug_item = self.debug_panel_item.read(cx);
         let Some(entries) = self
             .stack_frame_entries
-            .get(&debug_item.curren_stack_frame_id())
+            .get(&debug_item.current_stack_frame_id())
         else {
             return div().into_any_element();
         };
@@ -134,7 +134,7 @@ impl VariableList {
         };
 
         let (stack_frame_id, thread_state) = self.debug_panel_item.read_with(cx, |panel, _| {
-            (panel.curren_stack_frame_id(), panel.current_thread_state())
+            (panel.current_stack_frame_id(), panel.current_thread_state())
         });
 
         self.build_entries(thread_state, stack_frame_id, false, true);
@@ -242,7 +242,7 @@ impl VariableList {
 
         let (stack_frame_id, client) = self
             .debug_panel_item
-            .read_with(cx, |p, _| (p.curren_stack_frame_id(), p.client()));
+            .read_with(cx, |p, _| (p.current_stack_frame_id(), p.client()));
         let support_set_variable = client
             .capabilities()
             .supports_set_variable
@@ -324,7 +324,7 @@ impl VariableList {
         };
 
         let (stack_frame_id, thread_state) = self.debug_panel_item.read_with(cx, |panel, _| {
-            (panel.curren_stack_frame_id(), panel.current_thread_state())
+            (panel.current_stack_frame_id(), panel.current_thread_state())
         });
 
         self.build_entries(thread_state, stack_frame_id, false, true);
@@ -427,7 +427,7 @@ impl VariableList {
                     this.debug_panel_item.read_with(cx, |panel, _| {
                         (
                             panel.thread_id(),
-                            panel.curren_stack_frame_id(),
+                            panel.current_stack_frame_id(),
                             panel.client(),
                         )
                     });
@@ -523,7 +523,7 @@ impl VariableList {
 
                             let Some(entries) = this
                                 .stack_frame_entries
-                                .get(&debug_item.curren_stack_frame_id())
+                                .get(&debug_item.current_stack_frame_id())
                             else {
                                 return;
                             };

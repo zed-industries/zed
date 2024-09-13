@@ -255,7 +255,7 @@ impl DebugPanelItem {
         self.thread_id
     }
 
-    pub fn curren_stack_frame_id(&self) -> u64 {
+    pub fn current_stack_frame_id(&self) -> u64 {
         self.current_stack_frame_id
     }
 
