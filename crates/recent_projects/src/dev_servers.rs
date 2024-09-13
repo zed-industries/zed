@@ -1457,9 +1457,7 @@ impl DevServerProjects {
                                         Button::new("register-dev-server-button", "Connect New Server")
                                             .icon(IconName::Plus)
                                             .icon_position(IconPosition::Start)
-                                            .tooltip(|cx| {
-                                                Tooltip::text("Connect to a new server", cx)
-                                            })
+                                            .icon_color(Color::Muted)
                                             .on_click(cx.listener(|this, _, cx| {
                                                 this.mode = Mode::CreateDevServer(
                                                     CreateDevServer {
