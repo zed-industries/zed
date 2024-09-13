@@ -839,20 +839,11 @@ static PNG_FORMAT: LazyLock<u32> =
 
 fn read_image_from_clipboard() -> Result<ClipboardEntry> {
     unsafe {
-        let handle = GetClipboardData(*PNG_FORMAT)?;
-        let image_ptr = GlobalLock(HGLOBAL(handle.0));
-        // let image_info = &*(image_ptr as *mut BITMAPINFOHEADER);
-        // let image_size = image_info.biHeight as usize
-        //     * image_info.biWidth as usize
-        //     * (image_info.biBitCount as usize / 8);
-        let iamge_size = GlobalSize(HGLOBAL(handle.0));
-        // let data_handle = GetClipboardData(CF_HDROP.0 as u32).unwrap();
+        let global = HGLOBAL(GetClipboardData(*PNG_FORMAT)?.0);
+        let image_ptr = GlobalLock(global);
+        let iamge_size = GlobalSize(global);
         let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
-        // let bytes = Vec::from_raw_parts(
-        //     (handle.0 as *mut u8).add(image_info.biSize as usize),
-        //     image_size,
-        //     image_size,
-        // );
+        let _ = GlobalUnlock(global);
         let id = hash(&bytes);
         Ok(ClipboardEntry::Image(Image {
             format: ImageFormat::Png,
