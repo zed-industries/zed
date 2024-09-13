@@ -100,6 +100,7 @@
 ] @punctuation.delimiter
 
 [
+  "..."
   "-"
   "--"
   "-="
