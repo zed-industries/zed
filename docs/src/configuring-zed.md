@@ -1069,7 +1069,18 @@ These values take in the same options as the root-level settings with the same n
 
 **Options**
 
-The proxy protocol is specified by the URI scheme. Supported URI schemes are: `http`, `https`, `socks4`, `socks4a`, `socks5`, `socks5h`. `http` will be used when no scheme is specified.
+The proxy setting must contain a URL to the proxy.
+
+The following URI schemes are supported:
+
+- `http`
+- `https`
+- `socks4`
+- `socks4a`
+- `socks5`
+- `socks5h`
+
+`http` will be used when no scheme is specified.
 
 By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
 
