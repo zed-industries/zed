@@ -4110,7 +4110,7 @@ impl ContextEditor {
                         h_flex()
                             .gap_3()
                             .child(
-                                Icon::new(IconName::ExclamationTriangle)
+                                Icon::new(IconName::Warning)
                                     .size(IconSize::Small)
                                     .color(Color::Warning),
                             )
@@ -5235,7 +5235,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
                     .layer(ElevationIndex::ElevatedSurface)
-                    .child(Icon::new(IconName::TextSelect))
+                    .child(Icon::new(IconName::CursorIBeam))
                     .child(Label::new(title.clone()).single_line())
                     .on_click(move |_, cx| {
                         editor
@@ -5339,7 +5339,7 @@ fn render_docs_slash_command_trailer(
             div()
                 .id(("latest-error", row.0))
                 .child(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
