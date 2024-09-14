@@ -120,6 +120,10 @@ jobs:
         with:
           clean: false
 
+      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
+        with:
+          mold-version: 2.32.0
+
       - name: cargo clippy
         run: ./script/clippy
 
