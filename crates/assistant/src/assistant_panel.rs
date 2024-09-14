@@ -12,11 +12,11 @@ use crate::{
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
-    ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
-    InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageMetadata,
-    MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
+    ContextStoreEvent, CopySelection, CycleMessageRole, DeployHistory, DeployPromptLibrary,
+    InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
+    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -45,17 +45,18 @@ use gpui::{
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
+    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, ToOffset,
 };
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
 };
 use language_model::{LanguageModelImage, LanguageModelToolUse};
-use multi_buffer::MultiBufferRow;
+use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
+use rope::Point;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
@@ -81,9 +82,10 @@ use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
+    notifications::NotificationId,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
-    DraggedSelection, Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent,
+    DraggedSelection, Pane, Save, ShowConfiguration, Toast, ToggleZoom, ToolbarItemEvent,
     ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, DraggedTab};
@@ -105,6 +107,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
+                .register_action(ContextEditor::copy_selection)
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context);
@@ -3100,6 +3103,87 @@ impl ContextEditor {
         });
     }
 
+    /// find the start and end row of code block enclosed by CODE_BLOCK_DELIMITER
+    /// where cursor currently sits
+    fn find_code_block(buffer: &MultiBufferSnapshot, cursor: u32) -> Option<Range<Point>> {
+        const CODE_BLOCK_DELIMITER: &str = "```";
+
+        let mut block_start = None;
+        let mut block_end = None;
+        let nrows = buffer.max_point().row;
+        // if cursor is in bottom half of buffer, search in reverse
+        let (rows, reverse) = if cursor > nrows << 1 {
+            (nrows..=0, true)
+        } else {
+            (0..=nrows, false)
+        };
+
+        for row in rows {
+            let line =
+                if let Some((buffer, range)) = buffer.buffer_line_for_row(MultiBufferRow(row)) {
+                    buffer
+                        .text_for_range(range)
+                        .collect::<String>()
+                        .trim()
+                        .to_string()
+                } else {
+                    String::new()
+                };
+
+            if line.starts_with(CODE_BLOCK_DELIMITER) {
+                if block_start.is_some() {
+                    if block_end.is_some() {
+                        block_start = Some(row);
+                        block_end = None;
+                    } else {
+                        block_end = Some(row);
+                    }
+                } else {
+                    block_start = Some(row);
+                }
+            }
+            if let Some(a) = block_start {
+                if let Some(b) = block_end {
+                    let x = a.min(b);
+                    let y = a.max(b);
+                    if x <= cursor && cursor <= y {
+                        return Some(Point::new((x + 1).min(y), 0)..Point::new(y, 0));
+                    }
+                    // went past cursor
+                    if reverse && cursor > y || !reverse && cursor < x {
+                        return None;
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// return selected text
+    /// or if selection is empty, return the code block where the cursor currently sits
+    /// or empty string
+    fn get_selection_or_code_block(
+        context_editor_view: &View<ContextEditor>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> (String, bool) {
+        let context_editor = context_editor_view.read(cx).editor.read(cx);
+        let anchor = &context_editor.selections.newest_anchor();
+        let buffer = context_editor.buffer().read(cx).read(cx);
+
+        let mut is_code_block = false;
+        let mut text = buffer.text_for_range(anchor.range()).collect::<String>();
+
+        if text.is_empty() {
+            let cursor_row = anchor.start.to_point(&buffer).row;
+            if let Some(range) = Self::find_code_block(&buffer, cursor_row) {
+                text = buffer.text_for_range(range).collect::<String>();
+                is_code_block = true;
+            }
+        }
+
+        (text, is_code_block)
+    }
+
     fn insert_selection(
         workspace: &mut Workspace,
         _: &InsertIntoEditor,
@@ -3118,14 +3202,7 @@ impl ContextEditor {
             return;
         };
 
-        let context_editor = context_editor_view.read(cx).editor.read(cx);
-        let anchor = context_editor.selections.newest_anchor();
-        let text = context_editor
-            .buffer()
-            .read(cx)
-            .read(cx)
-            .text_for_range(anchor.range())
-            .collect::<String>();
+        let (text, _) = Self::get_selection_or_code_block(&context_editor_view, cx);
 
         // If nothing is selected, don't delete the current selection; instead, be a no-op.
         if !text.is_empty() {
@@ -3133,6 +3210,36 @@ impl ContextEditor {
                 editor.insert(&text, cx);
                 editor.focus(cx);
             })
+        }
+    }
+
+    fn copy_selection(
+        workspace: &mut Workspace,
+        _: &CopySelection,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let Some(context_editor_view) = panel.read(cx).active_context_editor(cx) else {
+            return;
+        };
+
+        let (text, is_code_block) = Self::get_selection_or_code_block(&context_editor_view, cx);
+
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            if is_code_block {
+                struct CopyCodeBlockToast;
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<CopyCodeBlockToast>(),
+                        "Code block copied to clipboard",
+                    )
+                    .autohide(),
+                    cx,
+                );
+            }
         }
     }
 

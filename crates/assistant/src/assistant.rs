@@ -58,6 +58,7 @@ actions!(
     [
         Assist,
         Split,
+        CopySelection,
         CycleMessageRole,
         QuoteSelection,
         InsertIntoEditor,
