@@ -71,13 +71,13 @@ use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
-    ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle,
-    FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
-    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
-    VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClickEvent,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter,
+    FocusHandle, FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla,
+    InteractiveText, KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement,
+    Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task,
+    TextStyle, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -5382,7 +5382,33 @@ impl Editor {
             editor.focus(cx);
             editor.toggle_breakpoint_at_anchor(anchor, cx);
         }))
-        .on_right_click(cx.listener(move |_editor, _e, _cx| {}))
+        .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
+            let source = editor
+                .buffer
+                .read(cx)
+                .snapshot(cx)
+                .anchor_at(Point::new(row.0, 0u32), Bias::Left);
+
+            let clicked_point = event.down.position;
+            let focus_handle = editor.focus_handle.clone();
+            let editor_weak = cx.view().downgrade();
+
+            let context_menu = ui::ContextMenu::build(cx, move |menu, _cx| {
+                let anchor = anchor.clone();
+                menu.on_blur_subscription(Subscription::new(|| {}))
+                    .context(focus_handle)
+                    .entry("Toggle Breakpoint", None, move |cx| {
+                        if let Some(editor) = editor_weak.upgrade() {
+                            editor.update(cx, |this, cx| {
+                                this.toggle_breakpoint_at_anchor(anchor, cx);
+                            })
+                        }
+                    })
+            });
+
+            editor.mouse_context_menu =
+                MouseContextMenu::pinned_to_editor(editor, source, clicked_point, context_menu, cx)
+        }))
     }
 
     fn render_run_indicator(
