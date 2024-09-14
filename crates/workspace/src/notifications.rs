@@ -311,15 +311,11 @@ impl Render for LanguageServerPrompt {
                                                 .mt(px(-2.0))
                                                 .map(|icon| {
                                                     if severity == DiagnosticSeverity::ERROR {
-                                                        icon.path(
-                                                            IconName::Warning.path(),
-                                                        )
-                                                        .text_color(Color::Error.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Error.color(cx))
                                                     } else {
-                                                        icon.path(
-                                                            IconName::Warning.path(),
-                                                        )
-                                                        .text_color(Color::Warning.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Warning.color(cx))
                                                     }
                                                 })
                                         }),
