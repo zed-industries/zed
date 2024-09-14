@@ -27,9 +27,9 @@ pub enum VectorName {
 
 /// A vector image, such as an SVG.
 ///
-/// A [Vector] is different from an [Icon] in that it is intended
+/// A [`Vector`] is different from an [`Icon`] in that it is intended
 /// to be displayed at a specific size, or series of sizes, rather
-/// than conforming to the standard size of an icons.
+/// than conforming to the standard size of an icon.
 #[derive(IntoElement)]
 pub struct Vector {
     path: &'static str,
@@ -38,7 +38,7 @@ pub struct Vector {
 }
 
 impl Vector {
-    /// Create a new [Vector] image with the given [VectorName] and size.
+    /// Creates a new [`Vector`] image with the given [`VectorName`] and size.
     pub fn new(vector: VectorName, width: Rems, height: Rems) -> Self {
         Self {
             path: vector.path(),
@@ -47,18 +47,18 @@ impl Vector {
         }
     }
 
-    /// Create a new [Vector] image where the width and height are the same.
+    /// Creates a new [`Vector`] image where the width and height are the same.
     pub fn square(vector: VectorName, size: Rems) -> Self {
         Self::new(vector, size, size)
     }
 
-    /// Set the image color
+    /// Sets the vector color.
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }
 
-    /// Set the image size
+    /// Sets the vector size.
     pub fn size(mut self, size: impl Into<Size<Rems>>) -> Self {
         let size = size.into();
 
