@@ -265,7 +265,7 @@ fn print_tree(root_dir: &str, dir: &Path, indent: usize) {
     if dir.is_dir() {
         // Print the directory name with indentation
         let dir_name = dir.to_string_lossy();
-        let dir_name_short = dir_name.trim_start_matches(&root_dir);
+        let dir_name_short = dir_name.trim_start_matches(root_dir);
         println!("{:indent$}{}", "", dir_name_short, indent = indent);
 
         // Iterate over the directory entries
