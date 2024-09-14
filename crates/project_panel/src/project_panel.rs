@@ -1823,6 +1823,7 @@ impl ProjectPanel {
                         path: entry.path.join("\0").into(),
                         inode: 0,
                         mtime: entry.mtime,
+                        size: entry.size,
                         is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,

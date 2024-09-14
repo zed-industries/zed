@@ -1,4 +1,10 @@
+use futures::{channel::oneshot, FutureExt as _};
 use gpui::{AppContext, Global, Subscription, ViewContext};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 #[derive(Default)]
 struct FeatureFlags {
@@ -53,6 +59,15 @@ impl FeatureFlag for ZedPro {
     const NAME: &'static str = "zed-pro";
 }
 
+pub struct AutoCommand {}
+impl FeatureFlag for AutoCommand {
+    const NAME: &'static str = "auto-command";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
@@ -75,6 +90,7 @@ where
 }
 
 pub trait FeatureFlagAppExt {
+    fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag;
     fn update_flags(&mut self, staff: bool, flags: Vec<String>);
     fn set_staff(&mut self, staff: bool);
     fn has_flag<T: FeatureFlag>(&self) -> bool;
@@ -82,7 +98,7 @@ pub trait FeatureFlagAppExt {
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut AppContext) + 'static;
+        F: FnMut(bool, &mut AppContext) + 'static;
 }
 
 impl FeatureFlagAppExt for AppContext {
@@ -109,13 +125,49 @@ impl FeatureFlagAppExt for AppContext {
             .unwrap_or(false)
     }
 
-    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    fn observe_flag<T: FeatureFlag, F>(&mut self, mut callback: F) -> Subscription
     where
-        F: Fn(bool, &mut AppContext) + 'static,
+        F: FnMut(bool, &mut AppContext) + 'static,
     {
         self.observe_global::<FeatureFlags>(move |cx| {
             let feature_flags = cx.global::<FeatureFlags>();
             callback(feature_flags.has_flag::<T>(), cx);
+        })
+    }
+
+    fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag {
+        let (tx, rx) = oneshot::channel::<bool>();
+        let mut tx = Some(tx);
+        let subscription: Option<Subscription>;
+
+        match self.try_global::<FeatureFlags>() {
+            Some(feature_flags) => {
+                subscription = None;
+                tx.take().unwrap().send(feature_flags.has_flag::<T>()).ok();
+            }
+            None => {
+                subscription = Some(self.observe_global::<FeatureFlags>(move |cx| {
+                    let feature_flags = cx.global::<FeatureFlags>();
+                    if let Some(tx) = tx.take() {
+                        tx.send(feature_flags.has_flag::<T>()).ok();
+                    }
+                }));
+            }
+        }
+
+        WaitForFlag(rx, subscription)
+    }
+}
+
+pub struct WaitForFlag(oneshot::Receiver<bool>, Option<Subscription>);
+
+impl Future for WaitForFlag {
+    type Output = bool;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.0.poll_unpin(cx).map(|result| {
+            self.1.take();
+            result.unwrap_or(false)
         })
     }
 }
