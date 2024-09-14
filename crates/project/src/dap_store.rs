@@ -289,8 +289,13 @@ impl Breakpoint {
 
     pub fn set_active_position(&mut self, buffer: &Buffer) {
         if self.active_position.is_none() {
-            self.active_position =
-                Some(buffer.anchor_at(Point::new(self.cache_position, 0), text::Bias::Left));
+            let bias = if self.cache_position == 0 {
+                text::Bias::Right
+            } else {
+                text::Bias::Left
+            };
+
+            self.active_position = Some(buffer.anchor_at(Point::new(self.cache_position, 0), bias));
         }
     }
 
