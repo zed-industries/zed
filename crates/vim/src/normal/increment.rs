@@ -28,18 +28,18 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1);
         let step = if action.step { 1 } else { 0 };
-        vim.increment(count as i32, step, cx)
+        vim.increment(count as i64, step, cx)
     });
     Vim::action(editor, cx, |vim, action: &Decrement, cx| {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1);
         let step = if action.step { -1 } else { 0 };
-        vim.increment(-(count as i32), step, cx)
+        vim.increment(-(count as i64), step, cx)
     });
 }
 
 impl Vim {
-    fn increment(&mut self, mut delta: i32, step: i32, cx: &mut ViewContext<Self>) {
+    fn increment(&mut self, mut delta: i64, step: i32, cx: &mut ViewContext<Self>) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
             let mut edits = Vec::new();
@@ -60,7 +60,7 @@ impl Vim {
                     };
 
                     if let Some((range, num, radix)) = find_number(&snapshot, start) {
-                        delta += step;
+                        delta += step as i64;
                         let replace = match radix {
                             10 => increment_decimal_string(&num, delta),
                             16 => increment_hex_string(&num, delta),
@@ -98,7 +98,7 @@ impl Vim {
     }
 }
 
-fn increment_decimal_string(mut num: &str, delta: i32) -> String {
+fn increment_decimal_string(mut num: &str, delta: i64) -> String {
     let mut negative = false;
     let mut n: u64;
     let mut decrement = false;
@@ -145,7 +145,7 @@ fn increment_decimal_string(mut num: &str, delta: i32) -> String {
     }
 }
 
-fn adaptive_increment_u64(mut n: u64, delta: i32) -> (u64, bool) {
+fn adaptive_increment_u64(mut n: u64, delta: i64) -> (u64, bool) {
     if let Some(n) = n.checked_add(delta as u64) {
         return (n, false);
     } else {
@@ -155,7 +155,7 @@ fn adaptive_increment_u64(mut n: u64, delta: i32) -> (u64, bool) {
     }
 }
 
-fn adaptive_decrement_u64(mut n: u64, delta: i32) -> (u64, bool) {
+fn adaptive_decrement_u64(mut n: u64, delta: i64) -> (u64, bool) {
     if let Some(n) = n.checked_sub(delta as u64) {
         return (n, false);
     } else {
@@ -164,9 +164,9 @@ fn adaptive_decrement_u64(mut n: u64, delta: i32) -> (u64, bool) {
     }
 }
 
-fn increment_hex_string(num: &str, delta: i32) -> String {
-    if let Ok(val) = i32::from_str_radix(&num, 16) {
-        let result = val + delta;
+fn increment_hex_string(num: &str, delta: i64) -> String {
+    if let Ok(val) = u64::from_str_radix(&num, 16) {
+        let result = wrapping_increment(val, delta);
         if should_use_lowercase(num) {
             format!("{:0width$x}", result, width = num.len())
         } else {
@@ -195,9 +195,17 @@ fn should_use_lowercase(num: &str) -> bool {
     }
 }
 
-fn increment_binary_string(num: &str, delta: i32) -> String {
-    if let Ok(val) = i32::from_str_radix(&num, 2) {
-        let result = val + delta;
+fn wrapping_increment(n: u64, delta: i64) -> u64 {
+    if delta > 0 {
+        return n.wrapping_add(delta as u64);
+    } else {
+        return n.wrapping_sub((-delta) as u64);
+    }
+}
+
+fn increment_binary_string(num: &str, delta: i64) -> String {
+    if let Ok(val) = u64::from_str_radix(&num, 2) {
+        let result = wrapping_increment(val, delta);
         format!("{:b}", result)
     } else {
         unreachable!()
