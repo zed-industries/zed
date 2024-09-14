@@ -50,7 +50,7 @@ impl Render for ToolbarControls {
                 )
             })
             .child(
-                IconButton::new("toggle-warnings", IconName::ExclamationTriangle)
+                IconButton::new("toggle-warnings", IconName::Warning)
                     .tooltip(move |cx| Tooltip::text(tooltip, cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(editor) = this.editor() {

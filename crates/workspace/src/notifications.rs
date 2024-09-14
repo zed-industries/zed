@@ -312,12 +312,12 @@ impl Render for LanguageServerPrompt {
                                                 .map(|icon| {
                                                     if severity == DiagnosticSeverity::ERROR {
                                                         icon.path(
-                                                            IconName::ExclamationTriangle.path(),
+                                                            IconName::Warning.path(),
                                                         )
                                                         .text_color(Color::Error.color(cx))
                                                     } else {
                                                         icon.path(
-                                                            IconName::ExclamationTriangle.path(),
+                                                            IconName::Warning.path(),
                                                         )
                                                         .text_color(Color::Warning.color(cx))
                                                     }
@@ -421,7 +421,7 @@ impl Render for ErrorMessagePrompt {
                                     .mr_2()
                                     .mt(px(-2.0))
                                     .map(|icon| {
-                                        icon.path(IconName::ExclamationTriangle.path())
+                                        icon.path(IconName::Warning.path())
                                             .text_color(Color::Error.color(cx))
                                     }),
                             )
