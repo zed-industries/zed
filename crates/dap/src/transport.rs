@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Context, Result};
-use dap_types::messages::{Message, Response};
+use dap_types::{
+    messages::{Message, Response},
+    ErrorResponse,
+};
 use futures::{AsyncBufRead, AsyncWrite};
 use gpui::AsyncAppContext;
 use smol::{
@@ -146,8 +149,15 @@ impl Transport {
         if response.success {
             Ok(response)
         } else {
-            dbg!(response);
-            Err(anyhow!("Received failed response"))
+            if let Some(body) = response.body {
+                if let Ok(error) = serde_json::from_value::<ErrorResponse>(body) {
+                    if let Some(message) = error.error {
+                        return Err(anyhow!(message.format));
+                    };
+                };
+            }
+
+            Err(anyhow!("Received error response from adapter"))
         }
     }
 
@@ -187,7 +197,7 @@ impl Transport {
                 .context("Process server message failed in transport::receive")?;
         }
 
-        anyhow::Ok(())
+        Ok(())
     }
 
     async fn send(
