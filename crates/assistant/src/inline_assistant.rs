@@ -1478,7 +1478,7 @@ impl Render for PromptEditor {
                     .child(
                         ModelSelector::new(
                             self.fs.clone(),
-                            IconButton::new("context", IconName::SlidersAlt)
+                            IconButton::new("context", IconName::SettingsAlt)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
@@ -2407,7 +2407,7 @@ impl Codegen {
         Ok(LanguageModelRequest {
             messages,
             tools: Vec::new(),
-            stop: vec!["|END|>".to_string()],
+            stop: Vec::new(),
             temperature: 1.,
         })
     }

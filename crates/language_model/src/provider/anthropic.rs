@@ -319,7 +319,7 @@ impl AnthropicModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Anthropic API Key"))?;
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,

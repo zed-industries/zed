@@ -43,6 +43,7 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: usize,
     pub max_output_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -175,6 +176,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
+                    max_completion_tokens: model.max_completion_tokens,
                 },
             );
         }
@@ -239,7 +241,7 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
             let request = stream_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -370,10 +372,13 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            if let open_ai::Model::Custom { .. } = model {
-                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-            } else {
-                tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
+            match model {
+                open_ai::Model::Custom { .. }
+                | open_ai::Model::O1Mini
+                | open_ai::Model::O1Preview => {
+                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+                }
+                _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
             }
         })
         .boxed()

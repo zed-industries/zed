@@ -150,7 +150,7 @@ impl Render for QuickActionBar {
             let focus = editor.focus_handle(cx);
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger(
-                    IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
+                    IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
