@@ -2780,6 +2780,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "command_palette_hooks",
  "futures 0.3.30",
  "gpui",
  "log",
