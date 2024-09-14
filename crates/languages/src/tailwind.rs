@@ -123,6 +123,9 @@ impl LspAdapter for TailwindLspAdapter {
                 .await?;
         }
 
+        let root_dir = container_dir.to_str().unwrap();
+        print_tree(root_dir, &container_dir, 0);
+
         #[cfg(target_os = "windows")]
         {
             let env_path = self.node.node_environment_path().await?;
@@ -256,4 +259,25 @@ async fn get_cached_server_binary(
     })
     .await
     .log_err()
+}
+
+fn print_tree(root_dir: &str, dir: &Path, indent: usize) {
+    if dir.is_dir() {
+        // Print the directory name with indentation
+        let dir_name = dir.to_string_lossy();
+        let dir_name_short = dir_name.trim_start_matches(&root_dir);
+        println!("{:indent$}{}", "", dir_name_short, indent = indent);
+
+        // Iterate over the directory entries
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                // Recursively print directories and files
+                print_tree(root_dir, &path, indent + 4);
+            }
+        }
+    } else if let Some(name) = dir.file_name() {
+        // Print file name
+        println!("{:indent$}{}", "", name.to_string_lossy(), indent = indent);
+    }
 }
