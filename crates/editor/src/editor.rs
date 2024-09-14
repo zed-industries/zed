@@ -5382,6 +5382,7 @@ impl Editor {
             editor.focus(cx);
             editor.toggle_breakpoint_at_anchor(anchor, cx);
         }))
+        .on_right_click(cx.listener(move |_editor, _e, _cx| {}))
     }
 
     fn render_run_indicator(
