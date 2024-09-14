@@ -21,13 +21,13 @@ use async_watch as watch;
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel,
+    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Pixels, Task, TaskLabel,
     WindowContext,
 };
-use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use serde_json::Value;
+use settings::WorktreeId;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -41,10 +41,10 @@ use std::{
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant, SystemTime},
     vec,
 };
@@ -67,11 +67,9 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
-lazy_static! {
-    /// A label for the background task spawned by the buffer to compute
-    /// a diff against the contents of its file.
-    pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
-}
+/// A label for the background task spawned by the buffer to compute
+/// a diff against the contents of its file.
+pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 /// Indicate whether a [Buffer] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -97,6 +95,7 @@ pub struct Buffer {
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
+    preview_version: clock::Global,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -331,6 +330,8 @@ pub enum Event {
     CapabilityChanged,
     /// The buffer was explicitly requested to close.
     Closed,
+    /// The buffer was discarded when closing.
+    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -361,7 +362,7 @@ pub trait File: Send + Sync {
     /// Returns the id of the worktree to which this file belongs.
     ///
     /// This is needed for looking up project-specific settings.
-    fn worktree_id(&self) -> usize;
+    fn worktree_id(&self, cx: &AppContext) -> WorktreeId;
 
     /// Returns whether the file has been deleted.
     fn is_deleted(&self) -> bool;
@@ -383,7 +384,7 @@ pub trait File: Send + Sync {
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
-    /// Returns the absolute path of this file.
+    /// Returns the absolute path of this file
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
     /// Loads the file's contents from disk.
@@ -452,7 +453,7 @@ pub struct BufferChunks<'a> {
     buffer_snapshot: Option<&'a BufferSnapshot>,
     range: Range<usize>,
     chunks: text::Chunks<'a>,
-    diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
+    diagnostic_endpoints: Option<Peekable<vec::IntoIter<DiagnosticEndpoint>>>,
     error_depth: usize,
     warning_depth: usize,
     information_depth: usize,
@@ -486,9 +487,14 @@ pub struct Chunk<'a> {
 #[derive(Clone)]
 pub struct ChunkRenderer {
     /// creates a custom element to represent this chunk.
-    pub render: Arc<dyn Send + Sync + Fn(&mut WindowContext) -> AnyElement>,
+    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of the text.
     pub constrain_width: bool,
+}
+
+pub struct ChunkRendererContext<'a, 'b> {
+    pub context: &'a mut WindowContext<'b>,
+    pub max_width: Pixels,
 }
 
 impl fmt::Debug for ChunkRenderer {
@@ -496,6 +502,20 @@ impl fmt::Debug for ChunkRenderer {
         f.debug_struct("ChunkRenderer")
             .field("constrain_width", &self.constrain_width)
             .finish()
+    }
+}
+
+impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
+    type Target = WindowContext<'b>;
+
+    fn deref(&self) -> &Self::Target {
+        self.context
+    }
+}
+
+impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.context
     }
 }
 
@@ -703,6 +723,7 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
+            preview_version: buffer.version(),
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
@@ -822,6 +843,12 @@ impl Buffer {
         self.has_conflict = false;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
+        cx.notify();
+    }
+
+    /// This method is called to signal that the buffer has been discarded.
+    pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Discarded);
         cx.notify();
     }
 
@@ -992,7 +1019,7 @@ impl Buffer {
         let offset = position.to_offset(self);
         self.syntax_map
             .lock()
-            .layers_for_range(offset..offset, &self.text)
+            .layers_for_range(offset..offset, &self.text, false)
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())
@@ -1079,7 +1106,6 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
-                return;
             }
             Err(parse_task) => {
                 self.parsing_in_background = true;
@@ -1351,7 +1377,11 @@ impl Buffer {
             })
             .collect();
 
+        let preserve_preview = self.preserve_preview();
         self.edit(edits, None, cx);
+        if preserve_preview {
+            self.refresh_preview();
+        }
     }
 
     /// Create a minimal edit that will cause the given row to be indented
@@ -1561,12 +1591,13 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.has_conflict
-            || self.has_unsaved_edits()
-            || self
-                .file
-                .as_ref()
-                .map_or(false, |file| file.is_deleted() || !file.is_created())
+        self.capability != Capability::ReadOnly
+            && (self.has_conflict
+                || self.has_unsaved_edits()
+                || self
+                    .file
+                    .as_ref()
+                    .map_or(false, |file| file.is_deleted() || !file.is_created()))
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -1907,25 +1938,23 @@ impl Buffer {
             );
         }
 
-        if space_above {
-            if position.row > 0 && !self.is_line_blank(position.row - 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-                position.row += 1;
-            }
+        if space_above && position.row > 0 && !self.is_line_blank(position.row - 1) {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            position.row += 1;
         }
 
-        if space_below {
-            if position.row == self.max_point().row || !self.is_line_blank(position.row + 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-            }
+        if space_below
+            && (position.row == self.max_point().row || !self.is_line_blank(position.row + 1))
+        {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
         }
 
         self.end_transaction(cx);
@@ -2063,7 +2092,7 @@ impl Buffer {
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
             let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
-            if diagnostics.len() == 0 {
+            if diagnostics.is_empty() {
                 if let Ok(ix) = ix {
                     self.diagnostics.remove(ix);
                 }
@@ -2194,6 +2223,18 @@ impl Buffer {
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
+    }
+
+    /// Call this directly after performing edits to prevent the preview tab
+    /// from being dismissed by those edits. It causes `should_dismiss_preview`
+    /// to return false until there are additional edits.
+    pub fn refresh_preview(&mut self) {
+        self.preview_version = self.version.clone();
+    }
+
+    /// Whether we should preserve the preview status of a tab containing this buffer.
+    pub fn preserve_preview(&self) -> bool {
+        !self.has_edits_since(&self.preview_version)
     }
 }
 
@@ -2539,7 +2580,7 @@ impl BufferSnapshot {
         });
         let highlight_maps = captures
             .grammars()
-            .into_iter()
+            .iter()
             .map(|grammar| grammar.highlight_map())
             .collect();
         (captures, highlight_maps)
@@ -2555,8 +2596,9 @@ impl BufferSnapshot {
         if language_aware {
             syntax = Some(self.get_highlights(range.clone()));
         }
-
-        BufferChunks::new(self.text.as_rope(), range, syntax, Some(self))
+        // We want to look at diagnostic spans only when iterating over language-annotated chunks.
+        let diagnostics = language_aware;
+        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
     }
 
     /// Invokes the given callback for each line of text in the given range of the buffer.
@@ -2582,13 +2624,14 @@ impl BufferSnapshot {
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
     pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer> + '_ {
-        self.syntax.layers_for_range(0..self.len(), &self.text)
+        self.syntax
+            .layers_for_range(0..self.len(), &self.text, true)
     }
 
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
         let offset = position.to_offset(self);
         self.syntax
-            .layers_for_range(offset..offset, &self.text)
+            .layers_for_range(offset..offset, &self.text, false)
             .filter(|l| l.node().end_byte() > offset)
             .last()
     }
@@ -2614,6 +2657,10 @@ impl BufferSnapshot {
         language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 
+    pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
+        CharClassifier::new(self.language_scope_at(point))
+    }
+
     /// Returns the [LanguageScope] at the given location.
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
@@ -2621,7 +2668,10 @@ impl BufferSnapshot {
         let mut smallest_range: Option<Range<usize>> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
-        for layer in self.syntax.layers_for_range(offset..offset, &self.text) {
+        for layer in self
+            .syntax
+            .layers_for_range(offset..offset, &self.text, false)
+        {
             let mut cursor = layer.node().walk();
 
             let mut range = None;
@@ -2667,15 +2717,14 @@ impl BufferSnapshot {
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let scope = self.language_scope_at(start);
-        let kind = |c| char_kind(&scope, c);
+        let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(kind),
-            next_chars.peek().copied().map(kind),
+            prev_chars.peek().copied().map(|c| classifier.kind(c)),
+            next_chars.peek().copied().map(|c| classifier.kind(c)),
         );
 
         for ch in prev_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -2683,7 +2732,7 @@ impl BufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -2697,7 +2746,10 @@ impl BufferSnapshot {
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<Range<usize>> = None;
-        'outer: for layer in self.syntax.layers_for_range(range.clone(), &self.text) {
+        'outer: for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
             let mut cursor = layer.node().walk();
 
             // Descend to the first leaf that touches the start of the range,
@@ -3368,31 +3420,35 @@ impl BufferSnapshot {
                 current_depth
             };
 
-            if depth < current_depth {
-                for _ in 0..(current_depth - depth) {
-                    let mut indent = indent_stack.pop().unwrap();
-                    if last_row != first_row {
-                        // In this case, we landed on an empty row, had to seek forward,
-                        // and discovered that the indent we where on is ending.
-                        // This means that the last display row must
-                        // be on line that ends this indent range, so we
-                        // should display the range up to the first non-empty line
-                        indent.end_row = first_row.saturating_sub(1);
-                    }
+            match depth.cmp(&current_depth) {
+                Ordering::Less => {
+                    for _ in 0..(current_depth - depth) {
+                        let mut indent = indent_stack.pop().unwrap();
+                        if last_row != first_row {
+                            // In this case, we landed on an empty row, had to seek forward,
+                            // and discovered that the indent we where on is ending.
+                            // This means that the last display row must
+                            // be on line that ends this indent range, so we
+                            // should display the range up to the first non-empty line
+                            indent.end_row = first_row.saturating_sub(1);
+                        }
 
-                    result_vec.push(indent)
+                        result_vec.push(indent)
+                    }
                 }
-            } else if depth > current_depth {
-                for next_depth in current_depth..depth {
-                    indent_stack.push(IndentGuide {
-                        buffer_id: self.remote_id(),
-                        start_row: first_row,
-                        end_row: last_row,
-                        depth: next_depth,
-                        tab_size,
-                        settings,
-                    });
+                Ordering::Greater => {
+                    for next_depth in current_depth..depth {
+                        indent_stack.push(IndentGuide {
+                            buffer_id: self.remote_id(),
+                            start_row: first_row,
+                            end_row: last_row,
+                            depth: next_depth,
+                            tab_size,
+                            settings,
+                        });
+                    }
                 }
+                _ => {}
             }
 
             for indent in indent_stack.iter_mut() {
@@ -3775,6 +3831,7 @@ impl<'a> BufferChunks<'a> {
         text: &'a Rope,
         range: Range<usize>,
         syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
+        diagnostics: bool,
         buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
         let mut highlights = None;
@@ -3787,7 +3844,7 @@ impl<'a> BufferChunks<'a> {
             })
         }
 
-        let diagnostic_endpoints = Vec::new().into_iter().peekable();
+        let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
         let chunks = text.chunks_in_range(range.clone());
 
         let mut this = BufferChunks {
@@ -3848,25 +3905,27 @@ impl<'a> BufferChunks<'a> {
     }
 
     fn initialize_diagnostic_endpoints(&mut self) {
-        if let Some(buffer) = self.buffer_snapshot {
-            let mut diagnostic_endpoints = Vec::new();
-            for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.start,
-                    is_start: true,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.end,
-                    is_start: false,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
+        if let Some(diagnostics) = self.diagnostic_endpoints.as_mut() {
+            if let Some(buffer) = self.buffer_snapshot {
+                let mut diagnostic_endpoints = Vec::new();
+                for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
+                    diagnostic_endpoints.push(DiagnosticEndpoint {
+                        offset: entry.range.start,
+                        is_start: true,
+                        severity: entry.diagnostic.severity,
+                        is_unnecessary: entry.diagnostic.is_unnecessary,
+                    });
+                    diagnostic_endpoints.push(DiagnosticEndpoint {
+                        offset: entry.range.end,
+                        is_start: false,
+                        severity: entry.diagnostic.severity,
+                        is_unnecessary: entry.diagnostic.is_unnecessary,
+                    });
+                }
+                diagnostic_endpoints
+                    .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+                *diagnostics = diagnostic_endpoints.into_iter().peekable();
             }
-            diagnostic_endpoints
-                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-            self.diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
         }
     }
 
@@ -3952,15 +4011,19 @@ impl<'a> Iterator for BufferChunks<'a> {
             }
         }
 
-        while let Some(endpoint) = self.diagnostic_endpoints.peek().copied() {
-            if endpoint.offset <= self.range.start {
-                self.update_diagnostic_depths(endpoint);
-                self.diagnostic_endpoints.next();
-            } else {
-                next_diagnostic_endpoint = endpoint.offset;
-                break;
+        let mut diagnostic_endpoints = std::mem::take(&mut self.diagnostic_endpoints);
+        if let Some(diagnostic_endpoints) = diagnostic_endpoints.as_mut() {
+            while let Some(endpoint) = diagnostic_endpoints.peek().copied() {
+                if endpoint.offset <= self.range.start {
+                    self.update_diagnostic_depths(endpoint);
+                    diagnostic_endpoints.next();
+                } else {
+                    next_diagnostic_endpoint = endpoint.offset;
+                    break;
+                }
             }
         }
+        self.diagnostic_endpoints = diagnostic_endpoints;
 
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
@@ -4110,8 +4173,8 @@ impl File for TestFile {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
-    fn worktree_id(&self) -> usize {
-        0
+    fn worktree_id(&self, _: &AppContext) -> WorktreeId {
+        WorktreeId::from_usize(0)
     }
 
     fn is_deleted(&self) -> bool {
@@ -4157,25 +4220,72 @@ pub(crate) fn contiguous_ranges(
     })
 }
 
-/// Returns the [CharKind] for the given character. When a scope is provided,
-/// the function checks if the character is considered a word character
-/// based on the language scope's word character settings.
-pub fn char_kind(scope: &Option<LanguageScope>, c: char) -> CharKind {
-    if c.is_whitespace() {
-        return CharKind::Whitespace;
-    } else if c.is_alphanumeric() || c == '_' {
-        return CharKind::Word;
-    }
+#[derive(Default, Debug)]
+pub struct CharClassifier {
+    scope: Option<LanguageScope>,
+    for_completion: bool,
+    ignore_punctuation: bool,
+}
 
-    if let Some(scope) = scope {
-        if let Some(characters) = scope.word_characters() {
-            if characters.contains(&c) {
-                return CharKind::Word;
-            }
+impl CharClassifier {
+    pub fn new(scope: Option<LanguageScope>) -> Self {
+        Self {
+            scope,
+            for_completion: false,
+            ignore_punctuation: false,
         }
     }
 
-    CharKind::Punctuation
+    pub fn for_completion(self, for_completion: bool) -> Self {
+        Self {
+            for_completion,
+            ..self
+        }
+    }
+
+    pub fn ignore_punctuation(self, ignore_punctuation: bool) -> Self {
+        Self {
+            ignore_punctuation,
+            ..self
+        }
+    }
+
+    pub fn is_whitespace(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Whitespace
+    }
+
+    pub fn is_word(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Word
+    }
+
+    pub fn is_punctuation(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Punctuation
+    }
+
+    pub fn kind(&self, c: char) -> CharKind {
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
+        } else if c.is_alphanumeric() || c == '_' {
+            return CharKind::Word;
+        }
+
+        if let Some(scope) = &self.scope {
+            if let Some(characters) = scope.word_characters() {
+                if characters.contains(&c) {
+                    if c == '-' && !self.for_completion && !self.ignore_punctuation {
+                        return CharKind::Punctuation;
+                    }
+                    return CharKind::Word;
+                }
+            }
+        }
+
+        if self.ignore_punctuation {
+            CharKind::Word
+        } else {
+            CharKind::Punctuation
+        }
+    }
 }
 
 /// Find all of the ranges of whitespace that occur at the ends of lines
@@ -4192,7 +4302,7 @@ pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
         let mut prev_line_trailing_whitespace_range = 0..0;
         for (i, line) in chunk.split('\n').enumerate() {
             let line_end_offset = offset + line.len();
-            let trimmed_line_len = line.trim_end_matches(|c| matches!(c, ' ' | '\t')).len();
+            let trimmed_line_len = line.trim_end_matches([' ', '\t']).len();
             let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
 
             if i == 0 && trimmed_line_len == 0 {

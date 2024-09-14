@@ -1324,6 +1324,62 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "test": {
+                    "1.txt": "// One",
+                    "2.txt": "// Two",
+                    "3.txt": "// Three",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_close_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
+    open_close_queried_buffer("2", 1, "2.txt", &workspace, cx).await;
+    open_close_queried_buffer("3", 1, "3.txt", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_selection(finder, 0, "3.txt");
+        assert_match_at_position(finder, 1, "2.txt");
+        assert_match_at_position(finder, 2, "1.txt");
+    });
+
+    cx.dispatch_action(SelectNext);
+
+    // Add more files to the worktree to trigger update matches
+    for i in 0..5 {
+        let filename = format!("/test/{}.txt", 4 + i);
+        app_state
+            .fs
+            .create_file(Path::new(&filename), Default::default())
+            .await
+            .expect("unable to create file");
+    }
+
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "3.txt");
+        assert_match_selection(finder, 1, "2.txt");
+        assert_match_at_position(finder, 2, "1.txt");
+    });
+}
+
+#[gpui::test]
 async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
@@ -1538,6 +1594,107 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 1);
         assert_match_at_position(finder, 0, "main.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state.fs.as_fake().insert_tree("/src", json!({})).await;
+
+    app_state
+        .fs
+        .create_dir("/src/even".as_ref())
+        .await
+        .expect("unable to create dir");
+
+    let initial_files_num = 5;
+    for i in 0..initial_files_num {
+        let filename = format!("/src/even/file_{}.txt", 10 + i);
+        app_state
+            .fs
+            .create_file(Path::new(&filename), Default::default())
+            .await
+            .expect("unable to create file");
+    }
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+    // Initial state
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("file");
+    let selected_index = 3;
+    // Checking only the filename, not the whole path
+    let selected_file = format!("file_{}.txt", 10 + selected_index);
+    // Select even/file_13.txt
+    for _ in 0..selected_index {
+        cx.dispatch_action(SelectNext);
+    }
+
+    picker.update(cx, |finder, _| {
+        assert_match_selection(finder, selected_index, &selected_file)
+    });
+
+    // Add more matches to the search results
+    let files_to_add = 10;
+    for i in 0..files_to_add {
+        let filename = format!("/src/file_{}.txt", 20 + i);
+        app_state
+            .fs
+            .create_file(Path::new(&filename), Default::default())
+            .await
+            .expect("unable to create file");
+    }
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // file_13.txt is still selected
+    picker.update(cx, |finder, _| {
+        let expected_selected_index = selected_index + files_to_add;
+        assert_match_selection(finder, expected_selected_index, &selected_file);
+    });
+}
+
+#[gpui::test]
+async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "file_1.txt": "// file_1",
+                "file_2.txt": "// file_2",
+                "file_3.txt": "// file_3",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+    // Initial state
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("file");
+    // Select even/file_2.txt
+    cx.dispatch_action(SelectNext);
+
+    // Remove the selected entry
+    app_state
+        .fs
+        .remove_file("/src/file_2.txt".as_ref(), Default::default())
+        .await
+        .expect("unable to remove file");
+    cx.executor().advance_clock(FS_WATCH_LATENCY);
+
+    // file_1.txt is now selected
+    picker.update(cx, |finder, _| {
+        assert_match_selection(finder, 0, "file_1.txt");
     });
 }
 
@@ -1855,7 +2012,7 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 }
 
 fn test_path_position(test_str: &str) -> FileSearchQuery {
-    let path_position = PathWithPosition::parse_str(&test_str);
+    let path_position = PathWithPosition::parse_str(test_str);
 
     FileSearchQuery {
         raw_query: test_str.to_owned(),
@@ -1940,8 +2097,11 @@ impl SearchEntries {
 fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries {
     let mut search_entries = SearchEntries::default();
     for m in &picker.delegate.matches.matches {
-        match m {
-            Match::History(history_path, path_match) => {
+        match &m {
+            Match::History {
+                path: history_path,
+                panel_match: path_match,
+            } => {
                 search_entries.history.push(
                     path_match
                         .as_ref()
@@ -1996,8 +2156,8 @@ fn assert_match_at_position(
         .matches
         .get(match_index)
         .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
-    let match_file_name = match match_item {
-        Match::History(found_path, _) => found_path.absolute.as_deref().unwrap().file_name(),
+    let match_file_name = match &match_item {
+        Match::History { path, .. } => path.absolute.as_deref().unwrap().file_name(),
         Match::Search(path_match) => path_match.0.path.file_name(),
     }
     .unwrap()

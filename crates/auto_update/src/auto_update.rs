@@ -88,6 +88,34 @@ struct JsonRelease {
     url: String,
 }
 
+struct MacOsUnmounter {
+    mount_path: PathBuf,
+}
+
+impl Drop for MacOsUnmounter {
+    fn drop(&mut self) {
+        let unmount_output = std::process::Command::new("hdiutil")
+            .args(["detach", "-force"])
+            .arg(&self.mount_path)
+            .output();
+
+        match unmount_output {
+            Ok(output) if output.status.success() => {
+                log::info!("Successfully unmounted the disk image");
+            }
+            Ok(output) => {
+                log::error!(
+                    "Failed to unmount disk image: {:?}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Err(error) => {
+                log::error!("Error while trying to unmount disk image: {:?}", error);
+            }
+        }
+    }
+}
+
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.
@@ -183,7 +211,7 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
         return;
     }
 
-    if let Some(message) = env::var("ZED_UPDATE_EXPLANATION").ok() {
+    if let Ok(message) = env::var("ZED_UPDATE_EXPLANATION") {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
@@ -226,7 +254,7 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
         let url = &auto_updater
             .http_client
             .build_url(&format!("/releases/{release_channel}/{current_version}"));
-        cx.open_url(&url);
+        cx.open_url(url);
     }
 
     None
@@ -694,7 +722,7 @@ async fn install_release_linux(
     }
 
     let output = Command::new("rsync")
-        .args(&["-av", "--delete"])
+        .args(["-av", "--delete"])
         .arg(&from)
         .arg(&to)
         .output()
@@ -726,10 +754,10 @@ async fn install_release_macos(
 
     mounted_app_path.push("/");
     let output = Command::new("hdiutil")
-        .args(&["attach", "-nobrowse"])
+        .args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
         .arg("-mountroot")
-        .arg(&temp_dir.path())
+        .arg(temp_dir.path())
         .output()
         .await?;
 
@@ -739,8 +767,13 @@ async fn install_release_macos(
         String::from_utf8_lossy(&output.stderr)
     );
 
+    // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
+    let _unmounter = MacOsUnmounter {
+        mount_path: mount_path.clone(),
+    };
+
     let output = Command::new("rsync")
-        .args(&["-av", "--delete"])
+        .args(["-av", "--delete"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
         .output()
@@ -749,18 +782,6 @@ async fn install_release_macos(
     anyhow::ensure!(
         output.status.success(),
         "failed to copy app: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let output = Command::new("hdiutil")
-        .args(&["detach"])
-        .arg(&mount_path)
-        .output()
-        .await?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "failed to unount: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
 

@@ -2,7 +2,7 @@ use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use editor::Editor;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
@@ -26,10 +26,10 @@ impl SlashCommand for OutlineSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -40,7 +40,7 @@ impl SlashCommand for OutlineSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        _arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,

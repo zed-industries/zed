@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
     Extension, Json, Router,
 };
-use chrono::{DateTime, SecondsFormat};
+use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
@@ -120,7 +120,7 @@ async fn create_billing_subscription(
         .zip(app.config.stripe_price_id.clone())
     else {
         log::error!("failed to retrieve Stripe client or price ID");
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -201,7 +201,7 @@ async fn manage_billing_subscription(
 
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -427,6 +427,24 @@ async fn poll_stripe_events(
             stripe_event_created_timestamp: event.created,
         };
 
+        // If the event has happened too far in the past, we don't want to
+        // process it and risk overwriting other more-recent updates.
+        //
+        // 1 hour was chosen arbitrarily. This could be made longer or shorter.
+        let one_hour = Duration::from_secs(60 * 60);
+        let an_hour_ago = Utc::now() - one_hour;
+        if an_hour_ago.timestamp() > event.created {
+            log::info!(
+                "Stripe event {} is more than {one_hour:?} old, marking as processed",
+                event_id
+            );
+            app.db
+                .create_processed_stripe_event(&processed_event_params)
+                .await?;
+
+            return Ok(());
+        }
+
         let process_result = match event.type_ {
             EventType::CustomerCreated | EventType::CustomerUpdated => {
                 handle_customer_event(app, stripe_client, event).await
@@ -582,7 +600,7 @@ async fn find_or_create_billing_customer(
     // there's nothing more we need to do.
     if let Some(billing_customer) = app
         .db
-        .get_billing_customer_by_stripe_customer_id(&customer_id)
+        .get_billing_customer_by_stripe_customer_id(customer_id)
         .await?
     {
         return Ok(Some(billing_customer));
@@ -591,7 +609,7 @@ async fn find_or_create_billing_customer(
     // If all we have is a customer ID, resolve it to a full customer record by
     // hitting the Stripe API.
     let customer = match customer_or_id {
-        Expandable::Id(id) => Customer::retrieve(&stripe_client, &id, &[]).await?,
+        Expandable::Id(id) => Customer::retrieve(stripe_client, &id, &[]).await?,
         Expandable::Object(customer) => *customer,
     };
 

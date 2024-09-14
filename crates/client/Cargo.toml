@@ -27,7 +27,6 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 once_cell.workspace = true
 paths.workspace = true
@@ -49,6 +48,7 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
+tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
 url.workspace = true
 util.workspace = true
 worktree.workspace = true

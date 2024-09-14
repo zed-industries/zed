@@ -14,7 +14,6 @@ proc-macro = true
 doctest = false
 
 [dependencies]
-lazy_static.workspace = true
 sqlez.workspace = true
 sqlformat = "0.2"
 syn = "1.0"

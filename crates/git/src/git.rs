@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 pub use git2 as libgit;
-pub use lazy_static::lazy_static;
 
 pub use crate::hosting_provider::*;
 
@@ -17,10 +17,8 @@ pub mod diff;
 pub mod repository;
 pub mod status;
 
-lazy_static! {
-    pub static ref DOT_GIT: &'static OsStr = OsStr::new(".git");
-    pub static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
-}
+pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
+pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Oid(libgit::Oid);
@@ -51,7 +49,7 @@ impl FromStr for Oid {
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
         libgit::Oid::from_str(s)
             .map_err(|error| anyhow!("failed to parse git oid: {}", error))
-            .map(|oid| Self(oid))
+            .map(Self)
     }
 }
 

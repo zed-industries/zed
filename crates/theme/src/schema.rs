@@ -121,12 +121,8 @@ impl ThemeStyleContent {
                             .background_color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
-                        font_style: style
-                            .font_style
-                            .map(|font_style| FontStyle::from(font_style)),
-                        font_weight: style
-                            .font_weight
-                            .map(|font_weight| FontWeight::from(font_weight)),
+                        font_style: style.font_style.map(FontStyle::from),
+                        font_weight: style.font_weight.map(FontWeight::from),
                         ..Default::default()
                     },
                 )
@@ -162,7 +158,7 @@ pub struct ThemeColorsContent {
     #[serde(rename = "border.disabled")]
     pub border_disabled: Option<String>,
 
-    /// Border color. Used for elevated surfaces, like a context menu, popup, or dialog.
+    /// Background color. Used for elevated surfaces, like a context menu, popup, or dialog.
     #[serde(rename = "elevated_surface.background")]
     pub elevated_surface_background: Option<String>,
 

@@ -145,7 +145,7 @@ impl TestPlatform {
     }
 
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
-        self.prompts.borrow().new_path.len() > 0
+        !self.prompts.borrow().new_path.is_empty()
     }
 }
 
@@ -316,6 +316,10 @@ impl Platform for TestPlatform {
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
+        unimplemented!()
+    }
+
+    fn open_with_system(&self, _path: &Path) {
         unimplemented!()
     }
 }

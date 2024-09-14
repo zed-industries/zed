@@ -297,6 +297,7 @@ impl Default for SerializedPaneGroup {
         Self::Pane(SerializedPane {
             children: vec![SerializedItem::default()],
             active: false,
+            pinned_count: 0,
         })
     }
 }
@@ -356,11 +357,17 @@ impl SerializedPaneGroup {
 
                 if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
                     let pane = pane.upgrade()?;
-                    Some((Member::Pane(pane.clone()), active.then(|| pane), new_items))
+                    Some((
+                        Member::Pane(pane.clone()),
+                        active.then_some(pane),
+                        new_items,
+                    ))
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, cx| workspace.force_remove_pane(&pane, cx))
+                        .update(cx, |workspace, cx| {
+                            workspace.force_remove_pane(&pane, &None, cx)
+                        })
                         .log_err()?;
                     None
                 }
@@ -373,11 +380,16 @@ impl SerializedPaneGroup {
 pub struct SerializedPane {
     pub(crate) active: bool,
     pub(crate) children: Vec<SerializedItem>,
+    pub(crate) pinned_count: usize,
 }
 
 impl SerializedPane {
-    pub fn new(children: Vec<SerializedItem>, active: bool) -> Self {
-        SerializedPane { children, active }
+    pub fn new(children: Vec<SerializedItem>, active: bool, pinned_count: usize) -> Self {
+        SerializedPane {
+            children,
+            active,
+            pinned_count,
+        }
     }
 
     pub async fn deserialize_to(
@@ -436,6 +448,9 @@ impl SerializedPane {
                 }
             })?;
         }
+        pane.update(cx, |pane, _| {
+            pane.set_pinned_count(self.pinned_count);
+        })?;
 
         anyhow::Ok(items)
     }

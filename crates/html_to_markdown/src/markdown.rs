@@ -5,10 +5,7 @@ pub struct WebpageChromeRemover;
 
 impl HandleTag for WebpageChromeRemover {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "head" | "script" | "style" | "nav" => true,
-            _ => false,
-        }
+        matches!(tag, "head" | "script" | "style" | "nav")
     }
 
     fn handle_tag_start(
@@ -39,19 +36,18 @@ impl HandleTag for ParagraphHandler {
     ) -> StartTagOutcome {
         if tag.is_inline() && writer.is_inside("p") {
             if let Some(parent) = writer.current_element_stack().iter().last() {
-                if !parent.is_inline() {
-                    if !(writer.markdown.ends_with(' ') || writer.markdown.ends_with('\n')) {
-                        writer.push_str(" ");
-                    }
+                if !(parent.is_inline()
+                    || writer.markdown.ends_with(' ')
+                    || writer.markdown.ends_with('\n'))
+                {
+                    writer.push_str(" ");
                 }
             }
         }
 
-        match tag.tag() {
-            "p" => writer.push_blank_line(),
-            _ => {}
+        if tag.tag() == "p" {
+            writer.push_blank_line()
         }
-
         StartTagOutcome::Continue
     }
 }
@@ -60,10 +56,7 @@ pub struct HeadingHandler;
 
 impl HandleTag for HeadingHandler {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => true,
-            _ => false,
-        }
+        matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
     }
 
     fn handle_tag_start(
@@ -96,10 +89,7 @@ pub struct ListHandler;
 
 impl HandleTag for ListHandler {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "ul" | "ol" | "li" => true,
-            _ => false,
-        }
+        matches!(tag, "ul" | "ol" | "li")
     }
 
     fn handle_tag_start(
@@ -142,12 +132,15 @@ impl TableHandler {
     }
 }
 
+impl Default for TableHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HandleTag for TableHandler {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "table" | "thead" | "tbody" | "tr" | "th" | "td" => true,
-            _ => false,
-        }
+        matches!(tag, "table" | "thead" | "tbody" | "tr" | "th" | "td")
     }
 
     fn handle_tag_start(
@@ -210,10 +203,7 @@ pub struct StyledTextHandler;
 
 impl HandleTag for StyledTextHandler {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "strong" | "em" => true,
-            _ => false,
-        }
+        matches!(tag, "strong" | "em")
     }
 
     fn handle_tag_start(
@@ -243,10 +233,7 @@ pub struct CodeHandler;
 
 impl HandleTag for CodeHandler {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "pre" | "code" => true,
-            _ => false,
-        }
+        matches!(tag, "pre" | "code")
     }
 
     fn handle_tag_start(
@@ -281,7 +268,7 @@ impl HandleTag for CodeHandler {
 
     fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
         if writer.is_inside("pre") {
-            writer.push_str(&text);
+            writer.push_str(text);
             return HandlerOutcome::Handled;
         }
 

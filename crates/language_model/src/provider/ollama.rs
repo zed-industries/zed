@@ -1,15 +1,19 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use http_client::HttpClient;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
+    ChatResponseDelta, OllamaToolCall,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{future, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
+use crate::LanguageModelCompletionEvent;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -27,6 +31,17 @@ const PROVIDER_NAME: &str = "Ollama";
 pub struct OllamaSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
+    pub available_models: Vec<AvailableModel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    /// The model name in the Ollama API (e.g. "llama3.1:latest")
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
+    pub max_tokens: usize,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -60,7 +75,7 @@ impl State {
                 // indicating which models are embedding models,
                 // simply filter out models with "-embed" in their name
                 .filter(|model| !model.name.contains("-embed"))
-                .map(|model| ollama::Model::new(&model.name))
+                .map(|model| ollama::Model::new(&model.name, None, None))
                 .collect();
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
@@ -122,10 +137,32 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
-        self.state
-            .read(cx)
+        let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
+
+        // Add models from the Ollama API
+        for model in self.state.read(cx).available_models.iter() {
+            models.insert(model.name.clone(), model.clone());
+        }
+
+        // Override with available models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .ollama
             .available_models
             .iter()
+        {
+            models.insert(
+                model.name.clone(),
+                ollama::Model {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    keep_alive: None,
+                },
+            );
+        }
+
+        models
+            .into_values()
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
@@ -180,13 +217,14 @@ impl OllamaLanguageModel {
                 .into_iter()
                 .map(|msg| match msg.role {
                     Role::User => ChatMessage::User {
-                        content: msg.content,
+                        content: msg.string_contents(),
                     },
                     Role::Assistant => ChatMessage::Assistant {
-                        content: msg.content,
+                        content: msg.string_contents(),
+                        tool_calls: None,
                     },
                     Role::System => ChatMessage::System {
-                        content: msg.content,
+                        content: msg.string_contents(),
                     },
                 })
                 .collect(),
@@ -198,7 +236,24 @@ impl OllamaLanguageModel {
                 temperature: Some(request.temperature),
                 ..Default::default()
             }),
+            tools: vec![],
         }
+    }
+    fn request_completion(
+        &self,
+        request: ChatRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<ChatResponseDelta>> {
+        let http_client = self.http_client.clone();
+
+        let Ok(api_url) = cx.update(|cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+            settings.api_url.clone()
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move { ollama::complete(http_client.as_ref(), &api_url, request).await }.boxed()
     }
 }
 
@@ -237,7 +292,7 @@ impl LanguageModel for OllamaLanguageModel {
         let token_count = request
             .messages
             .iter()
-            .map(|msg| msg.content.chars().count())
+            .map(|msg| msg.string_contents().chars().count())
             .sum::<usize>()
             / 4;
 
@@ -248,7 +303,7 @@ impl LanguageModel for OllamaLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
@@ -269,7 +324,7 @@ impl LanguageModel for OllamaLanguageModel {
                         Ok(delta) => {
                             let content = match delta.message {
                                 ChatMessage::User { content } => content,
-                                ChatMessage::Assistant { content } => content,
+                                ChatMessage::Assistant { content, .. } => content,
                                 ChatMessage::System { content } => content,
                             };
                             Some(Ok(content))
@@ -281,18 +336,55 @@ impl LanguageModel for OllamaLanguageModel {
             Ok(stream)
         });
 
-        async move { Ok(future.await?.boxed()) }.boxed()
+        async move {
+            Ok(future
+                .await?
+                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(
         &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        schema: serde_json::Value,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        use ollama::{OllamaFunctionTool, OllamaTool};
+        let function = OllamaFunctionTool {
+            name: tool_name.clone(),
+            description: Some(tool_description),
+            parameters: Some(schema),
+        };
+        let tools = vec![OllamaTool::Function { function }];
+        let request = self.to_ollama_request(request).with_tools(tools);
+        let response = self.request_completion(request, cx);
+        self.request_limiter
+            .run(async move {
+                let response = response.await?;
+                let ChatMessage::Assistant { tool_calls, .. } = response.message else {
+                    bail!("message does not have an assistant role");
+                };
+                if let Some(tool_calls) = tool_calls.filter(|calls| !calls.is_empty()) {
+                    for call in tool_calls {
+                        let OllamaToolCall::Function(function) = call;
+                        if function.name == tool_name {
+                            return Ok(futures::stream::once(async move {
+                                Ok(function.arguments.to_string())
+                            })
+                            .boxed());
+                        }
+                    }
+                } else {
+                    bail!("assistant message does not have any tool calls");
+                };
+
+                bail!("tool not used")
+            })
+            .boxed()
     }
 }
 

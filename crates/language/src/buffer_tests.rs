@@ -16,6 +16,7 @@ use settings::SettingsStore;
 use std::{
     env,
     ops::Range,
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 use text::network::Network;
@@ -24,12 +25,12 @@ use text::{Point, ToPoint};
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 
-lazy_static! {
-    static ref TRAILING_WHITESPACE_REGEX: Regex = RegexBuilder::new("[ \t]+$")
+pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"[ \t]+$")
         .multi_line(true)
         .build()
-        .unwrap();
-}
+        .expect("Failed to create TRAILING_WHITESPACE_REGEX")
+});
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -71,7 +72,7 @@ fn test_select_language(cx: &mut AppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".into(),
+            name: LanguageName::new("Rust"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
@@ -82,7 +83,7 @@ fn test_select_language(cx: &mut AppContext) {
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Make".into(),
+            name: LanguageName::new("Make"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                 ..Default::default()
@@ -96,15 +97,13 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.rs"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Rust".into())
     );
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.mk"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Make".into())
     );
 
@@ -112,8 +111,7 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("src/Makefile"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Make".into())
     );
 
@@ -121,22 +119,19 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("zed/cars"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/a.cars"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/sumk"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
 }
@@ -157,23 +152,22 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ..Default::default()
     });
 
-    cx.read(|cx| languages.language_for_file(&file("the/script"), None, cx))
-        .await
-        .unwrap_err();
-    cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
-        .await
-        .unwrap_err();
+    assert!(cx
+        .read(|cx| languages.language_for_file(&file("the/script"), None, cx))
+        .is_none());
+    assert!(cx
+        .read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
+        .is_none());
+
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
             &file("the/script"),
             Some(&"#!/bin/env node".into()),
             cx
         ))
-        .await
         .unwrap()
-        .name()
-        .as_ref(),
-        "JavaScript"
+        .name(),
+        "JavaScript".into()
     );
 }
 
@@ -241,19 +235,16 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
 
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "TypeScript");
+    assert_eq!(language.name(), "TypeScript".into());
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "C++");
+    assert_eq!(language.name(), "C++".into());
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "Dockerfile");
+    assert_eq!(language.name(), "Dockerfile".into());
 }
 
 fn file(path: &str) -> Arc<dyn File> {
@@ -1823,6 +1814,63 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
 }
 
 #[gpui::test]
+async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    // First we insert some newlines to request an auto-indent (asynchronously).
+    // Then we request that a preview tab be preserved for the new version, even though it's edited.
+    let buffer = cx.new_model(|cx| {
+        let text = "fn a() {}";
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        // This causes autoindent to be async.
+        buffer.set_sync_parse_timeout(Duration::ZERO);
+
+        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
+        buffer.refresh_preview();
+
+        // Synchronously, we haven't auto-indented and we're still preserving the preview.
+        assert_eq!(buffer.text(), "fn a() {\n\n}");
+        assert!(buffer.preserve_preview());
+        buffer
+    });
+
+    // Now let the autoindent finish
+    cx.executor().run_until_parked();
+
+    // The auto-indent applied, but didn't dismiss our preview
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "fn a() {\n    \n}");
+        assert!(buffer.preserve_preview());
+
+        // Edit inserting another line. It will autoindent async.
+        // Then refresh the preview version.
+        buffer.edit(
+            [(Point::new(1, 4)..Point::new(1, 4), "\n")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        buffer.refresh_preview();
+        assert_eq!(buffer.text(), "fn a() {\n    \n\n}");
+        assert!(buffer.preserve_preview());
+
+        // Then perform another edit, this time without refreshing the preview version.
+        buffer.edit([(Point::new(1, 4)..Point::new(1, 4), "x")], None, cx);
+        // This causes the preview to not be preserved.
+        assert!(!buffer.preserve_preview());
+    });
+
+    // Let the async autoindent from the first edit finish.
+    cx.executor().run_until_parked();
+
+    // The autoindent applies, but it shouldn't restore the preview status because we had an edit in the meantime.
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "fn a() {\n    x\n    \n}");
+        assert!(!buffer.preserve_preview());
+    });
+}
+
+#[gpui::test]
 fn test_insert_empty_line(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -2153,6 +2201,45 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
         let ruby_config = snapshot.language_scope_at(Point::new(3, 12)).unwrap();
         assert_eq!(ruby_config.line_comment_prefixes(), &[Arc::from("# ")]);
         assert_eq!(ruby_config.block_comment_delimiters(), None);
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_at_with_hidden_languages(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.new_model(|cx| {
+        let text = r#"
+            this is an *emphasized* word.
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(markdown_lang()));
+        language_registry.add(Arc::new(markdown_inline_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        for point in [Point::new(0, 4), Point::new(0, 16)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Markdown".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().0.as_ref(), "Markdown");
+        }
 
         buffer
     });
@@ -2660,7 +2747,7 @@ fn ruby_lang() -> Language {
 fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: "HTML".into(),
+            name: LanguageName::new("HTML"),
             block_comment: Some(("<!--".into(), "-->".into())),
             ..Default::default()
         },
@@ -2807,6 +2894,45 @@ fn javascript_lang() -> Language {
         (object "}" @end) @indent
         "#,
     )
+    .unwrap()
+}
+
+pub fn markdown_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_md::language()),
+    )
+    .with_injection_query(
+        r#"
+            (fenced_code_block
+                (info_string
+                    (language) @language)
+                (code_fence_content) @content)
+
+            ((inline) @content
+                (#set! "language" "markdown-inline"))
+        "#,
+    )
+    .unwrap()
+}
+
+pub fn markdown_inline_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown-Inline".into(),
+            hidden: true,
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_md::inline_language()),
+    )
+    .with_highlights_query("(emphasis) @emphasis")
     .unwrap()
 }
 

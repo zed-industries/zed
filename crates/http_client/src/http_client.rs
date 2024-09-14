@@ -175,6 +175,22 @@ impl HttpClientWithUrl {
             query,
         )?)
     }
+
+    /// Builds a Zed LLM URL using the given path.
+    pub fn build_zed_llm_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
+        let base_url = self.base_url();
+        let base_api_url = match base_url.as_ref() {
+            "https://zed.dev" => "https://llm.zed.dev",
+            "https://staging.zed.dev" => "https://llm-staging.zed.dev",
+            "http://localhost:3000" => "http://localhost:8080",
+            other => other,
+        };
+
+        Ok(Url::parse_with_params(
+            &format!("{}{}", base_api_url, path),
+            query,
+        )?)
+    }
 }
 
 impl HttpClient for Arc<HttpClientWithUrl> {
@@ -205,6 +221,10 @@ impl HttpClient for HttpClientWithUrl {
 
 pub fn client(user_agent: Option<String>, proxy: Option<Uri>) -> Arc<dyn HttpClient> {
     let mut builder = isahc::HttpClient::builder()
+        // Some requests to Qwen2 models on Runpod can take 32+ seconds,
+        // especially if there's a cold boot involved. We may need to have
+        // those requests use a different http client, because global timeouts
+        // of 50 and 60 seconds, respectively, would be very high!
         .connect_timeout(Duration::from_secs(5))
         .low_speed_timeout(100, Duration::from_secs(5))
         .proxy(proxy.clone());

@@ -1,5 +1,5 @@
 use gpui::Render;
-use story::{StoryContainer, StoryItem, StorySection};
+use story::{Story, StoryItem, StorySection};
 
 use crate::{prelude::*, AudioStatus, Availability, AvatarAvailabilityIndicator};
 use crate::{Avatar, AvatarAudioStatusIndicator};
@@ -8,7 +8,8 @@ pub struct AvatarStory;
 
 impl Render for AvatarStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        StoryContainer::new("Avatar", "crates/ui/src/components/stories/avatar.rs")
+        Story::container()
+            .child(Story::title_for::<Avatar>())
             .child(
                 StorySection::new()
                     .child(StoryItem::new(

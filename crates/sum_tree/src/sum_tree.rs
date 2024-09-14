@@ -986,7 +986,7 @@ mod tests {
                     }
 
                     if before_start {
-                        assert_eq!(cursor.next_item(), reference_items.get(0));
+                        assert_eq!(cursor.next_item(), reference_items.first());
                     } else if pos + 1 < reference_items.len() {
                         assert_eq!(cursor.next_item().unwrap(), &reference_items[pos + 1]);
                     } else {

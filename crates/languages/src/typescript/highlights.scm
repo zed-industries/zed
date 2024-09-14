@@ -100,6 +100,7 @@
 ] @punctuation.delimiter
 
 [
+  "..."
   "-"
   "--"
   "-="
@@ -181,6 +182,7 @@
   "import"
   "in"
   "instanceof"
+  "is"
   "let"
   "new"
   "of"

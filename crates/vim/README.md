@@ -24,7 +24,7 @@ async fn test_visual_star_hash(cx: &mut gpui::TestAppContext) {
 To keep CI runs fast, by default the neovim tests use a cached JSON file that records what neovim did (see crates/vim/test_data),
 but while developing this test you'll need to run it with the neovim flag enabled:
 
-```
+```sh
 cargo test -p vim --features neovim test_visual_star_hash
 ```
 

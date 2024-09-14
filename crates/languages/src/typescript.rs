@@ -8,10 +8,9 @@ use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
-use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
@@ -58,7 +57,11 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![server_path.into(), "--stdio".into()]
+    vec![
+        "--max-old-space-size=8192".into(),
+        server_path.into(),
+        "--stdio".into(),
+    ]
 }
 
 pub struct TypeScriptLspAdapter {
@@ -232,14 +235,12 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.initialization_options.clone())
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
         })?;
         if let Some(options) = override_options {
             return Ok(options);
@@ -330,9 +331,7 @@ impl LspAdapter for EsLintLspAdapter {
         let workspace_root = delegate.worktree_root_path();
 
         let eslint_user_settings = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;
@@ -383,7 +382,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "workspaceFolder": {
                     "uri": workspace_root,
                     "name": workspace_root.file_name()
-                        .unwrap_or_else(|| workspace_root.as_os_str()),
+                        .unwrap_or(workspace_root.as_os_str()),
                 },
                 "problems": problems,
                 "codeActionOnSave": code_action_on_save,

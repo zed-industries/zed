@@ -26,12 +26,19 @@ log.workspace = true
 menu.workspace = true
 project.workspace = true
 schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smol.workspace = true
+theme.workspace = true
 util.workspace = true
 worktree.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+search = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["log"]
