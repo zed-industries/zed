@@ -27,8 +27,8 @@ pub use wit::{
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
-    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree, Buffer
+    Buffer, CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
+    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -40,7 +40,6 @@ pub use wit::Guest;
 
 /// Constructs for interacting with language servers over the
 /// Language Server Protocol (LSP).
-
 pub mod lsp {
     pub use crate::wit::zed::extension::lsp::{
         Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind,
@@ -290,10 +289,7 @@ impl wit::Guest for Component {
     }
 
     fn run_editor_action(
-        name: String,
-        buffer: Buffer
-    ) {
-        extension().run_editor_action(name, buffer)
+        name: String,buffer: Buffe    extension().run_editor_action(name, buffer)
     }
 }
 
