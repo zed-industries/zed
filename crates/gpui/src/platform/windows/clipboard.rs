@@ -6,6 +6,7 @@ use itertools::Itertools;
 use util::ResultExt;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
+    Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_BITFIELDS, RGBQUAD},
     System::{
         DataExchange::{
             CloseClipboard, CountClipboardFormats, EmptyClipboard, EnumClipboardFormats,
@@ -13,7 +14,7 @@ use windows::Win32::{
             IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
-        Ole::CF_UNICODETEXT,
+        Ole::{CF_DIB, CF_DIBV5, CF_UNICODETEXT},
     },
 };
 use windows_core::PCWSTR;
@@ -29,15 +30,22 @@ static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("PNG")));
 
 // Helper format list
-static AVAILABLE_FORMATS: LazyLock<[u32; 2]> =
-    LazyLock::new(|| [CF_UNICODETEXT.0 as u32, *CLIPBOARD_PNG_FORMAT]);
-static AVAILABLE_IMAGE_FORMATS: LazyLock<[u32; 1]> = LazyLock::new(|| [*CLIPBOARD_PNG_FORMAT]);
+static AVAILABLE_FORMATS: LazyLock<[u32; 3]> = LazyLock::new(|| {
+    [
+        CF_UNICODETEXT.0 as u32,
+        *CLIPBOARD_PNG_FORMAT,
+        CF_DIB.0 as u32,
+    ]
+});
+static AVAILABLE_IMAGE_FORMATS: LazyLock<[u32; 2]> =
+    LazyLock::new(|| [*CLIPBOARD_PNG_FORMAT, CF_DIB.0 as u32]);
 
 // Helper struct
 static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::new(|| {
     let mut formats_map = FxHashMap::default();
     formats_map.insert(CF_UNICODETEXT.0 as u32, ClipboardFormatType::Text);
     formats_map.insert(*CLIPBOARD_PNG_FORMAT, ClipboardFormatType::Image);
+    formats_map.insert(CF_DIB.0 as u32, ClipboardFormatType::Image);
     formats_map
 });
 
@@ -125,10 +133,10 @@ fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
 }
 
 fn write_image_to_clipboard(item: &Image) -> Result<()> {
-    if item.format != ImageFormat::Png {
-        anyhow::bail!("Clipboard unsupported image format: {:?}", item.format);
+    match item.format {
+        ImageFormat::Png => set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?,
+        _ => anyhow::bail!("Clipboard unsupported image format: {:?}", item.format),
     }
-    set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?;
     Ok(())
 }
 
@@ -214,17 +222,23 @@ fn read_image_from_clipboard() -> Option<ClipboardEntry> {
         let Some(image_format) = check_available_formats(&*AVAILABLE_IMAGE_FORMATS) else {
             return None;
         };
-        let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
-        let image_ptr = GlobalLock(global);
-        let iamge_size = GlobalSize(global);
-        let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
-        let _ = GlobalUnlock(global);
-        let id = hash(&bytes);
-        Some(ClipboardEntry::Image(Image {
-            format: ImageFormat::Png,
-            bytes,
-            id,
-        }))
+        // if image_format == *CLIPBOARD_PNG_FORMAT {
+        //     let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
+        //     let image_ptr = GlobalLock(global);
+        //     let iamge_size = GlobalSize(global);
+        //     let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
+        //     let _ = GlobalUnlock(global);
+        //     let id = hash(&bytes);
+        //     Some(ClipboardEntry::Image(Image {
+        //         format: ImageFormat::Png,
+        //         bytes,
+        //         id,
+        //     }))
+        // } else if image_format == CF_DIB.0 as u32 {
+        bitmap::read_bitmap(CF_DIBV5.0 as u32)
+        // } else {
+        // None
+        // }
     }
 }
 
@@ -249,5 +263,68 @@ fn check_available_formats(formats: &[u32]) -> Option<u32> {
         None
     } else {
         Some(ret as u32)
+    }
+}
+
+mod bitmap {
+    use util::ResultExt;
+    use windows::Win32::{
+        Foundation::HGLOBAL,
+        Graphics::Gdi::{
+            BITMAPFILEHEADER, BITMAPINFO, BITMAPINFOHEADER, BITMAPV5HEADER, BI_BITFIELDS, RGBQUAD,
+        },
+        System::{
+            DataExchange::GetClipboardData,
+            Memory::{GlobalLock, GlobalSize, GlobalUnlock},
+        },
+    };
+
+    use crate::{hash, ClipboardEntry, Image, ImageFormat};
+
+    pub(super) fn read_bitmap(image_format: u32) -> Option<ClipboardEntry> {
+        let global = HGLOBAL(unsafe { GetClipboardData(image_format).log_err() }?.0);
+        let image_ptr = unsafe { GlobalLock(global) };
+        let bitmap_info = unsafe { &*(image_ptr as *mut BITMAPV5HEADER) };
+        let dib_header_size = std::mem::size_of::<BITMAPV5HEADER>();
+        println!("{:#?}", bitmap_info);
+        let raw_bytes = {
+            let size = unsafe { GlobalSize(global) };
+            unsafe { std::slice::from_raw_parts(image_ptr as *mut u8, size) }
+        };
+
+        let mut file_header = vec![0u8; std::mem::size_of::<BITMAPFILEHEADER>()];
+        file_header[0] = b'B';
+        file_header[1] = b'M';
+        let total_size = file_header.len() + raw_bytes.len();
+        file_header[2..6].copy_from_slice(&(total_size as u32).to_le_bytes());
+        file_header[10..14].copy_from_slice(&(dib_header_size as u32).to_le_bytes());
+
+        let mut bitmap_data = file_header;
+        bitmap_data.extend_from_slice(raw_bytes);
+        let id = hash(&bitmap_data);
+        Some(ClipboardEntry::Image(Image {
+            format: ImageFormat::Bmp,
+            bytes: bitmap_data,
+            id,
+        }))
+    }
+
+    fn create_bitmap(width: i32, height: i32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        let header = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: height,
+            biPlanes: todo!(),
+            biBitCount: todo!(),
+            biCompression: todo!(),
+            biSizeImage: todo!(),
+            biXPelsPerMeter: todo!(),
+            biYPelsPerMeter: todo!(),
+            biClrUsed: todo!(),
+            biClrImportant: todo!(),
+        };
     }
 }
