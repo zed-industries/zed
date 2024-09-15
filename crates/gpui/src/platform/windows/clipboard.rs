@@ -123,6 +123,7 @@ fn format_to_type(item_format: u32) -> &'static ClipboardFormatType {
     FORMATS_MAP.get(&item_format).unwrap()
 }
 
+// Currently, we only write the first item.
 fn write_to_clipboard_inner(item: ClipboardItem) -> Result<()> {
     unsafe {
         OpenClipboard(None)?;
@@ -174,6 +175,8 @@ fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
     Ok(())
 }
 
+// Here writing PNG to the clipboard to better support other apps. For more info, please ref to
+// the PR.
 fn write_image_to_clipboard(item: &Image) -> Result<()> {
     match item.format {
         ImageFormat::Svg => set_data_to_clipboard(item.bytes(), *CLIPBOARD_SVG_FORMAT)?,
@@ -223,11 +226,12 @@ fn read_from_clipboard_inner() -> Option<ClipboardItem> {
     })
 }
 
-// Here we enumerate all formats on clipboard, find the first one we can process.
-// The reason we dont use `GetPriorityClipboardFormat` here is that it sometimes return the wrong format.
-// Say copy a JPEG image from Word, there are serveral formats in clipboard:
-// Jpeg, Png, Svg
-// If we use `GetPriorityClipboardFormat` we will get Svg back, which is not what we want.
+// Here, we enumerate all formats on the clipboard and find the first one that we can process.
+// The reason we don't use `GetPriorityClipboardFormat` is that it sometimes returns the
+// wrong format.
+// For instance, when copying a JPEG image from  Microsoft Word, there may be several formats
+// on the clipboard: Jpeg, Png, Svg.
+// If we use `GetPriorityClipboardFormat`, it will return Svg, which is not what we want.
 fn with_best_match_format<F>(f: F) -> Option<ClipboardItem>
 where
     F: Fn(u32) -> Option<ClipboardEntry>,
@@ -245,7 +249,7 @@ where
             });
         }
     }
-    // log the formats that we dont support
+    // log the formats that we don't support yet.
     {
         clipboard_format = 0;
         for _ in 0..count {
