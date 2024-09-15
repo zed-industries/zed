@@ -157,18 +157,35 @@ fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
 fn write_image_to_clipboard(item: &Image) -> Result<()> {
     match item.format {
         ImageFormat::Svg => set_data_to_clipboard(item.bytes(), *CLIPBOARD_SVG_FORMAT)?,
-        ImageFormat::Gif => set_data_to_clipboard(item.bytes(), *CLIPBOARD_GIF_FORMAT)?,
-        ImageFormat::Png => set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?,
-        ImageFormat::Jpeg => set_data_to_clipboard(item.bytes(), *CLIPBOARD_JPG_FORMAT)?,
+        ImageFormat::Gif => {
+            set_data_to_clipboard(item.bytes(), *CLIPBOARD_GIF_FORMAT)?;
+            let png_bytes = to_png_format(item.bytes(), ImageFormat::Gif)?;
+            set_data_to_clipboard(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
+        }
+        ImageFormat::Png => {
+            set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?;
+            let png_bytes = to_png_format(item.bytes(), ImageFormat::Png)?;
+            set_data_to_clipboard(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
+        }
+        ImageFormat::Jpeg => {
+            set_data_to_clipboard(item.bytes(), *CLIPBOARD_JPG_FORMAT)?;
+            let png_bytes = to_png_format(item.bytes(), ImageFormat::Jpeg)?;
+            set_data_to_clipboard(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
+        }
         _ => anyhow::bail!("Clipboard unsupported image format: {:?}", item.format),
     }
     Ok(())
 }
 
-// fn to_png_format(bytes: &[u8]) -> Result<()> {
-//     let x = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?;
-//     x.as_bytes().to_vec()
-// }
+fn to_png_format(bytes: &[u8], image_format: ImageFormat) -> Result<Vec<u8>> {
+    let image = image::load_from_memory_with_format(bytes, image_format.into())?;
+    let mut output_buf = Vec::new();
+    image.write_to(
+        &mut std::io::Cursor::new(&mut output_buf),
+        image::ImageFormat::Png,
+    )?;
+    Ok(output_buf)
+}
 
 fn read_from_clipboard_inner() -> Result<ClipboardItem> {
     unsafe {
@@ -305,5 +322,20 @@ fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<Clipbo
         let _ = GlobalUnlock(global);
         let id = hash(&bytes);
         Some(ClipboardEntry::Image(Image { format, bytes, id }))
+    }
+}
+
+impl From<ImageFormat> for image::ImageFormat {
+    fn from(value: ImageFormat) -> Self {
+        match value {
+            ImageFormat::Png => image::ImageFormat::Png,
+            ImageFormat::Jpeg => image::ImageFormat::Jpeg,
+            ImageFormat::Webp => image::ImageFormat::WebP,
+            ImageFormat::Gif => image::ImageFormat::Gif,
+            // ImageFormat::Svg => todo!(),
+            ImageFormat::Bmp => image::ImageFormat::Bmp,
+            ImageFormat::Tiff => image::ImageFormat::Tiff,
+            _ => unreachable!(),
+        }
     }
 }
