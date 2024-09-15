@@ -296,7 +296,6 @@ fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
     let Some(image_format) = format_number_to_image_format(format) else {
         return None;
     };
-    println!("==> image: {:?}", image_format);
     read_image_for_type(format, *image_format)
 }
 
