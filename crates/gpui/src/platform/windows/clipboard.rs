@@ -13,12 +13,15 @@ use windows::Win32::{
             RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
-        Ole::CF_UNICODETEXT,
+        Ole::{CF_HDROP, CF_UNICODETEXT},
     },
+    UI::Shell::{DragQueryFileW, HDROP},
 };
 use windows_core::PCWSTR;
 
 use crate::{hash, ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat};
+
+use super::DRAGDROP_GET_FILES_COUNT;
 
 // Clipboard formats
 static CLIPBOARD_HASH_FORMAT: LazyLock<u32> =
@@ -42,6 +45,7 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_GIF_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
+    formats_map.insert(CF_HDROP.0 as u32, ClipboardFormatType::Files);
     formats_map
 });
 static FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
@@ -51,9 +55,10 @@ static FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
     formats_map.insert(*CLIPBOARD_GIF_FORMAT);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT);
+    formats_map.insert(CF_HDROP.0 as u32);
     formats_map
 });
-static FORMATS_NUMBER_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
+static IMAGE_FORMATS_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
     let mut formats_map = FxHashMap::default();
     formats_map.insert(*CLIPBOARD_PNG_FORMAT, ImageFormat::Png);
     formats_map.insert(*CLIPBOARD_GIF_FORMAT, ImageFormat::Gif);
@@ -66,6 +71,7 @@ static FORMATS_NUMBER_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new
 enum ClipboardFormatType {
     Text,
     Image,
+    Files,
 }
 
 fn register_clipboard_format(format: PCWSTR) -> u32 {
@@ -191,6 +197,7 @@ fn read_from_clipboard_inner() -> Option<ClipboardItem> {
     with_best_match_format(|item_format| match format_to_type(item_format) {
         ClipboardFormatType::Text => read_string_from_clipboard(),
         ClipboardFormatType::Image => read_image_from_clipboard(item_format),
+        ClipboardFormatType::Files => read_files_from_clipboard(),
     })
 }
 
@@ -291,7 +298,7 @@ fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
 
 #[inline]
 fn format_number_to_image_format(format_number: u32) -> Option<&'static ImageFormat> {
-    FORMATS_NUMBER_MAP.get(&format_number)
+    IMAGE_FORMATS_MAP.get(&format_number)
 }
 
 fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<ClipboardEntry> {
@@ -303,6 +310,35 @@ fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<Clipbo
         let _ = GlobalUnlock(global);
         let id = hash(&bytes);
         Some(ClipboardEntry::Image(Image { format, bytes, id }))
+    }
+}
+
+fn read_files_from_clipboard() -> Option<ClipboardEntry> {
+    unsafe {
+        let global = HGLOBAL(GetClipboardData(CF_HDROP.0 as u32).log_err()?.0);
+        let hdrop = HDROP(GlobalLock(global));
+        let mut filenames = String::new();
+        let file_count = DragQueryFileW(hdrop, DRAGDROP_GET_FILES_COUNT, None);
+        for file_index in 0..file_count {
+            let filename_length = DragQueryFileW(hdrop, file_index, None) as usize;
+            let mut buffer = vec![0u16; filename_length + 1];
+            let ret = DragQueryFileW(hdrop, file_index, Some(buffer.as_mut_slice()));
+            if ret == 0 {
+                log::error!("unable to read file name");
+                continue;
+            }
+            if let Some(file_name) = String::from_utf16(&buffer[0..filename_length]).log_err() {
+                if !filenames.is_empty() {
+                    filenames.push('\n');
+                }
+                filenames.push_str(&file_name);
+            }
+        }
+        let _ = GlobalUnlock(global);
+        Some(ClipboardEntry::String(ClipboardString {
+            text: filenames,
+            metadata: None,
+        }))
     }
 }
 

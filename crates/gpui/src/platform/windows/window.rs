@@ -1061,7 +1061,7 @@ fn calculate_client_rect(
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
-const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+pub(crate) const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 
 mod windows_renderer {
     use std::{num::NonZeroIsize, sync::Arc};
