@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 use anyhow::Result;
 use collections::FxHashMap;
 use itertools::Itertools;
+use serde_json::to_vec;
 use util::ResultExt;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
@@ -26,6 +27,8 @@ static CLIPBOARD_HASH_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal text hash")));
 static CLIPBOARD_METADATA_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal metadata")));
+static CLIPBOARD_SVG_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| register_clipboard_format(windows::core::w!("image/svg+xml")));
 static CLIPBOARD_GIF_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GIF")));
 static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
@@ -34,16 +37,18 @@ static CLIPBOARD_JPG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("JFIF")));
 
 // Helper format list
-static AVAILABLE_FORMATS: LazyLock<[u32; 4]> = LazyLock::new(|| {
+static AVAILABLE_FORMATS: LazyLock<[u32; 5]> = LazyLock::new(|| {
     [
         CF_UNICODETEXT.0 as u32,
+        *CLIPBOARD_SVG_FORMAT,
         *CLIPBOARD_GIF_FORMAT,
         *CLIPBOARD_PNG_FORMAT,
         *CLIPBOARD_JPG_FORMAT,
     ]
 });
-static AVAILABLE_IMAGE_FORMATS: LazyLock<[u32; 3]> = LazyLock::new(|| {
+static AVAILABLE_IMAGE_FORMATS: LazyLock<[u32; 4]> = LazyLock::new(|| {
     [
+        *CLIPBOARD_SVG_FORMAT,
         *CLIPBOARD_GIF_FORMAT,
         *CLIPBOARD_PNG_FORMAT,
         *CLIPBOARD_JPG_FORMAT,
@@ -57,6 +62,7 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_PNG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_GIF_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT, ClipboardFormatType::Image);
+    formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
     formats_map
 });
 
@@ -247,7 +253,8 @@ fn read_image_from_clipboard() -> Option<ClipboardEntry> {
         //     }))
         // } else if image_format == CF_DIB.0 as u32 {
         // read_gif(*CLIPBOARD_GIF_FORMAT)
-        read_jpeg(*CLIPBOARD_JPG_FORMAT)
+        // read_jpeg(*CLIPBOARD_JPG_FORMAT)
+        read_svg(*CLIPBOARD_SVG_FORMAT)
         // } else {
         // None
         // }
@@ -304,6 +311,22 @@ fn read_jpeg(image_format: u32) -> Option<ClipboardEntry> {
         let id = hash(&bytes);
         Some(ClipboardEntry::Image(Image {
             format: ImageFormat::Jpeg,
+            bytes,
+            id,
+        }))
+    }
+}
+
+fn read_svg(image_format: u32) -> Option<ClipboardEntry> {
+    unsafe {
+        let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
+        let image_ptr = GlobalLock(global);
+        let iamge_size = GlobalSize(global);
+        let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
+        let _ = GlobalUnlock(global);
+        let id = hash(&bytes);
+        Some(ClipboardEntry::Image(Image {
+            format: ImageFormat::Svg,
             bytes,
             id,
         }))
