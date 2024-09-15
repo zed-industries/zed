@@ -21,7 +21,8 @@ use windows_core::PCWSTR;
 
 use crate::{hash, ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat};
 
-use super::DRAGDROP_GET_FILES_COUNT;
+// https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
+const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 
 // Clipboard formats
 static CLIPBOARD_HASH_FORMAT: LazyLock<u32> =
@@ -74,6 +75,36 @@ enum ClipboardFormatType {
     Files,
 }
 
+pub(crate) fn write_to_clipboard(item: ClipboardItem) {
+    write_to_clipboard_inner(item).log_err();
+    unsafe { CloseClipboard().log_err() };
+}
+
+pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
+    let result = read_from_clipboard_inner();
+    unsafe { CloseClipboard().log_err() };
+    result
+}
+
+pub(crate) fn with_file_names<F>(hdrop: HDROP, mut f: F)
+where
+    F: FnMut(String),
+{
+    let file_count = unsafe { DragQueryFileW(hdrop, DRAGDROP_GET_FILES_COUNT, None) };
+    for file_index in 0..file_count {
+        let filename_length = unsafe { DragQueryFileW(hdrop, file_index, None) } as usize;
+        let mut buffer = vec![0u16; filename_length + 1];
+        let ret = unsafe { DragQueryFileW(hdrop, file_index, Some(buffer.as_mut_slice())) };
+        if ret == 0 {
+            log::error!("unable to read file name");
+            continue;
+        }
+        if let Some(file_name) = String::from_utf16(&buffer[0..filename_length]).log_err() {
+            f(file_name);
+        }
+    }
+}
+
 fn register_clipboard_format(format: PCWSTR) -> u32 {
     let ret = unsafe { RegisterClipboardFormatW(format) };
     if ret == 0 {
@@ -88,17 +119,6 @@ fn register_clipboard_format(format: PCWSTR) -> u32 {
 #[inline]
 fn format_to_type(item_format: u32) -> &'static ClipboardFormatType {
     FORMATS_MAP.get(&item_format).unwrap()
-}
-
-pub(crate) fn write_to_clipboard(item: ClipboardItem) {
-    write_to_clipboard_inner(item).log_err();
-    unsafe { CloseClipboard().log_err() };
-}
-
-pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
-    let result = read_from_clipboard_inner();
-    unsafe { CloseClipboard().log_err() };
-    result
 }
 
 fn write_to_clipboard_inner(item: ClipboardItem) -> Result<()> {
@@ -318,22 +338,9 @@ fn read_files_from_clipboard() -> Option<ClipboardEntry> {
         let global = HGLOBAL(GetClipboardData(CF_HDROP.0 as u32).log_err()?.0);
         let hdrop = HDROP(GlobalLock(global));
         let mut filenames = String::new();
-        let file_count = DragQueryFileW(hdrop, DRAGDROP_GET_FILES_COUNT, None);
-        for file_index in 0..file_count {
-            let filename_length = DragQueryFileW(hdrop, file_index, None) as usize;
-            let mut buffer = vec![0u16; filename_length + 1];
-            let ret = DragQueryFileW(hdrop, file_index, Some(buffer.as_mut_slice()));
-            if ret == 0 {
-                log::error!("unable to read file name");
-                continue;
-            }
-            if let Some(file_name) = String::from_utf16(&buffer[0..filename_length]).log_err() {
-                if !filenames.is_empty() {
-                    filenames.push('\n');
-                }
-                filenames.push_str(&file_name);
-            }
-        }
+        with_file_names(hdrop, |file_name| {
+            filenames.push_str(&file_name);
+        });
         let _ = GlobalUnlock(global);
         Some(ClipboardEntry::String(ClipboardString {
             text: filenames,
