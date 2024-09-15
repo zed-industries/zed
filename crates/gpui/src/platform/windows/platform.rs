@@ -37,7 +37,6 @@ pub(crate) struct WindowsPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<DirectWriteTextSystem>,
-    clipboard_formats: ClipboardFormatStore,
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
@@ -90,8 +89,6 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let clipboard_formats =
-            ClipboardFormatStore::new().expect("Unable to register clipboard formats");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
         let validation_number = rand::random::<usize>();
 
@@ -102,7 +99,6 @@ impl WindowsPlatform {
             background_executor,
             foreground_executor,
             text_system,
-            clipboard_formats,
             windows_version,
             bitmap_factory,
             validation_number,
@@ -450,11 +446,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        write_to_clipboard(item, &self.clipboard_formats);
+        write_to_clipboard(item);
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        read_from_clipboard(&self.clipboard_formats)
+        read_from_clipboard()
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
