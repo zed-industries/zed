@@ -117,7 +117,6 @@ fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
     unsafe {
         let global = GlobalAlloc(GMEM_MOVEABLE, data.len() * std::mem::size_of::<T>())?;
         let handle = GlobalLock(global);
-        // u_memcpy(handle as _, data.as_ptr(), data.len() as _);
         std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
         let _ = GlobalUnlock(global);
         SetClipboardData(format, HANDLE(global.0))?;
@@ -130,14 +129,6 @@ fn write_image_to_clipboard(item: &Image) -> Result<()> {
         anyhow::bail!("Clipboard unsupported image format: {:?}", item.format);
     }
     set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?;
-    // unsafe {
-    //     let data = item.bytes();
-    //     let global = GlobalAlloc(GMEM_MOVEABLE, data.len())?;
-    //     let handle = GlobalLock(global);
-    //     std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
-    //     let _ = GlobalUnlock(global);
-    //     SetClipboardData(*CLIPBOARD_PNG_FORMAT, HANDLE(global.0))?;
-    // }
     Ok(())
 }
 
