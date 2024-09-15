@@ -1,4 +1,5 @@
 use anyhow::Result;
+use collections::FxHashMap;
 use itertools::Itertools;
 use util::ResultExt;
 use windows::Win32::{
@@ -6,8 +7,9 @@ use windows::Win32::{
     Globalization::u_memcpy,
     System::{
         DataExchange::{
-            CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
-            RegisterClipboardFormatW, SetClipboardData,
+            CloseClipboard, CountClipboardFormats, EmptyClipboard, EnumClipboardFormats,
+            GetClipboardData, GetClipboardFormatNameW, GetPriorityClipboardFormat,
+            IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
         Ole::CF_UNICODETEXT,
@@ -26,6 +28,13 @@ pub(crate) struct ClipboardFormatStore {
     pub(crate) hash: u32,
     pub(crate) metadata: u32,
     pub(crate) png: u32,
+    formats_map: FxHashMap<u32, ClipboardFormatType>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ClipboardFormatType {
+    Text,
+    Image,
 }
 
 impl ClipboardFormatStore {
@@ -34,12 +43,29 @@ impl ClipboardFormatStore {
         let hash = register_clipboard_format(CLIPBOARD_HASH_FORMAT)?;
         let metadata = register_clipboard_format(CLIPBOARD_PNG_FORMAT)?;
         let png = register_clipboard_format(CLIPBOARD_PNG_FORMAT)?;
+        let mut formats_map = FxHashMap::default();
+        formats_map.insert(text, ClipboardFormatType::Text);
+        formats_map.insert(png, ClipboardFormatType::Image);
+
         Ok(Self {
             text,
             hash,
             metadata,
             png,
+            formats_map,
         })
+    }
+
+    fn available_formats(&self) -> [u32; 2] {
+        [self.text, self.png]
+    }
+
+    fn format_to_type(&self, format: u32) -> &ClipboardFormatType {
+        self.formats_map.get(&format).unwrap()
+    }
+
+    fn image_formats(&self) -> [u32; 1] {
+        [self.png]
     }
 }
 
@@ -122,7 +148,7 @@ fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
 
 fn write_image_to_clipboard(item: &Image, format_store: &ClipboardFormatStore) -> Result<()> {
     if item.format != ImageFormat::Png {
-        anyhow::bail!("Unsupported format: {:?}", item.format);
+        anyhow::bail!("Clipboard unsupported image format: {:?}", item.format);
     }
     unsafe {
         let data = item.bytes();
@@ -139,44 +165,55 @@ fn read_from_clipboard_inner(format_store: &ClipboardFormatStore) -> Result<Clip
     unsafe {
         OpenClipboard(None)?;
         let mut entries = Vec::new();
-        if let Some(string) = read_string_from_clipboard(format_store).log_err() {
-            entries.push(string);
+        let Some(item_format) = check_available_formats(&format_store.available_formats()) else {
+            anyhow::bail!("No available content in clipboard");
+        };
+
+        let item_type = format_store.format_to_type(item_format);
+        match item_type {
+            ClipboardFormatType::Text => {
+                if let Some(string) = read_string_from_clipboard(format_store) {
+                    entries.push(string);
+                }
+            }
+            ClipboardFormatType::Image => {
+                if let Some(image) = read_image_from_clipboard(format_store) {
+                    entries.push(image);
+                }
+            }
         }
-        if let Some(image) = read_image_from_clipboard(format_store).log_err() {
-            entries.push(image);
-        }
-        if entries.is_empty() {
-            anyhow::bail!("No content in clipboard");
-        } else {
-            Ok(ClipboardItem { entries })
-        }
+        debug_assert!(!entries.is_empty());
+        Ok(ClipboardItem { entries })
     }
 }
 
-fn read_string_from_clipboard(format_store: &ClipboardFormatStore) -> Result<ClipboardEntry> {
+fn read_string_from_clipboard(format_store: &ClipboardFormatStore) -> Option<ClipboardEntry> {
     let text = unsafe {
-        let handle = GetClipboardData(CF_UNICODETEXT.0 as u32)?;
+        let handle = GetClipboardData(CF_UNICODETEXT.0 as u32).log_err()?;
         let text = PCWSTR(handle.0 as *const u16);
         String::from_utf16_lossy(text.as_wide())
     };
     let Some(hash) = read_hash_from_clipboard(format_store) else {
-        return Ok(ClipboardEntry::String(ClipboardString::new(text)));
+        return Some(ClipboardEntry::String(ClipboardString::new(text)));
     };
     let Some(metadata) = read_metadata_from_clipboard(format_store) else {
-        return Ok(ClipboardEntry::String(ClipboardString::new(text)));
+        return Some(ClipboardEntry::String(ClipboardString::new(text)));
     };
     if hash == ClipboardString::text_hash(&text) {
-        Ok(ClipboardEntry::String(ClipboardString {
+        Some(ClipboardEntry::String(ClipboardString {
             text,
             metadata: Some(metadata),
         }))
     } else {
-        Ok(ClipboardEntry::String(ClipboardString::new(text)))
+        Some(ClipboardEntry::String(ClipboardString::new(text)))
     }
 }
 
 fn read_hash_from_clipboard(format_store: &ClipboardFormatStore) -> Option<u64> {
     unsafe {
+        if IsClipboardFormatAvailable(format_store.hash).is_err() {
+            return None;
+        }
         let handle = GetClipboardData(format_store.hash).log_err()?;
         let raw_ptr = handle.0 as *const u16;
         let hash_bytes: [u8; 8] = std::slice::from_raw_parts(raw_ptr.cast::<u8>(), 8)
@@ -189,24 +226,54 @@ fn read_hash_from_clipboard(format_store: &ClipboardFormatStore) -> Option<u64> 
 
 fn read_metadata_from_clipboard(format_store: &ClipboardFormatStore) -> Option<String> {
     unsafe {
+        if IsClipboardFormatAvailable(format_store.metadata).is_err() {
+            return None;
+        }
         let handle = GetClipboardData(format_store.metadata).log_err()?;
         let text = PCWSTR(handle.0 as *const u16);
         Some(String::from_utf16_lossy(text.as_wide()))
     }
 }
 
-fn read_image_from_clipboard(format_store: &ClipboardFormatStore) -> Result<ClipboardEntry> {
+fn read_image_from_clipboard(format_store: &ClipboardFormatStore) -> Option<ClipboardEntry> {
     unsafe {
-        let global = HGLOBAL(GetClipboardData(format_store.png)?.0);
+        let Some(image_format) = check_available_formats(&format_store.image_formats()) else {
+            return None;
+        };
+        let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
         let image_ptr = GlobalLock(global);
         let iamge_size = GlobalSize(global);
         let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
         let _ = GlobalUnlock(global);
         let id = hash(&bytes);
-        Ok(ClipboardEntry::Image(Image {
+        Some(ClipboardEntry::Image(Image {
             format: ImageFormat::Png,
             bytes,
             id,
         }))
+    }
+}
+
+fn check_available_formats(formats: &[u32]) -> Option<u32> {
+    let ret = unsafe { GetPriorityClipboardFormat(formats) };
+    if ret <= 0 {
+        if ret == -1 {
+            let count = unsafe { CountClipboardFormats() };
+            let mut clipboard_format = 0;
+            for _ in 0..count {
+                clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
+                let mut buffer = [0u16; 64];
+                unsafe { GetClipboardFormatNameW(clipboard_format, &mut buffer) };
+                let format_name = String::from_utf16_lossy(&buffer);
+                log::info!(
+                    "Try to paste with unsupported clipboard format: {}, {}.",
+                    clipboard_format,
+                    format_name
+                );
+            }
+        }
+        None
+    } else {
+        Some(ret as u32)
     }
 }
