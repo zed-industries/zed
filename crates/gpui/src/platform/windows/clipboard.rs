@@ -98,7 +98,7 @@ pub(crate) fn write_to_clipboard(item: ClipboardItem) {
 }
 
 pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
-    let result = read_from_clipboard_inner().log_err();
+    let result = read_from_clipboard_inner();
     unsafe { CloseClipboard().log_err() };
     result
 }
@@ -159,25 +159,32 @@ fn write_image_to_clipboard(item: &Image) -> Result<()> {
         ImageFormat::Svg => set_data_to_clipboard(item.bytes(), *CLIPBOARD_SVG_FORMAT)?,
         ImageFormat::Gif => {
             set_data_to_clipboard(item.bytes(), *CLIPBOARD_GIF_FORMAT)?;
-            let png_bytes = to_png_format(item.bytes(), ImageFormat::Gif)?;
+            let png_bytes = convert_image_to_png_format(item.bytes(), ImageFormat::Gif)?;
             set_data_to_clipboard(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
         }
         ImageFormat::Png => {
             set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?;
-            let png_bytes = to_png_format(item.bytes(), ImageFormat::Png)?;
+            let png_bytes = convert_image_to_png_format(item.bytes(), ImageFormat::Png)?;
             set_data_to_clipboard(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
         }
         ImageFormat::Jpeg => {
             set_data_to_clipboard(item.bytes(), *CLIPBOARD_JPG_FORMAT)?;
-            let png_bytes = to_png_format(item.bytes(), ImageFormat::Jpeg)?;
+            let png_bytes = convert_image_to_png_format(item.bytes(), ImageFormat::Jpeg)?;
             set_data_to_clipboard(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
         }
-        _ => anyhow::bail!("Clipboard unsupported image format: {:?}", item.format),
+        other => {
+            log::warn!(
+                "Clipboard unsupported image format: {:?}, convert to PNG instead.",
+                item.format
+            );
+            let png_bytes = convert_image_to_png_format(item.bytes(), other)?;
+            set_data_to_clipboard(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
+        }
     }
     Ok(())
 }
 
-fn to_png_format(bytes: &[u8], image_format: ImageFormat) -> Result<Vec<u8>> {
+fn convert_image_to_png_format(bytes: &[u8], image_format: ImageFormat) -> Result<Vec<u8>> {
     let image = image::load_from_memory_with_format(bytes, image_format.into())?;
     let mut output_buf = Vec::new();
     image.write_to(
@@ -187,33 +194,54 @@ fn to_png_format(bytes: &[u8], image_format: ImageFormat) -> Result<Vec<u8>> {
     Ok(output_buf)
 }
 
-fn read_from_clipboard_inner() -> Result<ClipboardItem> {
+fn read_from_clipboard_inner() -> Option<ClipboardItem> {
     unsafe {
-        OpenClipboard(None)?;
-        let Some(item_format) = find_best_match_format(&ALL_FORMATS_SET) else {
-            anyhow::bail!("No available content in clipboard");
-        };
-
-        let item_type = format_to_type(item_format);
-        let entries = match item_type {
-            ClipboardFormatType::Text => {
-                if let Some(string) = read_string_from_clipboard() {
-                    vec![string]
-                } else {
-                    vec![]
-                }
-            }
-            ClipboardFormatType::Image => {
-                if let Some(image) = read_image_from_clipboard() {
-                    vec![image]
-                } else {
-                    vec![]
-                }
-            }
-        };
-        debug_assert!(!entries.is_empty());
-        Ok(ClipboardItem { entries })
+        OpenClipboard(None).log_err()?;
+        find_best_match_format(|item_format| match format_to_type(item_format) {
+            ClipboardFormatType::Text => read_string_from_clipboard(),
+            ClipboardFormatType::Image => read_image_from_clipboard(item_format),
+        })
     }
+}
+
+// Here we enumerate all formats on clipboard, find the first one we can process.
+// The reason we dont use `GetPriorityClipboardFormat` here is that it sometimes return the wrong format.
+// Say copy a JPEG image from Word, there are serveral formats in clipboard:
+// Jpeg, Png, Svg
+// If we use `GetPriorityClipboardFormat` we will get Svg back, which is not what we want.
+fn find_best_match_format<F>(f: F) -> Option<ClipboardItem>
+where
+    F: Fn(u32) -> Option<ClipboardEntry>,
+{
+    let count = unsafe { CountClipboardFormats() };
+    let mut clipboard_format = 0;
+    for _ in 0..count {
+        clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
+        let Some(item_format) = ALL_FORMATS_SET.get(&clipboard_format) else {
+            continue;
+        };
+        if let Some(entry) = f(*item_format) {
+            return Some(ClipboardItem {
+                entries: vec![entry],
+            });
+        }
+    }
+    // log the formats that we dont support
+    {
+        clipboard_format = 0;
+        for _ in 0..count {
+            clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
+            let mut buffer = [0u16; 64];
+            unsafe { GetClipboardFormatNameW(clipboard_format, &mut buffer) };
+            let format_name = String::from_utf16_lossy(&buffer);
+            log::warn!(
+                "Try to paste with unsupported clipboard format: {}, {}.",
+                clipboard_format,
+                format_name
+            );
+        }
+    }
+    None
 }
 
 fn read_string_from_clipboard() -> Option<ClipboardEntry> {
@@ -264,48 +292,12 @@ fn read_metadata_from_clipboard() -> Option<String> {
     }
 }
 
-fn read_image_from_clipboard() -> Option<ClipboardEntry> {
-    let Some(format_number) = find_best_match_format(&IMAGE_FORMATS_SET) else {
-        return None;
-    };
-    let Some(image_format) = format_number_to_image_format(format_number) else {
+fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
+    let Some(image_format) = format_number_to_image_format(format) else {
         return None;
     };
     println!("==> image: {:?}", image_format);
-    read_image_for_type(format_number, *image_format)
-}
-
-// Here we enumerate all formats on clipboard, find the first one we can process.
-// The reason we dont use `GetPriorityClipboardFormat` here is that it sometimes return the wrong format.
-// Say copy a JPEG image from Word, there are serveral formats in clipboard:
-// Jpeg, Png, Svg
-// If we use `GetPriorityClipboardFormat` we will get Svg back, which is not what we want.
-fn find_best_match_format(formats_set: &LazyLock<FxHashSet<u32>>) -> Option<u32> {
-    let count = unsafe { CountClipboardFormats() };
-    let mut clipboard_format = 0;
-    for _ in 0..count {
-        clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
-        let Some(image_format) = formats_set.get(&clipboard_format) else {
-            continue;
-        };
-        return Some(*image_format);
-    }
-    // log the formats that we dont support
-    {
-        clipboard_format = 0;
-        for _ in 0..count {
-            clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
-            let mut buffer = [0u16; 64];
-            unsafe { GetClipboardFormatNameW(clipboard_format, &mut buffer) };
-            let format_name = String::from_utf16_lossy(&buffer);
-            log::warn!(
-                "Try to paste with unsupported clipboard format: {}, {}.",
-                clipboard_format,
-                format_name
-            );
-        }
-    }
-    None
+    read_image_for_type(format, *image_format)
 }
 
 #[inline]
