@@ -6,7 +6,6 @@ use itertools::Itertools;
 use util::ResultExt;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
-    Globalization::u_memcpy,
     System::{
         DataExchange::{
             CloseClipboard, CountClipboardFormats, EmptyClipboard, EnumClipboardFormats,
@@ -114,11 +113,12 @@ fn write_string_to_clipboard(item: &ClipboardString) -> Result<()> {
     Ok(())
 }
 
-fn set_data_to_clipboard(data: &[u16], format: u32) -> Result<()> {
+fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
     unsafe {
-        let global = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2)?;
+        let global = GlobalAlloc(GMEM_MOVEABLE, data.len() * std::mem::size_of::<T>())?;
         let handle = GlobalLock(global);
-        u_memcpy(handle as _, data.as_ptr(), data.len() as _);
+        // u_memcpy(handle as _, data.as_ptr(), data.len() as _);
+        std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
         let _ = GlobalUnlock(global);
         SetClipboardData(format, HANDLE(global.0))?;
     }
@@ -129,14 +129,15 @@ fn write_image_to_clipboard(item: &Image) -> Result<()> {
     if item.format != ImageFormat::Png {
         anyhow::bail!("Clipboard unsupported image format: {:?}", item.format);
     }
-    unsafe {
-        let data = item.bytes();
-        let global = GlobalAlloc(GMEM_MOVEABLE, data.len())?;
-        let handle = GlobalLock(global);
-        std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
-        let _ = GlobalUnlock(global);
-        SetClipboardData(*CLIPBOARD_PNG_FORMAT, HANDLE(global.0))?;
-    }
+    set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?;
+    // unsafe {
+    //     let data = item.bytes();
+    //     let global = GlobalAlloc(GMEM_MOVEABLE, data.len())?;
+    //     let handle = GlobalLock(global);
+    //     std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
+    //     let _ = GlobalUnlock(global);
+    //     SetClipboardData(*CLIPBOARD_PNG_FORMAT, HANDLE(global.0))?;
+    // }
     Ok(())
 }
 
@@ -247,7 +248,7 @@ fn check_available_formats(formats: &[u32]) -> Option<u32> {
                 let mut buffer = [0u16; 64];
                 unsafe { GetClipboardFormatNameW(clipboard_format, &mut buffer) };
                 let format_name = String::from_utf16_lossy(&buffer);
-                log::info!(
+                log::warn!(
                     "Try to paste with unsupported clipboard format: {}, {}.",
                     clipboard_format,
                     format_name
