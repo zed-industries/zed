@@ -1183,7 +1183,7 @@ impl Image {
                 // TODO: Fix this
                 let pixmap = cx
                     .svg_renderer()
-                    .render_pixmap(&self.bytes, SvgSize::ScaleFactor(0.5))?;
+                    .render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
 
                 let buffer =
                     image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
