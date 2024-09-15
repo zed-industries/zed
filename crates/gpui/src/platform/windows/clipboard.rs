@@ -44,15 +44,7 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
     formats_map
 });
-static FORMATS_NUMBER_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
-    let mut formats_map = FxHashMap::default();
-    formats_map.insert(*CLIPBOARD_PNG_FORMAT, ImageFormat::Png);
-    formats_map.insert(*CLIPBOARD_GIF_FORMAT, ImageFormat::Gif);
-    formats_map.insert(*CLIPBOARD_JPG_FORMAT, ImageFormat::Jpeg);
-    formats_map.insert(*CLIPBOARD_SVG_FORMAT, ImageFormat::Svg);
-    formats_map
-});
-static ALL_FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
+static FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
     let mut formats_map = FxHashSet::default();
     formats_map.insert(CF_UNICODETEXT.0 as u32);
     formats_map.insert(*CLIPBOARD_PNG_FORMAT);
@@ -61,12 +53,12 @@ static ALL_FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
     formats_map.insert(*CLIPBOARD_SVG_FORMAT);
     formats_map
 });
-static IMAGE_FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
-    let mut formats_map = FxHashSet::default();
-    formats_map.insert(*CLIPBOARD_PNG_FORMAT);
-    formats_map.insert(*CLIPBOARD_GIF_FORMAT);
-    formats_map.insert(*CLIPBOARD_JPG_FORMAT);
-    formats_map.insert(*CLIPBOARD_SVG_FORMAT);
+static FORMATS_NUMBER_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
+    let mut formats_map = FxHashMap::default();
+    formats_map.insert(*CLIPBOARD_PNG_FORMAT, ImageFormat::Png);
+    formats_map.insert(*CLIPBOARD_GIF_FORMAT, ImageFormat::Gif);
+    formats_map.insert(*CLIPBOARD_JPG_FORMAT, ImageFormat::Jpeg);
+    formats_map.insert(*CLIPBOARD_SVG_FORMAT, ImageFormat::Svg);
     formats_map
 });
 
@@ -217,7 +209,7 @@ where
     let mut clipboard_format = 0;
     for _ in 0..count {
         clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
-        let Some(item_format) = ALL_FORMATS_SET.get(&clipboard_format) else {
+        let Some(item_format) = FORMATS_SET.get(&clipboard_format) else {
             continue;
         };
         if let Some(entry) = f(*item_format) {
