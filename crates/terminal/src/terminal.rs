@@ -331,6 +331,8 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
+        let working_directory = working_directory.or_else(|| Some(util::paths::home_dir().clone()));
+
         let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
