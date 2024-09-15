@@ -1,21 +1,19 @@
 use std::sync::LazyLock;
 
 use anyhow::Result;
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use serde_json::to_vec;
 use util::ResultExt;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
-    Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_BITFIELDS, RGBQUAD},
     System::{
         DataExchange::{
             CloseClipboard, CountClipboardFormats, EmptyClipboard, EnumClipboardFormats,
-            GetClipboardData, GetClipboardFormatNameW, GetPriorityClipboardFormat,
-            IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+            GetClipboardData, GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard,
+            RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
-        Ole::{CF_DIB, CF_DIBV5, CF_UNICODETEXT},
+        Ole::CF_UNICODETEXT,
     },
 };
 use windows_core::PCWSTR;
@@ -36,26 +34,7 @@ static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
 static CLIPBOARD_JPG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("JFIF")));
 
-// Helper format list
-static AVAILABLE_FORMATS: LazyLock<[u32; 5]> = LazyLock::new(|| {
-    [
-        CF_UNICODETEXT.0 as u32,
-        *CLIPBOARD_SVG_FORMAT,
-        *CLIPBOARD_GIF_FORMAT,
-        *CLIPBOARD_PNG_FORMAT,
-        *CLIPBOARD_JPG_FORMAT,
-    ]
-});
-static AVAILABLE_IMAGE_FORMATS: LazyLock<[u32; 4]> = LazyLock::new(|| {
-    [
-        *CLIPBOARD_SVG_FORMAT,
-        *CLIPBOARD_GIF_FORMAT,
-        *CLIPBOARD_PNG_FORMAT,
-        *CLIPBOARD_JPG_FORMAT,
-    ]
-});
-
-// Helper struct
+// Helper maps and sets
 static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::new(|| {
     let mut formats_map = FxHashMap::default();
     formats_map.insert(CF_UNICODETEXT.0 as u32, ClipboardFormatType::Text);
@@ -63,6 +42,31 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_GIF_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
+    formats_map
+});
+static FORMATS_NUMBER_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
+    let mut formats_map = FxHashMap::default();
+    formats_map.insert(*CLIPBOARD_PNG_FORMAT, ImageFormat::Png);
+    formats_map.insert(*CLIPBOARD_GIF_FORMAT, ImageFormat::Gif);
+    formats_map.insert(*CLIPBOARD_JPG_FORMAT, ImageFormat::Jpeg);
+    formats_map.insert(*CLIPBOARD_SVG_FORMAT, ImageFormat::Svg);
+    formats_map
+});
+static ALL_FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
+    let mut formats_map = FxHashSet::default();
+    formats_map.insert(CF_UNICODETEXT.0 as u32);
+    formats_map.insert(*CLIPBOARD_PNG_FORMAT);
+    formats_map.insert(*CLIPBOARD_GIF_FORMAT);
+    formats_map.insert(*CLIPBOARD_JPG_FORMAT);
+    formats_map.insert(*CLIPBOARD_SVG_FORMAT);
+    formats_map
+});
+static IMAGE_FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
+    let mut formats_map = FxHashSet::default();
+    formats_map.insert(*CLIPBOARD_PNG_FORMAT);
+    formats_map.insert(*CLIPBOARD_GIF_FORMAT);
+    formats_map.insert(*CLIPBOARD_JPG_FORMAT);
+    formats_map.insert(*CLIPBOARD_SVG_FORMAT);
     formats_map
 });
 
@@ -83,6 +87,7 @@ fn register_clipboard_format(format: PCWSTR) -> u32 {
     ret
 }
 
+#[inline]
 fn format_to_type(item_format: u32) -> &'static ClipboardFormatType {
     FORMATS_MAP.get(&item_format).unwrap()
 }
@@ -151,16 +156,24 @@ fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
 
 fn write_image_to_clipboard(item: &Image) -> Result<()> {
     match item.format {
+        ImageFormat::Svg => set_data_to_clipboard(item.bytes(), *CLIPBOARD_SVG_FORMAT)?,
+        ImageFormat::Gif => set_data_to_clipboard(item.bytes(), *CLIPBOARD_GIF_FORMAT)?,
         ImageFormat::Png => set_data_to_clipboard(item.bytes(), *CLIPBOARD_PNG_FORMAT)?,
+        ImageFormat::Jpeg => set_data_to_clipboard(item.bytes(), *CLIPBOARD_JPG_FORMAT)?,
         _ => anyhow::bail!("Clipboard unsupported image format: {:?}", item.format),
     }
     Ok(())
 }
 
+// fn to_png_format(bytes: &[u8]) -> Result<()> {
+//     let x = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?;
+//     x.as_bytes().to_vec()
+// }
+
 fn read_from_clipboard_inner() -> Result<ClipboardItem> {
     unsafe {
         OpenClipboard(None)?;
-        let Some(item_format) = check_available_formats(&*AVAILABLE_FORMATS) else {
+        let Some(item_format) = find_best_match_format(&ALL_FORMATS_SET) else {
             anyhow::bail!("No available content in clipboard");
         };
 
@@ -235,100 +248,62 @@ fn read_metadata_from_clipboard() -> Option<String> {
 }
 
 fn read_image_from_clipboard() -> Option<ClipboardEntry> {
-    unsafe {
-        let Some(image_format) = check_available_formats(&*AVAILABLE_IMAGE_FORMATS) else {
-            return None;
+    let Some(format_number) = find_best_match_format(&IMAGE_FORMATS_SET) else {
+        return None;
+    };
+    let Some(image_format) = format_number_to_image_format(format_number) else {
+        return None;
+    };
+    println!("==> image: {:?}", image_format);
+    read_image_for_type(format_number, *image_format)
+}
+
+// Here we enumerate all formats on clipboard, find the first one we can process.
+// The reason we dont use `GetPriorityClipboardFormat` here is that it sometimes return the wrong format.
+// Say copy a JPEG image from Word, there are serveral formats in clipboard:
+// Jpeg, Png, Svg
+// If we use `GetPriorityClipboardFormat` we will get Svg back, which is not what we want.
+fn find_best_match_format(formats_set: &LazyLock<FxHashSet<u32>>) -> Option<u32> {
+    let count = unsafe { CountClipboardFormats() };
+    let mut clipboard_format = 0;
+    for _ in 0..count {
+        clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
+        let Some(image_format) = formats_set.get(&clipboard_format) else {
+            continue;
         };
-        // if image_format == *CLIPBOARD_PNG_FORMAT {
-        //     let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
-        //     let image_ptr = GlobalLock(global);
-        //     let iamge_size = GlobalSize(global);
-        //     let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
-        //     let _ = GlobalUnlock(global);
-        //     let id = hash(&bytes);
-        //     Some(ClipboardEntry::Image(Image {
-        //         format: ImageFormat::Png,
-        //         bytes,
-        //         id,
-        //     }))
-        // } else if image_format == CF_DIB.0 as u32 {
-        // read_gif(*CLIPBOARD_GIF_FORMAT)
-        // read_jpeg(*CLIPBOARD_JPG_FORMAT)
-        read_svg(*CLIPBOARD_SVG_FORMAT)
-        // } else {
-        // None
-        // }
+        return Some(*image_format);
     }
-}
-
-fn check_available_formats(formats: &[u32]) -> Option<u32> {
-    let ret = unsafe { GetPriorityClipboardFormat(formats) };
-    if ret <= 0 {
-        if ret == -1 {
-            let count = unsafe { CountClipboardFormats() };
-            let mut clipboard_format = 0;
-            for _ in 0..count {
-                clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
-                let mut buffer = [0u16; 64];
-                unsafe { GetClipboardFormatNameW(clipboard_format, &mut buffer) };
-                let format_name = String::from_utf16_lossy(&buffer);
-                log::warn!(
-                    "Try to paste with unsupported clipboard format: {}, {}.",
-                    clipboard_format,
-                    format_name
-                );
-            }
+    // log the formats that we dont support
+    {
+        clipboard_format = 0;
+        for _ in 0..count {
+            clipboard_format = unsafe { EnumClipboardFormats(clipboard_format) };
+            let mut buffer = [0u16; 64];
+            unsafe { GetClipboardFormatNameW(clipboard_format, &mut buffer) };
+            let format_name = String::from_utf16_lossy(&buffer);
+            log::warn!(
+                "Try to paste with unsupported clipboard format: {}, {}.",
+                clipboard_format,
+                format_name
+            );
         }
-        None
-    } else {
-        Some(ret as u32)
     }
+    None
 }
 
-fn read_gif(image_format: u32) -> Option<ClipboardEntry> {
+#[inline]
+fn format_number_to_image_format(format_number: u32) -> Option<&'static ImageFormat> {
+    FORMATS_NUMBER_MAP.get(&format_number)
+}
+
+fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<ClipboardEntry> {
     unsafe {
-        let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
+        let global = HGLOBAL(GetClipboardData(format_number).log_err()?.0);
         let image_ptr = GlobalLock(global);
         let iamge_size = GlobalSize(global);
         let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
         let _ = GlobalUnlock(global);
         let id = hash(&bytes);
-        Some(ClipboardEntry::Image(Image {
-            format: ImageFormat::Gif,
-            bytes,
-            id,
-        }))
-    }
-}
-
-fn read_jpeg(image_format: u32) -> Option<ClipboardEntry> {
-    unsafe {
-        let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
-        let image_ptr = GlobalLock(global);
-        let iamge_size = GlobalSize(global);
-        let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
-        let _ = GlobalUnlock(global);
-        let id = hash(&bytes);
-        Some(ClipboardEntry::Image(Image {
-            format: ImageFormat::Jpeg,
-            bytes,
-            id,
-        }))
-    }
-}
-
-fn read_svg(image_format: u32) -> Option<ClipboardEntry> {
-    unsafe {
-        let global = HGLOBAL(GetClipboardData(image_format).log_err()?.0);
-        let image_ptr = GlobalLock(global);
-        let iamge_size = GlobalSize(global);
-        let bytes = std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec();
-        let _ = GlobalUnlock(global);
-        let id = hash(&bytes);
-        Some(ClipboardEntry::Image(Image {
-            format: ImageFormat::Svg,
-            bytes,
-            id,
-        }))
+        Some(ClipboardEntry::Image(Image { format, bytes, id }))
     }
 }
