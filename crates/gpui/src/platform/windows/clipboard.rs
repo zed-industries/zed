@@ -166,7 +166,7 @@ fn write_string_to_clipboard(item: &ClipboardString) -> Result<()> {
 
 fn set_data_to_clipboard<T>(data: &[T], format: u32) -> Result<()> {
     unsafe {
-        let global = GlobalAlloc(GMEM_MOVEABLE, data.len() * std::mem::size_of::<T>())?;
+        let global = GlobalAlloc(GMEM_MOVEABLE, std::mem::size_of_val(data))?;
         let handle = GlobalLock(global);
         std::ptr::copy_nonoverlapping(data.as_ptr(), handle as _, data.len());
         let _ = GlobalUnlock(global);
@@ -308,9 +308,7 @@ fn read_hash_from_clipboard() -> Option<u64> {
 }
 
 fn read_metadata_from_clipboard() -> Option<String> {
-    if unsafe { IsClipboardFormatAvailable(*CLIPBOARD_METADATA_FORMAT).is_err() } {
-        return None;
-    }
+    unsafe { IsClipboardFormatAvailable(*CLIPBOARD_METADATA_FORMAT).log_err()? };
     let global = SmartGlobal::from_raw_ptr(
         unsafe { GetClipboardData(*CLIPBOARD_METADATA_FORMAT).log_err() }?.0,
     );
@@ -319,9 +317,7 @@ fn read_metadata_from_clipboard() -> Option<String> {
 }
 
 fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
-    let Some(image_format) = format_number_to_image_format(format) else {
-        return None;
-    };
+    let image_format = format_number_to_image_format(format)?;
     read_image_for_type(format, *image_format)
 }
 
