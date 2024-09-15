@@ -187,13 +187,11 @@ fn convert_image_to_png_format(bytes: &[u8], image_format: ImageFormat) -> Resul
 }
 
 fn read_from_clipboard_inner() -> Option<ClipboardItem> {
-    unsafe {
-        OpenClipboard(None).log_err()?;
-        find_best_match_format(|item_format| match format_to_type(item_format) {
-            ClipboardFormatType::Text => read_string_from_clipboard(),
-            ClipboardFormatType::Image => read_image_from_clipboard(item_format),
-        })
-    }
+    unsafe { OpenClipboard(None) }.log_err()?;
+    with_best_match_format(|item_format| match format_to_type(item_format) {
+        ClipboardFormatType::Text => read_string_from_clipboard(),
+        ClipboardFormatType::Image => read_image_from_clipboard(item_format),
+    })
 }
 
 // Here we enumerate all formats on clipboard, find the first one we can process.
@@ -201,7 +199,7 @@ fn read_from_clipboard_inner() -> Option<ClipboardItem> {
 // Say copy a JPEG image from Word, there are serveral formats in clipboard:
 // Jpeg, Png, Svg
 // If we use `GetPriorityClipboardFormat` we will get Svg back, which is not what we want.
-fn find_best_match_format<F>(f: F) -> Option<ClipboardItem>
+fn with_best_match_format<F>(f: F) -> Option<ClipboardItem>
 where
     F: Fn(u32) -> Option<ClipboardEntry>,
 {
