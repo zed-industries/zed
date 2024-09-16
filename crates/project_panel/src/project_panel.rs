@@ -2767,7 +2767,6 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle)
                 .child(
                     Button::new("open_project", "Open a project")
-                        .style(ButtonStyle::Filled)
                         .full_width()
                         .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(cx.listener(|this, _, cx| {
