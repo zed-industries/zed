@@ -103,6 +103,7 @@ impl DapStore {
                 .insert(Breakpoint {
                     active_position: None,
                     cache_position: serialize_breakpoint.position.saturating_sub(1u32),
+                    kind: BreakpointKind::Standard,
                 });
         }
     }
@@ -262,11 +263,19 @@ impl DapStore {
             .detach()
     }
 }
+type LogMessage = String;
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum BreakpointKind {
+    Standard,
+    Log(LogMessage),
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Breakpoint {
     pub active_position: Option<text::Anchor>,
     pub cache_position: u32,
+    pub kind: BreakpointKind,
 }
 
 impl Breakpoint {
@@ -318,11 +327,16 @@ impl Breakpoint {
             .unwrap_or(self.cache_position) as u64
             + 1u64;
 
+        let log_message = match &self.kind {
+            BreakpointKind::Standard => None,
+            BreakpointKind::Log(log_message) => Some(log_message.clone()),
+        };
+
         SourceBreakpoint {
             line,
             condition: None,
             hit_condition: None,
-            log_message: None,
+            log_message,
             column: None,
             mode: None,
         }
