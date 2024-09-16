@@ -1370,7 +1370,13 @@ impl Project {
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
-            _ => 0,
+            _ => {
+                if self.ssh_session.is_some() {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
@@ -1817,6 +1823,15 @@ impl Project {
     pub fn is_local_or_ssh(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Remote { .. } => false,
+        }
+    }
+
+    pub fn is_via_ssh(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => {
+                self.ssh_session.is_some()
+            }
             ProjectClientState::Remote { .. } => false,
         }
     }
