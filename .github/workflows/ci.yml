@@ -284,22 +284,9 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
-      - name: "Setup jq"
-        uses: dcarbone/install-jq-action@8867ddb4788346d7c22b72ea2e2ffe4d514c7bcb # v2
-
-      - name: Set up Clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-15 clang-15 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
-          echo "/usr/lib/llvm-15/bin" >> $GITHUB_PATH
 
       - name: Install Linux dependencies
         run: ./script/linux
-
-      - name: rustup
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -368,22 +355,9 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
-      - name: "Setup jq"
-        uses: dcarbone/install-jq-action@8867ddb4788346d7c22b72ea2e2ffe4d514c7bcb # v2
-
-      - name: Set up Clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-15 clang-15 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
-          echo "/usr/lib/llvm-15/bin" >> $GITHUB_PATH
 
       - name: Install Linux dependencies
         run: ./script/linux
-
-      - name: rustup
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
