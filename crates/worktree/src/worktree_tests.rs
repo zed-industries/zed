@@ -673,7 +673,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Vec::new();
+                project_settings.file_scan_exclusions = Some(Vec::new());
             });
         });
     });
@@ -910,7 +910,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions =
-                    vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()];
+                    Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
             });
         });
     });
@@ -945,7 +945,8 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = vec!["**/node_modules/**".to_string()];
+                project_settings.file_scan_exclusions =
+                    Some(vec!["**/node_modules/**".to_string()]);
             });
         });
     });
@@ -1008,11 +1009,11 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = vec![
+                project_settings.file_scan_exclusions = Some(vec![
                     "**/.git".to_string(),
                     "node_modules/".to_string(),
                     "build_output".to_string(),
-                ];
+                ]);
             });
         });
     });

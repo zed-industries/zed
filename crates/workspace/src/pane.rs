@@ -158,6 +158,8 @@ actions!(
         SplitDown,
         SplitHorizontal,
         SplitVertical,
+        SwapItemLeft,
+        SwapItemRight,
         TogglePreviewTab,
         TogglePinTab,
     ]
@@ -1052,6 +1054,26 @@ impl Pane {
             index = 0;
         }
         self.activate_item(index, activate_pane, activate_pane, cx);
+    }
+
+    pub fn swap_item_left(&mut self, cx: &mut ViewContext<Self>) {
+        let index = self.active_item_index;
+        if index == 0 {
+            return;
+        }
+
+        self.items.swap(index, index - 1);
+        self.activate_item(index - 1, true, true, cx);
+    }
+
+    pub fn swap_item_right(&mut self, cx: &mut ViewContext<Self>) {
+        let index = self.active_item_index;
+        if index + 1 == self.items.len() {
+            return;
+        }
+
+        self.items.swap(index, index + 1);
+        self.activate_item(index + 1, true, true, cx);
     }
 
     pub fn close_active_item(
@@ -2574,6 +2596,8 @@ impl Render for Pane {
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
             }))
+            .on_action(cx.listener(|pane, _: &SwapItemLeft, cx| pane.swap_item_left(cx)))
+            .on_action(cx.listener(|pane, _: &SwapItemRight, cx| pane.swap_item_right(cx)))
             .on_action(cx.listener(|pane, action, cx| {
                 pane.toggle_pin_tab(action, cx);
             }))

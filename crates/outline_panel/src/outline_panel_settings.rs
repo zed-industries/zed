@@ -1,5 +1,4 @@
-use anyhow;
-use gpui::{px, Pixels};
+use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -11,51 +10,66 @@ pub enum OutlinePanelDockPosition {
     Right,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, JsonSchema)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct OutlinePanelSettings {
-    /// Whether to show the outline panel button in the status bar.
     pub button: bool,
-    /// Customize default width (in pixels) taken by outline panel
     pub default_width: Pixels,
-    /// The position of outline panel
     pub dock: OutlinePanelDockPosition,
-    /// Whether to show file icons in the outline panel.
     pub file_icons: bool,
-    /// Whether to show folder icons or chevrons for directories in the outline panel.
     pub folder_icons: bool,
-    /// Whether to show the git status in the outline panel.
     pub git_status: bool,
-    /// Amount of indentation (in pixels) for nested items.
-    pub indent_size: Pixels,
-    /// Whether to reveal it in the outline panel automatically,
-    /// when a corresponding project entry becomes active.
-    /// Gitignored entries are never auto revealed.
+    pub indent_size: f32,
     pub auto_reveal_entries: bool,
-    /// Whether to fold directories automatically
-    /// when directory has only one directory inside.
     pub auto_fold_dirs: bool,
 }
 
-impl Default for OutlinePanelSettings {
-    fn default() -> Self {
-        Self {
-            button: true,
-            default_width: px(240.),
-            dock: OutlinePanelDockPosition::Left,
-            file_icons: true,
-            folder_icons: true,
-            auto_fold_dirs: true,
-            auto_reveal_entries: true,
-            indent_size: px(20.),
-            git_status: true,
-        }
-    }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct OutlinePanelSettingsContent {
+    /// Whether to show the outline panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Customize default width (in pixels) taken by outline panel
+    ///
+    /// Default: 240
+    pub default_width: Option<f32>,
+    /// The position of outline panel
+    ///
+    /// Default: left
+    pub dock: Option<OutlinePanelDockPosition>,
+    /// Whether to show file icons in the outline panel.
+    ///
+    /// Default: true
+    pub file_icons: Option<bool>,
+    /// Whether to show folder icons or chevrons for directories in the outline panel.
+    ///
+    /// Default: true
+    pub folder_icons: Option<bool>,
+    /// Whether to show the git status in the outline panel.
+    ///
+    /// Default: true
+    pub git_status: Option<bool>,
+    /// Amount of indentation (in pixels) for nested items.
+    ///
+    /// Default: 20
+    pub indent_size: Option<f32>,
+    /// Whether to reveal it in the outline panel automatically,
+    /// when a corresponding project entry becomes active.
+    /// Gitignored entries are never auto revealed.
+    ///
+    /// Default: true
+    pub auto_reveal_entries: Option<bool>,
+    /// Whether to fold directories automatically
+    /// when directory has only one directory inside.
+    ///
+    /// Default: true
+    pub auto_fold_dirs: Option<bool>,
 }
 
 impl Settings for OutlinePanelSettings {
     const KEY: Option<&'static str> = Some("outline_panel");
 
-    type FileContent = Self;
+    type FileContent = OutlinePanelSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,

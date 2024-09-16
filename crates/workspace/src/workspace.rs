@@ -4644,7 +4644,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     |cx| {
                         cx.new_view(|_| {
                             MessageNotification::new("Failed to load the database file.")
-                                .with_click_message("Click to let us know about this error")
+                                .with_click_message("File an issue")
                                 .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
                         })
                     },
@@ -6465,7 +6465,7 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = AutosaveSetting::OnWindowChange;
+                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
                 })
             });
             item.is_dirty = true;
@@ -6485,7 +6485,7 @@ mod tests {
             cx.focus_self();
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = AutosaveSetting::OnFocusChange;
+                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;
@@ -6508,7 +6508,7 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = AutosaveSetting::AfterDelay { milliseconds: 500 };
+                    settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
                 })
             });
             item.is_dirty = true;
@@ -6527,7 +6527,7 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = AutosaveSetting::OnFocusChange;
+                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;

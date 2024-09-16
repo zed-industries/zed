@@ -24,12 +24,12 @@ use editor::{
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, uniform_list, Action, AnyElement, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EventEmitter,
-    FocusHandle, FocusableView, HighlightStyle, InteractiveElement, IntoElement, KeyContext, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId,
+    EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement, IntoElement,
+    KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
+    SharedString, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -1938,7 +1938,7 @@ impl OutlinePanel {
             .child(
                 ListItem::new(item_id)
                     .indent_level(depth)
-                    .indent_step_size(settings.indent_size)
+                    .indent_step_size(px(settings.indent_size))
                     .selected(is_active)
                     .when_some(icon_element, |list_item, icon_element| {
                         list_item.child(h_flex().child(icon_element))
@@ -3801,7 +3801,7 @@ impl Panel for OutlinePanel {
                     DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
                     DockPosition::Right => OutlinePanelDockPosition::Right,
                 };
-                settings.dock = dock;
+                settings.dock = Some(dock);
             },
         );
     }

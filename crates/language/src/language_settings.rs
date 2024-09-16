@@ -70,10 +70,10 @@ pub struct LanguageSettings {
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
-    /// Whether to show wrap guides (vertical rulers) in the editor.
-    /// Setting this to true will show a guide at the 'preferred_line_length' value
-    /// if softwrap is set to 'preferred_line_length', and will show any
-    /// additional guides as specified by the 'wrap_guides' setting.
+    // Whether to show wrap guides (vertical rulers) in the editor.
+    // Setting this to true will show a guide at the 'preferred_line_length' value
+    // if softwrap is set to 'preferred_line_length', and will show any
+    // additional guides as specified by the 'wrap_guides' setting.
     pub show_wrap_guides: bool,
     /// Character counts at which to show wrap guides (vertical rulers) in the editor.
     pub wrap_guides: Vec<usize>,
@@ -1027,6 +1027,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     }
 
     merge(&mut settings.tab_size, src.tab_size);
+    settings.tab_size = settings
+        .tab_size
+        .clamp(NonZeroU32::new(1).unwrap(), NonZeroU32::new(16).unwrap());
+
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
