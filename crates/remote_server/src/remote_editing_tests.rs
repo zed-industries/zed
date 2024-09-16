@@ -8,7 +8,7 @@ use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
 };
-use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, WorkspaceEdit};
+use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
 use node_runtime::FakeNodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},
@@ -383,7 +383,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     });
 
-    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|params, cx| async move {
+    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
             ..Default::default()
@@ -435,7 +435,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         .unwrap();
 
     cx.run_until_parked();
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
 }
