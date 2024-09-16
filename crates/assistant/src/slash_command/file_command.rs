@@ -462,12 +462,16 @@ pub fn build_entry_output_section(
         range,
         icon,
         label: label.into(),
-        metadata: path.and_then(|path| {
-            serde_json::to_value(FileCommandMetadata {
-                path: path.to_string_lossy().to_string(),
+        metadata: if is_directory {
+            None
+        } else {
+            path.and_then(|path| {
+                serde_json::to_value(FileCommandMetadata {
+                    path: path.to_string_lossy().to_string(),
+                })
+                .ok()
             })
-            .ok()
-        }),
+        },
     }
 }
 
