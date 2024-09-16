@@ -4102,7 +4102,7 @@ dependencies = [
  "ui",
  "url",
  "util",
- "wasm-encoder 0.21.0",
+ "wasm-encoder 0.215.0",
  "wasmparser 0.215.0",
  "wasmtime",
  "wasmtime-wasi",
@@ -12798,15 +12798,6 @@ name = "wasm-bindgen-shared"
 version = "0.2.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c62a0a307cb4a311d3a07867860911ca130c3494e8c2719593806c08bc5d0484"
-
-[[package]]
-name = "wasm-encoder"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29ab2fe77b325731603297debb4573e002d06ae0aa1f4dc108585c81961e0609"
-dependencies = [
- "leb128",
-]
 
 [[package]]
 name = "wasm-encoder"
