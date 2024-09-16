@@ -1026,14 +1026,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         }
     }
 
-    if let Some(tab_size) = src.tab_size {
-        /*
-        The tab size should be between 1 and 16.
-        max tab size value same as jetbrains settings value
-        */
-        let tab_size = tab_size.get().clamp(1, 16);
-        merge(&mut settings.tab_size, NonZeroU32::new(tab_size));
-    }
+    merge(&mut settings.tab_size, src.tab_size);
+    settings.tab_size = settings
+        .tab_size
+        .clamp(NonZeroU32::new(1).unwrap(), NonZeroU32::new(16).unwrap());
 
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
