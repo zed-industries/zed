@@ -4091,6 +4091,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         cx.assert_editor_state(wrapped_text);
     }
 
+    // Test that different comment prefixes are supported.
     {
         let language = Arc::new(Language::new(
             LanguageConfig {

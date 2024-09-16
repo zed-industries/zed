@@ -6725,8 +6725,6 @@ impl Editor {
                 }
             }
 
-            // todo!("only rewrap if we're in a comment, markdown text or plain text")
-
             let start = Point::new(start_row, 0);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
