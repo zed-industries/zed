@@ -9060,6 +9060,7 @@ dependencies = [
  "http_client",
  "language",
  "log",
+ "lsp",
  "node_runtime",
  "project",
  "remote",

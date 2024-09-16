@@ -315,7 +315,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
-    let mut fake_rust_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "the-rust-language-server",
@@ -335,7 +335,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
     );
-    let mut fake_json_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_json_servers = language_registry.register_fake_lsp(
         "JSON",
         FakeLspAdapter {
             name: "the-json-language-server",
@@ -716,7 +716,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "the-language-server",
@@ -1125,7 +1125,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             disk_based_diagnostics_progress_token: Some(progress_token.into()),
@@ -1247,7 +1247,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "the-language-server",
@@ -1324,8 +1324,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers =
-        language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
@@ -1404,8 +1403,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
-    let mut fake_servers =
-        language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
@@ -1445,7 +1443,7 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "the-language-server",
@@ -1506,14 +1504,14 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
-    let mut fake_rust_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "rust-lsp",
             ..Default::default()
         },
     );
-    let mut fake_js_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_js_servers = language_registry.register_fake_lsp(
         "JavaScript",
         FakeLspAdapter {
             name: "js-lsp",
@@ -1627,7 +1625,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             disk_based_diagnostics_sources: vec!["disk".into()],
@@ -2049,8 +2047,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers =
-        language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
@@ -2421,8 +2418,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers =
-        language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
@@ -2515,7 +2511,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(typescript_lang());
-    let mut fake_language_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_language_servers = language_registry.register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -2607,7 +2603,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(typescript_lang());
-    let mut fake_language_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_language_servers = language_registry.register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -2668,7 +2664,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(typescript_lang());
-    let mut fake_language_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_language_servers = language_registry.register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -3815,7 +3811,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -4702,7 +4698,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         "ESLintServer",
         "NoHoverCapabilitiesServer",
     ];
-    let mut fake_tsx_language_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_tsx_language_servers = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[0],
@@ -4713,7 +4709,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _a = language_registry.register_fake_lsp_adapter(
+    let _a = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[1],
@@ -4724,7 +4720,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _b = language_registry.register_fake_lsp_adapter(
+    let _b = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[2],
@@ -4735,7 +4731,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _c = language_registry.register_fake_lsp_adapter(
+    let _c = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[3],
@@ -4846,7 +4842,7 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(typescript_lang());
-    let mut fake_language_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_language_servers = language_registry.register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -4922,7 +4918,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         "ESLintServer",
         "NoActionsCapabilitiesServer",
     ];
-    let mut fake_tsx_language_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_tsx_language_servers = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[0],
@@ -4933,7 +4929,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _a = language_registry.register_fake_lsp_adapter(
+    let _a = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[1],
@@ -4944,7 +4940,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _b = language_registry.register_fake_lsp_adapter(
+    let _b = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[2],
@@ -4955,7 +4951,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let _c = language_registry.register_fake_lsp_adapter(
+    let _c = language_registry.register_fake_lsp(
         "tsx",
         FakeLspAdapter {
             name: language_server_names[3],

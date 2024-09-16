@@ -751,12 +751,13 @@ where
 pub struct FakeLspAdapter {
     pub name: &'static str,
     pub initialization_options: Option<Value>,
-    pub capabilities: lsp::ServerCapabilities,
-    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    pub prettier_plugins: Vec<&'static str>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
-    pub prettier_plugins: Vec<&'static str>,
     pub language_server_binary: LanguageServerBinary,
+
+    pub capabilities: lsp::ServerCapabilities,
+    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
 }
 
 /// Configuration of handling bracket pairs for a given language.

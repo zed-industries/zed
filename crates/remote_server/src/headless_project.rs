@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
-use language::LanguageRegistry;
+use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
@@ -29,6 +29,7 @@ pub struct HeadlessProject {
     pub lsp_store: Model<LspStore>,
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
+    pub languages: Arc<LanguageRegistry>,
 }
 
 impl HeadlessProject {
@@ -63,7 +64,7 @@ impl HeadlessProject {
                 buffer_store.clone(),
                 worktree_store.clone(),
                 environment,
-                languages,
+                languages.clone(),
                 None,
                 fs.clone(),
                 cx,
@@ -72,17 +73,16 @@ impl HeadlessProject {
             lsp_store
         });
 
-        let buffer_store_subscription = cx
-            .subscribe(
-                &buffer_store,
-                |_this, _buffer_store, event, cx| match event {
-                    BufferStoreEvent::BufferAdded(buffer) => {
-                        cx.subscribe(buffer, Self::on_buffer_event).detach();
-                    }
-                    _ => {}
-                },
-            )
-            .detach();
+        cx.subscribe(
+            &buffer_store,
+            |_this, _buffer_store, event, cx| match event {
+                BufferStoreEvent::BufferAdded(buffer) => {
+                    cx.subscribe(buffer, Self::on_buffer_event).detach();
+                }
+                _ => {}
+            },
+        )
+        .detach();
 
         let client: AnyProtoClient = session.clone().into();
 
@@ -118,6 +118,7 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             next_entry_id: Default::default(),
+            languages,
         }
     }
 
