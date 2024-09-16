@@ -4,6 +4,9 @@ FROM rust:1.81-bookworm as builder
 WORKDIR app
 COPY . .
 
+# Replace the Cargo configuration with the one used by collab.
+COPY ./.cargo/collab-config.toml ./.cargo/config.toml
+
 # Compile collab server
 ARG CARGO_PROFILE_RELEASE_PANIC=abort
 ARG GITHUB_SHA
