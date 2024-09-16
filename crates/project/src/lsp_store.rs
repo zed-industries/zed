@@ -3314,6 +3314,12 @@ impl LspStore {
         }
 
         cx.emit(LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id });
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id,
+            message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
+                Default::default(),
+            ),
+        })
     }
 
     pub fn disk_based_diagnostics_finished(
@@ -3328,6 +3334,12 @@ impl LspStore {
         }
 
         cx.emit(LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id });
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id,
+            message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                Default::default(),
+            ),
+        })
     }
 
     // After saving a buffer using a language server that doesn't provide a disk-based progress token,

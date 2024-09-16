@@ -2188,32 +2188,11 @@ impl Project {
                 cx.emit(Event::DiskBasedDiagnosticsStarted {
                     language_server_id: *language_server_id,
                 });
-                if self.is_local_or_ssh() {
-                    self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
-                        language_server_id: *language_server_id,
-                        message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                            Default::default(),
-                        ),
-                    })
-                    .ok();
-                }
             }
             LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
                 cx.emit(Event::DiskBasedDiagnosticsFinished {
                     language_server_id: *language_server_id,
                 });
-                if self.is_local_or_ssh() {
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id: *language_server_id,
-                            message:
-                                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                                    Default::default(),
-                                ),
-                        },
-                    )
-                    .ok();
-                }
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
