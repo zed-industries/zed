@@ -350,10 +350,12 @@ impl Breakpoint {
                     .map(|position| buffer.summary_for_anchor::<Point>(&position).row + 1u32)
                     .unwrap_or(self.cache_position + 1u32),
                 path,
+                kind: self.kind.clone(),
             },
             None => SerializedBreakpoint {
                 position: self.cache_position + 1u32,
                 path,
+                kind: self.kind.clone(),
             },
         }
     }
@@ -363,15 +365,21 @@ impl Breakpoint {
 pub struct SerializedBreakpoint {
     pub position: u32,
     pub path: Arc<Path>,
+    pub kind: BreakpointKind,
 }
 
 impl SerializedBreakpoint {
     pub fn to_source_breakpoint(&self) -> SourceBreakpoint {
+        let log_message = match &self.kind {
+            BreakpointKind::Standard => None,
+            BreakpointKind::Log(message) => Some(message.clone()),
+        };
+
         SourceBreakpoint {
             line: self.position as u64,
             condition: None,
             hit_condition: None,
-            log_message: None,
+            log_message,
             column: None,
             mode: None,
         }

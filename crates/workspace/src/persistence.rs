@@ -530,6 +530,7 @@ impl WorkspaceDb {
                             .push(SerializedBreakpoint {
                                 position: breakpoint.position,
                                 path: Arc::from(file_path.as_path()),
+                                kind: project::dap_store::BreakpointKind::Standard,
                             });
                     }
 
