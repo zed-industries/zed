@@ -8,9 +8,14 @@ Dart support is available through the [Dart extension](https://github.com/zed-in
 ## Dart Configuration
 
 The extension will try to find the binary `dart` by default.
+If `dart` binary is found, it will run the LSP with following arguments:
+
+```sh
+dart language-server --protocol=lsp
+```
 
 If you use other means of installing dart binary, you will need to define this in the json settings.
-This is example of using `dart` installed with [FVM](https://fvm.app/):
+This is an example of using `dart` installed by [FVM](https://fvm.app/):
 
 ```json
 {
@@ -24,6 +29,10 @@ This is example of using `dart` installed with [FVM](https://fvm.app/):
   }
 }
 ```
+
+In the example, `fvm` is installed with [Homebrew](https://brew.sh/).
+
+If you are using default approach of installing `dart` binary but want to supply specific `arguments` to the LSP, you can also use this settings.
 
 <!--
 TBD: Document Dart. pubspec.yaml
