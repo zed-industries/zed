@@ -108,7 +108,7 @@ impl DefaultColors {
             foreground_disabled: rgb(0x565656),
             foreground_placeholder: rgb(0x6e6f6f),
             foreground_selected: rgb(0xffffff),
-            separator: rgb(0xd9d9d9),
+            separator: rgb(0x3d3d3d),
         }
     }
 
