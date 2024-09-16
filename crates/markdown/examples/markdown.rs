@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, Task, View, WindowOptions};
+use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
@@ -105,8 +105,7 @@ pub fn main() {
         let node_runtime = FakeNodeRuntime::new();
         theme::init(LoadThemes::JustBase, cx);
 
-        let language_registry =
-            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        let language_registry = LanguageRegistry::new(cx.background_executor().clone());
         language_registry.set_theme(cx.theme().clone());
         let language_registry = Arc::new(language_registry);
         languages::init(language_registry.clone(), node_runtime, cx);
