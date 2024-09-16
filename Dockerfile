@@ -13,6 +13,8 @@ ENV GITHUB_SHA=$GITHUB_SHA
 # At some point in the past 3 weeks, additional dependencies on `xkbcommon` and
 # `xkbcommon-x11` were introduced into collab.
 #
+# A `git bisect` points to this commit as being the culprit: `b8e6098f60e5dabe98fe8281f993858dacc04a55`.
+#
 # Now when we try to build collab for the Docker image, it fails with the following
 # error:
 #
