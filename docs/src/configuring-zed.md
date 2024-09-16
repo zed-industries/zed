@@ -1061,6 +1061,45 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+## Network Proxy
+
+- Description: Configure a network proxy for Zed.
+- Setting: `proxy`
+- Default: `null`
+
+**Options**
+
+The proxy setting must contain a URL to the proxy.
+
+The following URI schemes are supported:
+
+- `http`
+- `https`
+- `socks4`
+- `socks4a`
+- `socks5`
+- `socks5h`
+
+`http` will be used when no scheme is specified.
+
+By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
+
+For example, to set an `http` proxy, add the following to your settings:
+
+```json
+{
+  "proxy": "http://127.0.0.1:10809"
+}
+```
+
+Or to set a `socks5` proxy:
+
+```json
+{
+  "proxy": "socks5://localhost:10808"
+}
+```
+
 ## Preview tabs
 
 - Description:

@@ -12,6 +12,9 @@ pub use registry::*;
 
 actions!(context_servers, [Restart]);
 
+/// The namespace for the context servers actions.
+const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
+
 pub fn init(cx: &mut AppContext) {
     log::info!("initializing context server client");
     manager::init(cx);

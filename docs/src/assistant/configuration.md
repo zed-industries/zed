@@ -165,7 +165,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### OpenAI Custom Models {#openai-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release, you can do so by adding the following to your Zed `settings.json`:
+The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release or you wish to control the request parameters you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -176,6 +176,12 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
           "provider": "openai",
           "name": "gpt-4o-2024-08-06",
           "max_tokens": 128000
+        },
+        {
+          "name": "o1-mini",
+          "display_name": "o1-mini",
+          "max_tokens": 128000,
+          "max_completion_tokens": 20000
         }
       ]
     }
@@ -183,7 +189,7 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 }
 ```
 
-You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). Custom models will be listed in the model dropdown in the assistant panel.
+You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the assistant panel.
 
 ### Advanced configuration {#advanced-configuration}
 

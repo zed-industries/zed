@@ -8,7 +8,7 @@ use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LineEnding, LspAdapterDelegate};
-use semantic_index::SemanticIndex;
+use semantic_index::SemanticDb;
 use std::{
     fmt::Write,
     path::PathBuf,
@@ -92,8 +92,11 @@ impl SlashCommand for SearchSlashCommand {
 
         let project = workspace.read(cx).project().clone();
         let fs = project.read(cx).fs().clone();
-        let project_index =
-            cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
+        let Some(project_index) =
+            cx.update_global(|index: &mut SemanticDb, cx| index.project_index(project, cx))
+        else {
+            return Task::ready(Err(anyhow::anyhow!("no project indexer")));
+        };
 
         cx.spawn(|cx| async move {
             let results = project_index
