@@ -1465,7 +1465,7 @@ impl Render for PromptEditor {
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
-            .py(cx.line_height() / 2.)
+            .py(cx.line_height() / 2.5)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::move_up))
@@ -1918,12 +1918,11 @@ impl PromptEditor {
             } else {
                 cx.theme().colors().text
             },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: settings.ui_font_size.into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size.into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
         EditorElement::new(

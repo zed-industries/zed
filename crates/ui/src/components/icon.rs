@@ -165,7 +165,7 @@ pub enum IconName {
     Copy,
     CountdownTimer,
     CursorIBeam,
-    CursorText,
+    TextSnippet,
     Dash,
     DatabaseZap,
     Delete,
@@ -255,6 +255,7 @@ pub enum IconName {
     Slash,
     SlashSquare,
     Sliders,
+    SlidersVertical,
     Snip,
     Space,
     Sparkle,
@@ -284,6 +285,7 @@ pub enum IconName {
     XCircle,
     ZedAssistant,
     ZedAssistantFilled,
+    ZedXCopilot,
 }
 
 #[derive(IntoElement)]

@@ -1027,6 +1027,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     }
 
     merge(&mut settings.tab_size, src.tab_size);
+    settings.tab_size = settings
+        .tab_size
+        .clamp(NonZeroU32::new(1).unwrap(), NonZeroU32::new(16).unwrap());
+
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);

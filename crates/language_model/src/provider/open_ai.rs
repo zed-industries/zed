@@ -497,13 +497,11 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
-        const INSTRUCTIONS: [&str; 6] = [
-            "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-            " - You can create an API key at: ",
-            " - Make sure your OpenAI account has credits",
-            " - Having a subscription for another service like GitHub Copilot won't work.",
-            "",
-            "Paste your OpenAI API key below and hit enter to use the assistant:",
+        const INSTRUCTIONS: [&str; 4] = [
+            "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
+            " - Create one by visiting:",
+            " - Ensure your OpenAI account has credits",
+            " - Paste your API key below and hit enter to start using the assistant",
         ];
 
         let env_var_set = self.state.read(cx).api_key_from_env;
@@ -540,6 +538,12 @@ impl Render for ConfigurationView {
                 .child(
                     Label::new(
                         format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
+                    )
+                    .size(LabelSize::Small),
+                )
+                .child(
+                    Label::new(
+                        "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
                     )
                     .size(LabelSize::Small),
                 )

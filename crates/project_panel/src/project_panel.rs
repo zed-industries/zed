@@ -2298,7 +2298,7 @@ impl ProjectPanel {
                                 .id("symlink_icon")
                                 .pr_3()
                                 .tooltip(move |cx| {
-                                    Tooltip::text(format!("{path} • Symbolic Link"), cx)
+                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
                                 })
                                 .child(
                                     Icon::new(IconName::ArrowUpRight)
@@ -2767,7 +2767,6 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle)
                 .child(
                     Button::new("open_project", "Open a project")
-                        .style(ButtonStyle::Filled)
                         .full_width()
                         .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(cx.listener(|this, _, cx| {
