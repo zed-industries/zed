@@ -4117,7 +4117,7 @@ impl ContextEditor {
                             .child(Label::new(label)),
                     )
                     .child(
-                        Button::new("open-configuration", "Configure providers")
+                        Button::new("open-configuration", "Configure Providers")
                             .size(ButtonSize::Compact)
                             .icon(Some(IconName::SlidersVertical))
                             .icon_size(IconSize::Small)
