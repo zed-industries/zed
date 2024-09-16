@@ -9,6 +9,7 @@ use settings::WorktreeId;
 use std::{
     collections::BTreeMap,
     future::Future,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -271,11 +272,30 @@ pub enum BreakpointKind {
     Log(LogMessage),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug)]
 pub struct Breakpoint {
     pub active_position: Option<text::Anchor>,
     pub cache_position: u32,
     pub kind: BreakpointKind,
+}
+
+// Custom implementation for PartialEq, Eq, and Hash is done
+// to get toggle breakpoint to solely be based on a breakpoint's
+// location. Otherwise, a user can get in situation's where there's
+// overlapping breakpoint's with them being aware.
+impl PartialEq for Breakpoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.active_position == other.active_position && self.cache_position == other.cache_position
+    }
+}
+
+impl Eq for Breakpoint {}
+
+impl Hash for Breakpoint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.active_position.hash(state);
+        self.cache_position.hash(state);
+    }
 }
 
 impl Breakpoint {

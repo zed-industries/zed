@@ -5239,12 +5239,14 @@ impl Element for EditorElement {
                         .collect();
 
                     // We want all lines with breakpoint's to have their number's painted
-                    // red & we still want to render a grey breakpoint for the gutter
+                    // debugg accent color & we still want to render a grey breakpoint for the gutter
                     // indicator so we add that in after creating breakpoint_rows for layout line nums
                     // Otherwise, when a cursor is on a line number it will always be white even
                     // if that line has a breakpoint
                     if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
-                        breakpoint_lines.insert(gutter_breakpoint_point, BreakpointKind::Standard);
+                        breakpoint_lines
+                            .entry(gutter_breakpoint_point)
+                            .or_insert(BreakpointKind::Standard);
                     }
 
                     let line_numbers = self.layout_line_numbers(
