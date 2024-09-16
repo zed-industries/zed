@@ -206,6 +206,15 @@
       "g r": ["easy_motion::Row", "both"]
     }
   },
+
+  {
+    "context": "vim_mode == easy_motion",
+    "bindings": {
+      "ctrl-c": "easy_motion::Cancel",
+      "escape": "easy_motion::Cancel"
+    }
+  },
+
   {
     "context": "vim_mode == normal",
     "bindings": {
@@ -511,12 +520,6 @@
       "k": "menu::SelectPrev",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst"
-    }
-  },
-  {
-    "context": "Editor && VimWaiting",
-    "bindings": {
-      "ctrl-c": "easy_motion::Cancel"
     }
   }
 ]

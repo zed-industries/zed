@@ -3,8 +3,8 @@
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{
-    char_kind, display_map::FoldSnapshot, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle,
-    FoldOffset, FoldPoint, RowExt, ToOffset, ToPoint,
+    display_map::FoldSnapshot, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, FoldOffset,
+    FoldPoint, RowExt, ToOffset, ToPoint,
 };
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;

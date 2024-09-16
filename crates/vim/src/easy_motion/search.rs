@@ -6,7 +6,7 @@ use editor::{
     DisplayPoint, Editor, RowExt, RowRangeExt,
 };
 use itertools::Itertools;
-use language::{char_kind, CharKind, LanguageScope};
+use language::CharClassifier;
 use multi_buffer::MultiBufferPoint;
 use text::{Bias, Selection};
 use ui::ViewContext;
@@ -114,14 +114,11 @@ pub fn word_starts(
     word_starts_in_range(map, start, end, full_word)
 }
 
-fn is_boundary(scope: &Option<LanguageScope>, full_word: bool, left: char, right: char) -> bool {
-    let left_kind = char_kind(&scope, left);
-    let right_kind = char_kind(&scope, right);
-
+fn is_boundary(classifier: &CharClassifier, full_word: bool, left: char, right: char) -> bool {
     let found = if full_word {
-        left_kind == CharKind::Whitespace && right_kind == CharKind::Word
+        classifier.is_whitespace(left) && classifier.is_word(right)
     } else {
-        left_kind != right_kind && right_kind == CharKind::Word
+        classifier.kind(left) != classifier.kind(right) && classifier.is_word(right)
     };
 
     found
@@ -133,7 +130,7 @@ pub fn word_starts_in_range(
     to: DisplayPoint,
     full_word: bool,
 ) -> Vec<DisplayPoint> {
-    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
     let mut results = Vec::new();
 
     let fold_snapshot = &map.fold_snapshot;
@@ -142,7 +139,7 @@ pub fn word_starts_in_range(
         && fold_snapshot
             .chars_at(map.display_point_to_fold_point(from, Bias::Right))
             .next()
-            .map(|first_char| char_kind(&scope, first_char) == CharKind::Word)
+            .map(|first_char| classifier.is_word(first_char))
             .unwrap_or_default()
     {
         results.push(DisplayPoint::zero());
@@ -152,7 +149,7 @@ pub fn word_starts_in_range(
     let to = map.display_point_to_fold_point(to, Bias::Right);
     while from < to {
         let Some(new_point) = find_boundary_range_fold(fold_snapshot, from, to, |left, right| {
-            is_boundary(&scope, full_word, left, right)
+            is_boundary(&classifier, full_word, left, right)
         }) else {
             break;
         };

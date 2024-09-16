@@ -1988,7 +1988,15 @@ impl Editor {
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(cx))
     }
 
-    fn key_context(&self, cx: &ViewContext<Self>) -> KeyContext {
+    pub fn hi(&self, cx: &AppContext) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults();
+        for addon in self.addons.values() {
+            addon.extend_key_context(&mut key_context, cx);
+        }
+        key_context
+    }
+
+    pub fn key_context(&self, cx: &ViewContext<Self>) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {

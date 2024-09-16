@@ -437,12 +437,12 @@ impl Vim {
                         });
                     }
                 }
-                Mode::Normal | Mode::Replace | Mode::Insert => {
+                Mode::Normal | Mode::Replace | Mode::Insert | Mode::EasyMotion => {
                     if self.active_operator().is_none() {
                         return;
                     }
                 }
-                _ => {}
+            }
         }
 
         self.motion(m, cx)

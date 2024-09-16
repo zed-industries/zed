@@ -5,8 +5,8 @@ mod test;
 
 mod change_list;
 mod command;
-mod easy_motion;
 mod digraph;
+mod easy_motion;
 mod insert;
 mod mode_indicator;
 mod motion;
@@ -19,6 +19,7 @@ mod visual;
 
 use anyhow::Result;
 use collections::HashMap;
+use easy_motion::{EasyMotion, EasyMotionAddon};
 use editor::{
     movement::{self, FindRange},
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
@@ -91,8 +92,9 @@ pub fn init(cx: &mut AppContext) {
     VimModeSetting::register(cx);
     VimSettings::register(cx);
 
-    easy_motion::init(cx);
     VimGlobals::register(cx);
+
+    easy_motion::init(cx);
 
     cx.observe_new_views(|editor: &mut Editor, cx| Vim::register(editor, cx))
         .detach();
@@ -301,7 +303,16 @@ impl Vim {
             cx.defer(|vim, cx| {
                 vim.focused(false, cx);
             })
-        })
+        });
+
+        let easy_motion = EasyMotion::new(cx, vim.downgrade());
+        editor.register_addon(EasyMotionAddon {
+            _view: easy_motion.clone(),
+        });
+
+        easy_motion.update(cx, |_, cx| {
+            easy_motion::register(editor, cx);
+        });
     }
 
     fn deactivate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
@@ -549,7 +560,9 @@ impl Vim {
                 }
             }
             Mode::Replace => CursorShape::Underscore,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::EasyMotion => {
+                CursorShape::Block
+            }
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -563,9 +576,12 @@ impl Vim {
                     true
                 }
             }
-            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                false
-            }
+            Mode::Normal
+            | Mode::Replace
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock
+            | Mode::EasyMotion => false,
         }
     }
 
@@ -575,19 +591,27 @@ impl Vim {
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
-                false
-            }
+            Mode::Insert
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock
+            | Mode::Replace
+            | Mode::EasyMotion => false,
             Mode::Normal => true,
         }
     }
 
     pub fn extend_key_context(&self, context: &mut KeyContext) {
+        if matches!(self.mode, Mode::EasyMotion) {
+            context.set("vim_mode", "easy_motion");
+            return;
+        }
         let mut mode = match self.mode {
             Mode::Normal => "normal",
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
             Mode::Insert => "insert",
             Mode::Replace => "replace",
+            Mode::EasyMotion => "easy_motion",
         }
         .to_string();
 
