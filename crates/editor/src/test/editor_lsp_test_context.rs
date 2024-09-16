@@ -57,7 +57,7 @@ impl EditorLspTestContext {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             language.name(),
             FakeLspAdapter {
                 capabilities,

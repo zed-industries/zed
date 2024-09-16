@@ -37,13 +37,13 @@ use language_model::{
 pub(crate) use model_selector::*;
 pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;
-use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
+use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    context_server_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tab_command, terminal_command, workflow_command,
+    auto_command, context_server_command, default_command, diagnostics_command, docs_command,
+    fetch_command, file_command, now_command, project_command, prompt_command, search_command,
+    symbols_command, tab_command, terminal_command, workflow_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -210,12 +210,13 @@ pub fn init(
         let client = client.clone();
         async move {
             let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticIndex::new(
+            let semantic_index = SemanticDb::new(
                 paths::embeddings_dir().join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
                 &mut cx,
             )
             .await?;
+
             cx.update(|cx| cx.set_global(semantic_index))
         }
     })
@@ -364,6 +365,7 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
 
 fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
+
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tab_command::TabSlashCommand, true);
@@ -381,6 +383,17 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         );
     }
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+
+    cx.observe_flag::<auto_command::AutoSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
+                slash_command_registry.register_command(auto_command::AutoCommand, true);
+            }
+        }
+    })
+    .detach();
 
     update_slash_commands_from_settings(cx);
     cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)

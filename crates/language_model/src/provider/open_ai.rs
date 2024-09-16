@@ -43,6 +43,7 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: usize,
     pub max_output_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -175,6 +176,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
+                    max_completion_tokens: model.max_completion_tokens,
                 },
             );
         }
@@ -239,7 +241,7 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
             let request = stream_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -370,10 +372,13 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            if let open_ai::Model::Custom { .. } = model {
-                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-            } else {
-                tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
+            match model {
+                open_ai::Model::Custom { .. }
+                | open_ai::Model::O1Mini
+                | open_ai::Model::O1Preview => {
+                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+                }
+                _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
             }
         })
         .boxed()
@@ -492,13 +497,11 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
-        const INSTRUCTIONS: [&str; 6] = [
-            "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-            " - You can create an API key at: ",
-            " - Make sure your OpenAI account has credits",
-            " - Having a subscription for another service like GitHub Copilot won't work.",
-            "",
-            "Paste your OpenAI API key below and hit enter to use the assistant:",
+        const INSTRUCTIONS: [&str; 4] = [
+            "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
+            " - Create one by visiting:",
+            " - Ensure your OpenAI account has credits",
+            " - Paste your API key below and hit enter to start using the assistant",
         ];
 
         let env_var_set = self.state.read(cx).api_key_from_env;
@@ -535,6 +538,12 @@ impl Render for ConfigurationView {
                 .child(
                     Label::new(
                         format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
+                    )
+                    .size(LabelSize::Small),
+                )
+                .child(
+                    Label::new(
+                        "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
                     )
                     .size(LabelSize::Small),
                 )

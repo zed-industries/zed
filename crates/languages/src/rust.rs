@@ -57,12 +57,13 @@ impl LspAdapter for RustLspAdapter {
                         }
                         (Some(path.into()), None)
                     }
-                    (None, Some(true)) => {
+                    (None, Some(true)) | (None, None) => {
+                        // Try to lookup rust-analyzer in PATH by default.
                         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
                         let env = delegate.shell_env().await;
                         (Some(path), Some(env))
                     }
-                    (None, Some(false)) | (None, None) => (None, None),
+                    (None, Some(false)) => (None, None),
                 };
                 path.map(|path| LanguageServerBinary {
                     path,

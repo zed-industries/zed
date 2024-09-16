@@ -1,9 +1,6 @@
 name: Release Nightly
 
 on:
-  schedule:
-    # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
-    - cron: "0 7 * * *"
   push:
     tags:
       - "nightly"

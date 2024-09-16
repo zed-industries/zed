@@ -50,9 +50,9 @@ use language::{
         deserialize_anchor, serialize_anchor, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry, Diff,
-    Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
-    PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    Buffer, BufferEvent, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry,
+    Diff, Documentation, File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
 use lsp_command::*;
@@ -62,10 +62,7 @@ use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_pat
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings, SettingsObserver};
 use remote::SshSession;
-use rpc::{
-    proto::{AnyProtoClient, SSH_PROJECT_ID},
-    ErrorCode,
-};
+use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
@@ -802,6 +799,7 @@ impl Project {
             client.add_model_message_handler(Self::handle_create_buffer_for_peer);
             client.add_model_message_handler(BufferStore::handle_update_buffer_file);
             client.add_model_message_handler(BufferStore::handle_update_diff_base);
+            client.add_model_request_handler(BufferStore::handle_update_buffer);
             LspStore::init(&client);
             SettingsObserver::init(&client);
 
@@ -1370,7 +1368,13 @@ impl Project {
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
-            _ => 0,
+            _ => {
+                if self.ssh_session.is_some() {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
@@ -1821,6 +1825,15 @@ impl Project {
         }
     }
 
+    pub fn is_via_ssh(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => {
+                self.ssh_session.is_some()
+            }
+            ProjectClientState::Remote { .. } => false,
+        }
+    }
+
     pub fn is_via_collab(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => false,
@@ -2175,32 +2188,11 @@ impl Project {
                 cx.emit(Event::DiskBasedDiagnosticsStarted {
                     language_server_id: *language_server_id,
                 });
-                if self.is_local_or_ssh() {
-                    self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
-                        language_server_id: *language_server_id,
-                        message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                            Default::default(),
-                        ),
-                    })
-                    .ok();
-                }
             }
             LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
                 cx.emit(Event::DiskBasedDiagnosticsFinished {
                     language_server_id: *language_server_id,
                 });
-                if self.is_local_or_ssh() {
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id: *language_server_id,
-                            message:
-                                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                                    Default::default(),
-                                ),
-                        },
-                    )
-                    .ok();
-                }
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,

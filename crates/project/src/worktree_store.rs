@@ -17,8 +17,8 @@ use gpui::{
 };
 use postage::oneshot;
 use rpc::{
-    proto::{self, AnyProtoClient, SSH_PROJECT_ID},
-    TypedEnvelope,
+    proto::{self, SSH_PROJECT_ID},
+    AnyProtoClient, TypedEnvelope,
 };
 use smol::{
     channel::{Receiver, Sender},

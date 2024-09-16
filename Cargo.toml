@@ -118,6 +118,7 @@ members = [
     "crates/title_bar",
     "crates/ui",
     "crates/ui_input",
+    "crates/ui_macros",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -292,6 +293,7 @@ time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
+ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
@@ -309,6 +311,7 @@ aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91d034ff8b53867143c005acfaa14609147c9a2c" }
 any_vec = "0.14"
 anyhow = "1.0.86"
+arrayvec = { version = "0.7.4", features = ["serde"] }
 ashpd = "0.9.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -325,12 +328,14 @@ bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
+blake3 = "1.5.3"
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = "0.11.6"
 cocoa = "0.26"
+convert_case = "0.6.0"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.2.6"
