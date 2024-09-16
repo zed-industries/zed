@@ -1807,65 +1807,66 @@ impl MultiBuffer {
             let prefix = cursor.slice(&Some(locator), Bias::Left, &());
             new_excerpts.append(prefix, &());
 
-            if let Some(excerpt) = cursor.item() {
-                let mut excerpt = excerpt.clone();
-                let old_text_len = excerpt.text_summary.len;
+            let Some(mut excerpt) = cursor.item().cloned() else {
+                continue;
+            };
 
-                let up_line_count = if direction.should_expand_up() {
-                    line_count
-                } else {
-                    0
-                };
+            let old_text_len = excerpt.text_summary.len;
 
-                let start_row = excerpt
-                    .range
-                    .context
-                    .start
-                    .to_point(&excerpt.buffer)
-                    .row
-                    .saturating_sub(up_line_count);
-                let start_point = Point::new(start_row, 0);
-                excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
+            let up_line_count = if direction.should_expand_up() {
+                line_count
+            } else {
+                0
+            };
 
-                let down_line_count = if direction.should_expand_down() {
-                    line_count
-                } else {
-                    0
-                };
+            let start_row = excerpt
+                .range
+                .context
+                .start
+                .to_point(&excerpt.buffer)
+                .row
+                .saturating_sub(up_line_count);
+            let start_point = Point::new(start_row, 0);
+            excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
 
-                let mut end_point = excerpt.buffer.clip_point(
-                    excerpt.range.context.end.to_point(&excerpt.buffer)
-                        + Point::new(down_line_count, 0),
-                    Bias::Left,
-                );
-                end_point.column = excerpt.buffer.line_len(end_point.row);
-                excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
-                excerpt.max_buffer_row = end_point.row;
+            let down_line_count = if direction.should_expand_down() {
+                line_count
+            } else {
+                0
+            };
 
-                excerpt.text_summary = excerpt
-                    .buffer
-                    .text_summary_for_range(excerpt.range.context.clone());
+            let mut end_point = excerpt.buffer.clip_point(
+                excerpt.range.context.end.to_point(&excerpt.buffer)
+                    + Point::new(down_line_count, 0),
+                Bias::Left,
+            );
+            end_point.column = excerpt.buffer.line_len(end_point.row);
+            excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
+            excerpt.max_buffer_row = end_point.row;
 
-                let new_start_offset = new_excerpts.summary().text.len;
-                let old_start_offset = cursor.start().1;
-                let edit = Edit {
-                    old: old_start_offset..old_start_offset + old_text_len,
-                    new: new_start_offset..new_start_offset + excerpt.text_summary.len,
-                };
+            excerpt.text_summary = excerpt
+                .buffer
+                .text_summary_for_range(excerpt.range.context.clone());
 
-                if let Some(last_edit) = edits.last_mut() {
-                    if last_edit.old.end == edit.old.start {
-                        last_edit.old.end = edit.old.end;
-                        last_edit.new.end = edit.new.end;
-                    } else {
-                        edits.push(edit);
-                    }
+            let new_start_offset = new_excerpts.summary().text.len;
+            let old_start_offset = cursor.start().1;
+            let edit = Edit {
+                old: old_start_offset..old_start_offset + old_text_len,
+                new: new_start_offset..new_start_offset + excerpt.text_summary.len,
+            };
+
+            if let Some(last_edit) = edits.last_mut() {
+                if last_edit.old.end == edit.old.start {
+                    last_edit.old.end = edit.old.end;
+                    last_edit.new.end = edit.new.end;
                 } else {
                     edits.push(edit);
                 }
-
-                new_excerpts.push(excerpt, &());
+            } else {
+                edits.push(edit);
             }
+
+            new_excerpts.push(excerpt, &());
 
             cursor.next(&());
         }
