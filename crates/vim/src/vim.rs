@@ -24,7 +24,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, View, ViewContext, WeakView,
+    Render, Subscription, View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -166,6 +166,8 @@ pub(crate) struct Vim {
     pub search: SearchState,
 
     editor: WeakView<Editor>,
+
+    _subscriptions: Vec<Subscription>,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -189,36 +191,32 @@ impl Vim {
     pub fn new(cx: &mut ViewContext<Editor>) -> View<Self> {
         let editor = cx.view().clone();
 
-        cx.new_view(|cx: &mut ViewContext<Vim>| {
-            cx.subscribe(&editor, |vim, _, event, cx| {
-                vim.handle_editor_event(event, cx)
-            })
-            .detach();
+        cx.new_view(|cx| Vim {
+            mode: Mode::Normal,
+            last_mode: Mode::Normal,
+            pre_count: None,
+            post_count: None,
+            operator_stack: Vec::new(),
+            replacements: Vec::new(),
 
-            let listener = cx.listener(Vim::observe_keystrokes);
-            cx.observe_keystrokes(listener).detach();
+            marks: HashMap::default(),
+            stored_visual_mode: None,
+            change_list: Vec::new(),
+            change_list_position: None,
+            current_tx: None,
+            current_anchor: None,
+            undo_modes: HashMap::default(),
 
-            Vim {
-                mode: Mode::Normal,
-                last_mode: Mode::Normal,
-                pre_count: None,
-                post_count: None,
-                operator_stack: Vec::new(),
-                replacements: Vec::new(),
+            selected_register: None,
+            search: SearchState::default(),
 
-                marks: HashMap::default(),
-                stored_visual_mode: None,
-                change_list: Vec::new(),
-                change_list_position: None,
-                current_tx: None,
-                current_anchor: None,
-                undo_modes: HashMap::default(),
-
-                selected_register: None,
-                search: SearchState::default(),
-
-                editor: editor.downgrade(),
-            }
+            editor: editor.downgrade(),
+            _subscriptions: vec![
+                cx.observe_keystrokes(Self::observe_keystrokes),
+                cx.subscribe(&editor, |this, _, event, cx| {
+                    this.handle_editor_event(event, cx)
+                }),
+            ],
         })
     }
 
