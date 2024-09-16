@@ -81,9 +81,9 @@ impl Render for WelcomePage {
                     .child(
                         svg()
                             .path("icons/logo_96.svg")
-                            .text_color(cx.theme().colors().icon_muted)
-                            .w(px(64.))
-                            .h(px(64.))
+                            .text_color(cx.theme().colors().icon_disabled)
+                            .w(px(80.))
+                            .h(px(80.))
                             .mx_auto(),
                     )
                     .child(
