@@ -16,7 +16,7 @@ use futures::{
 };
 use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use lsp::{FakeLanguageServer, LanguageServerId};
+use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use schemars::JsonSchema;
@@ -107,7 +107,7 @@ pub struct FakeLanguageServerEntry {
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub tx: futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-    pub _server: Option<FakeLanguageServer>,
+    pub _server: Option<lsp::FakeLanguageServer>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
