@@ -37,10 +37,10 @@ Prettier will also be used for TypeScript files by default. To disable this:
 {
   "languages": {
     "TypeScript": {
-      "prettier": { "allowed": false },
-    },
+      "prettier": { "allowed": false }
+    }
     //...
-  },
+  }
 }
 ```
 

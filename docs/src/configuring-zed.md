@@ -1520,10 +1520,10 @@ See Buffer Font Features
 {
   "terminal": {
     "font_features": {
-      "calt": false,
+      "calt": false
       // See Buffer Font Features for more features
-    },
-  },
+    }
+  }
 }
 ```
 
@@ -1540,8 +1540,8 @@ See Buffer Font Features
 ```json
 {
   "terminal": {
-    "line_height": "comfortable",
-  },
+    "line_height": "comfortable"
+  }
 }
 ```
 
@@ -1550,8 +1550,8 @@ See Buffer Font Features
 ```json
 {
   "terminal": {
-    "line_height": "standard",
-  },
+    "line_height": "standard"
+  }
 }
 ```
 
@@ -1561,9 +1561,9 @@ See Buffer Font Features
 {
   "terminal": {
     "line_height": {
-      "custom": 2,
-    },
-  },
+      "custom": 2
+    }
+  }
 }
 ```
 

@@ -17,9 +17,9 @@ The `OmniSharp` binary can be configured in a Zed settings file with:
     "omnisharp": {
       "binary": {
         "path": "/path/to/OmniSharp",
-        "args": ["optional", "additional", "args", "-lsp"],
-      },
-    },
-  },
+        "args": ["optional", "additional", "args", "-lsp"]
+      }
+    }
+  }
 }
 ```
