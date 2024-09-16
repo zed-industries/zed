@@ -7,7 +7,7 @@ use project::{
     project_settings::SettingsObserver,
     search::SearchQuery,
     worktree_store::WorktreeStore,
-    LspStore, ProjectPath, WorktreeId,
+    LspStore, LspStoreEvent, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
@@ -19,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt;
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -72,6 +73,8 @@ impl HeadlessProject {
             lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             lsp_store
         });
+
+        cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
         cx.subscribe(
             &buffer_store,
@@ -137,6 +140,29 @@ impl HeadlessProject {
                     operations: vec![serialize_operation(op)],
                 }))
                 .detach(),
+            _ => {}
+        }
+    }
+
+    fn on_lsp_store_event(
+        &mut self,
+        _lsp_store: Model<LspStore>,
+        event: &LspStoreEvent,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            LspStoreEvent::LanguageServerUpdate {
+                language_server_id,
+                message,
+            } => {
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: SSH_PROJECT_ID,
+                        language_server_id: language_server_id.to_proto(),
+                        variant: Some(message.clone()),
+                    })
+                    .log_err();
+            }
             _ => {}
         }
     }
