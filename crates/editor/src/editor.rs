@@ -6718,7 +6718,6 @@ impl Editor {
             // todo!("write tests")
             // todo!("deal with the next selection potentially overlapping with start_row..end_row")
             // todo!("only rewrap if we're in a comment, markdown text or plain text")
-            // todo!("bonus points 1: diff(selection_text, wrapped_text) and apply more precise edits")
 
             let start = Point::new(start_row, 0);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
@@ -6751,37 +6750,42 @@ impl Editor {
             }
 
             let diff = TextDiff::from_lines(&selection_text, &wrapped_text);
-            let mut start = start;
+            let mut offset = start.to_offset(&buffer);
+            let mut moved_since_edit = true;
+
             for change in diff.iter_all_changes() {
                 let value = change.value();
-
-                let end_column = (start.column + value.len() as u32)
-                    .min(buffer.line_len(MultiBufferRow(start.row)));
-                let end = Point::new(start.row, end_column);
-                let edit_range = start..end;
-
                 match change.tag() {
-                    ChangeTag::Equal => {}
+                    ChangeTag::Equal => {
+                        offset += value.len();
+                        moved_since_edit = true;
+                    }
                     ChangeTag::Delete => {
-                        edits.push((edit_range, String::new()));
+                        let start = buffer.anchor_after(offset);
+                        let end = buffer.anchor_before(offset + value.len());
+
+                        if moved_since_edit {
+                            edits.push((start..end, String::new()));
+                        } else {
+                            edits.last_mut().unwrap().0.end = end;
+                        }
+
+                        offset += value.len();
+                        moved_since_edit = false;
                     }
                     ChangeTag::Insert => {
-                        edits.push((edit_range, value.to_string()));
-                    }
-                }
+                        if moved_since_edit {
+                            let anchor = buffer.anchor_after(offset);
+                            edits.push((anchor..anchor, value.to_string()));
+                        } else {
+                            edits.last_mut().unwrap().1.push_str(value);
+                        }
 
-                // TODO: This logic isn't quite right, as we can have a delete and an insert
-                // on the same line, which right now is advancing the row count too far.
-                if value.ends_with('\n') {
-                    start.row += 1;
-                    start.column = 0;
-                } else {
-                    start = end;
+                        moved_since_edit = false;
+                    }
                 }
             }
         }
-
-        dbg!(&edits);
 
         self.buffer
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
