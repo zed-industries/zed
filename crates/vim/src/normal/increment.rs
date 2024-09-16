@@ -344,6 +344,146 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_increment_sign_change(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                ˇ0
+                "})
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                -ˇ1
+                "});
+        cx.simulate_shared_keystrokes("2 ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                ˇ1
+                "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_bin_wrapping_and_padding(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                    0b111111111111111111111111111111111111111111111111111111111111111111111ˇ1
+                    "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0b000000111111111111111111111111111111111111111111111111111111111111111ˇ1
+                    "});
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0b000000000000000000000000000000000000000000000000000000000000000000000ˇ0
+                    "});
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0b000000000000000000000000000000000000000000000000000000000000000000000ˇ1
+                    "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0b000000111111111111111111111111111111111111111111111111111111111111111ˇ1
+                    "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_hex_wrapping_and_padding(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                    0xfffffffffffffffffffˇf
+                    "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0x0000fffffffffffffffˇf
+                    "});
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0x0000000000000000000ˇ0
+                    "});
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0x0000000000000000000ˇ1
+                    "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0x0000fffffffffffffffˇf
+                    "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_wrapping(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                    1844674407370955161ˇ9
+                    "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    1844674407370955161ˇ5
+                    "});
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    -1844674407370955161ˇ5
+                    "});
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    -1844674407370955161ˇ4
+                    "});
+        cx.simulate_shared_keystrokes("3 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    1844674407370955161ˇ4
+                    "});
+        cx.simulate_shared_keystrokes("2 ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    -1844674407370955161ˇ5
+                    "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_inline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                    inline0x3ˇ9u32
+                    "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    inline0x3ˇau32
+                    "});
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    inline0x3ˇbu32
+                    "});
+        cx.simulate_shared_keystrokes("l l l ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    inline0x3bu3ˇ3
+                    "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_hex_casing(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                        0xFˇa
+                    "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0xfˇb
+                    "});
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    0xfˇc
+                    "});
+    }
+
+    #[gpui::test]
     async fn test_increment_radix(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
