@@ -997,14 +997,14 @@ impl Context {
     fn handle_buffer_event(
         &mut self,
         _: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::Event::Operation(operation) => cx.emit(ContextEvent::Operation(
+            language::BufferEvent::Operation(operation) => cx.emit(ContextEvent::Operation(
                 ContextOperation::BufferOperation(operation.clone()),
             )),
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
                 // Use `inclusive = true` to invalidate a step when an edit occurs

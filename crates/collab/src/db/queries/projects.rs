@@ -30,6 +30,7 @@ impl Database {
         room_id: RoomId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
+        is_ssh_project: bool,
         dev_server_project_id: Option<DevServerProjectId>,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
@@ -121,12 +122,14 @@ impl Database {
                 .await?;
             }
 
+            let replica_id = if is_ssh_project { 1 } else { 0 };
+
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
                 connection_id: ActiveValue::set(connection.id as i32),
                 connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
                 user_id: ActiveValue::set(participant.user_id),
-                replica_id: ActiveValue::set(ReplicaId(0)),
+                replica_id: ActiveValue::set(ReplicaId(replica_id)),
                 is_host: ActiveValue::set(true),
                 ..Default::default()
             }

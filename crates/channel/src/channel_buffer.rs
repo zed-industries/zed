@@ -171,11 +171,11 @@ impl ChannelBuffer {
     fn on_buffer_update(
         &mut self,
         _: Model<language::Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::Event::Operation(operation) => {
+            language::BufferEvent::Operation(operation) => {
                 if *ZED_ALWAYS_ACTIVE {
                     if let language::Operation::UpdateSelections { selections, .. } = operation {
                         if selections.is_empty() {
@@ -191,7 +191,7 @@ impl ChannelBuffer {
                     })
                     .log_err();
             }
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 cx.emit(ChannelBufferEvent::BufferEdited);
             }
             _ => {}

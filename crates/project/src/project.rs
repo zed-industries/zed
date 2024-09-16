@@ -50,9 +50,9 @@ use language::{
         deserialize_anchor, serialize_anchor, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry, Diff,
-    Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
-    PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    Buffer, BufferEvent, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry,
+    Diff, Documentation, File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
 use lsp_command::*;
@@ -799,6 +799,7 @@ impl Project {
             client.add_model_message_handler(Self::handle_create_buffer_for_peer);
             client.add_model_message_handler(BufferStore::handle_update_buffer_file);
             client.add_model_message_handler(BufferStore::handle_update_diff_base);
+            client.add_model_request_handler(BufferStore::handle_update_buffer);
             LspStore::init(&client);
             SettingsObserver::init(&client);
 
@@ -1367,7 +1368,13 @@ impl Project {
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
-            _ => 0,
+            _ => {
+                if self.ssh_session.is_some() {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
@@ -1814,6 +1821,15 @@ impl Project {
     pub fn is_local_or_ssh(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Remote { .. } => false,
+        }
+    }
+
+    pub fn is_via_ssh(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => {
+                self.ssh_session.is_some()
+            }
             ProjectClientState::Remote { .. } => false,
         }
     }

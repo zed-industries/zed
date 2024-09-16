@@ -275,7 +275,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
         |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
-                Event::Operation(op) => buffer1_ops.lock().push(op),
+                BufferEvent::Operation(op) => buffer1_ops.lock().push(op),
                 event => buffer_1_events.lock().push(event),
             })
             .detach();
@@ -313,15 +313,15 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            Event::Edited,
-            Event::DirtyChanged,
-            Event::Edited,
-            Event::Edited,
+            BufferEvent::Edited,
+            BufferEvent::DirtyChanged,
+            BufferEvent::Edited,
+            BufferEvent::Edited,
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
     );
 
     buffer1.update(cx, |buffer, cx| {
@@ -336,11 +336,11 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged,]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged,]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
     );
 }
 
@@ -2411,7 +2411,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                if let Event::Operation(op) = event {
+                if let BufferEvent::Operation(op) = event {
                     network
                         .lock()
                         .broadcast(buffer.replica_id(), vec![proto::serialize_operation(op)]);
@@ -2539,7 +2539,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
                     cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                        if let Event::Operation(op) = event {
+                        if let BufferEvent::Operation(op) = event {
                             network.lock().broadcast(
                                 buffer.replica_id(),
                                 vec![proto::serialize_operation(op)],
