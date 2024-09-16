@@ -671,8 +671,7 @@ impl Render for ConfigurationView {
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(INSTRUCTIONS[0]))
-                .child(Label::new(INSTRUCTIONS[1]))
-                .child(h_flex().gap_0p5().child(Label::new(INSTRUCTIONS[2])).child(
+                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
                     Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ExternalLink)
@@ -681,7 +680,7 @@ impl Render for ConfigurationView {
                         .on_click(move |_, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
                     )
                 )
-                .child(Label::new(INSTRUCTIONS[3]))
+                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()

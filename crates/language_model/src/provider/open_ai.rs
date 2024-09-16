@@ -492,9 +492,8 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
-        const INSTRUCTIONS: [&str; 5] = [
+        const INSTRUCTIONS: [&str; 4] = [
             "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
-            "",
             " - Create one by visiting:",
             " - Ensure your OpenAI account has credits",
             " - Paste your API key below and hit enter to start using the assistant",
@@ -519,7 +518,7 @@ impl Render for ConfigurationView {
                     )
                 )
                 .children(
-                    (3..INSTRUCTIONS.len()).map(|n|
+                    (2..INSTRUCTIONS.len()).map(|n|
                         Label::new(INSTRUCTIONS[n])).collect::<Vec<_>>())
                 .child(
                     h_flex()
