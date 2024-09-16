@@ -13273,6 +13273,7 @@ dependencies = [
  "util",
  "vim",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
