@@ -255,7 +255,6 @@ pub enum IconName {
     Slash,
     SlashSquare,
     Sliders,
-    SlidersAlt,
     SlidersVertical,
     Snip,
     Space,
@@ -287,7 +286,6 @@ pub enum IconName {
     ZedAssistant,
     ZedAssistantFilled,
     ZedXCopilot,
-    Visible,
 }
 
 #[derive(IntoElement)]
