@@ -6666,16 +6666,26 @@ impl Editor {
         let mut selections = selections.iter().peekable();
 
         let mut edits = Vec::new();
+        let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
         while let Some(selection) = selections.next() {
+            let mut start_row = selection.start.row;
+            let mut end_row = selection.end.row;
+
+            // Skip selections that overlap with a range that has already been rewrapped.
+            let selection_range = start_row..end_row;
+            if rewrapped_row_ranges
+                .iter()
+                .any(|range| range.overlaps(&selection_range))
+            {
+                continue;
+            }
+
             let row = selection.head().row;
             let indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
             let indent_end = Point::new(row, indent_size.len);
 
             let mut line_prefix = indent_size.chars().collect::<String>();
-
-            let mut start_row = selection.start.row;
-            let mut end_row = selection.end.row;
 
             if selection.is_empty() {
                 if let Some(comment_prefix) =
@@ -6692,31 +6702,29 @@ impl Editor {
                     line_prefix.push_str(&comment_prefix);
                 }
 
-                while start_row > 0 {
+                'expand_upwards: while start_row > 0 {
                     let prev_row = start_row - 1;
                     if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
                         && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
                     {
                         start_row = prev_row;
                     } else {
-                        break;
+                        break 'expand_upwards;
                     }
                 }
 
-                while end_row < buffer.max_point().row {
+                'expand_downwards: while end_row < buffer.max_point().row {
                     let next_row = end_row + 1;
                     if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
                         && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
                     {
                         end_row = next_row;
                     } else {
-                        break;
+                        break 'expand_downwards;
                     }
                 }
             }
 
-            // todo!("write tests")
-            // todo!("deal with the next selection potentially overlapping with start_row..end_row")
             // todo!("only rewrap if we're in a comment, markdown text or plain text")
 
             let start = Point::new(start_row, 0);
@@ -6785,6 +6793,8 @@ impl Editor {
                     }
                 }
             }
+
+            rewrapped_row_ranges.push(start_row..=end_row);
         }
 
         self.buffer
