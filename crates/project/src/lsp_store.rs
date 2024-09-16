@@ -501,15 +501,15 @@ impl LspStore {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::Event::Edited { .. } => {
+            language::BufferEvent::Edited { .. } => {
                 self.on_buffer_edited(buffer, cx);
             }
 
-            language::Event::Saved => {
+            language::BufferEvent::Saved => {
                 self.on_buffer_saved(buffer, cx);
             }
 
@@ -4629,14 +4629,13 @@ impl LspStore {
             return;
         }
 
+        let local = self.as_local().unwrap();
+
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::for_local(self, worktree_handle, cx);
-        let cli_environment = self
-            .as_local()
-            .unwrap()
-            .environment
-            .read(cx)
-            .get_cli_environment();
+        let cli_environment = local.environment.update(cx, |environment, cx| {
+            environment.get_environment(Some(worktree_id), Some(worktree_path.clone()), cx)
+        });
 
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),

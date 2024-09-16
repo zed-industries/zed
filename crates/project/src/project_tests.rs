@@ -3310,7 +3310,10 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert!(buffer.is_dirty());
         assert_eq!(
             *events.lock(),
-            &[language::Event::Edited, language::Event::DirtyChanged]
+            &[
+                language::BufferEvent::Edited,
+                language::BufferEvent::DirtyChanged
+            ]
         );
         events.lock().clear();
         buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), cx);
@@ -3319,7 +3322,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     // after saving, the buffer is not dirty, and emits a saved event.
     buffer1.update(cx, |buffer, cx| {
         assert!(!buffer.is_dirty());
-        assert_eq!(*events.lock(), &[language::Event::Saved]);
+        assert_eq!(*events.lock(), &[language::BufferEvent::Saved]);
         events.lock().clear();
 
         buffer.edit([(1..1, "B")], None, cx);
@@ -3333,9 +3336,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::Event::Edited,
-                language::Event::DirtyChanged,
-                language::Event::Edited,
+                language::BufferEvent::Edited,
+                language::BufferEvent::DirtyChanged,
+                language::BufferEvent::Edited,
             ],
         );
         events.lock().clear();
@@ -3349,7 +3352,10 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 
     assert_eq!(
         *events.lock(),
-        &[language::Event::Edited, language::Event::DirtyChanged]
+        &[
+            language::BufferEvent::Edited,
+            language::BufferEvent::DirtyChanged
+        ]
     );
 
     // When a file is deleted, the buffer is considered dirty.
@@ -3374,8 +3380,8 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::Event::DirtyChanged,
-            language::Event::FileHandleChanged
+            language::BufferEvent::DirtyChanged,
+            language::BufferEvent::FileHandleChanged
         ]
     );
 
@@ -3401,7 +3407,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     cx.executor().run_until_parked();
-    assert_eq!(*events.lock(), &[language::Event::FileHandleChanged]);
+    assert_eq!(*events.lock(), &[language::BufferEvent::FileHandleChanged]);
     cx.update(|cx| assert!(buffer3.read(cx).is_dirty()));
 }
 

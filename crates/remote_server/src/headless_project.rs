@@ -1,10 +1,13 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use language::LanguageRegistry;
 use project::{
-    buffer_store::BufferStore, project_settings::SettingsObserver, search::SearchQuery,
-    worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId,
+    buffer_store::{BufferStore, BufferStoreEvent},
+    project_settings::SettingsObserver,
+    search::SearchQuery,
+    worktree_store::WorktreeStore,
+    LspStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
@@ -36,9 +39,7 @@ impl HeadlessProject {
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        // TODO: we should load the env correctly (as we do in login_shell_env_loaded when stdout is not a pty). Can we re-use the ProjectEnvironment for that?
-        let mut languages =
-            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages
             .set_language_server_download_dir(PathBuf::from("/Users/conrad/what-could-go-wrong"));
 
@@ -70,6 +71,18 @@ impl HeadlessProject {
             lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             lsp_store
         });
+
+        let buffer_store_subscription = cx
+            .subscribe(
+                &buffer_store,
+                |_this, _buffer_store, event, cx| match event {
+                    BufferStoreEvent::BufferAdded(buffer) => {
+                        cx.subscribe(buffer, Self::on_buffer_event).detach();
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
 
         let client: AnyProtoClient = session.clone().into();
 
@@ -105,6 +118,25 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             next_entry_id: Default::default(),
+        }
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferEvent::Operation(op) => cx
+                .background_executor()
+                .spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: SSH_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(op)],
+                }))
+                .detach(),
+            _ => {}
         }
     }
 

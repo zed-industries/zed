@@ -15,7 +15,7 @@ use gpui::{
 use http_client::Url;
 use language::{
     proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
-    Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
+    Buffer, BufferEvent, Capability, File as _, Language, Operation,
 };
 use rpc::{
     proto::{self, AnyProtoClient},
