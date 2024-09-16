@@ -1426,7 +1426,7 @@ impl SlashCommand for FakeSlashCommand {
     fn run(
         self: Arc<Self>,
         _arguments: &[String],
-        _context_slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,

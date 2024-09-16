@@ -1907,11 +1907,16 @@ impl ContextEditor {
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
             let context = self.context.read(cx);
-            let sections = context.slash_command_output_sections().to_vec();
+            let sections = context
+                .slash_command_output_sections()
+                .into_iter()
+                .filter(|section| section.is_valid(context.buffer().read(cx)))
+                .cloned()
+                .collect::<Vec<_>>();
             let snapshot = context.buffer().read(cx).snapshot();
             let output = command.run(
                 arguments,
-                sections,
+                &sections,
                 snapshot,
                 workspace,
                 self.lsp_adapter_delegate.clone(),

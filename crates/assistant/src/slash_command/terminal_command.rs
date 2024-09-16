@@ -57,7 +57,7 @@ impl SlashCommand for TerminalSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
-        _context_slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,

@@ -2,7 +2,7 @@ mod slash_command_registry;
 
 use anyhow::Result;
 use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
-use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
@@ -77,7 +77,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
-        context_slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
@@ -109,4 +109,10 @@ pub struct SlashCommandOutputSection<T> {
     pub icon: IconName,
     pub label: SharedString,
     pub metadata: Option<serde_json::Value>,
+}
+
+impl SlashCommandOutputSection<language::Anchor> {
+    pub fn is_valid(&self, buffer: &language::TextBuffer) -> bool {
+        self.range.start.is_valid(buffer) && !self.range.to_offset(buffer).is_empty()
+    }
 }

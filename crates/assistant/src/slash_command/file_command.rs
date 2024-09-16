@@ -176,7 +176,7 @@ impl SlashCommand for FileSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
-        _context_slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
@@ -434,7 +434,7 @@ pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32
 
 #[derive(Serialize, Deserialize)]
 pub struct FileCommandMetadata {
-    path: String,
+    pub path: String,
 }
 
 pub fn build_entry_output_section(
@@ -462,11 +462,11 @@ pub fn build_entry_output_section(
         range,
         icon,
         label: label.into(),
-        metadata: path.map(|path| {
+        metadata: path.and_then(|path| {
             serde_json::to_value(FileCommandMetadata {
                 path: path.to_string_lossy().to_string(),
             })
-            .unwrap()
+            .ok()
         }),
     }
 }
