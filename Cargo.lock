@@ -8554,8 +8554,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "futures 0.3.30",
- "parking_lot",
  "prost",
  "prost-build",
  "serde",
