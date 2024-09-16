@@ -16,7 +16,7 @@ use futures::{
 };
 use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use lsp::LanguageServerId;
+use lsp::{FakeLanguageServer, LanguageServerId};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use schemars::JsonSchema;
@@ -107,6 +107,7 @@ pub struct FakeLanguageServerEntry {
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub tx: futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+    pub _server: Option<FakeLanguageServer>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,6 +335,8 @@ impl LanguageRegistry {
             .push(CachedLspAdapter::new(adapter));
     }
 
+    /// Register a fake language server and adapter
+    /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
     pub fn register_fake_lsp(
         &self,
@@ -353,6 +356,8 @@ impl LanguageRegistry {
         self.register_fake_language_server(adapter_name, capabilities, initializer)
     }
 
+    /// Register a fake lsp adapter (without the language server)
+    /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
     pub fn register_fake_lsp_adapter(
         &self,
@@ -368,6 +373,8 @@ impl LanguageRegistry {
             .push(CachedLspAdapter::new(Arc::new(adapter)));
     }
 
+    /// Register a fake language server (without the adapter)
+    /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
     pub fn register_fake_language_server(
         &self,
@@ -382,6 +389,7 @@ impl LanguageRegistry {
                 tx: servers_tx,
                 capabilities,
                 initializer,
+                _server: None,
             },
         );
         servers_rx
@@ -917,6 +925,7 @@ impl LanguageRegistry {
                                 fake_entry.capabilities.clone(),
                                 cx.clone(),
                             );
+                            fake_entry._server = Some(fake_server.clone());
 
                             if let Some(initializer) = &fake_entry.initializer {
                                 initializer(&mut fake_server);
