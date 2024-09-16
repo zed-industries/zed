@@ -1516,7 +1516,7 @@ The name of any font family installed on the user's system
 
 See Buffer Font Features
 
-```jsonc
+```json
 {
   "terminal": {
     "font_features": {
@@ -1537,7 +1537,7 @@ See Buffer Font Features
 
 1. Use a line height that's `comfortable` for reading, 1.618. (default)
 
-```jsonc
+```json
 {
   "terminal": {
     "line_height": "comfortable",
@@ -1547,7 +1547,7 @@ See Buffer Font Features
 
 2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
 
-```jsonc
+```json
 {
   "terminal": {
     "line_height": "standard",
@@ -1557,7 +1557,7 @@ See Buffer Font Features
 
 3.  Use a custom line height.
 
-```jsonc
+```json
 {
   "terminal": {
     "line_height": {
