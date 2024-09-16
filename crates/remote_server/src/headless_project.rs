@@ -8,8 +8,8 @@ use project::{
 };
 use remote::SshSession;
 use rpc::{
-    proto::{self, AnyProtoClient, SSH_PEER_ID, SSH_PROJECT_ID},
-    TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
+    AnyProtoClient, TypedEnvelope,
 };
 use smol::stream::StreamExt;
 use std::{

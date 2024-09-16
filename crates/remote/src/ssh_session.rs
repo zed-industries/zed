@@ -13,9 +13,9 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion};
 use parking_lot::Mutex;
-use rpc::proto::{
-    self, build_typed_envelope, EntityMessageSubscriber, Envelope, EnvelopedMessage, PeerId,
-    ProtoClient, ProtoMessageHandlerSet, RequestMessage,
+use rpc::{
+    proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
+    EntityMessageSubscriber, ProtoClient, ProtoMessageHandlerSet,
 };
 use smol::{
     fs,

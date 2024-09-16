@@ -2,11 +2,9 @@
 
 pub mod error;
 mod macros;
-mod proto_client;
 mod typed_envelope;
 
 pub use error::*;
-pub use proto_client::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;

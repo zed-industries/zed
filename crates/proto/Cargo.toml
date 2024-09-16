@@ -23,7 +23,6 @@ futures.workspace = true
 parking_lot.workspace = true
 prost.workspace = true
 serde.workspace = true
-gpui.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

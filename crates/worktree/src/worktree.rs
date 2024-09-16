@@ -36,7 +36,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::proto::{self, AnyProtoClient};
+use rpc::{proto, AnyProtoClient};
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{smallvec, SmallVec};
