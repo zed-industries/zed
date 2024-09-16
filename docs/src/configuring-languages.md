@@ -295,7 +295,9 @@ Zed offers customization options for syntax highlighting and themes, allowing yo
 
 ### Customizing Syntax Highlighting
 
-Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting:
+Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
+
+This example makes comments italic and changes the color of strings:
 
 ```json
 "experimental.theme_overrides": {
@@ -309,28 +311,6 @@ Zed uses Tree-sitter grammars for syntax highlighting. Override the default high
   }
 }
 ```
-
-This example makes comments italic and changes the color of strings.
-
-### Language-Specific Theme Overrides
-
-Apply theme overrides for specific languages:
-
-```json
-"languages": {
-  "Python": {
-    "theme_overrides": {
-      "syntax": {
-        "function": {
-          "color": "#0000FF"
-        }
-      }
-    }
-  }
-}
-```
-
-This configuration changes the color of function names in Python files.
 
 ### Selecting and Customizing Themes
 

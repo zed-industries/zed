@@ -122,11 +122,7 @@ impl Database {
                 .await?;
             }
 
-            let replica_id = if is_ssh_project {
-                1
-            } else {
-                0
-            };
+            let replica_id = if is_ssh_project { 1 } else { 0 };
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
