@@ -7,35 +7,47 @@ pub struct OverflowScrollStory;
 
 impl Render for OverflowScrollStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let color = cx.default_style().color;
+
         Story::container(cx)
             .child(Story::title(cx, "Overflow Scroll"))
-            .child(Story::label(cx, "`overflow_x_scroll`"))
             .child(
-                h_flex()
-                    .id("overflow_x_scroll")
-                    .gap_2()
-                    .overflow_x_scroll()
-                    .children((0..100).map(|i| {
-                        div()
-                            .p_4()
-                            .debug_bg_cyan()
-                            .child(SharedString::from(format!("Child {}", i + 1)))
-                    })),
+                Story::section(cx)
+                    .child(Story::label(cx, "`overflow_x_scroll`"))
+                    .child(
+                        h_flex()
+                            .id("overflow_x_scroll")
+                            .gap_2()
+                            .overflow_x_scroll()
+                            .children((0..100).map(|i| {
+                                div()
+                                    .p_4()
+                                    .bg(color.container)
+                                    .border_1()
+                                    .border_color(color.border)
+                                    .child(SharedString::from(format!("Child {}", i + 1)))
+                            })),
+                    ),
             )
-            .child(Story::label(cx, "`overflow_y_scroll`"))
             .child(
-                v_flex()
-                    .w_full()
-                    .flex_1()
-                    .id("overflow_y_scroll")
-                    .gap_2()
-                    .overflow_y_scroll()
-                    .children((0..100).map(|i| {
-                        div()
-                            .p_4()
-                            .debug_bg_green()
-                            .child(SharedString::from(format!("Child {}", i + 1)))
-                    })),
+                Story::section(cx)
+                    .child(Story::label(cx, "`overflow_y_scroll`"))
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .flex_1()
+                            .id("overflow_y_scroll")
+                            .gap_2()
+                            .overflow_y_scroll()
+                            .children((0..100).map(|i| {
+                                div()
+                                    .p_4()
+                                    .bg(color.container)
+                                    .border_1()
+                                    .border_color(color.border)
+                                    .child(SharedString::from(format!("Child {}", i + 1)))
+                            })),
+                    ),
             )
     }
 }

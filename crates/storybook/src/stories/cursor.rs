@@ -85,12 +85,14 @@ impl Render for CursorStory {
             ),
         ];
 
+        let color = cx.default_style().color;
+
         Story::container(cx)
             .flex()
             .gap_1()
             .child(Story::title(cx, "cursor"))
             .children(all_cursors.map(|(name, apply_cursor)| {
-                div().gap_1().flex().text_color(gpui::white()).child(
+                div().gap_1().flex().text_color(color.foreground).child(
                     div()
                         .flex()
                         .items_center()
@@ -99,8 +101,8 @@ impl Render for CursorStory {
                         .map(apply_cursor)
                         .w_64()
                         .h_8()
-                        .bg(gpui::red())
-                        .active(|style| style.bg(gpui::green()))
+                        .bg(color.container)
+                        .active(|style| style.bg(color.background_activated))
                         .text_sm()
                         .child(Story::label(cx, name)),
                 )

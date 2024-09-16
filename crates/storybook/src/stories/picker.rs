@@ -2,6 +2,7 @@ use fuzzy::StringMatchCandidate;
 use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
+use story::Story;
 use ui::{prelude::*, ListItemSpacing};
 use ui::{Label, ListItem};
 
@@ -199,9 +200,16 @@ impl PickerStory {
 
 impl Render for PickerStory {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        div()
-            .bg(cx.theme().styles.colors.background)
-            .size_full()
-            .child(self.picker.clone())
+        Story::container(cx)
+            .p_4()
+            .child(Story::title(cx, "Picker"))
+            .child(
+                div()
+                    .flex()
+                    .size_full()
+                    .justify_center()
+                    .items_center()
+                    .child(self.picker.clone()),
+            )
     }
 }
