@@ -1465,7 +1465,7 @@ impl Render for PromptEditor {
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
-            .py(cx.line_height() / 2.)
+            .py(cx.line_height() / 2.5)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::move_up))
