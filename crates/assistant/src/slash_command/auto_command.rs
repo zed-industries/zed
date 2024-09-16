@@ -1,7 +1,7 @@
 use super::create_label_for_command;
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::ArgumentCompletion;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
