@@ -14,8 +14,7 @@ path = "src/rpc.rs"
 doctest = false
 
 [features]
-default = ["client"]
-client = ["gpui"]
+gpui = ["dep:gpui"]
 test-support = ["collections/test-support", "gpui/test-support", "proto/test-support"]
 
 [dependencies]
