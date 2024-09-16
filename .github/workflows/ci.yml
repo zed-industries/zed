@@ -120,9 +120,8 @@ jobs:
         with:
           clean: false
 
-      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
-        with:
-          mold-version: 2.32.0
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: cargo clippy
         run: ./script/clippy
@@ -294,9 +293,8 @@ jobs:
           sudo apt-get install -y llvm-15 clang-15 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
           echo "/usr/lib/llvm-15/bin" >> $GITHUB_PATH
 
-      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
-        with:
-          mold-version: 2.32.0
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: rustup
         run: |
@@ -379,9 +377,8 @@ jobs:
           sudo apt-get install -y llvm-15 clang-15 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
           echo "/usr/lib/llvm-15/bin" >> $GITHUB_PATH
 
-      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
-        with:
-          mold-version: 2.32.0
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: rustup
         run: |
