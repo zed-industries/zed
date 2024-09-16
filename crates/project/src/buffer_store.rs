@@ -1057,7 +1057,11 @@ impl BufferStore {
                         buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
                     }
                     OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
-                    OpenBuffer::Weak(_) => {}
+                    OpenBuffer::Weak(buffer) => {
+                        if let Some(buffer) = buffer.upgrade() {
+                            buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        }
+                    }
                 },
                 hash_map::Entry::Vacant(e) => {
                     e.insert(OpenBuffer::Operations(ops));

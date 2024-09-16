@@ -270,11 +270,6 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> Option<&FakeLspAdapter> {
-        self.adapter.as_fake()
-    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -507,11 +502,6 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> Option<&FakeLspAdapter> {
-        None
     }
 }
 
@@ -1717,10 +1707,6 @@ impl LspAdapter for FakeLspAdapter {
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
-    }
-
-    fn as_fake(&self) -> Option<&FakeLspAdapter> {
-        Some(self)
     }
 }
 

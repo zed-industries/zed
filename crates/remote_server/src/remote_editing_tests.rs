@@ -8,7 +8,7 @@ use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
 };
-use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
+use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, WorkspaceEdit};
 use node_runtime::FakeNodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},
@@ -408,14 +408,36 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     assert_eq!(
         result.into_iter().map(|c| c.label.text).collect::<Vec<_>>(),
         vec!["boop".to_string()]
-    )
+    );
 
-    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|params, cx| async move {
-        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
-            label: "boop".to_string(),
+    fake_lsp.handle_request::<lsp::request::Rename, _, _>(|_, _| async move {
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: Some(
+                [(
+                    lsp::Url::from_file_path("/code/project1/src/lib.rs").unwrap(),
+                    vec![lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
+                        "two".to_string(),
+                    )],
+                )]
+                .into_iter()
+                .collect(),
+            ),
             ..Default::default()
-        }])))
+        }))
     });
+
+    project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 3, "two".to_string(), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
+    })
 }
 
 fn init_logger() {
