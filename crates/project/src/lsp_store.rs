@@ -2930,6 +2930,7 @@ impl LspStore {
             })
             .map(|(_, server)| server.server_id())
             .collect::<Vec<_>>();
+
         let mut response_results = server_ids
             .into_iter()
             .map(|server_id| {

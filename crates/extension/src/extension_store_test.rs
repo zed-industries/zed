@@ -610,8 +610,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .unwrap();
 
     let mut fake_servers = language_registry.register_fake_language_server(
-        LanguageServerName("Gleam".into()),
-        Default::default(),
+        LanguageServerName("gleam".into()),
+        lsp::ServerCapabilities {
+            completion_provider: Some(Default::default()),
+            ..Default::default()
+        },
         None,
     );
 

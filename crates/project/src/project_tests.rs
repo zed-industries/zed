@@ -4918,50 +4918,53 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         "ESLintServer",
         "NoActionsCapabilitiesServer",
     ];
-    let mut fake_tsx_language_servers = language_registry.register_fake_lsp(
-        "tsx",
-        FakeLspAdapter {
-            name: language_server_names[0],
-            capabilities: lsp::ServerCapabilities {
-                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
+
+    let mut language_server_rxs = [
+        language_registry.register_fake_lsp(
+            "tsx",
+            FakeLspAdapter {
+                name: language_server_names[0],
+                capabilities: lsp::ServerCapabilities {
+                    code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
-    let _a = language_registry.register_fake_lsp(
-        "tsx",
-        FakeLspAdapter {
-            name: language_server_names[1],
-            capabilities: lsp::ServerCapabilities {
-                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
+        ),
+        language_registry.register_fake_lsp(
+            "tsx",
+            FakeLspAdapter {
+                name: language_server_names[1],
+                capabilities: lsp::ServerCapabilities {
+                    code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
-    let _b = language_registry.register_fake_lsp(
-        "tsx",
-        FakeLspAdapter {
-            name: language_server_names[2],
-            capabilities: lsp::ServerCapabilities {
-                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
+        ),
+        language_registry.register_fake_lsp(
+            "tsx",
+            FakeLspAdapter {
+                name: language_server_names[2],
+                capabilities: lsp::ServerCapabilities {
+                    code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
-    let _c = language_registry.register_fake_lsp(
-        "tsx",
-        FakeLspAdapter {
-            name: language_server_names[3],
-            capabilities: lsp::ServerCapabilities {
-                code_action_provider: None,
-                ..lsp::ServerCapabilities::default()
+        ),
+        language_registry.register_fake_lsp(
+            "tsx",
+            FakeLspAdapter {
+                name: language_server_names[3],
+                capabilities: lsp::ServerCapabilities {
+                    code_action_provider: None,
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
+        ),
+    ];
 
     let buffer = project
         .update(cx, |p, cx| p.open_local_buffer("/dir/a.tsx", cx))
@@ -4969,15 +4972,17 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         .unwrap();
     cx.executor().run_until_parked();
 
+    let mut _servers = Vec::new();
     let mut servers_with_actions_requests = HashMap::default();
     for i in 0..language_server_names.len() {
-        let new_server = fake_tsx_language_servers.next().await.unwrap_or_else(|| {
+        let new_server = language_server_rxs[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
                 &language_server_names[i]
             )
         });
         let new_server_name = new_server.server.name();
+
         assert!(
             !servers_with_actions_requests.contains_key(new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
@@ -5020,11 +5025,15 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             }
             unexpected => panic!("Unexpected server name: {unexpected}"),
         }
+
+        _servers.push(new_server);
     }
 
     let code_actions_task = project.update(cx, |project, cx| {
         project.code_actions(&buffer, 0..buffer.read(cx).len(), cx)
     });
+
+    // cx.run_until_parked();
     let _: Vec<()> = futures::future::join_all(servers_with_actions_requests.into_values().map(
         |mut code_actions_request| async move {
             code_actions_request

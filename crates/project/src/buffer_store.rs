@@ -65,7 +65,7 @@ pub enum BufferStoreEvent {
     },
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>);
 
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
