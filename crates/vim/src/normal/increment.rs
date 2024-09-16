@@ -60,13 +60,13 @@ impl Vim {
                     };
 
                     if let Some((range, num, radix)) = find_number(&snapshot, start) {
-                        delta += step as i64;
                         let replace = match radix {
                             10 => increment_decimal_string(&num, delta),
                             16 => increment_hex_string(&num, delta),
                             2 => increment_binary_string(&num, delta),
                             _ => unreachable!(),
                         };
+                        delta += step as i64;
                         edits.push((range.clone(), replace));
                         if selection.is_empty() {
                             new_anchors.push((false, snapshot.anchor_after(range.end)))
@@ -123,21 +123,18 @@ fn increment_decimal_string(mut num: &str, delta: i64) -> String {
         result = value.wrapping_add(delta as u64);
         if result < value {
             negative = !negative;
-            if !negative {
-                result = result.wrapping_add(1);
-            }
         }
-        if negative && result == u64::MAX {
-            result = 0;
+        if !negative && result < value || negative && result == u64::MAX {
             negative = false;
+            result = result.wrapping_add(1);
         }
     } else {
         result = value.wrapping_sub((-delta) as u64);
-        if value < result {
+        if result > value {
             negative = !negative;
         }
-        if negative && result == u64::MAX {
-            result = u64::MAX - 1;
+        if negative && result > value {
+            result = result.wrapping_sub(1);
         }
     }
 
@@ -158,7 +155,11 @@ fn increment_hex_string(num: &str, delta: i64) -> String {
             format!("{:0width$X}", result, width = num.len())
         }
     } else {
-        unreachable!()
+        if should_use_lowercase(num) {
+            format!("{:0width$x}", u64::MAX, width = num.len())
+        } else {
+            format!("{:0width$X}", u64::MAX, width = num.len())
+        }
     }
 }
 
@@ -191,9 +192,9 @@ fn wrapping_increment(n: u64, delta: i64) -> u64 {
 fn increment_binary_string(num: &str, delta: i64) -> String {
     if let Ok(val) = u64::from_str_radix(&num, 2) {
         let result = wrapping_increment(val, delta);
-        format!("{:b}", result)
+        format!("{:0width$b}", result, width = num.len())
     } else {
-        unreachable!()
+        format!("{:0width$b}", u64::MAX, width = num.len())
     }
 }
 
