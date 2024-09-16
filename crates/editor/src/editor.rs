@@ -6681,6 +6681,17 @@ impl Editor {
                 continue;
             }
 
+            let mut should_rewrap = false;
+
+            if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
+                match language_scope.language_name().0.as_ref() {
+                    "Markdown" | "Plain Text" => {
+                        should_rewrap = true;
+                    }
+                    _ => {}
+                }
+            }
+
             let row = selection.head().row;
             let indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
             let indent_end = Point::new(row, indent_size.len);
@@ -6700,6 +6711,7 @@ impl Editor {
                         })
                 {
                     line_prefix.push_str(&comment_prefix);
+                    should_rewrap = true;
                 }
 
                 'expand_upwards: while start_row > 0 {
@@ -6723,6 +6735,10 @@ impl Editor {
                         break 'expand_downwards;
                     }
                 }
+            }
+
+            if !should_rewrap {
+                continue;
             }
 
             let start = Point::new(start_row, 0);
