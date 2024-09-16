@@ -3980,10 +3980,40 @@ fn test_transpose(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_rewrap(cx: &mut TestAppContext) {
+async fn test_rewrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    // todo!("add rewrap tests")
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into()],
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let unwrapped_text = indoc! {"
+        // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+    "};
+
+    let wrapped_text = indoc! {"
+        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+        // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+        // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+        // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+        // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+        // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+        // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+        // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+        // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+        // porttitor id. Aliquam id accumsan eros.ˇ
+    "};
+
+    cx.set_state(unwrapped_text);
+    cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+    cx.assert_editor_state(wrapped_text);
 }
 
 #[gpui::test]
