@@ -1795,6 +1795,7 @@ impl MultiBuffer {
             return;
         }
         self.sync(cx);
+
         let ids = ids.into_iter().collect::<Vec<_>>();
         let snapshot = self.snapshot(cx);
         let locators = snapshot.excerpt_locators_for_ids(ids.iter().copied());
@@ -1870,6 +1871,7 @@ impl MultiBuffer {
         }
 
         new_excerpts.append(cursor.suffix(&()), &());
+
         drop(cursor);
         self.snapshot.borrow_mut().excerpts = new_excerpts;
 
