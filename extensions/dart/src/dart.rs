@@ -15,6 +15,22 @@ impl zed::Extension for DartExtension {
         _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let lsp_settings_binary = LspSettings::for_worktree("dart", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.binary);
+
+        if let Some(binary_settings) = lsp_settings_binary {
+            return Ok(zed::Command {
+                command: binary_settings
+                    .path
+                    .expect("The settings lsp.dart.binary.command should not be empty"),
+                args: binary_settings
+                    .arguments
+                    .expect("The settings lsp.dart.binary.arguments should not be empty"),
+                env: Default::default(),
+            });
+        }
+
         if let Some(path) = worktree.which("dart") {
             return Ok(zed::Command {
                 command: path,
@@ -23,19 +39,10 @@ impl zed::Extension for DartExtension {
             });
         }
 
-        if let Some(fvm_path) = worktree.which("fvm") {
-            return Ok(zed::Command {
-                command: fvm_path,
-                args: vec![
-                    "dart".to_string(),
-                    "language-server".to_string(),
-                    "--protocol=lsp".to_string(),
-                ],
-                env: Default::default(),
-            });
-        }
-
-        Err("Either 'dart' or 'fvm' must be installed".to_string())
+        Err(
+            "Either implement settings lsp.dart.binary, or install dart from dart.dev/get-dart"
+                .to_string(),
+        )
     }
 
     fn language_server_workspace_configuration(
