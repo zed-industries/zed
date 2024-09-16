@@ -125,6 +125,12 @@ pub struct ParsedMarkdownTableRow {
     pub children: Vec<Vec<MarkdownParagraph>>,
 }
 
+impl Default for ParsedMarkdownTableRow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParsedMarkdownTableRow {
     pub fn new() -> Self {
         Self {

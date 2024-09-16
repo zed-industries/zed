@@ -210,10 +210,10 @@ impl BackgroundExecutor {
                 Poll::Pending => {
                     let timeout =
                         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout) {
-                        if deadline.is_some_and(|deadline| deadline < Instant::now()) {
-                            return Err(future);
-                        }
+                    if !self.dispatcher.park(timeout)
+                        && deadline.is_some_and(|deadline| deadline < Instant::now())
+                    {
+                        return Err(future);
                     }
                 }
             }

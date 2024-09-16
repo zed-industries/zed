@@ -134,8 +134,11 @@ impl InlineAssistant {
         })
         .detach();
 
-        let workspace = workspace.clone();
+        let workspace = workspace.downgrade();
         cx.observe_global::<SettingsStore>(move |cx| {
+            let Some(workspace) = workspace.upgrade() else {
+                return;
+            };
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
@@ -1200,9 +1203,11 @@ impl InlineAssistStatus {
     pub(crate) fn is_pending(&self) -> bool {
         matches!(self, Self::Pending)
     }
+
     pub(crate) fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed)
     }
+
     pub(crate) fn is_done(&self) -> bool {
         matches!(self, Self::Done)
     }
@@ -1460,7 +1465,7 @@ impl Render for PromptEditor {
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
-            .py(cx.line_height() / 2.)
+            .py(cx.line_height() / 2.5)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::move_up))
@@ -1473,7 +1478,7 @@ impl Render for PromptEditor {
                     .child(
                         ModelSelector::new(
                             self.fs.clone(),
-                            IconButton::new("context", IconName::SlidersAlt)
+                            IconButton::new("context", IconName::SettingsAlt)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
@@ -1792,12 +1797,15 @@ impl PromptEditor {
             CodegenStatus::Pending => {
                 cx.emit(PromptEditorEvent::DismissRequested);
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
                 if self.edited_since_done {
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
                     cx.emit(PromptEditorEvent::ConfirmRequested);
                 }
+            }
+            CodegenStatus::Error(_) => {
+                cx.emit(PromptEditorEvent::StartRequested);
             }
         }
     }
@@ -1910,12 +1918,11 @@ impl PromptEditor {
             } else {
                 cx.theme().colors().text
             },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size.into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
         EditorElement::new(
@@ -2339,7 +2346,7 @@ impl Codegen {
                 self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx)?;
 
             let chunks =
-                cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
+                cx.spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
             async move { Ok(chunks.await?.boxed()) }.boxed_local()
         };
         self.handle_stream(telemetry_id, edit_range, chunks, cx);
@@ -2365,20 +2372,7 @@ impl Codegen {
             None
         };
 
-        // Higher Temperature increases the randomness of model outputs.
-        // If Markdown or No Language is Known, increase the randomness for more creative output
-        // If Code, decrease temperature to get more deterministic outputs
-        let temperature = if let Some(language) = language_name.clone() {
-            if language.as_ref() == "Markdown" {
-                1.0
-            } else {
-                0.5
-            }
-        } else {
-            1.0
-        };
-
-        let language_name = language_name.as_deref();
+        let language_name = language_name.as_ref();
         let start = buffer.point_to_buffer_offset(edit_range.start);
         let end = buffer.point_to_buffer_offset(edit_range.end);
         let (buffer, range) = if let Some((start, end)) = start.zip(end) {
@@ -2411,8 +2405,9 @@ impl Codegen {
 
         Ok(LanguageModelRequest {
             messages,
-            stop: vec!["|END|>".to_string()],
-            temperature,
+            tools: Vec::new(),
+            stop: Vec::new(),
+            temperature: 1.,
         })
     }
 
@@ -3064,7 +3059,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range,
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3136,7 +3131,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3211,7 +3206,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3285,7 +3280,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });

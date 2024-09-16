@@ -193,11 +193,11 @@ impl SlashCommand for DiagnosticsSlashCommand {
                 .map(|(range, placeholder_type)| SlashCommandOutputSection {
                     range,
                     icon: match placeholder_type {
-                        PlaceholderType::Root(_, _) => IconName::ExclamationTriangle,
+                        PlaceholderType::Root(_, _) => IconName::Warning,
                         PlaceholderType::File(_) => IconName::File,
                         PlaceholderType::Diagnostic(DiagnosticType::Error, _) => IconName::XCircle,
                         PlaceholderType::Diagnostic(DiagnosticType::Warning, _) => {
-                            IconName::ExclamationTriangle
+                            IconName::Warning
                         }
                     },
                     label: match placeholder_type {

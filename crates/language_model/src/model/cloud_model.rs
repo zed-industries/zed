@@ -17,14 +17,14 @@ pub enum CloudModel {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, EnumIter)]
 pub enum ZedModel {
-    #[serde(rename = "qwen2-7b-instruct")]
+    #[serde(rename = "Qwen/Qwen2-7B-Instruct")]
     Qwen2_7bInstruct,
 }
 
 impl ZedModel {
     pub fn id(&self) -> &str {
         match self {
-            ZedModel::Qwen2_7bInstruct => "qwen2-7b-instruct",
+            ZedModel::Qwen2_7bInstruct => "Qwen/Qwen2-7B-Instruct",
         }
     }
 
@@ -102,6 +102,8 @@ impl CloudModel {
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini
+                | open_ai::Model::O1Mini
+                | open_ai::Model::O1Preview
                 | open_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }

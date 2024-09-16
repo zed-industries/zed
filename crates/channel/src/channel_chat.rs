@@ -11,6 +11,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use rand::prelude::*;
+use rpc::proto::AnyProtoClient;
 use std::{
     ops::{ControlFlow, Range},
     sync::Arc,
@@ -60,9 +61,9 @@ pub enum ChannelMessageId {
     Pending(usize),
 }
 
-impl Into<Option<u64>> for ChannelMessageId {
-    fn into(self) -> Option<u64> {
-        match self {
+impl From<ChannelMessageId> for Option<u64> {
+    fn from(val: ChannelMessageId) -> Self {
+        match val {
             ChannelMessageId::Saved(id) => Some(id),
             ChannelMessageId::Pending(_) => None,
         }
@@ -95,7 +96,7 @@ pub enum ChannelChatEvent {
 }
 
 impl EventEmitter<ChannelChatEvent> for ChannelChat {}
-pub fn init(client: &Arc<Client>) {
+pub fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ChannelChat::handle_message_sent);
     client.add_model_message_handler(ChannelChat::handle_message_removed);
     client.add_model_message_handler(ChannelChat::handle_message_updated);

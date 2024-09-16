@@ -12,7 +12,7 @@
 //! - [`WrapMap`] that handles soft wrapping.
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
-//! Each one of those builds on top of preceding map.
+//!   Each one of those builds on top of preceding map.
 //!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
@@ -105,7 +105,7 @@ pub struct DisplayMap {
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
-    fold_placeholder: FoldPlaceholder,
+    pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
 }
@@ -588,7 +588,7 @@ impl DisplaySnapshot {
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
         self.buffer_snapshot
-            .anchor_at(point.to_offset(&self, bias), bias)
+            .anchor_at(point.to_offset(self, bias), bias)
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
@@ -735,7 +735,7 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row.next_row();
-        for chunk in self.highlighted_chunks(range, false, &editor_style) {
+        for chunk in self.highlighted_chunks(range, false, editor_style) {
             line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
@@ -1286,7 +1286,7 @@ pub mod tests {
                                         height,
                                         disposition,
                                         render: Box::new(|_| div().into_any()),
-                                        priority: priority,
+                                        priority,
                                     }
                                 })
                                 .collect::<Vec<_>>();

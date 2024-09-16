@@ -119,15 +119,13 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         should_report_inline_completion_event: bool,
         _cx: &mut ModelContext<Self>,
     ) {
-        if should_report_inline_completion_event {
-            if self.completion_id.is_some() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_inline_completion_event(
-                        Self::name().to_string(),
-                        false,
-                        self.file_extension.clone(),
-                    );
-                }
+        if should_report_inline_completion_event && self.completion_id.is_some() {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
             }
         }
 
@@ -163,7 +161,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 }
 
 fn trim_to_end_of_line_unless_leading_newline(text: &str) -> &str {
-    if has_leading_newline(&text) {
+    if has_leading_newline(text) {
         text
     } else if let Some(i) = text.find('\n') {
         &text[..i]

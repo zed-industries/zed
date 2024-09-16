@@ -1,10 +1,6 @@
 use std::ops::Range;
 
-use crate::{
-    motion::{coerce_punctuation, right},
-    state::Mode,
-    Vim,
-};
+use crate::{motion::right, state::Mode, Vim};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
@@ -14,7 +10,7 @@ use editor::{
 use itertools::Itertools;
 
 use gpui::{actions, impl_actions, ViewContext};
-use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
+use language::{BufferSnapshot, CharKind, Point, Selection};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 
@@ -248,22 +244,19 @@ fn in_word(
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
-    let scope = map
+    let classifier = map
         .buffer_snapshot
-        .language_scope_at(relative_to.to_point(map));
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| {
-            coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
-                != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
-        },
+        |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
-            != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
+        classifier.kind(left) != classifier.kind(right)
     });
 
     Some(start..end)
@@ -362,11 +355,14 @@ fn around_word(
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
     let offset = relative_to.to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(offset);
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(offset)
+        .ignore_punctuation(ignore_punctuation);
     let in_word = map
         .buffer_chars_at(offset)
         .next()
-        .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
+        .map(|(c, _)| !classifier.is_whitespace(c))
         .unwrap_or(false);
 
     if in_word {
@@ -390,24 +386,22 @@ fn around_next_word(
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let scope = map
+    let classifier = map
         .buffer_snapshot
-        .language_scope_at(relative_to.to_point(map));
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     // Get the start of the word
     let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
-        |left, right| {
-            coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
-                != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
-        },
+        |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
     let mut word_found = false;
     let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
-        let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-        let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+        let left_kind = classifier.kind(left);
+        let right_kind = classifier.kind(right);
 
         let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
 
@@ -458,10 +452,10 @@ fn argument(
 
             // TODO: Is there any better way to filter out string brackets?
             // Used to filter out string brackets
-            return matches!(
+            matches!(
                 buffer.chars_at(open.start).next(),
                 Some('(' | '[' | '{' | '<' | '|')
-            );
+            )
         };
 
         // Find the brackets containing the cursor
@@ -487,9 +481,7 @@ fn argument(
             parent_covers_bracket_range = covers_bracket_range;
 
             // Unable to find a child node with a parent that covers the bracket range, so no argument to select
-            if cursor.goto_first_child_for_byte(offset).is_none() {
-                return None;
-            }
+            cursor.goto_first_child_for_byte(offset)?;
         }
 
         let mut argument_node = cursor.node();
@@ -662,7 +654,7 @@ fn is_sentence_end(map: &DisplaySnapshot, offset: usize) -> bool {
         }
     }
 
-    return false;
+    false
 }
 
 /// Expands the passed range to include whitespace on one side or the other in a line. Attempts to add the
@@ -675,8 +667,8 @@ fn expand_to_include_whitespace(
     let mut range = range.start.to_offset(map, Bias::Left)..range.end.to_offset(map, Bias::Right);
     let mut whitespace_included = false;
 
-    let mut chars = map.buffer_chars_at(range.end).peekable();
-    while let Some((char, offset)) = chars.next() {
+    let chars = map.buffer_chars_at(range.end).peekable();
+    for (char, offset) in chars {
         if char == '\n' && stop_at_newline {
             break;
         }
@@ -883,9 +875,7 @@ fn surrounding_markers(
         }
     }
 
-    let Some(mut opening) = opening else {
-        return None;
-    };
+    let mut opening = opening?;
 
     let mut matched_opens = 0;
     let mut closing = None;
@@ -913,9 +903,7 @@ fn surrounding_markers(
         before_ch = ch;
     }
 
-    let Some(mut closing) = closing else {
-        return None;
-    };
+    let mut closing = closing?;
 
     if around && !search_across_lines {
         let mut found = false;
@@ -1059,7 +1047,7 @@ mod test {
             .assert_matches();
     }
 
-    const PARAGRAPH_EXAMPLES: &[&'static str] = &[
+    const PARAGRAPH_EXAMPLES: &[&str] = &[
         // Single line
         "ˇThe quick brown fox jumpˇs over the lazy dogˇ.ˇ",
         // Multiple lines without empty lines
@@ -1146,7 +1134,7 @@ mod test {
     async fn test_visual_paragraph_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        const EXAMPLES: &[&'static str] = &[
+        const EXAMPLES: &[&str] = &[
             indoc! {"
                 ˇThe quick brown
                 fox jumps over

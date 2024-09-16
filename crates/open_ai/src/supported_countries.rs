@@ -15,6 +15,8 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     vec![
         "AL", // Albania
         "DZ", // Algeria
+        "AS", // American Samoa (US)
+        "AI", // Anguilla (UK)
         "AF", // Afghanistan
         "AD", // Andorra
         "AO", // Angola
@@ -31,11 +33,13 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "BE", // Belgium
         "BZ", // Belize
         "BJ", // Benin
+        "BM", // Bermuda (UK)
         "BT", // Bhutan
         "BO", // Bolivia
         "BA", // Bosnia and Herzegovina
         "BW", // Botswana
         "BR", // Brazil
+        "IO", // British Indian Ocean Territory (UK)
         "BN", // Brunei
         "BG", // Bulgaria
         "BF", // Burkina Faso
@@ -44,13 +48,17 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "KH", // Cambodia
         "CM", // Cameroon
         "CA", // Canada
+        "KY", // Cayman Islands (UK)
         "CF", // Central African Republic
         "TD", // Chad
         "CL", // Chile
+        "CX", // Christmas Island (AU)
+        "CC", // Cocos (Keeling) Islands (AU)
         "CO", // Colombia
         "KM", // Comoros
         "CG", // Congo (Brazzaville)
         "CD", // Congo (DRC)
+        "CK", // Cook Islands (NZ)
         "CR", // Costa Rica
         "CI", // Côte d'Ivoire
         "HR", // Croatia
@@ -68,21 +76,28 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "EE", // Estonia
         "SZ", // Eswatini (Swaziland)
         "ET", // Ethiopia
+        "FK", // Falkland Islands (UK)
         "FJ", // Fiji
         "FI", // Finland
         "FR", // France
+        "GF", // French Guiana (FR)
+        "PF", // French Polynesia (FR)
+        "TF", // French Southern Territories
         "GA", // Gabon
         "GM", // Gambia
         "GE", // Georgia
         "DE", // Germany
         "GH", // Ghana
+        "GI", // Gibraltar (UK)
         "GR", // Greece
         "GD", // Grenada
         "GT", // Guatemala
+        "GU", // Guam (US)
         "GN", // Guinea
         "GW", // Guinea-Bissau
         "GY", // Guyana
         "HT", // Haiti
+        "HM", // Heard Island and McDonald Islands (AU)
         "VA", // Holy See (Vatican City)
         "HN", // Honduras
         "HU", // Hungary
@@ -124,6 +139,7 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "MD", // Moldova
         "MC", // Monaco
         "MN", // Mongolia
+        "MS", // Montserrat (UK)
         "ME", // Montenegro
         "MA", // Morocco
         "MZ", // Mozambique
@@ -136,8 +152,11 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "NI", // Nicaragua
         "NE", // Niger
         "NG", // Nigeria
+        "NF", // Norfolk Island (AU)
         "MK", // North Macedonia
+        "MI", // Northern Mariana Islands (UK)
         "NO", // Norway
+        "NU", // Niue (NZ)
         "OM", // Oman
         "PK", // Pakistan
         "PW", // Palau
@@ -147,13 +166,18 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "PY", // Paraguay
         "PE", // Peru
         "PH", // Philippines
+        "PN", // Pitcairn (UK)
         "PL", // Poland
         "PT", // Portugal
+        "PR", // Puerto Rico (US)
         "QA", // Qatar
         "RO", // Romania
         "RW", // Rwanda
+        "BL", // Saint Barthélemy (FR)
         "KN", // Saint Kitts and Nevis
         "LC", // Saint Lucia
+        "MF", // Saint Martin (FR)
+        "PM", // Saint Pierre and Miquelon (FR)
         "VC", // Saint Vincent and the Grenadines
         "WS", // Samoa
         "SM", // San Marino
@@ -162,6 +186,7 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "SN", // Senegal
         "RS", // Serbia
         "SC", // Seychelles
+        "SH", // Saint Helena, Ascension and Tristan da Cunha (UK)
         "SL", // Sierra Leone
         "SG", // Singapore
         "SK", // Slovakia
@@ -183,21 +208,27 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "TH", // Thailand
         "TL", // Timor-Leste (East Timor)
         "TG", // Togo
+        "TK", // Tokelau (NZ)
         "TO", // Tonga
         "TT", // Trinidad and Tobago
         "TN", // Tunisia
         "TR", // Turkey
         "TM", // Turkmenistan
+        "TC", // Turks and Caicos Islands (UK)
         "TV", // Tuvalu
         "UG", // Uganda
         "UA", // Ukraine (with certain exceptions)
         "AE", // United Arab Emirates
         "GB", // United Kingdom
+        "UM", // United States Minor Outlying Islands (US)
         "US", // United States of America
         "UY", // Uruguay
         "UZ", // Uzbekistan
         "VU", // Vanuatu
         "VN", // Vietnam
+        "VI", // Virgin Islands (US)
+        "VG", // Virgin Islands (UK)
+        "WF", // Wallis and Futuna (FR)
         "YE", // Yemen
         "ZM", // Zambia
         "ZW", // Zimbabwe

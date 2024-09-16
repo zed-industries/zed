@@ -22,8 +22,7 @@ type WriteQueueConstructor = Box<dyn 'static + Send + FnMut() -> WriteQueue>;
 /// and have a single worker thread per db file. This means many thread safe connections
 /// (possibly with different migrations) could all be communicating with the same background
 /// thread.
-static QUEUES: LazyLock<RwLock<HashMap<Arc<str>, WriteQueue>>> =
-    LazyLock::new(|| Default::default());
+static QUEUES: LazyLock<RwLock<HashMap<Arc<str>, WriteQueue>>> = LazyLock::new(Default::default);
 
 /// Thread safe connection to a given database file or in memory db. This can be cloned, shared, static,
 /// whatever. It derefs to a synchronous connection by thread that is read only. A write capable connection

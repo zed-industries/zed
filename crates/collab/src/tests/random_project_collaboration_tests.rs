@@ -282,7 +282,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || rng.gen() {
-                                Path::new("/").join(&plan.next_root_dir_name())
+                                Path::new("/").join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
                             };

@@ -25,6 +25,7 @@ linkify.workspace = true
 log.workspace = true
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
+settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 workspace.workspace = true

@@ -1,6 +1,6 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::http_client::AsyncBody;
-use ::settings::Settings;
+use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -9,18 +9,20 @@ use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
 use isahc::config::{Configurable, RedirectPolicy};
+use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
-    env,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
+
+use super::latest;
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
 pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
@@ -32,7 +34,12 @@ wasmtime::component::bindgen!({
     with: {
          "worktree": ExtensionWorktree,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
+         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
+         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/lsp": latest::zed::extension::lsp,
+         "zed:extension/nodejs": latest::zed::extension::nodejs,
+         "zed:extension/platform": latest::zed::extension::platform,
+         "zed:extension/slash-command": latest::zed::extension::slash_command,
     },
 });
 
@@ -48,7 +55,94 @@ pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBo
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(|linker, f| {
+            Extension::add_to_linker(linker, f)?;
+            latest::zed::extension::github::add_to_linker(linker, f)?;
+            latest::zed::extension::nodejs::add_to_linker(linker, f)?;
+            latest::zed::extension::platform::add_to_linker(linker, f)?;
+            latest::zed::extension::slash_command::add_to_linker(linker, f)?;
+            Ok(())
+        })
+    })
+}
+
+impl From<Command> for latest::Command {
+    fn from(value: Command) -> Self {
+        Self {
+            command: value.command,
+            args: value.args,
+            env: value.env,
+        }
+    }
+}
+
+impl From<SettingsLocation> for latest::SettingsLocation {
+    fn from(value: SettingsLocation) -> Self {
+        Self {
+            worktree_id: value.worktree_id,
+            path: value.path,
+        }
+    }
+}
+
+impl From<LanguageServerInstallationStatus> for latest::LanguageServerInstallationStatus {
+    fn from(value: LanguageServerInstallationStatus) -> Self {
+        match value {
+            LanguageServerInstallationStatus::None => Self::None,
+            LanguageServerInstallationStatus::Downloading => Self::Downloading,
+            LanguageServerInstallationStatus::CheckingForUpdate => Self::CheckingForUpdate,
+            LanguageServerInstallationStatus::Failed(message) => Self::Failed(message),
+        }
+    }
+}
+
+impl From<DownloadedFileType> for latest::DownloadedFileType {
+    fn from(value: DownloadedFileType) -> Self {
+        match value {
+            DownloadedFileType::Gzip => Self::Gzip,
+            DownloadedFileType::GzipTar => Self::GzipTar,
+            DownloadedFileType::Zip => Self::Zip,
+            DownloadedFileType::Uncompressed => Self::Uncompressed,
+        }
+    }
+}
+
+impl From<Range> for latest::Range {
+    fn from(value: Range) -> Self {
+        Self {
+            start: value.start,
+            end: value.end,
+        }
+    }
+}
+
+impl From<CodeLabelSpan> for latest::CodeLabelSpan {
+    fn from(value: CodeLabelSpan) -> Self {
+        match value {
+            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
+            CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
+        }
+    }
+}
+
+impl From<CodeLabelSpanLiteral> for latest::CodeLabelSpanLiteral {
+    fn from(value: CodeLabelSpanLiteral) -> Self {
+        Self {
+            text: value.text,
+            highlight_name: value.highlight_name,
+        }
+    }
+}
+
+impl From<CodeLabel> for latest::CodeLabel {
+    fn from(value: CodeLabel) -> Self {
+        Self {
+            code: value.code,
+            spans: value.spans.into_iter().map(Into::into).collect(),
+            filter_range: value.filter_range.into(),
+        }
+    }
 }
 
 #[async_trait]
@@ -76,7 +170,7 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<u64> {
         let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_id())
+        Ok(delegate.worktree_id().to_proto())
     }
 
     async fn root_path(
@@ -251,136 +345,6 @@ async fn convert_response(
 }
 
 #[async_trait]
-impl nodejs::Host for WasmState {
-    async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .binary_path()
-            .await
-            .map(|path| path.to_string_lossy().to_string())
-            .to_wasmtime_result()
-    }
-
-    async fn npm_package_latest_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .npm_package_latest_version(&package_name)
-            .await
-            .to_wasmtime_result()
-    }
-
-    async fn npm_package_installed_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<Option<String>, String>> {
-        self.host
-            .node_runtime
-            .npm_package_installed_version(&self.work_dir(), &package_name)
-            .await
-            .to_wasmtime_result()
-    }
-
-    async fn npm_install_package(
-        &mut self,
-        package_name: String,
-        version: String,
-    ) -> wasmtime::Result<Result<(), String>> {
-        self.host
-            .node_runtime
-            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-            .await
-            .to_wasmtime_result()
-    }
-}
-
-#[async_trait]
-impl lsp::Host for WasmState {}
-
-impl From<::http_client::github::GithubRelease> for github::GithubRelease {
-    fn from(value: ::http_client::github::GithubRelease) -> Self {
-        Self {
-            version: value.tag_name,
-            assets: value.assets.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAsset {
-    fn from(value: ::http_client::github::GithubReleaseAsset) -> Self {
-        Self {
-            name: value.name,
-            download_url: value.browser_download_url,
-        }
-    }
-}
-
-#[async_trait]
-impl github::Host for WasmState {
-    async fn latest_github_release(
-        &mut self,
-        repo: String,
-        options: github::GithubReleaseOptions,
-    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
-        maybe!(async {
-            let release = ::http_client::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(release.into())
-        })
-        .await
-        .to_wasmtime_result()
-    }
-
-    async fn github_release_by_tag_name(
-        &mut self,
-        repo: String,
-        tag: String,
-    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
-        maybe!(async {
-            let release = ::http_client::github::get_release_by_tag_name(
-                &repo,
-                &tag,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(release.into())
-        })
-        .await
-        .to_wasmtime_result()
-    }
-}
-
-#[async_trait]
-impl platform::Host for WasmState {
-    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
-        Ok((
-            match env::consts::OS {
-                "macos" => platform::Os::Mac,
-                "linux" => platform::Os::Linux,
-                "windows" => platform::Os::Windows,
-                _ => panic!("unsupported os"),
-            },
-            match env::consts::ARCH {
-                "aarch64" => platform::Architecture::Aarch64,
-                "x86" => platform::Architecture::X86,
-                "x86_64" => platform::Architecture::X8664,
-                _ => panic!("unsupported architecture"),
-            },
-        ))
-    }
-}
-
-#[async_trait]
-impl slash_command::Host for WasmState {}
-
-#[async_trait]
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,
@@ -393,14 +357,15 @@ impl ExtensionImports for WasmState {
                 let location = location
                     .as_ref()
                     .map(|location| ::settings::SettingsLocation {
-                        worktree_id: location.worktree_id as usize,
+                        worktree_id: WorktreeId::from_proto(location.worktree_id),
                         path: Path::new(&location.path),
                     });
 
                 cx.update(|cx| match category.as_str() {
                     "language" => {
+                        let key = key.map(|k| LanguageName::new(&k));
                         let settings =
-                            AllLanguageSettings::get(location, cx).language(key.as_deref());
+                            AllLanguageSettings::get(location, cx).language(key.as_ref());
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
                         })?)

@@ -34,7 +34,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1);
         let step = if action.step { -1 } else { 0 };
-        vim.increment(count as i32 * -1, step, cx)
+        vim.increment(-(count as i32), step, cx)
     });
 }
 
@@ -47,10 +47,10 @@ impl Vim {
 
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             for selection in editor.selections.all_adjusted(cx) {
-                if !selection.is_empty() {
-                    if vim.mode != Mode::VisualBlock || new_anchors.is_empty() {
-                        new_anchors.push((true, snapshot.anchor_before(selection.start)))
-                    }
+                if !selection.is_empty()
+                    && (vim.mode != Mode::VisualBlock || new_anchors.is_empty())
+                {
+                    new_anchors.push((true, snapshot.anchor_before(selection.start)))
                 }
                 for row in selection.start.row..=selection.end.row {
                     let start = if row == selection.start.row {
@@ -80,10 +80,8 @@ impl Vim {
                         if selection.is_empty() {
                             new_anchors.push((false, snapshot.anchor_after(range.end)))
                         }
-                    } else {
-                        if selection.is_empty() {
-                            new_anchors.push((true, snapshot.anchor_after(start)))
-                        }
+                    } else if selection.is_empty() {
+                        new_anchors.push((true, snapshot.anchor_after(start)))
                     }
                 }
             }
@@ -140,7 +138,11 @@ fn find_number(
             begin = None;
             num = String::new();
         }
-        if num == "0" && ch == 'x' && chars.peek().is_some() && chars.peek().unwrap().is_digit(16) {
+        if num == "0"
+            && ch == 'x'
+            && chars.peek().is_some()
+            && chars.peek().unwrap().is_ascii_hexdigit()
+        {
             radix = 16;
             begin = None;
             num = String::new();
@@ -156,13 +158,11 @@ fn find_number(
                 begin = Some(offset);
             }
             num.push(ch);
-        } else {
-            if begin.is_some() {
-                end = Some(offset);
-                break;
-            } else if ch == '\n' {
-                break;
-            }
+        } else if begin.is_some() {
+            end = Some(offset);
+            break;
+        } else if ch == '\n' {
+            break;
         }
         offset += ch.len_utf8();
     }

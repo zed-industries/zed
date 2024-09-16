@@ -58,7 +58,7 @@ impl EditorLspTestContext {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let mut fake_servers = language_registry.register_fake_lsp_adapter(
-            language.name().as_ref(),
+            language.name(),
             FakeLspAdapter {
                 capabilities,
                 ..Default::default()
@@ -226,6 +226,7 @@ impl EditorLspTestContext {
                     ..Default::default()
                 },
                 block_comment: Some(("<!-- ".into(), " -->".into())),
+                word_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
             Some(tree_sitter_html::language()),

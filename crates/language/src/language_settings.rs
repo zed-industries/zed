@@ -1,6 +1,6 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageServerName};
+use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
@@ -20,15 +20,6 @@ use settings::{add_references_to_properties, Settings, SettingsLocation, Setting
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
-impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
-    fn into(self) -> SettingsLocation<'a> {
-        SettingsLocation {
-            worktree_id: self.worktree_id(),
-            path: self.path().as_ref(),
-        }
-    }
-}
-
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
     AllLanguageSettings::register(cx);
@@ -41,7 +32,7 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_deref())
+    all_language_settings(file, cx).language(language_name.as_ref())
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -49,7 +40,10 @@ pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
-    let location = file.map(|f| f.as_ref().into());
+    let location = file.map(|f| SettingsLocation {
+        worktree_id: f.worktree_id(cx),
+        path: f.path().as_ref(),
+    });
     AllLanguageSettings::get(location, cx)
 }
 
@@ -59,7 +53,7 @@ pub struct AllLanguageSettings {
     /// The inline completion settings.
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
-    languages: HashMap<Arc<str>, LanguageSettings>,
+    languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
@@ -155,10 +149,10 @@ impl LanguageSettings {
             );
 
         let rest = available_language_servers
-            .into_iter()
+            .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&&available_language_server.0)
-                    && !enabled_language_servers.contains(&&available_language_server.0)
+                !disabled_language_servers.contains(&available_language_server.0)
+                    && !enabled_language_servers.contains(&available_language_server.0)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -210,7 +204,7 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
-    pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
+    pub languages: HashMap<LanguageName, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
@@ -414,13 +408,15 @@ impl JsonSchema for FormatOnSave {
             .into(),
         );
 
-        let mut valid_raw_values = SchemaObject::default();
-        valid_raw_values.enum_values = Some(vec![
-            Value::String("on".into()),
-            Value::String("off".into()),
-            Value::String("prettier".into()),
-            Value::String("language_server".into()),
-        ]);
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("on".into()),
+                Value::String("off".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
         let mut nested_values = SchemaObject::default();
 
         nested_values.array().items = Some(formatter_schema.clone().into());
@@ -545,12 +541,15 @@ impl JsonSchema for SelectedFormatter {
             .into(),
         );
 
-        let mut valid_raw_values = SchemaObject::default();
-        valid_raw_values.enum_values = Some(vec![
-            Value::String("auto".into()),
-            Value::String("prettier".into()),
-            Value::String("language_server".into()),
-        ]);
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("auto".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
+
         let mut nested_values = SchemaObject::default();
 
         nested_values.array().items = Some(formatter_schema.clone().into());
@@ -633,7 +632,7 @@ impl AsRef<[Formatter]> for FormatterList {
     fn as_ref(&self) -> &[Formatter] {
         match &self.0 {
             SingleOrVec::Single(single) => slice::from_ref(single),
-            SingleOrVec::Vec(v) => &v,
+            SingleOrVec::Vec(v) => v,
         }
     }
 }
@@ -792,7 +791,7 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&str>) -> &'a LanguageSettings {
+    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
             if let Some(overrides) = self.languages.get(name) {
                 return overrides;
@@ -822,7 +821,7 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()).as_deref())
+        self.language(language.map(|l| l.name()).as_ref())
             .show_inline_completions
     }
 }
@@ -1145,7 +1144,7 @@ mod tests {
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
-                .into_iter()
+                .iter()
                 .copied()
                 .map(|name| LanguageServerName(name.into()))
                 .collect::<Vec<_>>()
