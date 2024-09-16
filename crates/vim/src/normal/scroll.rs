@@ -307,7 +307,7 @@ mod test {
         let visible_lines = 10;
         cx.set_scroll_height(visible_lines).await;
 
-        // We also turn off scrolloff, since that makes the tests more confusing.
+        // First test without vertical scroll margin
         cx.neovim.set_option(&format!("scrolloff={}", 0)).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<EditorSettings>(cx, |s| {
@@ -317,6 +317,31 @@ mod test {
 
         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
         cx.set_shared_state(&content).await;
+
+        // scroll down: ctrl-f
+        cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        // scroll up: ctrl-b
+        cx.simulate_shared_keystrokes("ctrl-b").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("ctrl-b").await;
+        cx.shared_state().await.assert_matches();
+
+        // Now go back to start of file, and test with vertical scroll margin
+        cx.simulate_shared_keystrokes("g g").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.neovim.set_option(&format!("scrolloff={}", 3)).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<EditorSettings>(cx, |s| {
+                s.vertical_scroll_margin = Some(3.0)
+            });
+        });
 
         // scroll down: ctrl-f
         cx.simulate_shared_keystrokes("ctrl-f").await;
