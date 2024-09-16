@@ -41,8 +41,7 @@ use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    auto_command, context_server_command, context_server_command, default_command, delta_command,
-    diagnostics_command, diagnostics_command, docs_command, fetch_command, file_command,
+    auto_command, default_command, delta_command, docs_command, fetch_command, file_command,
     now_command, project_command, prompt_command, search_command, symbols_command, tab_command,
     terminal_command, workflow_command,
 };
