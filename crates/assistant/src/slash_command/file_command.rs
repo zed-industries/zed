@@ -1,4 +1,4 @@
-use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
+use super::{diagnostics_command::collect_buffer_diagnostics, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
@@ -506,16 +506,13 @@ pub fn append_buffer_to_output(
     output.text.push_str("```");
     output.text.push('\n');
 
-    if !write_single_file_diagnostics(&mut output.text, path, buffer) {
-        output.text.pop();
-    }
+    let section_ix = output.sections.len();
+    collect_buffer_diagnostics(output, buffer, false);
 
-    output.sections.push(build_entry_output_section(
-        prev_len..output.text.len(),
-        path,
-        false,
-        None,
-    ));
+    output.sections.insert(
+        section_ix,
+        build_entry_output_section(prev_len..output.text.len(), path, false, None),
+    );
 
     output.text.push('\n');
 

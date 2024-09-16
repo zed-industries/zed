@@ -13,8 +13,6 @@ use workspace::Workspace;
 
 pub(crate) struct DeltaSlashCommand;
 
-impl DeltaSlashCommand {}
-
 impl SlashCommand for DeltaSlashCommand {
     fn name(&self) -> String {
         "delta".into()
@@ -54,7 +52,7 @@ impl SlashCommand for DeltaSlashCommand {
         let mut paths = HashSet::default();
         let mut file_command_old_outputs = Vec::new();
         let mut file_command_new_outputs = Vec::new();
-        for section in context_slash_command_output_sections {
+        for section in context_slash_command_output_sections.iter().rev() {
             if let Some(metadata) = section
                 .metadata
                 .as_ref()
@@ -87,8 +85,8 @@ impl SlashCommand for DeltaSlashCommand {
                 .zip(file_command_new_outputs)
             {
                 if let Ok(new_output) = new_output {
-                    if let Some(file_range) = new_output.sections.first() {
-                        let new_text = &new_output.text[file_range.range.clone()];
+                    if let Some(file_command_range) = new_output.sections.first() {
+                        let new_text = &new_output.text[file_command_range.range.clone()];
                         if old_text.chars().ne(new_text.chars()) {
                             output.sections.extend(new_output.sections.into_iter().map(
                                 |section| SlashCommandOutputSection {
