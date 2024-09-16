@@ -418,6 +418,7 @@ dependencies = [
  "regex",
  "release_channel",
  "rope",
+ "rpc",
  "schemars",
  "search",
  "semantic_index",
@@ -8553,9 +8554,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "futures 0.3.30",
- "gpui",
- "parking_lot",
  "prost",
  "prost-build",
  "serde",

@@ -62,10 +62,7 @@ use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_pat
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings, SettingsObserver};
 use remote::SshSession;
-use rpc::{
-    proto::{AnyProtoClient, SSH_PROJECT_ID},
-    ErrorCode,
-};
+use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};

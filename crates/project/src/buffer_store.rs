@@ -17,10 +17,7 @@ use language::{
     proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
     Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
 };
-use rpc::{
-    proto::{self, AnyProtoClient},
-    ErrorExt as _, TypedEnvelope,
-};
+use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use smol::channel::Receiver;
 use std::{io, path::Path, str::FromStr as _, sync::Arc, time::Instant};
 use text::BufferId;

@@ -5,8 +5,8 @@ use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
 use language::proto::serialize_version;
 use rpc::{
-    proto::{self, AnyProtoClient, PeerId},
-    TypedEnvelope,
+    proto::{self, PeerId},
+    AnyProtoClient, TypedEnvelope,
 };
 use std::{sync::Arc, time::Duration};
 use text::BufferId;

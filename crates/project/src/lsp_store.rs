@@ -49,7 +49,7 @@ use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;
 
-use rpc::proto::AnyProtoClient;
+use rpc::AnyProtoClient;
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};

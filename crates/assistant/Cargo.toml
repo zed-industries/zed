@@ -65,6 +65,7 @@ proto.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 rope.workspace = true
+rpc.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
