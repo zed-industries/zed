@@ -2,7 +2,7 @@
 
 Zed supports ways to spawn (and rerun) commands using its integrated terminal to output the results. These commands can read a limited subset of Zed state (such as a path to the file currently being edited or selected text).
 
-```json
+```jsonc
 [
   {
     "label": "Example task",
