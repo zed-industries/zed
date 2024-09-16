@@ -1179,7 +1179,7 @@ Or to set a `socks5` proxy:
 - Setting: `search`
 - Default:
 
-```
+```json
 "search": {
   "whole_word": false,
   "case_sensitive": false,
