@@ -543,7 +543,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("Note that having a subscription for another service like GitHub Copilot won't work."),
+                        "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
                     )
                     .size(LabelSize::Small),
                 )
