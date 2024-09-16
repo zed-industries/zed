@@ -54,7 +54,7 @@ pub fn colors_iter(appearance: WindowAppearance) -> Vec<Rgba> {
 ///
 /// NOTE: Default colors are in active development and will
 /// likely change frequently, including breaking changes,
-/// until stabalized. Use with caution!
+/// until stabilized. Use with caution!
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DefaultColors {
     /// Default color for backgrounds.
