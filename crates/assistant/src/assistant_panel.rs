@@ -4117,9 +4117,11 @@ impl ContextEditor {
                             .child(Label::new(label)),
                     )
                     .child(
-                        Button::new("open-configuration", "Open configuration")
+                        Button::new("open-configuration", "Configure Providers")
                             .size(ButtonSize::Compact)
+                            .icon(Some(IconName::SlidersVertical))
                             .icon_size(IconSize::Small)
+                            .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
