@@ -73,9 +73,14 @@ fn scroll_editor(
         return;
     }
 
-    let amount = match (amount, editor.visible_line_count()) {
-        (ScrollAmount::Page(1.0), Some(visible_line_count)) => {
-            ScrollAmount::Line(amount.lines(visible_line_count) - 1.0)
+    let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
+    let amount = match (amount.is_full_page(), editor.visible_line_count()) {
+        (true, Some(visible_line_count)) => {
+            if amount.direction().is_upwards() {
+                ScrollAmount::Line(amount.lines(visible_line_count) + 1.0)
+            } else {
+                ScrollAmount::Line(amount.lines(visible_line_count) - 1.0)
+            }
         }
         _ => amount.clone(),
     };
@@ -120,11 +125,18 @@ fn scroll_editor(
             } else {
                 DisplayRow(top.row().0 + vertical_scroll_margin)
             };
-            let max_row = DisplayRow(map.max_point().row().0.max(top.row().0.saturating_add(
-                (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
-            )));
 
-            let new_row = if head.row() < min_row {
+            let max_visible_row = top.row().0.saturating_add(
+                (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
+            );
+            let max_row = DisplayRow(map.max_point().row().0.max(max_visible_row));
+
+            let new_row = if full_page_up {
+                // Special-casing ctrl-b/page-up, which is special-cased by Vim, it seems
+                // to always put the cursor on the last line of the page, even if the cursor
+                // was before that.
+                DisplayRow(max_visible_row)
+            } else if head.row() < min_row {
                 min_row
             } else if head.row() > max_row {
                 max_row
@@ -306,18 +318,19 @@ mod test {
         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
         cx.set_shared_state(&content).await;
 
-        // test ctrl-f
+        // scroll down: ctrl-f
         cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        // scroll up: ctrl-b
+        cx.simulate_shared_keystrokes("ctrl-b").await;
         cx.shared_state().await.assert_matches();
 
         cx.simulate_shared_keystrokes("ctrl-b").await;
         cx.shared_state().await.assert_matches();
-
-        // test ctrl-b
-        // cx.simulate_shared_keystrokes("ctrl-b").await;
-        // cx.shared_state().await.assert_matches();
-        // cx.simulate_shared_keystrokes("ctrl-b").await;
-        // cx.shared_state().await.assert_matches();
     }
 
     #[gpui::test]
