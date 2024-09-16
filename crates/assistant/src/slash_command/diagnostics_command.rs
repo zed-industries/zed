@@ -336,7 +336,7 @@ fn collect_diagnostics(
             0,
             SlashCommandOutputSection {
                 range: 0..output.text.len(),
-                icon: IconName::ExclamationTriangle,
+                icon: IconName::Warning,
                 label: label.into(),
                 metadata: None,
             },
@@ -371,7 +371,7 @@ fn collect_diagnostic(
             if !include_warnings {
                 return;
             }
-            ("warning", IconName::ExclamationTriangle)
+            ("warning", IconName::Warning)
         }
         DiagnosticSeverity::ERROR => ("error", IconName::XCircle),
         _ => return,

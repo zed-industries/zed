@@ -609,10 +609,14 @@ impl settings::Settings for ThemeSettings {
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
+            this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
+
             merge(
                 &mut this.buffer_font_size,
                 value.buffer_font_size.map(Into::into),
             );
+            this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
+
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 
             // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.

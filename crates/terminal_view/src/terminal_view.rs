@@ -991,7 +991,7 @@ impl Item for TerminalView {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Unknown => (
-                    IconName::ExclamationTriangle,
+                    IconName::Warning,
                     Color::Warning,
                     Some(rerun_button(terminal_task.id.clone())),
                 ),

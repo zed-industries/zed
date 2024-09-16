@@ -29,10 +29,7 @@ pub fn main() {
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = FakeNodeRuntime::new();
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
+        let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         languages::init(language_registry.clone(), node_runtime, cx);
         theme::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();

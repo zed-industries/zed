@@ -667,7 +667,7 @@ impl Item for ProjectDiagnosticsEditor {
                     then.child(
                         h_flex()
                             .gap_1()
-                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
+                            .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(
                                 Label::new(self.summary.warning_count.to_string())
                                     .color(params.text_color()),
@@ -804,7 +804,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                         icon.path(IconName::XCircle.path())
                                             .text_color(Color::Error.color(cx))
                                     } else {
-                                        icon.path(IconName::ExclamationTriangle.path())
+                                        icon.path(IconName::Warning.path())
                                             .text_color(Color::Warning.color(cx))
                                     }
                                 }),

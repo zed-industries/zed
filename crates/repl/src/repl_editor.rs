@@ -321,7 +321,7 @@ fn get_language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Lan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Context, Task};
+    use gpui::Context;
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
 
@@ -475,10 +475,7 @@ mod tests {
         let typescript =
             languages::language("typescript", tree_sitter_typescript::language_typescript());
         let python = languages::language("python", tree_sitter_python::language());
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
+        let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         language_registry.add(markdown.clone());
         language_registry.add(typescript.clone());
         language_registry.add(python.clone());

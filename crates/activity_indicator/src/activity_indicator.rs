@@ -262,7 +262,7 @@ impl ActivityIndicator {
         if !failed.is_empty() {
             return Some(Content {
                 icon: Some(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
@@ -280,7 +280,7 @@ impl ActivityIndicator {
         if let Some(failure) = self.project.read(cx).last_formatting_failure() {
             return Some(Content {
                 icon: Some(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
@@ -333,7 +333,7 @@ impl ActivityIndicator {
                 }),
                 AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
-                        Icon::new(IconName::ExclamationTriangle)
+                        Icon::new(IconName::Warning)
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),

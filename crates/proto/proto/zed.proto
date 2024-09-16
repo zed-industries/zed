@@ -1855,6 +1855,7 @@ message Entry {
     bool is_external = 8;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
+    optional uint64 size = 11;
 }
 
 message RepositoryEntry {
