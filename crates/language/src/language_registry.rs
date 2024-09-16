@@ -12,7 +12,7 @@ use collections::{hash_map, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
-    Future, FutureExt as _,
+    Future,
 };
 use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
@@ -79,7 +79,6 @@ impl<'a> From<&'a str> for LanguageName {
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
-    login_shell_env_loaded: Shared<Task<()>>,
     executor: BackgroundExecutor,
     lsp_binary_status_tx: LspBinaryStatusSender,
 }
@@ -204,7 +203,7 @@ struct LspBinaryStatusSender {
 }
 
 impl LanguageRegistry {
-    pub fn new(login_shell_env_loaded: Task<()>, executor: BackgroundExecutor) -> Self {
+    pub fn new(executor: BackgroundExecutor) -> Self {
         let this = Self {
             state: RwLock::new(LanguageRegistryState {
                 next_language_server_id: 0,
@@ -224,7 +223,6 @@ impl LanguageRegistry {
                 fake_server_txs: Default::default(),
             }),
             language_server_download_dir: None,
-            login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_status_tx: Default::default(),
             executor,
         };
@@ -234,7 +232,7 @@ impl LanguageRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(executor: BackgroundExecutor) -> Self {
-        let mut this = Self::new(Task::ready(()), executor);
+        let mut this = Self::new(executor);
         this.language_server_download_dir = Some(Path::new("/the-download-dir").into());
         this
     }
@@ -828,7 +826,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cli_environment: Option<HashMap<String, String>>,
+        cli_environment: Shared<Task<Option<HashMap<String, String>>>>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -844,15 +842,12 @@ impl LanguageRegistry {
             .log_err()?;
         let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
-        let login_shell_env_loaded = self.login_shell_env_loaded.clone();
         let this = Arc::downgrade(self);
 
         let task = cx.spawn({
             let container_dir = container_dir.clone();
             move |mut cx| async move {
-                // If we want to install a binary globally, we need to wait for
-                // the login shell to be set on our process.
-                login_shell_env_loaded.await;
+                let cli_environment = cli_environment.await;
 
                 let binary_result = adapter
                     .clone()
