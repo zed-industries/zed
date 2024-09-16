@@ -462,7 +462,8 @@ impl Render for ConfigurationView {
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                .child(Label::new(INSTRUCTIONS[1]))
+                .child(h_flex().gap_1().child(Label::new(INSTRUCTIONS[2])).child(
                     Button::new("google_console", GOOGLE_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ExternalLink)
@@ -472,7 +473,6 @@ impl Render for ConfigurationView {
                     )
                 )
                 .child(Label::new(INSTRUCTIONS[3]))
-                .child(Label::new(INSTRUCTIONS[4]))
                 .child(
                     h_flex()
                         .w_full()

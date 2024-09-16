@@ -657,9 +657,8 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const ANTHROPIC_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
-        const INSTRUCTIONS: [&str; 4] = [
+        const INSTRUCTIONS: [&str; 3] = [
             "To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:",
-            "",
             "- Create one at:",
             "- Paste your API key below and hit enter to use the assistant:",
         ];
@@ -672,7 +671,8 @@ impl Render for ConfigurationView {
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                .child(Label::new(INSTRUCTIONS[1]))
+                .child(h_flex().gap_0p5().child(Label::new(INSTRUCTIONS[2])).child(
                     Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ExternalLink)
@@ -682,7 +682,6 @@ impl Render for ConfigurationView {
                     )
                 )
                 .child(Label::new(INSTRUCTIONS[3]))
-                .child(Label::new(INSTRUCTIONS[4]))
                 .child(
                     h_flex()
                         .w_full()
