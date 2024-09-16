@@ -165,7 +165,7 @@ pub enum IconName {
     Copy,
     CountdownTimer,
     CursorIBeam,
-    CursorText,
+    TextSnippet,
     Dash,
     DatabaseZap,
     Delete,

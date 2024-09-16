@@ -5235,7 +5235,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
                     .layer(ElevationIndex::ElevatedSurface)
-                    .child(Icon::new(IconName::CursorIBeam))
+                    .child(Icon::new(IconName::TextSnippet))
                     .child(Label::new(title.clone()).single_line())
                     .on_click(move |_, cx| {
                         editor
