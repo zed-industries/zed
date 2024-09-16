@@ -7,17 +7,17 @@ use crate::{List, ListItem};
 pub struct ListStory;
 
 impl Render for ListStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title_for::<List>())
-            .child(Story::label("Default"))
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Story::container(cx)
+            .child(Story::title_for::<List>(cx))
+            .child(Story::label(cx, "Default"))
             .child(
                 List::new()
                     .child(ListItem::new("apple").child("Apple"))
                     .child(ListItem::new("banana").child("Banana"))
                     .child(ListItem::new("cherry").child("Cherry")),
             )
-            .child(Story::label("With sections"))
+            .child(Story::label(cx, "With sections"))
             .child(
                 List::new()
                     .header(ListHeader::new("Produce"))

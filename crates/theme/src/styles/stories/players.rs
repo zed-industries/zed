@@ -7,13 +7,13 @@ pub struct PlayerStory;
 
 impl Render for PlayerStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container().child(
+        Story::container(cx).child(
             div()
                 .flex()
                 .flex_col()
                 .gap_4()
-                .child(Story::title_for::<PlayerColors>())
-                .child(Story::label("Player Colors"))
+                .child(Story::title_for::<PlayerColors>(cx))
+                .child(Story::label(cx, "Player Colors"))
                 .child(
                     div()
                         .flex()
@@ -44,7 +44,7 @@ impl Render for PlayerStory {
                             ),
                         ),
                 )
-                .child(Story::label("Avatar Rings"))
+                .child(Story::label(cx, "Avatar Rings"))
                 .child(div().flex().gap_1().children(
                     cx.theme().players().0.clone().iter_mut().map(|player| {
                         div()
@@ -60,7 +60,7 @@ impl Render for PlayerStory {
                             )
                     }),
                 ))
-                .child(Story::label("Player Backgrounds"))
+                .child(Story::label(cx, "Player Backgrounds"))
                 .child(div().flex().gap_1().children(
                     cx.theme().players().0.clone().iter_mut().map(|player| {
                         div()
@@ -119,7 +119,7 @@ impl Render for PlayerStory {
                             )
                     }),
                 ))
-                .child(Story::label("Player Selections"))
+                .child(Story::label(cx, "Player Selections"))
                 .child(div().flex().flex_col().gap_px().children(
                     cx.theme().players().0.clone().iter_mut().map(|player| {
                         div()

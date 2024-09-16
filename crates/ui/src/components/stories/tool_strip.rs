@@ -6,9 +6,9 @@ use crate::{prelude::*, ToolStrip, Tooltip};
 pub struct ToolStripStory;
 
 impl Render for ToolStripStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title_for::<ToolStrip>())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Story::container(cx)
+            .child(Story::title_for::<ToolStrip>(cx))
             .child(
                 StorySection::new().child(StoryItem::new(
                     "Vertical Tool Strip",

@@ -73,6 +73,8 @@ mod asset_cache;
 mod assets;
 mod bounds_tree;
 mod color;
+/// Defines the default style for GPUI elements.
+pub mod default_style;
 mod element;
 mod elements;
 mod executor;

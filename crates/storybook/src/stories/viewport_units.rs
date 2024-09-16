@@ -7,7 +7,7 @@ pub struct ViewportUnitsStory;
 
 impl Render for ViewportUnitsStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container().child(
+        Story::container(cx).child(
             div()
                 .flex()
                 .flex_row()

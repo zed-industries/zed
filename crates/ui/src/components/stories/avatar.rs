@@ -8,8 +8,8 @@ pub struct AvatarStory;
 
 impl Render for AvatarStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title_for::<Avatar>())
+        Story::container(cx)
+            .child(Story::title_for::<Avatar>(cx))
             .child(
                 StorySection::new()
                     .child(StoryItem::new(

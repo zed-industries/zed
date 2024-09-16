@@ -1,15 +1,12 @@
-use gpui::{
-    div, prelude::*, px, rems, AnyElement, DefaultColor, DefaultColors, Div, SharedString,
-    WindowContext,
-};
+use gpui::{div, prelude::*, px, rems, AnyElement, Div, SharedString, WindowContext};
 use itertools::Itertools;
 use smallvec::SmallVec;
 
 pub struct Story {}
 
 impl Story {
-    pub fn container() -> gpui::Stateful<Div> {
-        let colors = DefaultColors::light();
+    pub fn container(cx: &WindowContext) -> gpui::Stateful<Div> {
+        let color = cx.default_style().color;
 
         div()
             .id("story_container")
@@ -18,84 +15,77 @@ impl Story {
             .min_h_full()
             .flex()
             .flex_col()
-            .text_color(DefaultColor::Text.hsla(&colors))
-            .bg(DefaultColor::Background.hsla(&colors))
+            .text_color(color.foreground)
+            .bg(color.background)
     }
 
-    pub fn title(title: impl Into<SharedString>) -> impl Element {
-        let colors = DefaultColors::light();
+    pub fn title(cx: &WindowContext, title: impl Into<SharedString>) -> impl Element {
+        let color = cx.default_style().color;
 
         div()
             .text_xs()
-            .text_color(DefaultColor::Text.hsla(&colors))
+            .text_color(color.foreground)
             .child(title.into())
     }
 
-    pub fn title_for<T>() -> impl Element {
-        Self::title(std::any::type_name::<T>())
+    pub fn title_for<T>(cx: &WindowContext) -> impl Element {
+        Self::title(cx, std::any::type_name::<T>())
     }
 
-    pub fn section() -> Div {
-        let colors = DefaultColors::light();
+    pub fn section(cx: &WindowContext) -> Div {
+        let color = cx.default_style().color;
 
-        div()
-            .p_4()
-            .m_4()
-            .border_1()
-            .border_color(DefaultColor::Separator.hsla(&colors))
+        div().p_4().m_4().border_1().border_color(color.separator)
     }
 
-    pub fn section_title() -> Div {
-        let colors = DefaultColors::light();
+    pub fn section_title(cx: &WindowContext) -> Div {
+        let color = cx.default_style().color;
 
-        div().text_lg().text_color(DefaultColor::Text.hsla(&colors))
+        div().text_lg().text_color(color.foreground)
     }
 
-    pub fn group() -> Div {
-        let colors = DefaultColors::light();
-        div().my_2().bg(DefaultColor::Container.hsla(&colors))
+    pub fn group(cx: &WindowContext) -> Div {
+        let color = cx.default_style().color;
+        div().my_2().bg(color.container)
     }
 
-    pub fn code_block(code: impl Into<SharedString>) -> Div {
-        let colors = DefaultColors::light();
+    pub fn code_block(cx: &WindowContext, code: impl Into<SharedString>) -> Div {
+        let color = cx.default_style().color;
 
         div()
             .size_full()
             .p_2()
             .max_w(rems(36.))
-            .bg(DefaultColor::Container.hsla(&colors))
+            .bg(color.container)
             .rounded_md()
             .text_sm()
-            .text_color(DefaultColor::Text.hsla(&colors))
+            .text_color(color.foreground)
             .overflow_hidden()
             .child(code.into())
     }
 
-    pub fn divider() -> Div {
-        let colors = DefaultColors::light();
+    pub fn divider(cx: &WindowContext) -> Div {
+        let color = cx.default_style().color;
 
-        div()
-            .my_2()
-            .h(px(1.))
-            .bg(DefaultColor::Separator.hsla(&colors))
+        div().my_2().h(px(1.)).bg(color.separator)
     }
 
-    pub fn description(description: impl Into<SharedString>) -> impl Element {
-        let colors = DefaultColors::light();
+    pub fn description(cx: &WindowContext, description: impl Into<SharedString>) -> impl Element {
+        let color = cx.default_style().color;
 
         div()
             .text_sm()
-            .text_color(DefaultColor::Text.hsla(&colors))
+            .text_color(color.foreground)
             .min_w_96()
             .child(description.into())
     }
 
-    pub fn label(label: impl Into<SharedString>) -> impl Element {
-        let colors = DefaultColors::light();
+    pub fn label(cx: &WindowContext, label: impl Into<SharedString>) -> impl Element {
+        let color = cx.default_style().color;
 
         div()
             .text_xs()
-            .text_color(DefaultColor::Text.hsla(&colors))
+            .text_color(color.foreground)
             .child(label.into())
     }
 
@@ -135,8 +125,8 @@ impl StoryItem {
 }
 
 impl RenderOnce for StoryItem {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let colors = DefaultColors::light();
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let color = cx.default_style().color;
 
         div()
             .my_2()
@@ -148,20 +138,20 @@ impl RenderOnce for StoryItem {
                     .px_2()
                     .w_1_2()
                     .min_h_px()
-                    .child(Story::label(self.label))
+                    .child(Story::label(cx, self.label))
                     .child(
                         div()
                             .rounded_md()
-                            .bg(DefaultColor::Background.hsla(&colors))
+                            .bg(color.background)
                             .border_1()
-                            .border_color(DefaultColor::Border.hsla(&colors))
+                            .border_color(color.border)
                             .py_1()
                             .px_2()
                             .overflow_hidden()
                             .child(self.item),
                     )
                     .when_some(self.description, |this, description| {
-                        this.child(Story::description(description))
+                        this.child(Story::description(cx, description))
                     }),
             )
             .child(
@@ -171,8 +161,8 @@ impl RenderOnce for StoryItem {
                     .w_1_2()
                     .min_h_px()
                     .when_some(self.usage, |this, usage| {
-                        this.child(Story::label("Example Usage"))
-                            .child(Story::code_block(usage))
+                        this.child(Story::label(cx, "Example Usage"))
+                            .child(Story::code_block(cx, usage))
                     }),
             )
     }
@@ -205,21 +195,21 @@ impl StorySection {
 }
 
 impl RenderOnce for StorySection {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let children: SmallVec<[AnyElement; 2]> = SmallVec::from_iter(Itertools::intersperse_with(
             self.children.into_iter(),
-            || Story::divider().into_any_element(),
+            || Story::divider(cx).into_any_element(),
         ));
 
-        Story::section()
+        Story::section(cx)
             // Section title
             .py_2()
             // Section description
             .when_some(self.description.clone(), |section, description| {
-                section.child(Story::description(description))
+                section.child(Story::description(cx, description))
             })
             .child(div().flex().flex_col().gap_2().children(children))
-            .child(Story::divider())
+            .child(Story::divider(cx))
     }
 }
 

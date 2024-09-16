@@ -8,9 +8,9 @@ pub struct CheckboxStory;
 
 impl Render for CheckboxStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title_for::<Checkbox>())
-            .child(Story::label("Default"))
+        Story::container(cx)
+            .child(Story::title_for::<Checkbox>(cx))
+            .child(Story::label(cx, "Default"))
             .child(
                 h_flex()
                     .p_2()
@@ -25,7 +25,7 @@ impl Render for CheckboxStory {
                     ))
                     .child(Checkbox::new("checkbox-selected", Selection::Selected)),
             )
-            .child(Story::label("Disabled"))
+            .child(Story::label(cx, "Disabled"))
             .child(
                 h_flex()
                     .p_2()

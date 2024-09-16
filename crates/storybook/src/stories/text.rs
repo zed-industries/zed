@@ -15,8 +15,8 @@ impl TextStory {
 
 impl Render for TextStory {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title("Text"))
+        Story::container(cx)
+            .child(Story::title(cx, "Text"))
             .children(vec![
                 StorySection::new()
                     .child(

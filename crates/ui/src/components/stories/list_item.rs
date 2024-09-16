@@ -10,12 +10,12 @@ pub struct ListItemStory;
 
 impl Render for ListItemStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container()
+        Story::container(cx)
             .bg(cx.theme().colors().background)
-            .child(Story::title_for::<ListItem>())
-            .child(Story::label("Default"))
+            .child(Story::title_for::<ListItem>(cx))
+            .child(Story::label(cx, "Default"))
             .child(ListItem::new("hello_world").child("Hello, world!"))
-            .child(Story::label("Inset"))
+            .child(Story::label(cx, "Inset"))
             .child(
                 ListItem::new("inset_list_item")
                     .inset(true)
@@ -31,7 +31,7 @@ impl Render for ListItemStory {
                             .color(Color::Muted),
                     ),
             )
-            .child(Story::label("With start slot icon"))
+            .child(Story::label(cx, "With start slot icon"))
             .child(
                 ListItem::new("with start slot_icon")
                     .child("Hello, world!")
@@ -41,7 +41,7 @@ impl Render for ListItemStory {
                             .color(Color::Muted),
                     ),
             )
-            .child(Story::label("With start slot avatar"))
+            .child(Story::label(cx, "With start slot avatar"))
             .child(
                 ListItem::new("with_start slot avatar")
                     .child("Hello, world!")
@@ -49,7 +49,7 @@ impl Render for ListItemStory {
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     )),
             )
-            .child(Story::label("With end slot"))
+            .child(Story::label(cx, "With end slot"))
             .child(
                 ListItem::new("with_left_avatar")
                     .child("Hello, world!")
@@ -57,7 +57,7 @@ impl Render for ListItemStory {
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     )),
             )
-            .child(Story::label("With end hover slot"))
+            .child(Story::label(cx, "With end hover slot"))
             .child(
                 ListItem::new("with_end_hover_slot")
                     .child("Hello, world!")
@@ -84,7 +84,7 @@ impl Render for ListItemStory {
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     )),
             )
-            .child(Story::label("With `on_click`"))
+            .child(Story::label(cx, "With `on_click`"))
             .child(
                 ListItem::new("with_on_click")
                     .child("Click me")
@@ -92,7 +92,7 @@ impl Render for ListItemStory {
                         println!("Clicked!");
                     }),
             )
-            .child(Story::label("With `on_secondary_mouse_down`"))
+            .child(Story::label(cx, "With `on_secondary_mouse_down`"))
             .child(
                 ListItem::new("with_on_secondary_mouse_down")
                     .child("Right click me")
@@ -100,13 +100,17 @@ impl Render for ListItemStory {
                         println!("Right mouse down!");
                     }),
             )
-            .child(Story::label("With overflowing content in the `end_slot`"))
+            .child(Story::label(
+                cx,
+                "With overflowing content in the `end_slot`",
+            ))
             .child(
                 ListItem::new("with_overflowing_content_in_end_slot")
                     .child("An excerpt")
                     .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
             )
             .child(Story::label(
+                cx,
                 "`inset` with overflowing content in the `end_slot`",
             ))
             .child(
@@ -116,6 +120,7 @@ impl Render for ListItemStory {
                     .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
             )
             .child(Story::label(
+                cx,
                 "`inset` with overflowing content in `children` and `end_slot`",
             ))
             .child(

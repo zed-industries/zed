@@ -28,10 +28,12 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    current_platform,
+    default_style::{default_style, DefaultStyle},
+    hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle, Asset,
+    AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId, Entity,
+    EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu,
+    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
     Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
@@ -553,6 +555,11 @@ impl AppContext {
     /// Returns the appearance of the application's windows.
     pub fn window_appearance(&self) -> WindowAppearance {
         self.platform.window_appearance()
+    }
+
+    /// Returns the default style, including base colors, font sizes, etc.
+    pub fn default_style(&self) -> DefaultStyle {
+        default_style(self.window_appearance())
     }
 
     /// Writes data to the primary selection buffer.

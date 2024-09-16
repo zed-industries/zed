@@ -1,10 +1,11 @@
 use gpui::{
-    colors, div, prelude::*, DefaultColor, DefaultThemeAppearance, Hsla, Render, View, ViewContext,
-    WindowContext,
+    default_style::{colors_iter, default_style},
+    div,
+    prelude::*,
+    Render, View, ViewContext, WindowAppearance, WindowContext,
 };
 use story::Story;
-use strum::IntoEnumIterator;
-use ui::{h_flex, ActiveTheme};
+use ui::h_flex;
 
 pub struct DefaultColorsStory;
 
@@ -16,71 +17,74 @@ impl DefaultColorsStory {
 
 impl Render for DefaultColorsStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let appearances = [DefaultThemeAppearance::Light, DefaultThemeAppearance::Dark];
+        let appearances = [WindowAppearance::Light, WindowAppearance::Dark];
 
-        Story::container()
-            .child(Story::title("Default Colors"))
+        Story::container(cx)
+            .child(Story::title(cx, "Default Colors"))
             .children(appearances.iter().map(|&appearance| {
-                let colors = colors(appearance);
-                let color_types = DefaultColor::iter()
-                    .map(|color| {
-                        let name = format!("{:?}", color);
-                        let rgba = color.hsla(&colors);
-                        (name, rgba)
-                    })
-                    .collect::<Vec<_>>();
+                let default_style = default_style(appearance);
+
+                let color = default_style.color;
+
+                let colors = colors_iter(appearance);
 
                 div()
                     .flex()
                     .flex_col()
                     .gap_4()
                     .p_4()
-                    .child(Story::label(format!("{:?} Appearance", appearance)))
-                    .children(color_types.iter().map(|(name, color)| {
-                        let color: Hsla = *color;
-
+                    .bg(color.background)
+                    .text_color(color.foreground)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(color.foreground)
+                            .child(format!("{:?} Appearance", appearance)),
+                    )
+                    .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(
+                            .children(colors.iter().map(|c| {
+                                let fill: gpui::Fill = c.clone().into();
+
                                 div()
                                     .w_12()
                                     .h_12()
-                                    .bg(color)
+                                    .bg(fill)
                                     .border_1()
-                                    .border_color(cx.theme().colors().border),
-                            )
-                            .child(Story::label(format!("{}: {:?}", name, color.clone())))
-                    }))
+                                    .border_color(color.border)
+                            })),
+                    )
                     .child(
                         h_flex()
                             .gap_1()
                             .child(
                                 h_flex()
-                                    .bg(DefaultColor::Background.hsla(&colors))
+                                    .bg(color.background)
                                     .h_8()
                                     .p_2()
                                     .text_sm()
-                                    .text_color(DefaultColor::Text.hsla(&colors))
+                                    .text_color(color.foreground)
                                     .child("Default Text"),
                             )
                             .child(
                                 h_flex()
-                                    .bg(DefaultColor::Container.hsla(&colors))
+                                    .bg(color.container)
                                     .h_8()
                                     .p_2()
                                     .text_sm()
-                                    .text_color(DefaultColor::Text.hsla(&colors))
+                                    .text_color(color.foreground)
                                     .child("Text on Container"),
                             )
                             .child(
                                 h_flex()
-                                    .bg(DefaultColor::Selected.hsla(&colors))
+                                    .bg(color.background_selected)
                                     .h_8()
                                     .p_2()
                                     .text_sm()
-                                    .text_color(DefaultColor::SelectedText.hsla(&colors))
+                                    .text_color(color.foreground_selected)
                                     .child("Selected Text"),
                             ),
                     )

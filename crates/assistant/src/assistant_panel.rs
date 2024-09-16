@@ -4985,7 +4985,7 @@ impl WorkflowAssist {
 }
 
 impl Render for ContextHistory {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().size_full().child(self.picker.clone())
     }
 }
