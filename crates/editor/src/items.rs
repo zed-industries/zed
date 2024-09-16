@@ -1705,8 +1705,8 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert_eq!(
-                    buffer.language().map(|lang| lang.name()).as_deref(),
-                    Some("Rust")
+                    buffer.language().map(|lang| lang.name()),
+                    Some("Rust".into())
                 ); // Language should be set to Rust
                 assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });

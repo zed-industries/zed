@@ -5,10 +5,13 @@ use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Optio
 use std::ops::Range;
 
 pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+    let mut options = Options::all();
+    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
+
     let mut events = Vec::new();
     let mut within_link = false;
     let mut within_metadata = false;
-    for (pulldown_event, mut range) in Parser::new_ext(text, Options::all()).into_offset_iter() {
+    for (pulldown_event, mut range) in Parser::new_ext(text, options).into_offset_iter() {
         if within_metadata {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
                 pulldown_event
@@ -232,6 +235,10 @@ pub enum MarkdownTag {
 
     /// A metadata block.
     MetadataBlock(MetadataBlockKind),
+
+    DefinitionList,
+    DefinitionListTitle,
+    DefinitionListDefinition,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -317,11 +324,9 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
             },
             pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
             pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
-            pulldown_cmark::Tag::DefinitionList
-            | pulldown_cmark::Tag::DefinitionListTitle
-            | pulldown_cmark::Tag::DefinitionListDefinition => {
-                unimplemented!("definition lists are not yet supported")
-            }
+            pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
+            pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
+            pulldown_cmark::Tag::DefinitionListDefinition => MarkdownTag::DefinitionListDefinition,
         }
     }
 }

@@ -1,7 +1,3 @@
-use crate::{
-    error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
-    RequestMessage, TypedEnvelope,
-};
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::{
@@ -9,7 +5,11 @@ use futures::{
     Future, FutureExt as _,
 };
 use gpui::{AnyModel, AnyWeakModel, AsyncAppContext, Model};
-pub use prost::Message;
+// pub use prost::Message;
+use proto::{
+    error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
+    RequestMessage, TypedEnvelope,
+};
 use std::{any::TypeId, sync::Arc};
 
 #[derive(Clone)]

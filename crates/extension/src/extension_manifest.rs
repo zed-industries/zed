@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
-use language::LanguageServerName;
+use language::{LanguageName, LanguageServerName};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -106,10 +106,10 @@ pub struct GrammarManifestEntry {
 pub struct LanguageServerManifestEntry {
     /// Deprecated in favor of `languages`.
     #[serde(default)]
-    language: Option<Arc<str>>,
+    language: Option<LanguageName>,
     /// The list of languages this language server should work with.
     #[serde(default)]
-    languages: Vec<Arc<str>>,
+    languages: Vec<LanguageName>,
     #[serde(default)]
     pub language_ids: HashMap<String, String>,
     #[serde(default)]
@@ -124,7 +124,7 @@ impl LanguageServerManifestEntry {
     ///
     /// We can replace this with just field access for the `languages` field once
     /// we have removed `language`.
-    pub fn languages(&self) -> impl IntoIterator<Item = Arc<str>> + '_ {
+    pub fn languages(&self) -> impl IntoIterator<Item = LanguageName> + '_ {
         let language = if self.languages.is_empty() {
             self.language.clone()
         } else {

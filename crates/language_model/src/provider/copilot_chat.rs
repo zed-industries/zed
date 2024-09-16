@@ -358,7 +358,7 @@ impl Render for ConfigurationView {
                     }
                     _ => {
                         const LABEL: &str =
-                    "To use the assistant panel or inline assistant, you must login to GitHub Copilot. Your GitHub account must have an active Copilot Chat subscription.";
+                    "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
                         v_flex().gap_6().child(Label::new(LABEL)).child(
                             v_flex()
                                 .gap_2()

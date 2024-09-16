@@ -1996,6 +1996,7 @@ async fn share_project(
             RoomId::from_proto(request.room_id),
             session.connection_id,
             &request.worktrees,
+            request.is_ssh_project,
             request
                 .dev_server_project_id
                 .map(DevServerProjectId::from_proto),

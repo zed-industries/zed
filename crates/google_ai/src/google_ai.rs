@@ -304,7 +304,12 @@ pub enum Model {
     #[serde(rename = "gemini-1.5-flash")]
     Gemini15Flash,
     #[serde(rename = "custom")]
-    Custom { name: String, max_tokens: usize },
+    Custom {
+        name: String,
+        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        display_name: Option<String>,
+        max_tokens: usize,
+    },
 }
 
 impl Model {
@@ -320,7 +325,9 @@ impl Model {
         match self {
             Model::Gemini15Pro => "Gemini 1.5 Pro",
             Model::Gemini15Flash => "Gemini 1.5 Flash",
-            Model::Custom { name, .. } => name,
+            Self::Custom {
+                name, display_name, ..
+            } => display_name.as_ref().unwrap_or(name),
         }
     }
 

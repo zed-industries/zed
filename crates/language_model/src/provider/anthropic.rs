@@ -319,7 +319,7 @@ impl AnthropicModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Anthropic API Key"))?;
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -657,11 +657,10 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const ANTHROPIC_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
-        const INSTRUCTIONS: [&str; 4] = [
-            "To use the assistant panel or inline assistant, you need to add your Anthropic API key.",
-            "You can create an API key at:",
-            "",
-            "Paste your Anthropic API key below and hit enter to use the assistant:",
+        const INSTRUCTIONS: [&str; 3] = [
+            "To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:",
+            "- Create one at:",
+            "- Paste your API key below and hit enter to use the assistant:",
         ];
         let env_var_set = self.state.read(cx).api_key_from_env;
 
@@ -682,7 +681,6 @@ impl Render for ConfigurationView {
                     )
                 )
                 .child(Label::new(INSTRUCTIONS[2]))
-                .child(Label::new(INSTRUCTIONS[3]))
                 .child(
                     h_flex()
                         .w_full()
@@ -695,7 +693,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        "You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed.",
+                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small),
                 )

@@ -24,7 +24,7 @@ impl Render for ListHeaderStory {
             .child(
                 ListHeader::new("Section 4")
                     .end_slot(IconButton::new("action_1", IconName::Bolt))
-                    .end_slot(IconButton::new("action_2", IconName::ExclamationTriangle))
+                    .end_slot(IconButton::new("action_2", IconName::Warning))
                     .end_slot(IconButton::new("action_3", IconName::Plus)),
             )
     }

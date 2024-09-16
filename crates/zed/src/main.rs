@@ -400,16 +400,16 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
-    let login_shell_env_loaded = if stdout_is_a_pty() {
-        Task::ready(())
-    } else {
-        app.background_executor().spawn(async {
-            #[cfg(unix)]
-            {
-                load_shell_from_passwd().await.log_err();
-            }
-            load_login_shell_environment().await.log_err();
-        })
+    if !stdout_is_a_pty() {
+        app.background_executor()
+            .spawn(async {
+                #[cfg(unix)]
+                {
+                    load_shell_from_passwd().await.log_err();
+                }
+                load_login_shell_environment().await.log_err();
+            })
+            .detach()
     };
 
     app.on_open_urls({
@@ -451,8 +451,7 @@ fn main() {
         client::init_settings(cx);
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
-        let mut languages =
-            LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
+        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(client.http_client());
