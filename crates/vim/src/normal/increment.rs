@@ -100,67 +100,52 @@ impl Vim {
 
 fn increment_decimal_string(mut num: &str, delta: i64) -> String {
     let mut negative = false;
-    let mut n: u64;
-    let mut decrement = false;
-    if delta < 0 {
-        decrement = true;
-    }
+    let mut value: u64;
     if num.chars().next() == Some('-') {
         negative = true;
         num = &num[1..];
     }
-    if let Ok(result) = u64::from_str_radix(num, 10) {
-        n = result;
+    if let Ok(parse_value) = u64::from_str_radix(num, 10) {
+        value = parse_value;
+        if negative {
+            value = u64::MAX - value;
+        }
     } else {
         if !negative {
-            return u64::MAX.to_string()
+            return u64::MAX.to_string();
         } else {
-            return format!("-{}", u64::MAX)
+            return format!("-{}", u64::MAX);
         }
     }
 
-    let (result, overflow) = if !negative && !decrement {
-        adaptive_increment_u64(n, delta)
-    } else if negative && !decrement {
-        let (result, overflow) = adaptive_decrement_u64(n, delta);
-        if result == 0 {
+    let mut result: u64;
+    if delta >= 0 {
+        result = value.wrapping_add(delta as u64);
+        if result < value {
+            negative = !negative;
+            if !negative {
+                result = result.wrapping_add(1);
+            }
+        }
+        if negative && result == u64::MAX {
+            result = 0;
             negative = false;
         }
-        (result, overflow)
-    } else if negative && decrement {
-        adaptive_increment_u64(n, -delta)
     } else {
-        adaptive_decrement_u64(n, -delta)
-    };
-
-    n = result;
-    if overflow {
-        negative = !negative;
+        result = value.wrapping_sub((-delta) as u64);
+        if value < result {
+            negative = !negative;
+        }
+        if negative && result == u64::MAX {
+            result = u64::MAX - 1;
+        }
     }
 
     if !negative {
-        format!("{}", n)
+        format!("{}", result)
     } else {
-        format!("-{}", n)
-    }
-}
-
-fn adaptive_increment_u64(mut n: u64, delta: i64) -> (u64, bool) {
-    if let Some(n) = n.checked_add(delta as u64) {
-        return (n, false);
-    } else {
-        let diff = u64::MAX - n;
-        n = u64::MAX - delta as u64 + diff + 1;
-        return (n, true);
-    }
-}
-
-fn adaptive_decrement_u64(mut n: u64, delta: i64) -> (u64, bool) {
-    if let Some(n) = n.checked_sub(delta as u64) {
-        return (n, false);
-    } else {
-        n = u64::MIN + delta as u64 - n;
-        return (n, true);
+        result = u64::MAX - result;
+        format!("-{}", result)
     }
 }
 
