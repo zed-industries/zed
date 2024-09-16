@@ -2298,7 +2298,7 @@ impl ProjectPanel {
                                 .id("symlink_icon")
                                 .pr_3()
                                 .tooltip(move |cx| {
-                                    Tooltip::with_meta(format!("{path}"), None, "Symbolic Link", cx)
+                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
                                 })
                                 .child(
                                     Icon::new(IconName::ArrowUpRight)
