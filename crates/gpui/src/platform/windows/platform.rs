@@ -190,6 +190,17 @@ impl WindowsPlatform {
             runnable.run();
         }
     }
+
+    fn generate_creation_info(&self) -> WindowCreationInfo {
+        WindowCreationInfo {
+            icon: self.icon,
+            executor: self.foreground_executor.clone(),
+            current_cursor: self.state.borrow().current_cursor,
+            windows_version: self.windows_version,
+            validation_number: self.validation_number,
+            main_receiver: self.main_receiver.clone(),
+        }
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -340,18 +351,7 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let lock = self.state.borrow();
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            self.icon,
-            self.foreground_executor.clone(),
-            lock.current_cursor,
-            self.windows_version,
-            self.validation_number,
-            self.main_receiver.clone(),
-        )?;
-        drop(lock);
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
@@ -578,6 +578,15 @@ impl Drop for WindowsPlatform {
             OleUninitialize();
         }
     }
+}
+
+pub(crate) struct WindowCreationInfo {
+    pub(crate) icon: HICON,
+    pub(crate) executor: ForegroundExecutor,
+    pub(crate) current_cursor: HCURSOR,
+    pub(crate) windows_version: WindowsVersion,
+    pub(crate) validation_number: usize,
+    pub(crate) main_receiver: flume::Receiver<Runnable>,
 }
 
 fn open_target(target: &str) {

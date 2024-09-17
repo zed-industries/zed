@@ -263,13 +263,16 @@ impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
-        icon: HICON,
-        executor: ForegroundExecutor,
-        current_cursor: HCURSOR,
-        windows_version: WindowsVersion,
-        validation_number: usize,
-        main_receiver: flume::Receiver<Runnable>,
+        creation_info: WindowCreationInfo,
     ) -> Result<Self> {
+        let WindowCreationInfo {
+            icon,
+            executor,
+            current_cursor,
+            windows_version,
+            validation_number,
+            main_receiver,
+        } = creation_info;
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
             .titlebar
