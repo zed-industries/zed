@@ -1,23 +1,24 @@
 use std::{mem, sync::Arc, time::Duration};
 
 use futures::future::BoxFuture;
-use isahc::config::{Configurable, RedirectPolicy};
+use isahc::config::RedirectPolicy;
 use util::maybe;
 
+pub use isahc::config::Configurable;
 pub struct IsahcHttpClient(isahc::HttpClient);
 
 pub use http_client::*;
 
 impl IsahcHttpClient {
-    pub fn new(proxy: Option<Uri>) -> Arc<IsahcHttpClient> {
-        Arc::new(IsahcHttpClient(
-            isahc::HttpClient::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .low_speed_timeout(100, Duration::from_secs(5))
-                .proxy(proxy.clone())
-                .build()
-                .unwrap(),
-        ))
+    pub fn new(proxy: Option<Uri>, user_agent: Option<String>) -> Arc<IsahcHttpClient> {
+        let mut builder = isahc::HttpClient::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .low_speed_timeout(100, Duration::from_secs(5))
+            .proxy(proxy.clone());
+        if let Some(agent) = user_agent {
+            builder = builder.default_header("User-Agent", agent);
+        }
+        Arc::new(IsahcHttpClient(builder.build().unwrap()))
     }
     pub fn builder() -> isahc::HttpClientBuilder {
         isahc::HttpClientBuilder::new()

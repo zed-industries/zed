@@ -19,7 +19,8 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{actions, AppContext, AsyncAppContext, Global, Model, Task, WeakModel};
-use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{read_proxy_from_env, AsyncBody, HttpClient, HttpClientWithUrl, Uri};
+use isahc_http_client::{Configurable, IsahcHttpClient};
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
@@ -534,11 +535,21 @@ impl Client {
             std::env::consts::ARCH
         );
         let clock = Arc::new(clock::RealSystemClock);
+        let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
+        let proxy_url = proxy_str
+            .as_ref()
+            .and_then(|input| {
+                input
+                    .parse::<Uri>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env);
+
         let http = Arc::new(HttpClientWithUrl::new(
-            cx.http_client(),
+            IsahcHttpClient::new(proxy_url, Some(user_agent)),
             &ClientSettings::get_global(cx).server_url,
-            Some(user_agent),
-            ProxySettings::get_global(cx).proxy.clone(),
+            proxy_str,
         ));
         Self::new(clock, http.clone(), cx)
     }

@@ -229,7 +229,7 @@ impl HttpClient for HttpClientWithUrl {
     }
 }
 
-fn read_proxy_from_env() -> Option<Uri> {
+pub fn read_proxy_from_env() -> Option<Uri> {
     const ENV_VARS: &[&str] = &[
         "ALL_PROXY",
         "all_proxy",

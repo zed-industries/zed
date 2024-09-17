@@ -304,17 +304,13 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
-    low_speed_timeout: Option<Duration>,
+    _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        //request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
 
     let request = request_builder.body(AsyncBody::default())?;
 
