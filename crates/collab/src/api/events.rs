@@ -151,7 +151,8 @@ pub async fn post_crash(
         installation_id = %installation_id,
         description = %description,
         backtrace = %summary,
-        "crash report");
+        "crash report"
+    );
 
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
         let payload = slack::WebhookBody::new(|w| {
