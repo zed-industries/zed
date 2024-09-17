@@ -12,8 +12,7 @@ pub struct Keystroke {
     pub modifiers: Modifiers,
 
     /// TODO:
-    /// key is the character printed on the key that was pressed
-    /// e.g. for option-s, key is "s"
+    /// on Windows, this is `VirtualKeycodes`. On macOS and Linux, this is `ScanCodes`.
     pub key: KeyCodes,
 
     /// TODO: This is the key that use to print.
