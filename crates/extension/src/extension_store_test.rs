@@ -18,6 +18,7 @@ use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, La
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
 use project::{Project, DEFAULT_COMPLETION_CONTEXT};
+use release_channel::AppVersion;
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
 use snippet_provider::SnippetRegistry;

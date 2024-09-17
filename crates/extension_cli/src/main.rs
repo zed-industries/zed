@@ -7,7 +7,6 @@ use std::{
 };
 
 use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
-use ::http_client::HttpClientWithProxy;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use extension::{
@@ -70,8 +69,8 @@ async fn main() -> Result<()> {
     let http_client = Arc::new(
         IsahcHttpClient::builder()
             .default_header("User-Agent", user_agent)
-            .build()?
-            .into(),
+            .build()
+            .map(IsahcHttpClient::from)?,
     );
 
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
