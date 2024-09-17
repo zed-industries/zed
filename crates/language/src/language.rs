@@ -94,7 +94,7 @@ where
     let mut parser = PARSERS.lock().pop().unwrap_or_else(|| {
         let mut parser = Parser::new();
         parser
-            .set_wasm_store(WasmStore::new(&WASM_ENGINE).unwrap())
+            .set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap())
             .unwrap();
         parser
     });
@@ -1485,13 +1485,6 @@ impl LanguageScope {
         }
     }
 
-    pub fn override_name(&self) -> Option<&str> {
-        let id = self.override_id?;
-        let grammar = self.language.grammar.as_ref()?;
-        let override_config = grammar.override_config.as_ref()?;
-        override_config.values.get(&id).map(|e| e.0.as_str())
-    }
-
     fn config_override(&self) -> Option<&LanguageConfigOverride> {
         let id = self.override_id?;
         let grammar = self.language.grammar.as_ref()?;
@@ -1762,8 +1755,8 @@ mod tests {
         let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
         languages.register_native_grammars([
-            ("json", tree_sitter_json::LANGUAGE),
-            ("rust", tree_sitter_rust::LANGUAGE),
+            ("json", tree_sitter_json::language()),
+            ("rust", tree_sitter_rust::language()),
         ]);
         languages.register_test_language(LanguageConfig {
             name: "JSON".into(),

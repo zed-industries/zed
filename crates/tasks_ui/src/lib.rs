@@ -226,7 +226,7 @@ mod tests {
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
-                Some(tree_sitter_rust::LANGUAGE.into()),
+                Some(tree_sitter_rust::language()),
             )
             .with_outline_query(
                 r#"(function_item
@@ -240,7 +240,7 @@ mod tests {
         let typescript_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
-                Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+                Some(tree_sitter_typescript::language_typescript()),
             )
             .with_outline_query(
                 r#"(function_declaration

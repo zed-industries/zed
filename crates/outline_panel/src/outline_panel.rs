@@ -4787,7 +4787,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::LANGUAGE.into()),
+            Some(tree_sitter_rust::language()),
         )
         .with_highlights_query(
             r#"

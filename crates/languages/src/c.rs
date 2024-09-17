@@ -346,7 +346,7 @@ mod tests {
                 });
             });
         });
-        let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
+        let language = crate::language("c", tree_sitter_c::language());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);

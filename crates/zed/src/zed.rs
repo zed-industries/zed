@@ -3445,7 +3445,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::LANGUAGE.into()),
+            Some(tree_sitter_rust::language()),
         ))
     }
 
@@ -3459,7 +3459,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_md::LANGUAGE.into()),
+            Some(tree_sitter_md::language()),
         ))
     }
 

@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use tree_sitter::Query;
+use tree_sitter_json::language;
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 
 use crate::{SettingsJsonSchemaParams, WorktreeId};
@@ -954,17 +955,12 @@ fn replace_value_in_json_text(
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
     static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
-        Query::new(
-            &tree_sitter_json::LANGUAGE.into(),
-            "(pair key: (string) @key value: (_) @value)",
-        )
-        .expect("Failed to create PAIR_QUERY")
+        Query::new(&language(), "(pair key: (string) @key value: (_) @value)")
+            .expect("Failed to create PAIR_QUERY")
     });
 
     let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_json::LANGUAGE.into())
-        .unwrap();
+    parser.set_language(&tree_sitter_json::language()).unwrap();
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();
