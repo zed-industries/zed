@@ -25,13 +25,13 @@ pub enum Keys {
     Enter,
     /// SHIFT key, `VK_SHIFT` on Windows. Note, both left-shift and right-shift can
     /// trigger this.
-    Shift,
+    Shift(KeyPosition),
     /// CTRL key, `VK_CONTROL` on Windows. Note, both left-ctrl and right-ctrl can
     /// trigger this.
-    Control,
+    Control(KeyPosition),
     /// Alt key, `VK_MENU` on Windows. Note, both left-alt and right-alt can
     /// trigger this.
-    Alt,
+    Alt(KeyPosition),
     /// PAUSE key, `VK_PAUSE` on Windows.
     Pause,
     /// CAPS LOCK key, `VK_CAPITAL` on Windows.
@@ -162,12 +162,14 @@ pub enum Keys {
     Y,
     /// A key on the main keyboard, `VK_A` on Windows.
     Z,
+    /// TODO:
+    Platform(KeyPosition),
     /// Left WIN key `VK_LWIN` on Windows,
     /// TODO: macOS, Linux
-    LeftPlatform,
+    // LeftPlatform,
     /// Right WIN key `VK_RWIN` on Windows,
     /// TODO: macOS, Linux
-    RightPlatform,
+    // RightPlatform,
     /// Applications key, `VK_APPS` on Windows.
     App,
     /// Computer Sleep key, `VK_SLEEP` on Windows.
@@ -257,17 +259,17 @@ pub enum Keys {
     /// SCROLL LOCK key
     ScrollLock,
     /// Left SHIFT key
-    LeftShift,
+    // LeftShift,
     /// Right SHIFT key
-    RightShift,
+    // RightShift,
     /// Left CONTROL key
-    LeftControl,
+    // LeftControl,
     /// Right CONTROL key
-    RightControl,
+    // RightControl,
     /// Left ALT key
-    LeftAlt,
+    // LeftAlt,
     /// Right ALT key
-    RightAlt,
+    // RightAlt,
     /// Browser Back key, `VK_BROWSER_BACK` on Windows.
     BrowserBack,
     /// Browser Forward key
@@ -374,6 +376,18 @@ pub enum Keys {
     OEMClear,
 }
 
+/// TODO:
+#[derive(Copy, Clone, Debug, Default, Deserialize, Hash)]
+pub enum KeyPosition {
+    /// TODO:
+    #[default]
+    Any,
+    /// TODO:
+    Left,
+    /// TODO:
+    Right,
+}
+
 impl Keys {
     /// TODO:
     pub fn is_printable(&self) -> bool {
@@ -434,9 +448,9 @@ impl Keys {
             "tab" => Self::Tab,
             // VirtualKeyCode::Clear => "UnImplemented",
             "enter" => Self::Enter,
-            "shift" => Self::Shift,
-            "ctrl" => Self::Control,
-            "alt" => Self::Alt,
+            "shift" => Self::Shift(KeyPosition::Any),
+            "ctrl" => Self::Control(KeyPosition::Any),
+            "alt" => Self::Alt(KeyPosition::Any),
             // VirtualKeyCode::Pause => "UnImplemented",
             "capslock" => Self::Capital,
             // VirtualKeyCode::Kana => "UnImplemented",
@@ -502,8 +516,7 @@ impl Keys {
             "x" => Keys::X,
             "y" => Keys::Y,
             "z" => Keys::Z,
-            "win" | "cmd" | "super" => Self::LeftPlatform, // TODO: RightPlatform?
-            // VirtualKeyCode::RightPlatform => "platform",
+            "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
             // VirtualKeyCode::App => "UnImplemented", // TODO: Chrome use this as Fn key
             // VirtualKeyCode::Sleep => "UnImplemented",
             // VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: Handle numpad keys
@@ -616,9 +629,10 @@ impl Keys {
             Keys::Tab => "tab",
             Keys::Clear => "UnImplemented",
             Keys::Enter => "enter",
-            Keys::Shift => "shift",
-            Keys::Control => "ctrl",
-            Keys::Alt => "alt",
+            // TODO: position
+            Keys::Shift(_) => "shift",
+            Keys::Control(_) => "ctrl",
+            Keys::Alt(_) => "alt",
             Keys::Pause => "UnImplemented",
             Keys::Capital => "capslock",
             Keys::Kana => "UnImplemented",
@@ -684,19 +698,13 @@ impl Keys {
             Keys::X => "x",
             Keys::Y => "y",
             Keys::Z => "z",
+            // TODO: handle position
             #[cfg(target_os = "windows")]
-            Keys::LeftPlatform => "win",
+            Keys::Platform(_) => "win",
             #[cfg(target_os = "macos")]
-            Keys::LeftPlatform => "cmd",
+            Keys::Platform(_) => "cmd",
             #[cfg(target_os = "linux")]
-            Keys::LeftPlatform => "super", // TODO:
-            Keys::RightPlatform => "UnImplemented",
-            // #[cfg(target_os = "windows")]
-            // VirtualKeyCode::RightPlatform => "win",
-            // #[cfg(target_os = "macos")]
-            // VirtualKeyCode::RightPlatform => "cmd",
-            // #[cfg(target_os = "linux")]
-            // VirtualKeyCode::RightPlatform => "super", // TODO:
+            Keys::Platform(_) => "super",
             Keys::App => "UnImplemented", // TODO: Chrome use this as Fn key
             Keys::Sleep => "UnImplemented",
             Keys::Numpad0 => "UnImplemented", // TODO: handle numpad key
@@ -741,18 +749,6 @@ impl Keys {
             Keys::F24 => "f24",
             Keys::NumLock => "UnImplemented",
             Keys::ScrollLock => "UnImplemented",
-            Keys::LeftShift => "UnImplemented",
-            Keys::RightShift => "UnImplemented",
-            Keys::LeftControl => "UnImplemented",
-            Keys::RightControl => "UnImplemented",
-            Keys::LeftAlt => "UnImplemented",
-            Keys::RightAlt => "UnImplemented",
-            // VirtualKeyCode::LeftShift => "shift", // TODO:
-            // VirtualKeyCode::RightShift => "shift",
-            // VirtualKeyCode::LeftControl => "control",
-            // VirtualKeyCode::RightControl => "control",
-            // VirtualKeyCode::LeftAlt => "alt",
-            // VirtualKeyCode::RightAlt => "alt",
             Keys::BrowserBack => "UnImplemented",
             Keys::BrowserForward => "UnImplemented",
             Keys::BrowserRefresh => "UnImplemented",
@@ -798,6 +794,19 @@ impl Keys {
         .to_string()
     }
 }
+
+impl PartialEq for KeyPosition {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (KeyPosition::Right, KeyPosition::Left) | (KeyPosition::Left, KeyPosition::Right) => {
+                false
+            }
+            _ => true,
+        }
+    }
+}
+
+impl Eq for KeyPosition {}
 
 #[cfg(test)]
 mod tests {

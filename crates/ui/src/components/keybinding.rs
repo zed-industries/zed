@@ -1,5 +1,5 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke, Keys};
+use gpui::{relative, Action, FocusHandle, IntoElement, Keys, Keystroke};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -45,23 +45,15 @@ impl KeyBinding {
             Keys::Escape => Some(IconName::Escape),
             Keys::PageDown => Some(IconName::PageDown),
             Keys::PageUp => Some(IconName::PageUp),
-            Keys::Shift if self.platform_style == PlatformStyle::Mac => {
-                Some(IconName::Shift)
-            }
-            Keys::Control if self.platform_style == PlatformStyle::Mac => {
+            Keys::Shift(_) if self.platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+            Keys::Control(_) if self.platform_style == PlatformStyle::Mac => {
                 Some(IconName::Control)
             }
-            Keys::LeftPlatform | Keys::RightPlatform
-                if self.platform_style == PlatformStyle::Mac =>
-            {
+            Keys::Platform(_) if self.platform_style == PlatformStyle::Mac => {
                 Some(IconName::Command)
             }
-            Keys::Function if self.platform_style == PlatformStyle::Mac => {
-                Some(IconName::Control)
-            }
-            Keys::Alt if self.platform_style == PlatformStyle::Mac => {
-                Some(IconName::Option)
-            }
+            Keys::Function if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
+            Keys::Alt(_) if self.platform_style == PlatformStyle::Mac => Some(IconName::Option),
             _ => None,
         }
     }

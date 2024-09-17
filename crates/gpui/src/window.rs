@@ -1,20 +1,19 @@
 use crate::{
-    keycodes::Keys, point, prelude::*, px, size, transparent_black, Action, AnyDrag,
-    AnyElement, AnyTooltip, AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace,
-    Bounds, BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId,
-    GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene,
-    Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, View, VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    keycodes::Keys, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement,
+    AnyTooltip, AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds,
+    BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
+    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyPosition, Keystroke, KeystrokeEvent,
+    LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -3245,10 +3244,10 @@ impl<'a> WindowContext<'a> {
                 && !self.window.pending_modifier.saw_keystroke
             {
                 let key = match self.window.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some(Keys::Shift),
-                    modifiers if modifiers.control => Some(Keys::Control),
-                    modifiers if modifiers.alt => Some(Keys::Alt),
-                    modifiers if modifiers.platform => Some(Keys::LeftPlatform),
+                    modifiers if modifiers.shift => Some(Keys::Shift(KeyPosition::Any)),
+                    modifiers if modifiers.control => Some(Keys::Control(KeyPosition::Any)),
+                    modifiers if modifiers.alt => Some(Keys::Alt(KeyPosition::Any)),
+                    modifiers if modifiers.platform => Some(Keys::Platform(KeyPosition::Any)),
                     modifiers if modifiers.function => Some(Keys::Function),
                     _ => None,
                 };
