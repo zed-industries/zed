@@ -32,37 +32,15 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        self.0 >= SemanticVersion::new(0, 129, 2)
-    }
-
-    pub fn with_save_as() -> ZedVersion {
-        ZedVersion(SemanticVersion::new(0, 134, 0))
+        self.0 >= SemanticVersion::new(0, 134, 0)
     }
 
     pub fn with_list_directory() -> ZedVersion {
         ZedVersion(SemanticVersion::new(0, 145, 0))
     }
-}
 
-pub trait VersionedMessage {
-    fn required_host_version(&self) -> Option<ZedVersion> {
-        None
-    }
-}
-
-impl VersionedMessage for proto::SaveBuffer {
-    fn required_host_version(&self) -> Option<ZedVersion> {
-        if self.new_path.is_some() {
-            Some(ZedVersion::with_save_as())
-        } else {
-            None
-        }
-    }
-}
-
-impl VersionedMessage for proto::OpenNewBuffer {
-    fn required_host_version(&self) -> Option<ZedVersion> {
-        Some(ZedVersion::with_save_as())
+    pub fn with_search_candidates() -> ZedVersion {
+        ZedVersion(SemanticVersion::new(0, 151, 0))
     }
 }
 
@@ -258,7 +236,7 @@ impl ConnectionPool {
                 }
                 PrincipalId::DevServerId(dev_server_id) => {
                     assert_eq!(
-                        self.connected_dev_servers.get(&dev_server_id).unwrap(),
+                        self.connected_dev_servers.get(dev_server_id).unwrap(),
                         connection_id
                     );
                 }
@@ -322,9 +300,9 @@ impl ChannelPool {
     }
 
     pub fn remove_user(&mut self, user_id: &UserId) {
-        if let Some(channels) = self.by_user.remove(&user_id) {
+        if let Some(channels) = self.by_user.remove(user_id) {
             for channel_id in channels.keys() {
-                self.unsubscribe(user_id, &channel_id)
+                self.unsubscribe(user_id, channel_id)
             }
         }
     }

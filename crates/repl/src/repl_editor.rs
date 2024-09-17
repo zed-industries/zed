@@ -6,13 +6,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use editor::Editor;
 use gpui::{prelude::*, AppContext, Entity, View, WeakView, WindowContext};
-use language::{BufferSnapshot, Language, Point};
+use language::{BufferSnapshot, Language, LanguageName, Point};
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
-pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
+pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -27,26 +27,30 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         return Ok(());
     };
 
-    let (ranges, next_cell_point) = snippet_ranges(&buffer.read(cx).snapshot(), selected_range);
+    let (runnable_ranges, next_cell_point) =
+        runnable_ranges(&buffer.read(cx).snapshot(), selected_range);
 
-    for range in ranges {
-        let Some(language) = multibuffer.read(cx).language_at(range.start, cx) else {
+    for runnable_range in runnable_ranges {
+        let Some(language) = multibuffer.read(cx).language_at(runnable_range.start, cx) else {
             continue;
         };
 
         let kernel_specification = store.update(cx, |store, cx| {
             store
-                .kernelspec(&language, cx)
+                .kernelspec(language.code_fence_block_name().as_ref(), cx)
                 .with_context(|| format!("No kernel found for language: {}", language.name()))
         })?;
 
         let fs = store.read(cx).fs().clone();
+        let telemetry = store.read(cx).telemetry().clone();
+
         let session = if let Some(session) = store.read(cx).get_session(editor.entity_id()).cloned()
         {
             session
         } else {
             let weak_editor = editor.downgrade();
-            let session = cx.new_view(|cx| Session::new(weak_editor, fs, kernel_specification, cx));
+            let session = cx
+                .new_view(|cx| Session::new(weak_editor, fs, telemetry, kernel_specification, cx));
 
             editor.update(cx, |_editor, cx| {
                 cx.notify();
@@ -76,13 +80,16 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         let next_cursor;
         {
             let snapshot = multibuffer.read(cx).read(cx);
-            selected_text = snapshot.text_for_range(range.clone()).collect::<String>();
-            anchor_range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+            selected_text = snapshot
+                .text_for_range(runnable_range.clone())
+                .collect::<String>();
+            anchor_range = snapshot.anchor_before(runnable_range.start)
+                ..snapshot.anchor_after(runnable_range.end);
             next_cursor = next_cell_point.map(|point| snapshot.anchor_after(point));
         }
 
         session.update(cx, |session, cx| {
-            session.execute(selected_text, anchor_range, next_cursor, cx);
+            session.execute(selected_text, anchor_range, next_cursor, move_down, cx);
         });
     }
 
@@ -92,7 +99,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
 pub enum SessionSupport {
     ActiveSession(View<Session>),
     Inactive(Box<KernelSpecification>),
-    RequiresSetup(Arc<str>),
+    RequiresSetup(LanguageName),
     Unsupported,
 }
 
@@ -107,14 +114,19 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
     let Some(language) = get_language(editor, cx) else {
         return SessionSupport::Unsupported;
     };
-    let kernelspec = store.update(cx, |store, cx| store.kernelspec(&language, cx));
+    let kernelspec = store.update(cx, |store, cx| {
+        store.kernelspec(language.code_fence_block_name().as_ref(), cx)
+    });
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
-        None => match language.name().as_ref() {
-            "TypeScript" | "Python" => SessionSupport::RequiresSetup(language.name()),
-            _ => SessionSupport::Unsupported,
-        },
+        None => {
+            if language_supported(&language) {
+                SessionSupport::RequiresSetup(language.name())
+            } else {
+                SessionSupport::Unsupported
+            }
+        }
     }
 }
 
@@ -156,7 +168,28 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
-fn snippet_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
+pub fn restart(editor: WeakView<Editor>, cx: &mut WindowContext) {
+    let Some(editor) = editor.upgrade() else {
+        return;
+    };
+
+    let entity_id = editor.entity_id();
+
+    let Some(session) = ReplStore::global(cx)
+        .read(cx)
+        .get_session(entity_id)
+        .cloned()
+    else {
+        return;
+    };
+
+    session.update(cx, |session, cx| {
+        session.restart(cx);
+        cx.notify();
+    });
+}
+
+fn cell_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
     let mut snippet_end_row = end_row;
     while buffer.is_line_blank(snippet_end_row) && snippet_end_row > start_row {
         snippet_end_row -= 1;
@@ -164,8 +197,8 @@ fn snippet_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range
     Point::new(start_row, 0)..Point::new(snippet_end_row, buffer.line_len(snippet_end_row))
 }
 
-// Returns the ranges of the snippets in the buffer and the next range for moving the cursor to
-fn jupytext_snippets(
+// Returns the ranges of the snippets in the buffer and the next point for moving the cursor to
+fn jupytext_cells(
     buffer: &BufferSnapshot,
     range: Range<Point>,
 ) -> (Vec<Range<Point>>, Option<Point>) {
@@ -208,19 +241,19 @@ fn jupytext_snippets(
                 .iter()
                 .any(|prefix| buffer.contains_str_at(Point::new(current_row, 0), prefix))
             {
-                snippets.push(snippet_range(buffer, snippet_start_row, current_row - 1));
+                snippets.push(cell_range(buffer, snippet_start_row, current_row - 1));
 
                 if current_row <= range.end.row {
                     snippet_start_row = current_row;
                 } else {
-                    // Return our snippets as well as the next range for moving the cursor to
+                    // Return our snippets as well as the next point for moving the cursor to
                     return (snippets, Some(Point::new(current_row, 0)));
                 }
             }
         }
 
         // Go to the end of the buffer (no more jupytext cells found)
-        snippets.push(snippet_range(
+        snippets.push(cell_range(
             buffer,
             snippet_start_row,
             buffer.max_point().row,
@@ -230,26 +263,52 @@ fn jupytext_snippets(
     (snippets, None)
 }
 
-fn snippet_ranges(
+fn runnable_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
 ) -> (Vec<Range<Point>>, Option<Point>) {
-    let (jupytext_snippets, next_cursor) = jupytext_snippets(buffer, range.clone());
+    if let Some(language) = buffer.language() {
+        if language.name() == "Markdown".into() {
+            return (markdown_code_blocks(buffer, range.clone()), None);
+        }
+    }
+
+    let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
     if !jupytext_snippets.is_empty() {
         return (jupytext_snippets, next_cursor);
     }
 
-    let snippet_range = snippet_range(buffer, range.start.row, range.end.row);
+    let snippet_range = cell_range(buffer, range.start.row, range.end.row);
     let start_language = buffer.language_at(snippet_range.start);
     let end_language = buffer.language_at(snippet_range.end);
 
-    if let Some((start, end)) = start_language.zip(end_language) {
-        if start == end {
-            return (vec![snippet_range], None);
-        }
+    if start_language
+        .zip(end_language)
+        .map_or(false, |(start, end)| start == end)
+    {
+        (vec![snippet_range], None)
+    } else {
+        (Vec::new(), None)
     }
+}
 
-    (Vec::new(), None)
+// We allow markdown code blocks to end in a trailing newline in order to render the output
+// below the final code fence. This is different than our behavior for selections and Jupytext cells.
+fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
+    buffer
+        .injections_intersecting_range(range)
+        .filter(|(_, language)| language_supported(language))
+        .map(|(content_range, _)| {
+            buffer.offset_to_point(content_range.start)..buffer.offset_to_point(content_range.end)
+        })
+        .collect()
+}
+
+fn language_supported(language: &Arc<Language>) -> bool {
+    match language.name().0.as_ref() {
+        "TypeScript" | "Python" => true,
+        _ => false,
+    }
 }
 
 fn get_language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Language>> {
@@ -264,7 +323,7 @@ mod tests {
     use super::*;
     use gpui::Context;
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig};
+    use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
 
     #[gpui::test]
     fn test_snippet_ranges(cx: &mut AppContext) {
@@ -295,7 +354,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Single-point selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -303,7 +362,7 @@ mod tests {
         assert_eq!(snippets, vec!["print(1 + 1)"]);
 
         // Multi-line selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -316,7 +375,7 @@ mod tests {
         );
 
         // Trimming multiple trailing blank lines
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0));
 
         let snippets = snippets
             .into_iter()
@@ -369,7 +428,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Jupytext snippet surrounding an empty selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5));
 
         let snippets = snippets
             .into_iter()
@@ -385,7 +444,7 @@ mod tests {
         );
 
         // Jupytext snippets intersecting a non-empty selection
-        let (snippets, _) = snippet_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -407,6 +466,144 @@ mod tests {
                     print(5 + 5)"#
                 }
             ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_markdown_code_blocks(cx: &mut AppContext) {
+        let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+        let typescript = languages::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+        let python = languages::language("python", tree_sitter_python::LANGUAGE.into());
+        let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+        language_registry.add(markdown.clone());
+        language_registry.add(typescript.clone());
+        language_registry.add(python.clone());
+
+        // Two code blocks intersecting with selection
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::local(
+                indoc! { r#"
+                    Hey this is Markdown!
+
+                    ```typescript
+                    let foo = 999;
+                    console.log(foo + 1999);
+                    ```
+
+                    ```typescript
+                    console.log("foo")
+                    ```
+                    "#
+                },
+                cx,
+            );
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5));
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    let foo = 999;
+                    console.log(foo + 1999);
+                    "#
+                },
+                "console.log(\"foo\")\n"
+            ]
+        );
+
+        // Three code blocks intersecting with selection
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::local(
+                indoc! { r#"
+                    Hey this is Markdown!
+
+                    ```typescript
+                    let foo = 999;
+                    console.log(foo + 1999);
+                    ```
+
+                    ```ts
+                    console.log("foo")
+                    ```
+
+                    ```typescript
+                    console.log("another code block")
+                    ```
+                "# },
+                cx,
+            );
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5));
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    let foo = 999;
+                    console.log(foo + 1999);
+                    "#
+                },
+                "console.log(\"foo\")\n",
+                "console.log(\"another code block\")\n",
+            ]
+        );
+
+        // Python code block
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::local(
+                indoc! { r#"
+                    Hey this is Markdown!
+
+                    ```python
+                    print("hello there")
+                    print("hello there")
+                    print("hello there")
+                    ```
+                "# },
+                cx,
+            );
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5));
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            snippets,
+            vec![indoc! { r#"
+                print("hello there")
+                print("hello there")
+                print("hello there")
+                "#
+            },]
         );
     }
 }

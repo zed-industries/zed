@@ -96,6 +96,7 @@ impl Render for Toolbar {
         let has_right_items = self.right_items().count() > 0;
 
         v_flex()
+            .group("toolbar")
             .p(Spacing::Large.rems(cx))
             .when(has_left_items || has_right_items, |this| {
                 this.gap(Spacing::Large.rems(cx))
@@ -103,37 +104,46 @@ impl Render for Toolbar {
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().toolbar_background)
-            .child(
-                h_flex()
-                    .justify_between()
-                    .gap(Spacing::Large.rems(cx))
-                    .when(has_left_items, |this| {
-                        this.child(
-                            h_flex()
-                                .flex_auto()
-                                .justify_start()
-                                .overflow_x_hidden()
-                                .children(self.left_items().map(|item| item.to_any())),
-                        )
-                    })
-                    .when(has_right_items, |this| {
-                        this.child(
-                            h_flex()
-                                .map(|el| {
-                                    if has_left_items {
-                                        // We're using `flex_none` here to prevent some flickering that can occur when the
-                                        // size of the left items container changes.
-                                        el.flex_none()
-                                    } else {
-                                        el.flex_auto()
-                                    }
-                                })
-                                .justify_end()
-                                .children(self.right_items().map(|item| item.to_any())),
-                        )
-                    }),
-            )
+            .when(has_left_items || has_right_items, |this| {
+                this.child(
+                    h_flex()
+                        .min_h(rems_from_px(24.))
+                        .justify_between()
+                        .gap(Spacing::Large.rems(cx))
+                        .when(has_left_items, |this| {
+                            this.child(
+                                h_flex()
+                                    .flex_auto()
+                                    .justify_start()
+                                    .overflow_x_hidden()
+                                    .children(self.left_items().map(|item| item.to_any())),
+                            )
+                        })
+                        .when(has_right_items, |this| {
+                            this.child(
+                                h_flex()
+                                    .map(|el| {
+                                        if has_left_items {
+                                            // We're using `flex_none` here to prevent some flickering that can occur when the
+                                            // size of the left items container changes.
+                                            el.flex_none()
+                                        } else {
+                                            el.flex_auto()
+                                        }
+                                    })
+                                    .justify_end()
+                                    .children(self.right_items().map(|item| item.to_any())),
+                            )
+                        }),
+                )
+            })
             .children(secondary_item)
+    }
+}
+
+impl Default for Toolbar {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -1,3 +1,5 @@
+(decorator) @annotation
+
 (class_definition
     "class" @context
     name: (identifier) @name

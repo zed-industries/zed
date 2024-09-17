@@ -1,4 +1,8 @@
-use crate::{pane_group::element::pane_axis, AppState, FollowerState, Pane, Workspace};
+use crate::{
+    pane_group::element::pane_axis,
+    workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
+    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
+};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
@@ -10,6 +14,7 @@ use gpui::{
 use parking_lot::Mutex;
 use project::Project;
 use serde::Deserialize;
+use settings::Settings;
 use std::sync::Arc;
 use ui::prelude::*;
 
@@ -561,6 +566,20 @@ impl SplitDirection {
         [Self::Up, Self::Down, Self::Left, Self::Right]
     }
 
+    pub fn vertical(cx: &WindowContext) -> Self {
+        match WorkspaceSettings::get_global(cx).pane_split_direction_vertical {
+            PaneSplitDirectionVertical::Left => SplitDirection::Left,
+            PaneSplitDirectionVertical::Right => SplitDirection::Right,
+        }
+    }
+
+    pub fn horizontal(cx: &WindowContext) -> Self {
+        match WorkspaceSettings::get_global(cx).pane_split_direction_horizontal {
+            PaneSplitDirectionHorizontal::Down => SplitDirection::Down,
+            PaneSplitDirectionHorizontal::Up => SplitDirection::Up,
+        }
+    }
+
     pub fn edge(&self, rect: Bounds<Pixels>) -> Pixels {
         match self {
             Self::Up => rect.origin.y,
@@ -612,7 +631,7 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
+        px, relative, size, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
         MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
         WeakView, WindowContext,
     };
@@ -819,12 +838,13 @@ mod element {
             _global_id: Option<&GlobalElementId>,
             cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-            let mut style = Style::default();
-            style.flex_grow = 1.;
-            style.flex_shrink = 1.;
-            style.flex_basis = relative(0.).into();
-            style.size.width = relative(1.).into();
-            style.size.height = relative(1.).into();
+            let style = Style {
+                flex_grow: 1.,
+                flex_shrink: 1.,
+                flex_basis: relative(0.).into(),
+                size: size(relative(1.).into(), relative(1.).into()),
+                ..Style::default()
+            };
             (cx.request_layout(style, None), ())
         }
 
@@ -903,11 +923,9 @@ mod element {
             }
 
             for (ix, child_layout) in layout.children.iter_mut().enumerate() {
-                if active_pane_magnification.is_none() {
-                    if ix < len - 1 {
-                        child_layout.handle =
-                            Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
-                    }
+                if active_pane_magnification.is_none() && ix < len - 1 {
+                    child_layout.handle =
+                        Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
                 }
             }
 
@@ -967,19 +985,17 @@ mod element {
                         let axis = self.axis;
                         move |e: &MouseMoveEvent, phase, cx| {
                             let dragged_handle = dragged_handle.borrow();
-                            if phase.bubble() {
-                                if *dragged_handle == Some(ix) {
-                                    Self::compute_resize(
-                                        &flexes,
-                                        e,
-                                        ix,
-                                        axis,
-                                        child_bounds.origin,
-                                        bounds.size,
-                                        workspace.clone(),
-                                        cx,
-                                    )
-                                }
+                            if phase.bubble() && *dragged_handle == Some(ix) {
+                                Self::compute_resize(
+                                    &flexes,
+                                    e,
+                                    ix,
+                                    axis,
+                                    child_bounds.origin,
+                                    bounds.size,
+                                    workspace.clone(),
+                                    cx,
+                                )
                             }
                         }
                     });

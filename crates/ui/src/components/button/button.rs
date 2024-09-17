@@ -81,12 +81,15 @@ pub struct Button {
     label_color: Option<Color>,
     label_size: Option<LabelSize>,
     selected_label: Option<SharedString>,
+    selected_label_color: Option<Color>,
     icon: Option<IconName>,
     icon_position: Option<IconPosition>,
     icon_size: Option<IconSize>,
     icon_color: Option<Color>,
     selected_icon: Option<IconName>,
+    selected_icon_color: Option<Color>,
     key_binding: Option<KeyBinding>,
+    alpha: Option<f32>,
 }
 
 impl Button {
@@ -103,12 +106,15 @@ impl Button {
             label_color: None,
             label_size: None,
             selected_label: None,
+            selected_label_color: None,
             icon: None,
             icon_position: None,
             icon_size: None,
             icon_color: None,
             selected_icon: None,
+            selected_icon_color: None,
             key_binding: None,
+            alpha: None,
         }
     }
 
@@ -127,6 +133,12 @@ impl Button {
     /// Sets the label used when the button is in a selected state.
     pub fn selected_label<L: Into<SharedString>>(mut self, label: impl Into<Option<L>>) -> Self {
         self.selected_label = label.into().map(Into::into);
+        self
+    }
+
+    /// Sets the label color used when the button is in a selected state.
+    pub fn selected_label_color(mut self, color: impl Into<Option<Color>>) -> Self {
+        self.selected_label_color = color.into();
         self
     }
 
@@ -160,9 +172,21 @@ impl Button {
         self
     }
 
+    /// Sets the icon color used when the button is in a selected state.
+    pub fn selected_icon_color(mut self, color: impl Into<Option<Color>>) -> Self {
+        self.selected_icon_color = color.into();
+        self
+    }
+
     /// Binds a key combination to the button for keyboard shortcuts.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
+        self
+    }
+
+    /// Sets the alpha property of the color of label.
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.alpha = Some(alpha);
         self
     }
 }
@@ -366,7 +390,7 @@ impl RenderOnce for Button {
         let label_color = if is_disabled {
             Color::Disabled
         } else if is_selected {
-            Color::Selected
+            self.selected_label_color.unwrap_or(Color::Selected)
         } else {
             self.label_color.unwrap_or_default()
         };
@@ -380,6 +404,7 @@ impl RenderOnce for Button {
                             .disabled(is_disabled)
                             .selected(is_selected)
                             .selected_icon(self.selected_icon)
+                            .selected_icon_color(self.selected_icon_color)
                             .size(self.icon_size)
                             .color(self.icon_color)
                     }))
@@ -392,6 +417,7 @@ impl RenderOnce for Button {
                             Label::new(label)
                                 .color(label_color)
                                 .size(self.label_size.unwrap_or_default())
+                                .when_some(self.alpha, |this, alpha| this.alpha(alpha))
                                 .line_height_style(LineHeightStyle::UiLabel),
                         )
                         .children(self.key_binding),
@@ -402,6 +428,7 @@ impl RenderOnce for Button {
                             .disabled(is_disabled)
                             .selected(is_selected)
                             .selected_icon(self.selected_icon)
+                            .selected_icon_color(self.selected_icon_color)
                             .size(self.icon_size)
                             .color(self.icon_color)
                     }))

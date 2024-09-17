@@ -9,7 +9,7 @@ use theme::LoadThemes;
 use ui::div;
 use ui::prelude::*;
 
-const MARKDOWN_EXAMPLE: &'static str = r#"
+const MARKDOWN_EXAMPLE: &str = r#"
 this text should be selectable
 
 wow so cool
@@ -29,10 +29,7 @@ pub fn main() {
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = FakeNodeRuntime::new();
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
+        let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         languages::init(language_registry.clone(), node_runtime, cx);
         theme::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();

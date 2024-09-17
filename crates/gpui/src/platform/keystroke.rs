@@ -161,12 +161,39 @@ impl Keystroke {
 }
 
 fn is_printable_key(key: &str) -> bool {
-    match key {
-        "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
-        | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9"
-        | "f10" | "f11" | "f12" => false,
-        _ => true,
-    }
+    !matches!(
+        key,
+        "f1" | "f2"
+            | "f3"
+            | "f4"
+            | "f5"
+            | "f6"
+            | "f7"
+            | "f8"
+            | "f9"
+            | "f10"
+            | "f11"
+            | "f12"
+            | "f13"
+            | "f14"
+            | "f15"
+            | "f16"
+            | "f17"
+            | "f18"
+            | "f19"
+            | "backspace"
+            | "delete"
+            | "left"
+            | "right"
+            | "up"
+            | "down"
+            | "pageup"
+            | "pagedown"
+            | "insert"
+            | "home"
+            | "end"
+            | "escape"
+    )
 }
 
 impl std::fmt::Display for Keystroke {
@@ -237,27 +264,28 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
-    /// Returns true if any modifier key is pressed
+    /// Returns whether any modifier key is pressed.
     pub fn modified(&self) -> bool {
         self.control || self.alt || self.shift || self.platform || self.function
     }
 
-    /// Whether the semantically 'secondary' modifier key is pressed
-    /// On macos, this is the command key
-    /// On windows and linux, this is the control key
+    /// Whether the semantically 'secondary' modifier key is pressed.
+    ///
+    /// On macOS, this is the command key.
+    /// On Linux and Windows, this is the control key.
     pub fn secondary(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
-            return self.platform;
+            self.platform
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            return self.control;
+            self.control
         }
     }
 
-    /// How many modifier keys are pressed
+    /// Returns how many modifier keys are pressed.
     pub fn number_of_modifiers(&self) -> u8 {
         self.control as u8
             + self.alt as u8
@@ -266,12 +294,12 @@ impl Modifiers {
             + self.function as u8
     }
 
-    /// helper method for Modifiers with no modifiers
+    /// Returns [`Modifiers`] with no modifiers.
     pub fn none() -> Modifiers {
         Default::default()
     }
 
-    /// helper method for Modifiers with just the command key
+    /// Returns [`Modifiers`] with just the command key.
     pub fn command() -> Modifiers {
         Modifiers {
             platform: true,
@@ -279,7 +307,7 @@ impl Modifiers {
         }
     }
 
-    /// A helper method for Modifiers with just the secondary key pressed
+    /// A Returns [`Modifiers`] with just the secondary key pressed.
     pub fn secondary_key() -> Modifiers {
         #[cfg(target_os = "macos")]
         {
@@ -298,7 +326,7 @@ impl Modifiers {
         }
     }
 
-    /// helper method for Modifiers with just the windows key
+    /// Returns [`Modifiers`] with just the windows key.
     pub fn windows() -> Modifiers {
         Modifiers {
             platform: true,
@@ -306,7 +334,7 @@ impl Modifiers {
         }
     }
 
-    /// helper method for Modifiers with just the super key
+    /// Returns [`Modifiers`] with just the super key.
     pub fn super_key() -> Modifiers {
         Modifiers {
             platform: true,
@@ -314,7 +342,7 @@ impl Modifiers {
         }
     }
 
-    /// helper method for Modifiers with just control
+    /// Returns [`Modifiers`] with just control.
     pub fn control() -> Modifiers {
         Modifiers {
             control: true,
@@ -322,7 +350,15 @@ impl Modifiers {
         }
     }
 
-    /// helper method for Modifiers with just shift
+    /// Returns [`Modifiers`] with just control.
+    pub fn alt() -> Modifiers {
+        Modifiers {
+            alt: true,
+            ..Default::default()
+        }
+    }
+
+    /// Returns [`Modifiers`] with just shift.
     pub fn shift() -> Modifiers {
         Modifiers {
             shift: true,
@@ -330,7 +366,7 @@ impl Modifiers {
         }
     }
 
-    /// helper method for Modifiers with command + shift
+    /// Returns [`Modifiers`] with command + shift.
     pub fn command_shift() -> Modifiers {
         Modifiers {
             shift: true,
@@ -339,7 +375,7 @@ impl Modifiers {
         }
     }
 
-    /// helper method for Modifiers with command + shift
+    /// Returns [`Modifiers`] with command + shift.
     pub fn control_shift() -> Modifiers {
         Modifiers {
             shift: true,
@@ -348,7 +384,7 @@ impl Modifiers {
         }
     }
 
-    /// Checks if this Modifiers is a subset of another Modifiers
+    /// Checks if this [`Modifiers`] is a subset of another [`Modifiers`].
     pub fn is_subset_of(&self, other: &Modifiers) -> bool {
         (other.control || !self.control)
             && (other.alt || !self.alt)

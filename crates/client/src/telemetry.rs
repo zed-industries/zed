@@ -18,7 +18,7 @@ use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CpuEvent, EditEvent,
     EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent,
-    MemoryEvent, SettingEvent,
+    MemoryEvent, ReplEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -531,6 +531,21 @@ impl Telemetry {
         }
     }
 
+    pub fn report_repl_event(
+        self: &Arc<Self>,
+        kernel_language: String,
+        kernel_status: String,
+        repl_session_id: String,
+    ) {
+        let event = Event::Repl(ReplEvent {
+            kernel_language,
+            kernel_status,
+            repl_session_id,
+        });
+
+        self.report_event(event)
+    }
+
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
@@ -653,6 +668,24 @@ impl Telemetry {
             )
             .detach();
     }
+}
+
+pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
+    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+        return None;
+    };
+
+    let mut summer = Sha256::new();
+    summer.update(checksum_seed);
+    summer.update(json);
+    summer.update(checksum_seed);
+    let mut checksum = String::new();
+    for byte in summer.finalize().as_slice() {
+        use std::fmt::Write;
+        write!(&mut checksum, "{:02x}", byte).unwrap();
+    }
+
+    Some(checksum)
 }
 
 #[cfg(test)]
@@ -812,22 +845,4 @@ mod tests {
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
     }
-}
-
-pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
-        return None;
-    };
-
-    let mut summer = Sha256::new();
-    summer.update(checksum_seed);
-    summer.update(&json);
-    summer.update(checksum_seed);
-    let mut checksum = String::new();
-    for byte in summer.finalize().as_slice() {
-        use std::fmt::Write;
-        write!(&mut checksum, "{:02x}", byte).unwrap();
-    }
-
-    Some(checksum)
 }

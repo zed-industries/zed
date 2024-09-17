@@ -363,6 +363,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         },
     );
 
+    #[allow(clippy::let_underscore_future)]
     let _ = store.update(cx, |store, cx| store.reload(None, cx));
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
@@ -586,11 +587,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let executor = cx.executor();
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
-            match event {
-                crate::Event::StartedReloading => {
-                    executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
-                }
-                _ => (),
+            if let crate::Event::StartedReloading = event {
+                executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }
     });
@@ -611,7 +609,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let mut fake_servers = language_registry.fake_language_servers("Gleam");
+    let mut fake_servers = language_registry.register_fake_language_server(
+        LanguageServerName("gleam".into()),
+        lsp::ServerCapabilities {
+            completion_provider: Some(Default::default()),
+            ..Default::default()
+        },
+        None,
+    );
 
     let buffer = project
         .update(cx, |project, cx| {

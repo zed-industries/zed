@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use client::telemetry::Telemetry;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
-use language::Language;
 use project::Fs;
 use settings::{Settings, SettingsStore};
 
@@ -22,14 +22,15 @@ pub struct ReplStore {
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
+    telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ReplStore {
     const NAMESPACE: &'static str = "repl";
 
-    pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-        let store = cx.new_model(move |cx| Self::new(fs, cx));
+    pub(crate) fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
+        let store = cx.new_model(move |cx| Self::new(fs, telemetry, cx));
 
         store
             .update(cx, |store, cx| store.refresh_kernelspecs(cx))
@@ -42,13 +43,14 @@ impl ReplStore {
         cx.global::<GlobalReplStore>().0.clone()
     }
 
-    pub fn new(fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut ModelContext<Self>) -> Self {
         let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
             this.set_enabled(JupyterSettings::enabled(cx), cx);
         })];
 
         let this = Self {
             fs,
+            telemetry,
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
@@ -60,6 +62,10 @@ impl ReplStore {
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
+    }
+
+    pub fn telemetry(&self) -> &Arc<Telemetry> {
+        &self.telemetry
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -111,26 +117,31 @@ impl ReplStore {
         })
     }
 
-    pub fn kernelspec(
-        &self,
-        language: &Language,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<KernelSpecification> {
+    pub fn kernelspec(&self, language_name: &str, cx: &AppContext) -> Option<KernelSpecification> {
         let settings = JupyterSettings::get_global(cx);
-        let language_name = language.code_fence_block_name();
-        let selected_kernel = settings.kernel_selections.get(language_name.as_ref());
+        let selected_kernel = settings.kernel_selections.get(language_name);
 
-        self.kernel_specifications
+        let found_by_name = self
+            .kernel_specifications
             .iter()
             .find(|runtime_specification| {
                 if let Some(selected) = selected_kernel {
                     // Top priority is the selected kernel
-                    runtime_specification.name.to_lowercase() == selected.to_lowercase()
-                } else {
-                    // Otherwise, we'll try to find a kernel that matches the language
-                    runtime_specification.kernelspec.language.to_lowercase()
-                        == language_name.to_lowercase()
+                    return runtime_specification.name.to_lowercase() == selected.to_lowercase();
                 }
+                false
+            })
+            .cloned();
+
+        if let Some(found_by_name) = found_by_name {
+            return Some(found_by_name);
+        }
+
+        self.kernel_specifications
+            .iter()
+            .find(|runtime_specification| {
+                runtime_specification.kernelspec.language.to_lowercase()
+                    == language_name.to_lowercase()
             })
             .cloned()
     }

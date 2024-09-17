@@ -246,12 +246,12 @@ impl VsCodeThemeConverter {
                     .settings
                     .font_style
                     .as_ref()
-                    .and_then(|style| try_parse_font_style(&style)),
+                    .and_then(|style| try_parse_font_style(style)),
                 font_weight: token_color
                     .settings
                     .font_style
                     .as_ref()
-                    .and_then(|style| try_parse_font_weight(&style)),
+                    .and_then(|style| try_parse_font_weight(style)),
             };
 
             if highlight_style.is_empty() {

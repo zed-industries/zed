@@ -6,7 +6,6 @@ mod repl_editor;
 mod repl_sessions_ui;
 mod repl_store;
 mod session;
-mod stdio;
 
 use std::{sync::Arc, time::Duration};
 
@@ -20,17 +19,18 @@ pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
 pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
-    ClearOutputs, Interrupt, ReplSessionsPage, Run, Sessions, Shutdown,
+    ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
 use crate::repl_store::ReplStore;
 pub use crate::session::Session;
+use client::telemetry::Telemetry;
 
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
     ::editor::init_settings(cx);
     repl_sessions_ui::init(cx);
-    ReplStore::init(fs, cx);
+    ReplStore::init(fs, telemetry, cx);
 }
 
 fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {

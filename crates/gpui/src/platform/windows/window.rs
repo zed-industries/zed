@@ -40,6 +40,7 @@ pub struct WindowsWindowState {
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
+    pub system_key_handled: bool,
 
     pub renderer: BladeRenderer,
 
@@ -60,6 +61,8 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
+    pub(crate) windows_version: WindowsVersion,
+    pub(crate) validation_number: usize,
 }
 
 impl WindowsWindowState {
@@ -87,8 +90,9 @@ impl WindowsWindowState {
         let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
+        let system_key_handled = false;
         let click_state = ClickState::new();
-        let system_settings = WindowsSystemSettings::new();
+        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
 
@@ -100,6 +104,7 @@ impl WindowsWindowState {
             scale_factor,
             callbacks,
             input_handler,
+            system_key_handled,
             renderer,
             click_state,
             system_settings,
@@ -161,7 +166,7 @@ impl WindowsWindowState {
 
     /// get the logical size of the app's drawable area.
     ///
-    /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
+    /// Currently, GPUI uses the logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.logical_size
@@ -182,13 +187,13 @@ impl WindowsWindowState {
     }
 
     fn title_bar_height(&self) -> Pixels {
-        // todo(windows) this is hard set to match the ui title bar
+        // todo(windows) this is hardcoded to match the ui title bar
         //               in the future the ui title bar component will report the size
         px(32.) + self.title_bar_top_offset()
     }
 
     pub(crate) fn caption_button_width(&self) -> Pixels {
-        // todo(windows) this is hard set to match the ui title bar
+        // todo(windows) this is hardcoded to match the ui title bar
         //               in the future the ui title bar component will report the size
         px(36.)
     }
@@ -219,6 +224,8 @@ impl WindowsWindowStatePtr {
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
             executor: context.executor.clone(),
+            windows_version: context.windows_version,
+            validation_number: context.validation_number,
         }))
     }
 }
@@ -244,6 +251,8 @@ struct WindowCreateContext {
     is_movable: bool,
     executor: ForegroundExecutor,
     current_cursor: HCURSOR,
+    windows_version: WindowsVersion,
+    validation_number: usize,
 }
 
 impl WindowsWindow {
@@ -253,6 +262,8 @@ impl WindowsWindow {
         icon: HICON,
         executor: ForegroundExecutor,
         current_cursor: HCURSOR,
+        windows_version: WindowsVersion,
+        validation_number: usize,
     ) -> Result<Self> {
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
@@ -292,9 +303,11 @@ impl WindowsWindow {
             is_movable: params.is_movable,
             executor,
             current_cursor,
+            windows_version,
+            validation_number,
         };
         let lpparam = Some(&context as *const _ as *const _);
-        let raw_hwnd = unsafe {
+        let creation_result = unsafe {
             CreateWindowExW(
                 dwexstyle,
                 classname,
@@ -310,7 +323,10 @@ impl WindowsWindow {
                 lpparam,
             )
         };
+        // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
+        // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
+        let raw_hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
         unsafe {
@@ -327,8 +343,8 @@ impl WindowsWindow {
             };
             let mut lock = state_ptr.state.borrow_mut();
             let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.udpate(raw_hwnd)?;
-            placement.rcNormalPosition = calcualte_window_rect(bounds, lock.border_offset);
+            lock.border_offset.update(raw_hwnd)?;
+            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
             drop(lock);
             SetWindowPlacement(raw_hwnd, &placement)?;
         }
@@ -340,9 +356,10 @@ impl WindowsWindow {
 
 impl rwh::HasWindowHandle for WindowsWindow {
     fn window_handle(&self) -> std::result::Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        let raw =
-            rwh::Win32WindowHandle::new(unsafe { NonZeroIsize::new_unchecked(self.0.hwnd.0) })
-                .into();
+        let raw = rwh::Win32WindowHandle::new(unsafe {
+            NonZeroIsize::new_unchecked(self.0.hwnd.0 as isize)
+        })
+        .into();
         Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
@@ -387,7 +404,7 @@ impl PlatformWindow for WindowsWindow {
 
     /// get the logical size of the app's drawable area.
     ///
-    /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
+    /// Currently, GPUI uses the logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.0.state.borrow().content_size()
@@ -506,8 +523,8 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { SetActiveWindow(hwnd) };
-        unsafe { SetFocus(hwnd) };
+        unsafe { SetActiveWindow(hwnd).log_err() };
+        unsafe { SetFocus(hwnd).log_err() };
         // todo(windows)
         // crate `windows 0.56` reports true as Err
         unsafe { SetForegroundWindow(hwnd).as_bool() };
@@ -658,6 +675,10 @@ impl PlatformWindow for WindowsWindow {
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        // todo(windows)
+    }
 }
 
 #[implement(IDropTarget)]
@@ -675,7 +696,7 @@ impl WindowsDragDropHandler {
 }
 
 #[allow(non_snake_case)]
-impl IDropTarget_Impl for WindowsDragDropHandler {
+impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
         &self,
         pdataobj: Option<&IDataObject>,
@@ -876,7 +897,7 @@ pub(crate) struct WindowBorderOffset {
 }
 
 impl WindowBorderOffset {
-    pub(crate) fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
+    pub(crate) fn update(&mut self, hwnd: HWND) -> anyhow::Result<()> {
         let window_rect = unsafe {
             let mut rect = std::mem::zeroed();
             GetWindowRect(hwnd, &mut rect)?;
@@ -953,7 +974,7 @@ unsafe extern "system" fn wnd_proc(
 }
 
 pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
-    if hwnd == HWND(0) {
+    if hwnd.is_invalid() {
         return None;
     }
 
@@ -983,7 +1004,7 @@ fn get_module_handle() -> HMODULE {
 fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
     let window_handle = state_ptr.hwnd;
     let handler = WindowsDragDropHandler(state_ptr);
-    // The lifetime of `IDropTarget` is handled by Windows, it wont release untill
+    // The lifetime of `IDropTarget` is handled by Windows, it won't release until
     // we call `RevokeDragDrop`.
     // So, it's safe to drop it here.
     let drag_drop_handler: IDropTarget = handler.into();
@@ -994,9 +1015,9 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
     Ok(())
 }
 
-fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
+fn calculate_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
     // NOTE:
-    // The reason that not using `AdjustWindowRectEx()` here is
+    // The reason we're not using `AdjustWindowRectEx()` here is
     // that the size reported by this function is incorrect.
     // You can test it, and there are similar discussions online.
     // See: https://stackoverflow.com/questions/12423584/how-to-set-exact-client-size-for-overlapped-window-winapi
@@ -1011,11 +1032,11 @@ fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBord
     let left_offset = border_offset.width_offset / 2;
     let top_offset = border_offset.height_offset / 2;
     let right_offset = border_offset.width_offset - left_offset;
-    let bottom_offet = border_offset.height_offset - top_offset;
+    let bottom_offset = border_offset.height_offset - top_offset;
     rect.left -= left_offset;
     rect.top -= top_offset;
     rect.right += right_offset;
-    rect.bottom += bottom_offet;
+    rect.bottom += bottom_offset;
     rect
 }
 
@@ -1027,11 +1048,11 @@ fn calculate_client_rect(
     let left_offset = border_offset.width_offset / 2;
     let top_offset = border_offset.height_offset / 2;
     let right_offset = border_offset.width_offset - left_offset;
-    let bottom_offet = border_offset.height_offset - top_offset;
+    let bottom_offset = border_offset.height_offset - top_offset;
     let left = rect.left + left_offset;
     let top = rect.top + top_offset;
     let right = rect.right - right_offset;
-    let bottom = rect.bottom - bottom_offet;
+    let bottom = rect.bottom - bottom_offset;
     let physical_size = size(DevicePixels(right - left), DevicePixels(bottom - top));
     Bounds {
         origin: logical_point(left as f32, top as f32, scale_factor),
@@ -1055,7 +1076,7 @@ mod windows_renderer {
     };
 
     pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> anyhow::Result<BladeRenderer> {
-        let raw = RawWindow { hwnd: hwnd.0 };
+        let raw = RawWindow { hwnd };
         let gpu: Arc<gpu::Context> = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
@@ -1078,15 +1099,15 @@ mod windows_renderer {
     }
 
     struct RawWindow {
-        hwnd: isize,
+        hwnd: HWND,
     }
 
     impl rwh::HasWindowHandle for RawWindow {
         fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
             Ok(unsafe {
-                let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
+                let hwnd = NonZeroIsize::new_unchecked(self.hwnd.0 as isize);
                 let mut handle = rwh::Win32WindowHandle::new(hwnd);
-                let hinstance = get_window_long(HWND(self.hwnd), GWLP_HINSTANCE);
+                let hinstance = get_window_long(self.hwnd, GWLP_HINSTANCE);
                 handle.hinstance = NonZeroIsize::new(hinstance);
                 rwh::WindowHandle::borrow_raw(handle.into())
             })

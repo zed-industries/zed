@@ -1,5 +1,8 @@
 mod dev_servers;
 pub mod disconnected_overlay;
+mod ssh_connections;
+mod ssh_remotes;
+pub use ssh_connections::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
@@ -17,6 +20,8 @@ use picker::{
 };
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
+use settings::Settings;
+use ssh_connections::SshSettings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -27,7 +32,8 @@ use ui::{
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
+    AppState, CloseIntent, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId,
+    WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -44,6 +50,7 @@ gpui::impl_actions!(projects, [OpenRecent]);
 gpui::actions!(projects, [OpenRemote]);
 
 pub fn init(cx: &mut AppContext) {
+    SshSettings::register(cx);
     cx.observe_new_views(RecentProjects::register).detach();
     cx.observe_new_views(DevServerProjects::register).detach();
     cx.observe_new_views(DisconnectedOverlay::register).detach();
@@ -129,8 +136,8 @@ impl RecentProjects {
         let weak = cx.view().downgrade();
         workspace.toggle_modal(cx, |cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
-            let modal = Self::new(delegate, 34., cx);
-            modal
+
+            Self::new(delegate, 34., cx)
         })
     }
 }
@@ -305,7 +312,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
                                             .update(&mut cx, |workspace, cx| {
-                                                workspace.prepare_to_close(true, cx)
+                                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                                             })?
                                             .await?;
                                         if continue_replacing {
@@ -381,9 +388,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let Some(hit) = self.matches.get(ix) else {
-            return None;
-        };
+        let hit = self.matches.get(ix)?;
 
         let (_, location) = self.workspaces.get(hit.candidate_id)?;
 
@@ -564,7 +569,7 @@ fn open_dev_server_project(
             cx.spawn(move |workspace, mut cx| async move {
                 let continue_replacing = workspace
                     .update(&mut cx, |workspace, cx| {
-                        workspace.prepare_to_close(true, cx)
+                        workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                     })?
                     .await?;
                 if continue_replacing {
@@ -662,7 +667,7 @@ impl RecentProjectsDelegate {
                     .unwrap_or_default();
                 this.update(&mut cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
-                    picker.delegate.set_selected_index(ix - 1, cx);
+                    picker.delegate.set_selected_index(ix.saturating_sub(1), cx);
                     picker.delegate.reset_selected_match_index = false;
                     picker.update_matches(picker.query(cx), cx)
                 })

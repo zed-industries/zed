@@ -121,12 +121,12 @@ impl GitBlame {
         );
 
         let buffer_subscriptions = cx.subscribe(&buffer, |this, buffer, event, cx| match event {
-            language::Event::DirtyChanged => {
+            language::BufferEvent::DirtyChanged => {
                 if !buffer.read(cx).is_dirty() {
                     this.generate(cx);
                 }
             }
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 this.regenerate_on_edit(cx);
             }
             _ => {}
@@ -455,7 +455,7 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let parsed_message = parse_markdown(&message, &languages).await;
+        let parsed_message = parse_markdown(&message, languages).await;
 
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
             Some(provider.build_commit_permalink(

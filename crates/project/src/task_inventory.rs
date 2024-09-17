@@ -161,7 +161,7 @@ impl Inventory {
         cx: &AppContext,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name(),
+            name: language.name().0,
         });
         let language_tasks = language
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
@@ -207,7 +207,7 @@ impl Inventory {
             .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name(),
+            name: language.name().0,
         });
         let file = location
             .as_ref()
@@ -395,7 +395,7 @@ fn task_lru_comparator(
 ) -> cmp::Ordering {
     lru_score_a
         // First, display recently used templates above all.
-        .cmp(&lru_score_b)
+        .cmp(lru_score_b)
         // Then, ensure more specific sources are displayed first.
         .then(task_source_kind_preference(kind_a).cmp(&task_source_kind_preference(kind_b)))
         // After that, display first more specific tasks, using more template variables.
@@ -579,15 +579,16 @@ impl ContextProvider for BasicContextProvider {
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
-        let worktree_abs_path = buffer
-            .file()
-            .map(|file| WorktreeId::from_usize(file.worktree_id()))
-            .and_then(|worktree_id| {
-                self.project
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).abs_path())
-            });
+        let worktree_abs_path =
+            buffer
+                .file()
+                .map(|file| file.worktree_id(cx))
+                .and_then(|worktree_id| {
+                    self.project
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .map(|worktree| worktree.read(cx).abs_path())
+                });
         if let Some(worktree_path) = worktree_abs_path {
             task_variables.insert(
                 VariableName::WorktreeRoot,
