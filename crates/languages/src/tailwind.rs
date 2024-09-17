@@ -19,24 +19,13 @@ use std::{
 use util::{maybe, ResultExt};
 
 #[cfg(target_os = "windows")]
-const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
+const SERVER_PATH: &str =
+    "node_modules/@tailwindcss/language-server/bin/tailwindcss-language-server";
 #[cfg(not(target_os = "windows"))]
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
-#[cfg(not(target_os = "windows"))]
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
-}
-
-#[cfg(target_os = "windows")]
-fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![
-        "-ExecutionPolicy".into(),
-        "Bypass".into(),
-        "-File".into(),
-        server_path.into(),
-        "--stdio".into(),
-    ]
 }
 
 pub struct TailwindLspAdapter {
@@ -123,29 +112,11 @@ impl LspAdapter for TailwindLspAdapter {
                 .await?;
         }
 
-        let root_dir = container_dir.to_str().unwrap();
-        print_tree(root_dir, &container_dir, 0);
-
-        #[cfg(target_os = "windows")]
-        {
-            let env_path = self.node.node_environment_path().await?;
-            let mut env = HashMap::default();
-            env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
-
-            Ok(LanguageServerBinary {
-                path: "powershell.exe".into(),
-                env: Some(env),
-                arguments: server_binary_arguments(&server_path),
-            })
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            Ok(LanguageServerBinary {
-                path: self.node.binary_path().await?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
-        }
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            env: None,
+            arguments: server_binary_arguments(&server_path),
+        })
     }
 
     async fn cached_server_binary(
@@ -259,25 +230,4 @@ async fn get_cached_server_binary(
     })
     .await
     .log_err()
-}
-
-fn print_tree(root_dir: &str, dir: &Path, indent: usize) {
-    if dir.is_dir() {
-        // Print the directory name with indentation
-        let dir_name = dir.to_string_lossy();
-        let dir_name_short = dir_name.trim_start_matches(root_dir);
-        println!("{:indent$}{}", "", dir_name_short, indent = indent);
-
-        // Iterate over the directory entries
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                // Recursively print directories and files
-                print_tree(root_dir, &path, indent + 4);
-            }
-        }
-    } else if let Some(name) = dir.file_name() {
-        // Print file name
-        println!("{:indent$}{}", "", name.to_string_lossy(), indent = indent);
-    }
 }
