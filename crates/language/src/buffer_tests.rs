@@ -382,7 +382,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(text, cx));
 
     // Spawn a task to format the buffer's whitespace.
-    // Pause so that the foratting task starts running.
+    // Pause so that the formatting task starts running.
     let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
     smol::future::yield_now().await;
 
