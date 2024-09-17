@@ -797,9 +797,8 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
             client.add_model_message_handler(Self::handle_update_worktree);
             client.add_model_message_handler(Self::handle_create_buffer_for_peer);
-            client.add_model_message_handler(BufferStore::handle_update_buffer_file);
-            client.add_model_message_handler(BufferStore::handle_update_diff_base);
             client.add_model_request_handler(BufferStore::handle_update_buffer);
+            BufferStore::init(&client);
             LspStore::init(&client);
             SettingsObserver::init(&client);
 
