@@ -63,6 +63,13 @@ impl Keystroke {
         //     }
         // }
 
+        // perform char-based matching first
+        if self.code.to_string() != target.key {
+            if self.key == target.key && self.modifiers == target.modifiers {
+                return true;
+            }
+        }
+
         target.modifiers == self.modifiers && target.code == self.code
     }
 

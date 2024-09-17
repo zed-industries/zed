@@ -1,5 +1,7 @@
 use crate::PlatformKeyboard;
 
+use super::events::key_string_from_keycode;
+
 pub(crate) struct MacKeyboard {
     // keyboard:
 }
@@ -185,7 +187,11 @@ impl PlatformKeyboard for MacKeyboard {
             "Unknown".to_string()
         } else {
             // map scan code to string
-            code.to_string()
+            key_string_from_keycode(keycode)
         }
+    }
+
+    fn us_layout_keycode_to_native_keycode(&self, code: &crate::KeyCodes) -> crate::KeyCodes {
+        *code
     }
 }

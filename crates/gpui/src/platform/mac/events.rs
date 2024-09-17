@@ -393,7 +393,7 @@ unsafe fn parse_keystroke(
 //     }
 // }
 
-fn key_string_from_keycode(code: CGKeyCode) -> String {
+pub(crate) fn key_string_from_keycode(code: CGKeyCode) -> String {
     let event = synthesize_keyboard_event(code);
     unsafe {
         let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
