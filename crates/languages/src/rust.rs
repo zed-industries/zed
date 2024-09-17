@@ -77,7 +77,7 @@ impl LspAdapter for RustLspAdapter {
                     {
                         Ok(()) => (Some(path), Some(env), None),
                         Err(err) => {
-                            log::error!("failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {:?}", path, err);
+                            log::error!("failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}", path, err);
                             (None, None, None)
                         }
                     }

@@ -54,7 +54,7 @@ use language_model::{
 use language_model::{LanguageModelImage, LanguageModelToolUse};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
-use project::lsp_store::ProjectLspAdapterDelegate;
+use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
@@ -5384,18 +5384,16 @@ fn make_lsp_adapter_delegate(
         let worktree = project
             .worktrees(cx)
             .next()
-            .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
-        let fs = if project.is_local() {
-            Some(project.fs().clone())
-        } else {
-            None
-        };
+            .ok_or_else(|| anyhow!("no worktrees when constructing LocalLspAdapterDelegate"))?;
         let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
-            Ok(
-                ProjectLspAdapterDelegate::new(lsp_store, &worktree, http_client, fs, None, cx)
-                    as Arc<dyn LspAdapterDelegate>,
-            )
+            Ok(LocalLspAdapterDelegate::new(
+                lsp_store,
+                &worktree,
+                http_client,
+                project.fs().clone(),
+                cx,
+            ) as Arc<dyn LspAdapterDelegate>)
         })
     })
 }
