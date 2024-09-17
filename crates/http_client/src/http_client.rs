@@ -329,7 +329,7 @@ impl HttpClient for FakeHttpClient {
         _follow_redirects: bool,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
         let future = (self.handler)(req);
-        Box::pin(async move { future.await })
+        future
     }
 
     fn proxy(&self) -> Option<&Uri> {
