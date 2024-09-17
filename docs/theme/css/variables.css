@@ -3,6 +3,8 @@
 :root {
   --color-scheme: light;
 
+  --logo-brightness: brightness(1);
+
   --sidebar-width: 300px;
   --sidebar-resize-indicator-width: 0px;
   --sidebar-resize-indicator-space: 2px;
@@ -85,6 +87,8 @@
 
 .dark {
   --color-scheme: dark;
+
+  --logo-brightness: brightness(2);
 
   --bg: hsl(220, 13%, 10%);
   --fg: hsl(220, 14%, 70%);

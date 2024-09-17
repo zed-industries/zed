@@ -116,6 +116,7 @@ a > .hljs {
   align-items: center;
   flex: 1;
   overflow: hidden;
+  filter: var(--logo-brightness);
 }
 .js .menu-title {
   cursor: pointer;
