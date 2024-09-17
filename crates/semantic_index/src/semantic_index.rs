@@ -113,7 +113,7 @@ impl SemanticDb {
                     range: start_line_byte_offset..end_line_byte_offset,
                     full_path,
                     file_content,
-                    row_range: start_row..end_row,
+                    row_range: start_row..=end_row,
                 });
             }
         }

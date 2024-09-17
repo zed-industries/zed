@@ -18,10 +18,10 @@ use settings::SettingsStore;
 use smol::channel::bounded;
 use smol::io::AsyncReadExt;
 use smol::Timer;
+use std::ops::RangeInclusive;
 use std::time::Duration;
 use std::{
     fs,
-    ops::Range,
     path::Path,
     process::{exit, Command, Stdio},
     sync::{
@@ -68,7 +68,7 @@ struct EvaluationQuery {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 struct EvaluationSearchResult {
     file: String,
-    lines: Range<u32>,
+    lines: RangeInclusive<u32>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -177,10 +177,10 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
         let (repo_name, url_path) = url_path.split_once("/blob/")?;
         let (sha, file_path) = url_path.split_once('/')?;
         let line_range = if let Some((start, end)) = hash.split_once('-') {
-            start.strip_prefix("L")?.parse::<u32>().ok()?..end.strip_prefix("L")?.parse().ok()?
+            start.strip_prefix("L")?.parse::<u32>().ok()?..=end.strip_prefix("L")?.parse().ok()?
         } else {
             let row = hash.strip_prefix("L")?.parse().ok()?;
-            row..row + 1
+            row..=row
         };
         Some((repo_name, sha, query, file_path, line_range))
     });
@@ -387,8 +387,9 @@ async fn run_evaluation(
                 for result in results.iter() {
                     if result.path.as_ref() == Path::new(&expected_result.file) {
                         file_matched = true;
-                        let start_matched = result.row_range.contains(&expected_result.lines.start);
-                        let end_matched = result.row_range.contains(&expected_result.lines.end);
+                        let start_matched =
+                            result.row_range.contains(&expected_result.lines.start());
+                        let end_matched = result.row_range.contains(&expected_result.lines.end());
 
                         if start_matched || end_matched {
                             range_overlapped = true;

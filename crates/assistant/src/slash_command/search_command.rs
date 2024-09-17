@@ -135,7 +135,7 @@ impl SlashCommand for SearchSlashCommand {
                             section_start_ix..section_end_ix,
                             Some(&full_path),
                             false,
-                            Some(row_range.start + 1..row_range.end + 1),
+                            Some(row_range.start() + 1..row_range.end() + 1),
                         ));
                     }
 

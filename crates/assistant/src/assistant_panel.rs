@@ -3282,7 +3282,7 @@ impl ContextEditor {
 
                     let fence = codeblock_fence_for_path(
                         filename.as_deref(),
-                        Some(selection.start.row..selection.end.row),
+                        Some(selection.start.row..=selection.end.row),
                     );
 
                     if let Some((line_comment_prefix, outline_text)) =

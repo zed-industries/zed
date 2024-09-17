@@ -19,7 +19,7 @@ use std::{
     cmp::Ordering,
     future::Future,
     num::NonZeroUsize,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -38,7 +38,7 @@ pub struct LoadedSearchResult {
     pub range: Range<usize>,
     pub full_path: PathBuf,
     pub file_content: String,
-    pub row_range: Range<u32>,
+    pub row_range: RangeInclusive<u32>,
 }
 
 pub struct WorktreeSearchResult {
