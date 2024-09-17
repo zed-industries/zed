@@ -38,7 +38,6 @@ impl HttpClient for IsahcHttpClient {
     {
         let req = maybe!({
             let (mut parts, body) = req.into_parts();
-            dbg!(&parts);
             let mut builder = isahc::Request::builder()
                 .method(parts.method)
                 .uri(parts.uri)

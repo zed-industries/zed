@@ -441,6 +441,8 @@ fn main() {
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
+        settings::init(cx);
+        client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
             AppVersion::global(cx),
@@ -467,11 +469,9 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
-        settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
         handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
 
-        client::init_settings(cx);
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
