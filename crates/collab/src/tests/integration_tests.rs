@@ -2273,7 +2273,7 @@ async fn test_propagate_saves_and_fs_changes(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     let javascript = Arc::new(Language::new(
         LanguageConfig {
@@ -2284,7 +2284,7 @@ async fn test_propagate_saves_and_fs_changes(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     for client in [&client_a, &client_b, &client_c] {
         client.language_registry().add(rust.clone());
@@ -3855,11 +3855,11 @@ async fn test_collaborating_with_diagnostics(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
 
     // Share a project as client A
     client_a
@@ -4126,7 +4126,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         .await;
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             disk_based_diagnostics_progress_token: Some("the-disk-based-token".into()),
@@ -4349,7 +4349,7 @@ async fn test_formatting_buffer(
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+        .register_fake_lsp("Rust", FakeLspAdapter::default());
 
     // Here we insert a fake tree with a directory that exists on disk. This is needed
     // because later we'll invoke a command, which requires passing a working directory
@@ -4458,9 +4458,9 @@ async fn test_prettier_formatting_buffer(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
@@ -4576,7 +4576,7 @@ async fn test_definition(
 
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
     client_a.language_registry().add(rust_lang());
 
     client_a
@@ -4712,7 +4712,7 @@ async fn test_references(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "my-fake-lsp-adapter",
@@ -4983,7 +4983,7 @@ async fn test_document_highlights(
 
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
     client_a.language_registry().add(rust_lang());
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
@@ -5079,28 +5079,30 @@ async fn test_lsp_hover(
 
     client_a.language_registry().add(rust_lang());
     let language_server_names = ["rust-analyzer", "CrabLang-ls"];
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
-        "Rust",
-        FakeLspAdapter {
-            name: "rust-analyzer",
-            capabilities: lsp::ServerCapabilities {
-                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
+    let mut language_servers = [
+        client_a.language_registry().register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
-    let _other_server = client_a.language_registry().register_fake_lsp_adapter(
-        "Rust",
-        FakeLspAdapter {
-            name: "CrabLang-ls",
-            capabilities: lsp::ServerCapabilities {
-                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
+        ),
+        client_a.language_registry().register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "CrabLang-ls",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
+        ),
+    ];
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a
@@ -5115,7 +5117,7 @@ async fn test_lsp_hover(
 
     let mut servers_with_hover_requests = HashMap::default();
     for i in 0..language_server_names.len() {
-        let new_server = fake_language_servers.next().await.unwrap_or_else(|| {
+        let new_server = language_servers[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
                 &language_server_names[i]
@@ -5260,7 +5262,7 @@ async fn test_project_symbols(
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
 
     client_a
         .fs()
@@ -5362,7 +5364,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
 
     client_a
         .fs()

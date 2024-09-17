@@ -11,7 +11,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use rand::prelude::*;
-use rpc::proto::AnyProtoClient;
+use rpc::AnyProtoClient;
 use std::{
     ops::{ControlFlow, Range},
     sync::Arc,

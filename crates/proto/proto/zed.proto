@@ -497,6 +497,7 @@ message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     optional uint64 dev_server_project_id = 3;
+    bool is_ssh_project = 4;
 }
 
 message ShareProjectResponse {
@@ -1855,6 +1856,7 @@ message Entry {
     bool is_external = 8;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
+    optional uint64 size = 11;
 }
 
 message RepositoryEntry {

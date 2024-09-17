@@ -991,7 +991,7 @@ impl Item for TerminalView {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Unknown => (
-                    IconName::ExclamationTriangle,
+                    IconName::Warning,
                     Color::Warning,
                     Some(rerun_button(terminal_task.id.clone())),
                 ),
@@ -1008,7 +1008,7 @@ impl Item for TerminalView {
         };
 
         h_flex()
-            .gap_2()
+            .gap_1()
             .group("term-tab-icon")
             .child(
                 h_flex()

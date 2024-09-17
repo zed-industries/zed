@@ -2,10 +2,7 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Model, ModelContext};
 use paths::local_settings_file_relative_path;
-use rpc::{
-    proto::{self, AnyProtoClient},
-    TypedEnvelope,
-};
+use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};

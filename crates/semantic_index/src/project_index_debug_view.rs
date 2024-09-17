@@ -55,8 +55,12 @@ impl ProjectIndexDebugView {
             for index in worktree_indices {
                 let (root_path, worktree_id, worktree_paths) =
                     index.read_with(&cx, |index, cx| {
-                        let worktree = index.worktree.read(cx);
-                        (worktree.abs_path(), worktree.id(), index.paths(cx))
+                        let worktree = index.worktree().read(cx);
+                        (
+                            worktree.abs_path(),
+                            worktree.id(),
+                            index.embedding_index().paths(cx),
+                        )
                     })?;
                 rows.push(Row::Worktree(root_path));
                 rows.extend(
@@ -82,10 +86,12 @@ impl ProjectIndexDebugView {
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         let project_index = self.index.read(cx);
-        let fs = project_index.fs.clone();
+        let fs = project_index.fs().clone();
         let worktree_index = project_index.worktree_index(worktree_id, cx)?.read(cx);
-        let root_path = worktree_index.worktree.read(cx).abs_path();
-        let chunks = worktree_index.chunks_for_path(file_path.clone(), cx);
+        let root_path = worktree_index.worktree().read(cx).abs_path();
+        let chunks = worktree_index
+            .embedding_index()
+            .chunks_for_path(file_path.clone(), cx);
 
         cx.spawn(|this, mut cx| async move {
             let chunks = chunks.await?;

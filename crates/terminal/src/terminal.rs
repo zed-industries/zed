@@ -1596,7 +1596,7 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         }
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
-    let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
+    let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");
     (success, task_line, command_line)
 }
 

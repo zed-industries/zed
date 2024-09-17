@@ -402,12 +402,12 @@ async fn perform_completion(
         LanguageModelProvider::Zed => {
             let api_key = state
                 .config
-                .qwen2_7b_api_key
+                .runpod_api_key
                 .as_ref()
                 .context("no Qwen2-7B API key configured on the server")?;
             let api_url = state
                 .config
-                .qwen2_7b_api_url
+                .runpod_api_summary_url
                 .as_ref()
                 .context("no Qwen2-7B URL configured on the server")?;
             let chunks = open_ai::stream_completion(

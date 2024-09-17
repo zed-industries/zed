@@ -33,14 +33,14 @@ You can configure the use of [typescript-language-server](https://github.com/typ
 
 Prettier will also be used for TypeScript files by default. To disable this:
 
-```jsonc
+```json
 {
   "languages": {
     "TypeScript": {
-      "prettier": { "allowed": false },
-    },
+      "prettier": { "allowed": false }
+    }
     //...
-  },
+  }
 }
 ```
 
@@ -52,7 +52,7 @@ Prettier will also be used for TypeScript files by default. To disable this:
 {
   "lsp": {
     "vtsls": {
-      "initialization_options": {
+      "settings": {
         // For TypeScript:
         "typescript": { "tsserver": { "maxTsServerMemory": 16184 } },
         // For JavaScript:
