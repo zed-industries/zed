@@ -98,10 +98,6 @@ impl<T: AsRef<Path>> PathExt for T {
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
-/// Extracts filename and row-column suffixes.
-/// Parenthesis format is used by [MSBuild](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks) compatible tools
-// NOTE: All cases need to have exactly three capture groups for extract(): file_name, row and column.
-// Valid patterns that don't contain row and/or column should have empty groups in their place.
 const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
     ([^\(]+)(?:
         \((\d+),(\d+)\) # filename(row,column)
@@ -109,12 +105,12 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
         \((\d+)\)()     # filename(row)
     )
     |
-    ([^\:]+)(?:
-        \:(\d+)\:(\d+)  # filename:row:column
+    (.+?)(?:
+        \:+(\d+)\:(\d+)\:*$  # filename:row:column
         |
-        \:(\d+)()       # filename:row
+        \:+(\d+)\:*()$       # filename:row
         |
-        \:()()          # filename:
+        \:*()()$             # filename:
     )";
 
 /// A representation of a path-like string with optional row and column numbers.
@@ -136,9 +132,92 @@ impl PathWithPosition {
             column: None,
         }
     }
+
     /// Parses a string that possibly has `:row:column` or `(row, column)` suffix.
+    /// Parenthesis format is used by [MSBuild](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks) compatible tools
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If the suffix parsing fails, the whole string is parsed as a path.
+    ///
+    /// Be mindful that `test_file:10:1:` is a valid posix filename.
+    /// `PathWithPosition` class assumes that the ending position-like suffix is **not** part of the filename.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use util::paths::PathWithPosition;
+    /// # use std::path::PathBuf;
+    /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
+    ///     path: PathBuf::from("test_file"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file:10"), PathWithPosition {
+    ///     path: PathBuf::from("test_file"),
+    ///     row: Some(10),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1:2"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: Some(2),
+    /// });
+    /// ```
+    ///
+    /// # Expected parsing results when encounter ill-formatted inputs.
+    /// ```
+    /// # use util::paths::PathWithPosition;
+    /// # use std::path::PathBuf;
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs:a"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a:b"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs:a:b"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::1"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1::"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::1:2"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: Some(2),
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1::2"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs:1"),
+    ///     row: Some(2),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1:2:3"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs:1"),
+    ///     row: Some(2),
+    ///     column: Some(3),
+    /// });
+    /// ```
     pub fn parse_str(s: &str) -> Self {
         let trimmed = s.trim();
         let path = Path::new(trimmed);
@@ -359,206 +438,229 @@ mod tests {
     }
 
     #[test]
-    fn path_with_position_parsing_positive() {
-        let input_and_expected = [
-            (
-                "test_file.rs",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: None,
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1:2",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: Some(2),
-                },
-            ),
-        ];
+    fn path_with_position_parse_posix_path() {
+        // Test POSIX filename edge cases
+        // Read more at https://en.wikipedia.org/wiki/Filename
+        assert_eq!(
+            PathWithPosition::parse_str(" test_file"),
+            PathWithPosition {
+                path: PathBuf::from("test_file"),
+                row: None,
+                column: None
+            }
+        );
 
-        for (input, expected) in input_and_expected {
-            let actual = PathWithPosition::parse_str(input);
-            assert_eq!(
-                actual, expected,
-                "For positive case input str '{input}', got a parse mismatch"
-            );
-        }
+        assert_eq!(
+            PathWithPosition::parse_str("a:bc:.zip:1"),
+            PathWithPosition {
+                path: PathBuf::from("a:bc:.zip"),
+                row: Some(1),
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("one.second.zip:1"),
+            PathWithPosition {
+                path: PathBuf::from("one.second.zip"),
+                row: Some(1),
+                column: None
+            }
+        );
+
+        // Trim off trailing `:`s for otherwise valid input.
+        assert_eq!(
+            PathWithPosition::parse_str("test_file:10:1:"),
+            PathWithPosition {
+                path: PathBuf::from("test_file"),
+                row: Some(10),
+                column: Some(1)
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("test_file.rs:"),
+            PathWithPosition {
+                path: PathBuf::from("test_file.rs"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("test_file.rs:1:"),
+            PathWithPosition {
+                path: PathBuf::from("test_file.rs"),
+                row: Some(1),
+                column: None
+            }
+        );
     }
 
     #[test]
-    fn path_with_position_parsing_negative() {
-        for (input, row, column) in [
-            ("test_file.rs:a", None, None),
-            ("test_file.rs:a:b", None, None),
-            ("test_file.rs::", None, None),
-            ("test_file.rs::1", None, None),
-            ("test_file.rs:1::", Some(1), None),
-            ("test_file.rs::1:2", None, None),
-            ("test_file.rs:1::2", Some(1), None),
-            ("test_file.rs:1:2:3", Some(1), Some(2)),
-        ] {
-            let actual = PathWithPosition::parse_str(input);
-            assert_eq!(
-                actual,
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row,
-                    column,
-                },
-                "For negative case input str '{input}', got a parse mismatch"
-            );
-        }
+    #[cfg(not(target_os = "windows"))]
+    fn path_with_position_parse_posix_path_with_suffix() {
+        assert_eq!(
+            PathWithPosition::parse_str("app-editors:zed-0.143.6:20240710-201212.log:34:"),
+            PathWithPosition {
+                path: PathBuf::from("app-editors:zed-0.143.6:20240710-201212.log"),
+                row: Some(34),
+                column: None,
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("crates/file_finder/src/file_finder.rs:1902:13:"),
+            PathWithPosition {
+                path: PathBuf::from("crates/file_finder/src/file_finder.rs"),
+                row: Some(1902),
+                column: Some(13),
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("crate/utils/src/test:today.log:34"),
+            PathWithPosition {
+                path: PathBuf::from("crate/utils/src/test:today.log"),
+                row: Some(34),
+                column: None,
+            }
+        );
     }
 
-    // Trim off trailing `:`s for otherwise valid input.
     #[test]
-    fn path_with_position_parsing_special() {
-        #[cfg(not(target_os = "windows"))]
-        let input_and_expected = [
-            (
-                "test_file.rs:",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: None,
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1:",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: None,
-                },
-            ),
-            (
-                "crates/file_finder/src/file_finder.rs:1902:13:",
-                PathWithPosition {
-                    path: PathBuf::from("crates/file_finder/src/file_finder.rs"),
-                    row: Some(1902),
-                    column: Some(13),
-                },
-            ),
-        ];
+    #[cfg(target_os = "windows")]
+    fn path_with_position_parse_windows_path() {
+        assert_eq!(
+            PathWithPosition::parse_str("crates\\utils\\paths.rs"),
+            PathWithPosition {
+                path: PathBuf::from("crates\\utils\\paths.rs"),
+                row: None,
+                column: None
+            }
+        );
 
-        #[cfg(target_os = "windows")]
-        let input_and_expected = [
-            (
-                "test_file.rs:",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: None,
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1:",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: None,
-                },
-            ),
-            (
-                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:",
-                PathWithPosition {
-                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: Some(13),
-                },
-            ),
-            (
-                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:",
-                PathWithPosition {
-                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: Some(13),
-                },
-            ),
-            (
-                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:",
-                PathWithPosition {
-                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: None,
-                },
-            ),
-            (
-                "\\\\?\\C:\\Users\\someone\\test_file.rs(1902,13):",
-                PathWithPosition {
-                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: Some(13),
-                },
-            ),
-            (
-                "\\\\?\\C:\\Users\\someone\\test_file.rs(1902):",
-                PathWithPosition {
-                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: None,
-                },
-            ),
-            (
-                "C:\\Users\\someone\\test_file.rs:1902:13:",
-                PathWithPosition {
-                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: Some(13),
-                },
-            ),
-            (
-                "crates/utils/paths.rs",
-                PathWithPosition {
-                    path: PathBuf::from("crates\\utils\\paths.rs"),
-                    row: None,
-                    column: None,
-                },
-            ),
-            (
-                "C:\\Users\\someone\\test_file.rs(1902,13):",
-                PathWithPosition {
-                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: Some(13),
-                },
-            ),
-            (
-                "C:\\Users\\someone\\test_file.rs(1902):",
-                PathWithPosition {
-                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
-                    row: Some(1902),
-                    column: None,
-                },
-            ),
-            (
-                "crates/utils/paths.rs:101",
-                PathWithPosition {
-                    path: PathBuf::from("crates\\utils\\paths.rs"),
-                    row: Some(101),
-                    column: None,
-                },
-            ),
-        ];
+        assert_eq!(
+            PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: None,
+                column: None
+            }
+        );
+    }
 
-        for (input, expected) in input_and_expected {
-            let actual = PathWithPosition::parse_str(input);
-            assert_eq!(
-                actual, expected,
-                "For special case input str '{input}', got a parse mismatch"
-            );
-        }
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn path_with_position_parse_windows_path_with_suffix() {
+        assert_eq!(
+            PathWithPosition::parse_str("crates\\utils\\paths.rs:101"),
+            PathWithPosition {
+                path: PathBuf::from("crates\\utils\\paths.rs"),
+                row: Some(101),
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1:20"),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                row: Some(1),
+                column: Some(20)
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs(1902,13)"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: Some(13)
+            }
+        );
+
+        // Trim off trailing `:`s for otherwise valid input.
+        assert_eq!(
+            PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:"),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: Some(13)
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:"),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs:1902"),
+                row: Some(13),
+                column: Some(15)
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:"),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs:1902"),
+                row: Some(15),
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs(1902,13):"),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: Some(13),
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs(1902):"),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: None,
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs:1902:13:"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: Some(13),
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs(1902,13):"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: Some(13),
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs(1902):"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: None,
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("crates/utils/paths.rs:101"),
+            PathWithPosition {
+                path: PathBuf::from("crates\\utils\\paths.rs"),
+                row: Some(101),
+                column: None,
+            }
+        );
     }
 
     #[test]

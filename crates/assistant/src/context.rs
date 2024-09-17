@@ -48,7 +48,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use text::BufferSnapshot;
-use util::{post_inc, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -162,6 +162,9 @@ impl ContextOperation {
                                 )?,
                                 icon: section.icon_name.parse()?,
                                 label: section.label.into(),
+                                metadata: section
+                                    .metadata
+                                    .and_then(|metadata| serde_json::from_str(&metadata).log_err()),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?,
@@ -242,6 +245,9 @@ impl ContextOperation {
                                     )),
                                     icon_name: icon_name.to_string(),
                                     label: section.label.to_string(),
+                                    metadata: section.metadata.as_ref().and_then(|metadata| {
+                                        serde_json::to_string(metadata).log_err()
+                                    }),
                                 }
                             })
                             .collect(),
@@ -635,12 +641,13 @@ impl Context {
                 .slash_command_output_sections
                 .iter()
                 .filter_map(|section| {
-                    let range = section.range.to_offset(buffer);
-                    if section.range.start.is_valid(buffer) && !range.is_empty() {
+                    if section.is_valid(buffer) {
+                        let range = section.range.to_offset(buffer);
                         Some(assistant_slash_command::SlashCommandOutputSection {
                             range,
                             icon: section.icon,
                             label: section.label.clone(),
+                            metadata: section.metadata.clone(),
                         })
                     } else {
                         None
@@ -1825,6 +1832,7 @@ impl Context {
                                         ..buffer.anchor_before(start + section.range.end),
                                     icon: section.icon,
                                     label: section.label,
+                                    metadata: section.metadata,
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
@@ -2977,6 +2985,7 @@ impl SavedContext {
                             ..buffer.anchor_before(section.range.end),
                         icon: section.icon,
                         label: section.label,
+                        metadata: section.metadata,
                     }
                 })
                 .collect(),

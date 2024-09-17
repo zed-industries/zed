@@ -261,17 +261,13 @@ pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatRequest,
-    low_speed_timeout: Option<Duration>,
+    _: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let mut request_builder = http::Request::builder()
+    let request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        // request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

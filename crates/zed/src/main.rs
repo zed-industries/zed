@@ -23,7 +23,7 @@ use gpui::{
     Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
     UpdateGlobal as _, VisualContext,
 };
-use http_client::read_proxy_from_env;
+use http_client::{read_proxy_from_env, Uri};
 use isahc_http_client::IsahcHttpClient;
 use language::LanguageRegistry;
 use log::LevelFilter;

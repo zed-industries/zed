@@ -8,14 +8,12 @@ use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LineEnding, LspAdapterDelegate};
-use semantic_index::SemanticDb;
+use semantic_index::{LoadedSearchResult, SemanticDb};
 use std::{
     fmt::Write,
-    path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::{prelude::*, IconName};
-use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) struct SearchSlashCommandFeatureFlag;
@@ -60,6 +58,8 @@ impl SlashCommand for SearchSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: language::BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -105,52 +105,28 @@ impl SlashCommand for SearchSlashCommand {
                 })?
                 .await?;
 
-            let mut loaded_results = Vec::new();
-            for result in results {
-                let (full_path, file_content) =
-                    result.worktree.read_with(&cx, |worktree, _cx| {
-                        let entry_abs_path = worktree.abs_path().join(&result.path);
-                        let mut entry_full_path = PathBuf::from(worktree.root_name());
-                        entry_full_path.push(&result.path);
-                        let file_content = async {
-                            let entry_abs_path = entry_abs_path;
-                            fs.load(&entry_abs_path).await
-                        };
-                        (entry_full_path, file_content)
-                    })?;
-                if let Some(file_content) = file_content.await.log_err() {
-                    loaded_results.push((result, full_path, file_content));
-                }
-            }
+            let loaded_results = SemanticDb::load_results(results, &fs, &cx).await?;
 
             let output = cx
                 .background_executor()
                 .spawn(async move {
                     let mut text = format!("Search results for {query}:\n");
                     let mut sections = Vec::new();
-                    for (result, full_path, file_content) in loaded_results {
-                        let range_start = result.range.start.min(file_content.len());
-                        let range_end = result.range.end.min(file_content.len());
-
-                        let start_row = file_content[0..range_start].matches('\n').count() as u32;
-                        let end_row = file_content[0..range_end].matches('\n').count() as u32;
-                        let start_line_byte_offset = file_content[0..range_start]
-                            .rfind('\n')
-                            .map(|pos| pos + 1)
-                            .unwrap_or_default();
-                        let end_line_byte_offset = file_content[range_end..]
-                            .find('\n')
-                            .map(|pos| range_end + pos)
-                            .unwrap_or_else(|| file_content.len());
-
+                    for LoadedSearchResult {
+                        path,
+                        range,
+                        full_path,
+                        file_content,
+                        row_range,
+                    } in loaded_results
+                    {
                         let section_start_ix = text.len();
                         text.push_str(&codeblock_fence_for_path(
-                            Some(&result.path),
-                            Some(start_row..end_row),
+                            Some(&path),
+                            Some(row_range.clone()),
                         ));
 
-                        let mut excerpt =
-                            file_content[start_line_byte_offset..end_line_byte_offset].to_string();
+                        let mut excerpt = file_content[range].to_string();
                         LineEnding::normalize(&mut excerpt);
                         text.push_str(&excerpt);
                         writeln!(text, "\n```\n").unwrap();
@@ -159,7 +135,7 @@ impl SlashCommand for SearchSlashCommand {
                             section_start_ix..section_end_ix,
                             Some(&full_path),
                             false,
-                            Some(start_row + 1..end_row + 1),
+                            Some(row_range.start() + 1..row_range.end() + 1),
                         ));
                     }
 
@@ -168,6 +144,7 @@ impl SlashCommand for SearchSlashCommand {
                         range: 0..text.len(),
                         icon: IconName::MagnifyingGlass,
                         label: query,
+                        metadata: None,
                     });
 
                     SlashCommandOutput {

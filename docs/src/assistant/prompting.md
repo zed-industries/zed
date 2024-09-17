@@ -52,6 +52,8 @@ More on prompt engineering:
 
 Zed allows you to customize the default prompt used in new context editors. Or to be more precise, it uses a series of prompts that are combined to form the default prompt.
 
+To edit prompts, select "Prompt Library" from the menu icon (three horizontal lines) in the upper right hand corner or using the `cmd-k l` keyboard shortcut.
+
 A default prompt might look something like:
 
 ```plaintext

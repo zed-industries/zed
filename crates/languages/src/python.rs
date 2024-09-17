@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
@@ -215,6 +216,7 @@ impl ContextProvider for PythonContextProvider {
         &self,
         variables: &task::TaskVariables,
         _location: &project::Location,
+        _: Option<&HashMap<String, String>>,
         _cx: &mut gpui::AppContext,
     ) -> Result<task::TaskVariables> {
         let python_module_name = python_module_name_from_relative_path(

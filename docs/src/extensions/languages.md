@@ -284,7 +284,9 @@ The `@run` capture specifies where the run button should appear in the editor. O
 | @run    | Captures the script name                               |
 | @script | Also captures the script name (for different purposes) |
 
+<!--
 TBD: `#set! tag`
+-->
 
 ## Language Servers
 

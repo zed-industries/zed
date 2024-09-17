@@ -289,7 +289,11 @@ message Envelope {
         WhichCommandResponse which_command_response = 249;
 
         ShellEnv shell_env = 250;
-        ShellEnvResponse shell_env_response = 251; // current max
+        ShellEnvResponse shell_env_response = 251;
+
+        TryExec try_exec = 252;
+        ReadTextFile read_text_file = 253;
+        ReadTextFileResponse read_text_file_response = 254; // current max
     }
 
     reserved 158 to 161;
@@ -2390,6 +2394,7 @@ message SlashCommandOutputSection {
     AnchorRange range = 1;
     string icon_name = 2;
     string label = 3;
+    optional string metadata = 4;
 }
 
 message ContextOperation {
@@ -2550,13 +2555,21 @@ message ShellEnvResponse {
     map<string, string> env = 1;
 }
 
-// message RestartLanguageServer {
+message ReadTextFile {
+    uint64 project_id = 1;
+    ProjectPath path = 2;
+}
 
-// }
-// message DestroyLanguageServer {
+message ReadTextFileResponse {
+    string text = 1;
+}
 
-// }
+message TryExec {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    LanguageServerCommand binary = 3;
+}
 
-// message LspWorkspaceConfiguration {
-
-// }
+message TryExecResponse {
+    string text = 1;
+}
