@@ -380,27 +380,33 @@ async fn run_evaluation(
             let mut project_overlapped_result_count = 0;
             let mut project_covered_file_count = 0;
             for expected_result in &query.expected_results {
-                let was_file_captured = results
-                    .iter()
-                    .any(|result| result.path.as_ref() == Path::new(&expected_result.file));
-                let was_partially_covered = results.iter().any(|result| {
-                    result.path.as_ref() == Path::new(&expected_result.file)
-                        && result.row_range.contains(&expected_result.lines.start)
-                        || result.row_range.contains(&expected_result.lines.end)
-                });
-                let was_fully_covered = results.iter().any(|result| {
-                    result.path.as_ref() == Path::new(&expected_result.file)
-                        && result.row_range.contains(&expected_result.lines.start)
-                        && result.row_range.contains(&expected_result.lines.end)
-                });
+                let mut file_matched = false;
+                let mut range_overlapped = false;
+                let mut range_covered = false;
 
-                if was_fully_covered {
+                for result in results.iter() {
+                    if result.path.as_ref() == Path::new(&expected_result.file) {
+                        file_matched = true;
+                        let start_matched = result.row_range.contains(&expected_result.lines.start);
+                        let end_matched = result.row_range.contains(&expected_result.lines.end);
+
+                        if start_matched || end_matched {
+                            range_overlapped = true;
+                        }
+
+                        if start_matched && end_matched {
+                            range_covered = true;
+                        }
+                    }
+                }
+
+                if range_covered {
                     project_covered_result_count += 1
                 };
-                if was_partially_covered {
+                if range_overlapped {
                     project_overlapped_result_count += 1
                 };
-                if was_file_captured {
+                if file_matched {
                     project_covered_file_count += 1
                 };
             }
