@@ -5,7 +5,7 @@ use strum::EnumIter;
 
 /// TODO:
 /// https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-/// https://source.chromium.org/chromium/chromium/src/+/main:ui/events/keycodes/keyboard_codes_win.h;drc=341564182474622e33c964e73a69ea8c1e004eb8;l=12
+/// On Windows, this is `VirtualKeyCodes`, on macOS and Linux, this is `ScanCodes`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash, EnumIter)]
 pub enum KeyCodes {
     /// Un-recognized key
