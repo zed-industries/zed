@@ -23,6 +23,7 @@ use gpui::{
     Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
     UpdateGlobal as _, VisualContext,
 };
+use isahc_http_client::IsahcHttpClient;
 use language::LanguageRegistry;
 use log::LevelFilter;
 
@@ -327,7 +328,9 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new().with_assets(Assets);
+    let app = App::new()
+        .with_assets(Assets)
+        .with_http_client(IsahcHttpClient::new(None, None));
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()

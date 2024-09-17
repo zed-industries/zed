@@ -143,9 +143,8 @@ impl App {
     }
 
     /// Set the http client for the application
-    pub fn with_http_client(self, http_client: impl HttpClient) -> Self {
+    pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
         let mut context_lock = self.0.borrow_mut();
-        let http_client = Arc::new(http_client);
         context_lock.http_client = http_client;
         drop(context_lock);
         self
