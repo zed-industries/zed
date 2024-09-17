@@ -4012,7 +4012,6 @@ dependencies = [
  "env_logger",
  "feature_flags",
  "fs",
- "futures 0.3.30",
  "git",
  "gpui",
  "http_client",
