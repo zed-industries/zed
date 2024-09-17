@@ -2390,6 +2390,7 @@ message SlashCommandOutputSection {
     AnchorRange range = 1;
     string icon_name = 2;
     string label = 3;
+    optional string metadata = 4;
 }
 
 message ContextOperation {
