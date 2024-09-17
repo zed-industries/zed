@@ -345,12 +345,12 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
 
     let mut response = match client.send(request).await {
         Ok(response) => response,
-        e @ Err(_) => {
+        Err(error) => {
             // Be ok with a timeout during preload of the model
             // if err.is_timeout() {
             //     return Ok(());
             // } else {
-            return e;
+            return Err(error);
             //}
         }
     };
