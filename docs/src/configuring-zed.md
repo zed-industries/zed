@@ -1059,13 +1059,11 @@ Settings-related hint updates are not debounced.
 - Setting: `entry_format`
 - Default: `journal/%Y/%m/%d.md`
 
-
 **Options**
 
-1. See the [`chrono::format::strftime` module](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)  on the supported escape sequences.
+1. See the [`chrono::format::strftime` module](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) on the supported escape sequences.
 
 2. If value is not properly configured, it will fallback to default `entry_format`
-
 
 ## Languages
 

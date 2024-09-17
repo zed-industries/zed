@@ -179,7 +179,7 @@ fn journal_dir(path: &str) -> Option<PathBuf> {
     let expanded_path = shellexpand::full(path)
         .ok()
         .map(|dir| Path::new(dir.as_ref()).to_path_buf());
-    expanded_path.or_else(|| dirs::home_dir())
+    expanded_path.or_else(dirs::home_dir)
 }
 
 fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {
