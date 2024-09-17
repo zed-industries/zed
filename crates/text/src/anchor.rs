@@ -6,11 +6,14 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
 
 /// A timestamped position in a buffer
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub enum Anchor {
-    #[default]
-    Start,
-    End,
+    Start {
+        buffer_id: BufferId,
+    },
+    End {
+        buffer_id: BufferId,
+    },
     Character {
         buffer_id: BufferId,
         insertion_id: clock::Lamport,
@@ -20,41 +23,49 @@ pub enum Anchor {
 }
 
 impl Anchor {
+    pub fn buffer_id(&self) -> BufferId {
+        match self {
+            Anchor::Start { buffer_id } => *buffer_id,
+            Anchor::End { buffer_id } => *buffer_id,
+            Anchor::Character { buffer_id, .. } => *buffer_id,
+        }
+    }
+
     pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Ordering {
+        debug_assert_eq!(
+            self.buffer_id(),
+            other.buffer_id(),
+            "anchors belong to different buffers"
+        );
+
         match (self, other) {
-            (Anchor::Start, Anchor::Start) | (Anchor::End, Anchor::End) => Ordering::Equal,
-            (Anchor::Start, _) | (_, Anchor::End) => Ordering::Less,
-            (_, Anchor::Start) | (Anchor::End, _) => Ordering::Greater,
+            (Anchor::Start { .. }, Anchor::Start { .. }) => Ordering::Equal,
+            (Anchor::End { .. }, Anchor::End { .. }) => Ordering::Equal,
+            (Anchor::Start { .. }, _) | (_, Anchor::End { .. }) => Ordering::Less,
+            (_, Anchor::Start { .. }) | (Anchor::End { .. }, _) => Ordering::Greater,
             (
                 Anchor::Character {
-                    buffer_id,
                     insertion_id,
                     offset,
                     bias,
+                    ..
                 },
                 Anchor::Character {
-                    buffer_id: other_buffer_id,
                     insertion_id: other_insertion_id,
                     offset: other_offset,
                     bias: other_bias,
+                    ..
                 },
             ) => {
-                debug_assert_eq!(
-                    buffer_id, other_buffer_id,
-                    "anchors belong to different buffers"
-                );
-
-                let fragment_id_comparison = if insertion_id == other_insertion_id {
-                    Ordering::Equal
+                if insertion_id == other_insertion_id {
+                    offset
+                        .cmp(&other_offset)
+                        .then_with(|| bias.cmp(&other_bias))
                 } else {
                     buffer
                         .fragment_id_for_anchor(self)
                         .cmp(buffer.fragment_id_for_anchor(other))
-                };
-
-                fragment_id_comparison
-                    .then_with(|| offset.cmp(&other_offset))
-                    .then_with(|| bias.cmp(&other_bias))
+                }
             }
         }
     }
@@ -85,8 +96,10 @@ impl Anchor {
 
     pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {
         match self {
-            Anchor::Start => Anchor::Start,
-            Anchor::End => buffer.anchor_before(buffer.len()),
+            Anchor::Start { buffer_id } => Anchor::Start {
+                buffer_id: *buffer_id,
+            },
+            Anchor::End { .. } => buffer.anchor_before(buffer.len()),
             Anchor::Character {
                 buffer_id,
                 insertion_id,
@@ -103,8 +116,10 @@ impl Anchor {
 
     pub fn bias_right(&self, buffer: &BufferSnapshot) -> Anchor {
         match self {
-            Anchor::Start => buffer.anchor_after(0),
-            Anchor::End => Anchor::End,
+            Anchor::Start { .. } => buffer.anchor_after(0),
+            Anchor::End { buffer_id } => Anchor::End {
+                buffer_id: *buffer_id,
+            },
             Anchor::Character {
                 buffer_id,
                 insertion_id,
@@ -129,7 +144,9 @@ impl Anchor {
     /// Returns true when the [`Anchor`] is located inside a visible fragment.
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
         match self {
-            Anchor::Start | Anchor::End => true,
+            Anchor::Start { buffer_id } | Anchor::End { buffer_id } => {
+                *buffer_id == buffer.remote_id
+            }
             Anchor::Character { buffer_id, .. } => {
                 if *buffer_id == buffer.remote_id {
                     let fragment_id = buffer.fragment_id_for_anchor(self);

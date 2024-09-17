@@ -1914,6 +1914,18 @@ impl BufferSnapshot {
         self.visible_text.summary()
     }
 
+    pub fn min_anchor(&self) -> Anchor {
+        Anchor::Start {
+            buffer_id: self.remote_id,
+        }
+    }
+
+    pub fn max_anchor(&self) -> Anchor {
+        Anchor::End {
+            buffer_id: self.remote_id,
+        }
+    }
+
     pub fn max_point(&self) -> Point {
         self.visible_text.max_point()
     }
@@ -2114,42 +2126,50 @@ impl BufferSnapshot {
         let mut text_cursor = self.visible_text.cursor(0);
         let mut position = D::default();
 
-        anchors.map(move |(anchor, payload)| match *anchor {
-            Anchor::Start => (D::default(), payload),
-            Anchor::End => (D::from_text_summary(&self.visible_text.summary()), payload),
-            Anchor::Character {
-                insertion_id,
-                offset,
-                bias,
-                ..
-            } => {
-                let anchor_key = InsertionFragmentKey {
-                    timestamp: insertion_id,
-                    split_offset: offset,
-                };
-                insertion_cursor.seek(&anchor_key, bias, &());
-                if let Some(insertion) = insertion_cursor.item() {
-                    let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
-                    if comparison == Ordering::Greater
-                        || (bias == Bias::Left && comparison == Ordering::Equal && offset > 0)
-                    {
+        anchors.map(move |(anchor, payload)| {
+            debug_assert_eq!(
+                anchor.buffer_id(),
+                self.remote_id,
+                "anchor belongs to a different buffer"
+            );
+
+            match *anchor {
+                Anchor::Start { .. } => (D::default(), payload),
+                Anchor::End { .. } => (D::from_text_summary(&self.visible_text.summary()), payload),
+                Anchor::Character {
+                    insertion_id,
+                    offset,
+                    bias,
+                    ..
+                } => {
+                    let anchor_key = InsertionFragmentKey {
+                        timestamp: insertion_id,
+                        split_offset: offset,
+                    };
+                    insertion_cursor.seek(&anchor_key, bias, &());
+                    if let Some(insertion) = insertion_cursor.item() {
+                        let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
+                        if comparison == Ordering::Greater
+                            || (bias == Bias::Left && comparison == Ordering::Equal && offset > 0)
+                        {
+                            insertion_cursor.prev(&());
+                        }
+                    } else {
                         insertion_cursor.prev(&());
                     }
-                } else {
-                    insertion_cursor.prev(&());
-                }
-                let insertion = insertion_cursor.item().expect("invalid insertion");
-                assert_eq!(insertion.timestamp, insertion_id, "invalid insertion");
+                    let insertion = insertion_cursor.item().expect("invalid insertion");
+                    assert_eq!(insertion.timestamp, insertion_id, "invalid insertion");
 
-                fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left, &None);
-                let fragment = fragment_cursor.item().unwrap();
-                let mut fragment_offset = fragment_cursor.start().1;
-                if fragment.visible {
-                    fragment_offset += offset - insertion.split_offset;
-                }
+                    fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left, &None);
+                    let fragment = fragment_cursor.item().unwrap();
+                    let mut fragment_offset = fragment_cursor.start().1;
+                    if fragment.visible {
+                        fragment_offset += offset - insertion.split_offset;
+                    }
 
-                position.add_assign(&text_cursor.summary(fragment_offset));
-                (position.clone(), payload)
+                    position.add_assign(&text_cursor.summary(fragment_offset));
+                    (position.clone(), payload)
+                }
             }
         })
     }
@@ -2162,9 +2182,15 @@ impl BufferSnapshot {
     }
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
+        debug_assert_eq!(
+            anchor.buffer_id(),
+            self.remote_id,
+            "anchor belongs to a different buffer"
+        );
+
         match *anchor {
-            Anchor::Start => Locator::min_ref(),
-            Anchor::End => Locator::max_ref(),
+            Anchor::Start { .. } => Locator::min_ref(),
+            Anchor::End { .. } => Locator::max_ref(),
             Anchor::Character {
                 insertion_id,
                 offset,
@@ -2220,9 +2246,9 @@ impl BufferSnapshot {
 
     fn anchor_at_offset(&self, offset: usize, bias: Bias) -> Anchor {
         if bias == Bias::Left && offset == 0 {
-            Anchor::Start
+            self.min_anchor()
         } else if bias == Bias::Right && offset == self.len() {
-            Anchor::End
+            self.max_anchor()
         } else {
             let mut fragment_cursor = self.fragments.cursor::<usize>();
             fragment_cursor.seek(&offset, bias, &None);
@@ -2239,8 +2265,8 @@ impl BufferSnapshot {
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         match *anchor {
-            Anchor::Start => true,
-            Anchor::End => true,
+            Anchor::Start { buffer_id } => self.remote_id == buffer_id,
+            Anchor::End { buffer_id } => self.remote_id == buffer_id,
             Anchor::Character {
                 buffer_id,
                 insertion_id,
@@ -2272,7 +2298,7 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        self.edits_since_in_range(since, Anchor::Start..Anchor::End)
+        self.edits_since_in_range(since, self.min_anchor()..self.max_anchor())
     }
 
     pub fn anchored_edits_since<'a, D>(
@@ -2282,7 +2308,7 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        self.anchored_edits_since_in_range(since, Anchor::Start..Anchor::End)
+        self.anchored_edits_since_in_range(since, self.min_anchor()..self.max_anchor())
     }
 
     pub fn edits_since_in_range<'a, D>(
