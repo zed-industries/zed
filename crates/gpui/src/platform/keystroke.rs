@@ -64,7 +64,7 @@ impl Keystroke {
         // }
 
         // perform char-based matching first
-        if self.code.to_string() != target.key {
+        if self.code.to_string() != self.key {
             if self.key == target.key && self.modifiers == target.modifiers {
                 return true;
             }
