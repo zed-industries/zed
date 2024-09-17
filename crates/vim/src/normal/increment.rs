@@ -98,104 +98,68 @@ impl Vim {
     }
 }
 
-fn increment_decimal_string(mut num: &str, delta: i64) -> String {
+fn increment_decimal_string(mut num: &str, mut delta: i64) -> String {
     let mut negative = false;
-    let mut value: u64;
     if num.chars().next() == Some('-') {
         negative = true;
+        delta = 0 - delta;
         num = &num[1..];
     }
-    if let Ok(parse_value) = u64::from_str_radix(num, 10) {
-        value = parse_value;
-        if negative {
-            value = u64::MAX - value;
-        }
-    } else {
-        if !negative {
-            return u64::MAX.to_string();
+    let result = if let Ok(value) = u64::from_str_radix(num, 10) {
+        let wrapped = value.wrapping_add_signed(delta);
+        if delta < 0 && wrapped > value {
+            negative = !negative;
+            (u64::MAX - wrapped).wrapping_add(1)
+        } else if delta > 0 && wrapped < value {
+            negative = !negative;
+            u64::MAX - wrapped
         } else {
-            return format!("-{}", u64::MAX);
-        }
-    }
-
-    let mut result: u64;
-    if delta >= 0 {
-        result = value.wrapping_add(delta as u64);
-        if result < value {
-            negative = !negative;
-        }
-        if !negative && result < value || negative && result == u64::MAX {
-            negative = false;
-            result = result.wrapping_add(1);
+            wrapped
         }
     } else {
-        result = value.wrapping_sub((-delta) as u64);
-        if result > value {
-            negative = !negative;
-        }
-        if negative && result > value {
-            result = result.wrapping_sub(1);
-        }
-    }
+        u64::MAX
+    };
 
-    if !negative {
+    if result == 0 || !negative {
         format!("{}", result)
     } else {
-        result = u64::MAX - result;
         format!("-{}", result)
     }
 }
 
 fn increment_hex_string(num: &str, delta: i64) -> String {
-    if let Ok(val) = u64::from_str_radix(&num, 16) {
-        let result = wrapping_increment(val, delta);
-        if should_use_lowercase(num) {
-            format!("{:0width$x}", result, width = num.len())
-        } else {
-            format!("{:0width$X}", result, width = num.len())
-        }
+    let result = if let Ok(val) = u64::from_str_radix(&num, 16) {
+        val.wrapping_add_signed(delta)
     } else {
-        if should_use_lowercase(num) {
-            format!("{:0width$x}", u64::MAX, width = num.len())
-        } else {
-            format!("{:0width$X}", u64::MAX, width = num.len())
-        }
+        u64::MAX
+    };
+    if should_use_lowercase(num) {
+        format!("{:0width$x}", result, width = num.len())
+    } else {
+        format!("{:0width$X}", result, width = num.len())
     }
 }
 
 fn should_use_lowercase(num: &str) -> bool {
-    let mut contain_lowercase = false;
-    let mut contain_alphabet = false;
+    let mut use_uppercase = false;
     for ch in num.chars() {
-        if !ch.is_ascii_digit() {
-            contain_alphabet = true;
-            if ch.is_ascii_lowercase() {
-                contain_lowercase = true;
-            }
+        if ch.is_ascii_lowercase() {
+            return true;
+        }
+        if ch.is_ascii_uppercase() {
+            use_uppercase = true;
         }
     }
-    if contain_lowercase || !contain_alphabet {
-        true
-    } else {
-        false
-    }
-}
-
-fn wrapping_increment(n: u64, delta: i64) -> u64 {
-    if delta > 0 {
-        return n.wrapping_add(delta as u64);
-    } else {
-        return n.wrapping_sub((-delta) as u64);
-    }
+    !use_uppercase
 }
 
 fn increment_binary_string(num: &str, delta: i64) -> String {
-    if let Ok(val) = u64::from_str_radix(&num, 2) {
-        let result = wrapping_increment(val, delta);
-        format!("{:0width$b}", result, width = num.len())
+    let result = if let Ok(val) = u64::from_str_radix(&num, 2) {
+        val.wrapping_add_signed(delta)
     } else {
-        format!("{:0width$b}", u64::MAX, width = num.len())
-    }
+        u64::MAX
+    };
+    format!("{:0width$b}", result, width = num.len())
 }
 
 fn find_number(
