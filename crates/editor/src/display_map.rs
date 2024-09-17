@@ -12,7 +12,7 @@
 //! - [`WrapMap`] that handles soft wrapping.
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
-//! Each one of those builds on top of preceding map.
+//!   Each one of those builds on top of preceding map.
 //!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
@@ -74,8 +74,6 @@ pub enum FoldStatus {
 
 pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
 
-const UNNECESSARY_CODE_FADE: f32 = 0.3;
-
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
@@ -107,7 +105,7 @@ pub struct DisplayMap {
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
-    fold_placeholder: FoldPlaceholder,
+    pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
 }
@@ -120,9 +118,9 @@ impl DisplayMap {
         font_size: Pixels,
         wrap_width: Option<Pixels>,
         show_excerpt_controls: bool,
-        buffer_header_height: u8,
-        excerpt_header_height: u8,
-        excerpt_footer_height: u8,
+        buffer_header_height: u32,
+        excerpt_header_height: u32,
+        excerpt_footer_height: u32,
         fold_placeholder: FoldPlaceholder,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -286,44 +284,11 @@ impl DisplayMap {
         block_map.insert(blocks)
     }
 
-    pub fn replace_blocks(
+    pub fn resize_blocks(
         &mut self,
-        heights_and_renderers: HashMap<CustomBlockId, (Option<u8>, RenderBlock)>,
+        heights: HashMap<CustomBlockId, u32>,
         cx: &mut ModelContext<Self>,
     ) {
-        //
-        // Note: previous implementation of `replace_blocks` simply called
-        // `self.block_map.replace(styles)` which just modified the render by replacing
-        // the `RenderBlock` with the new one.
-        //
-        // ```rust
-        //  for block in &self.blocks {
-        //           if let Some(render) = renderers.remove(&block.id) {
-        //               *block.render.lock() = render;
-        //           }
-        //       }
-        // ```
-        //
-        // If height changes however, we need to update the tree. There's a performance
-        // cost to this, so we'll split the replace blocks into handling the old behavior
-        // directly and the new behavior separately.
-        //
-        //
-        let mut only_renderers = HashMap::<CustomBlockId, RenderBlock>::default();
-        let mut full_replace = HashMap::<CustomBlockId, (u8, RenderBlock)>::default();
-        for (id, (height, render)) in heights_and_renderers {
-            if let Some(height) = height {
-                full_replace.insert(id, (height, render));
-            } else {
-                only_renderers.insert(id, render);
-            }
-        }
-        self.block_map.replace_renderers(only_renderers);
-
-        if full_replace.is_empty() {
-            return;
-        }
-
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -334,7 +299,11 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.replace(full_replace);
+        block_map.resize(heights);
+    }
+
+    pub fn replace_blocks(&mut self, renderers: HashMap<CustomBlockId, RenderBlock>) {
+        self.block_map.replace_blocks(renderers);
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut ModelContext<Self>) {
@@ -619,7 +588,7 @@ impl DisplaySnapshot {
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
         self.buffer_snapshot
-            .anchor_at(point.to_offset(&self, bias), bias)
+            .anchor_at(point.to_offset(self, bias), bias)
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
@@ -720,7 +689,7 @@ impl DisplaySnapshot {
             let mut diagnostic_highlight = HighlightStyle::default();
 
             if chunk.is_unnecessary {
-                diagnostic_highlight.fade_out = Some(UNNECESSARY_CODE_FADE);
+                diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
             }
 
             if let Some(severity) = chunk.diagnostic_severity {
@@ -766,7 +735,7 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row.next_row();
-        for chunk in self.highlighted_chunks(range, false, &editor_style) {
+        for chunk in self.highlighted_chunks(range, false, editor_style) {
             line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
@@ -1051,6 +1020,18 @@ impl DisplaySnapshot {
         let type_id = TypeId::of::<Tag>();
         self.inlay_highlights.get(&type_id)
     }
+
+    pub fn buffer_header_height(&self) -> u32 {
+        self.block_snapshot.buffer_header_height
+    }
+
+    pub fn excerpt_footer_height(&self) -> u32 {
+        self.block_snapshot.excerpt_footer_height
+    }
+
+    pub fn excerpt_header_height(&self) -> u32 {
+        self.block_snapshot.excerpt_header_height
+    }
 }
 
 #[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
@@ -1298,12 +1279,14 @@ pub mod tests {
                                         position.to_point(&buffer),
                                         height
                                     );
+                                    let priority = rng.gen_range(1..100);
                                     BlockProperties {
                                         style: BlockStyle::Fixed,
                                         position,
                                         height,
                                         disposition,
                                         render: Box::new(|_| div().into_any()),
+                                        priority,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1662,7 +1645,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"
@@ -1767,7 +1750,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"
@@ -1850,7 +1833,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"

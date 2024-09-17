@@ -87,6 +87,7 @@ pub enum ActivateScript {
     Csh,
     Fish,
     Nushell,
+    PowerShell,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -141,7 +142,7 @@ pub struct TerminalSettingsContent {
     pub alternate_scroll: Option<AlternateScroll>,
     /// Sets whether the option key behaves as the meta key.
     ///
-    /// Default: false
+    /// Default: true
     pub option_as_meta: Option<bool>,
     /// Whether or not selecting text in the terminal will automatically
     /// copy to the system clipboard.

@@ -5,9 +5,10 @@ use super::{
 };
 use anyhow::Result;
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LineEnding, LspAdapterDelegate};
-use semantic_index::SemanticIndex;
+use semantic_index::SemanticDb;
 use std::{
     fmt::Write,
     path::PathBuf,
@@ -16,6 +17,12 @@ use std::{
 use ui::{prelude::*, IconName};
 use util::ResultExt;
 use workspace::Workspace;
+
+pub(crate) struct SearchSlashCommandFeatureFlag;
+
+impl FeatureFlag for SearchSlashCommandFeatureFlag {
+    const NAME: &'static str = "search-slash-command";
+}
 
 pub(crate) struct SearchSlashCommand;
 
@@ -42,31 +49,31 @@ impl SlashCommand for SearchSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
-        let Some(argument) = argument else {
+        if arguments.is_empty() {
             return Task::ready(Err(anyhow::anyhow!("missing search query")));
         };
 
         let mut limit = None;
         let mut query = String::new();
-        for part in argument.split(' ') {
+        for part in arguments {
             if let Some(parameter) = part.strip_prefix("--") {
                 if let Ok(count) = parameter.parse::<usize>() {
                     limit = Some(count);
@@ -85,8 +92,11 @@ impl SlashCommand for SearchSlashCommand {
 
         let project = workspace.read(cx).project().clone();
         let fs = project.read(cx).fs().clone();
-        let project_index =
-            cx.update_global(|index: &mut SemanticIndex, cx| index.project_index(project, cx));
+        let Some(project_index) =
+            cx.update_global(|index: &mut SemanticDb, cx| index.project_index(project, cx))
+        else {
+            return Task::ready(Err(anyhow::anyhow!("no project indexer")));
+        };
 
         cx.spawn(|cx| async move {
             let results = project_index

@@ -225,14 +225,16 @@ pub struct InlayChunks<'a> {
 }
 
 impl<'a> InlayChunks<'a> {
-    pub fn seek(&mut self, offset: InlayOffset) {
-        self.transforms.seek(&offset, Bias::Right, &());
+    pub fn seek(&mut self, new_range: Range<InlayOffset>) {
+        self.transforms.seek(&new_range.start, Bias::Right, &());
 
-        let buffer_offset = self.snapshot.to_buffer_offset(offset);
-        self.buffer_chunks.seek(buffer_offset);
+        let buffer_range = self.snapshot.to_buffer_offset(new_range.start)
+            ..self.snapshot.to_buffer_offset(new_range.end);
+        self.buffer_chunks.seek(buffer_range);
         self.inlay_chunks = None;
         self.buffer_chunk = None;
-        self.output_offset = offset;
+        self.output_offset = new_range.start;
+        self.max_output_offset = new_range.end;
     }
 
     pub fn offset(&self) -> InlayOffset {
@@ -322,7 +324,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     } else {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
                         highlight_style
-                            .get_or_insert_with(|| Default::default())
+                            .get_or_insert_with(Default::default)
                             .highlight(*style);
                     }
                 } else {
@@ -449,15 +451,14 @@ impl InlayMap {
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
 
-        if buffer_edits.is_empty() {
-            if snapshot.buffer.trailing_excerpt_update_count()
+        if buffer_edits.is_empty()
+            && snapshot.buffer.trailing_excerpt_update_count()
                 != buffer_snapshot.trailing_excerpt_update_count()
-            {
-                buffer_edits.push(Edit {
-                    old: snapshot.buffer.len()..snapshot.buffer.len(),
-                    new: buffer_snapshot.len()..buffer_snapshot.len(),
-                });
-            }
+        {
+            buffer_edits.push(Edit {
+                old: snapshot.buffer.len()..snapshot.buffer.len(),
+                new: buffer_snapshot.len()..buffer_snapshot.len(),
+            });
         }
 
         if buffer_edits.is_empty() {

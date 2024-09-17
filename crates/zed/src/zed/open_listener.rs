@@ -1,6 +1,7 @@
 use crate::restorable_workspace_locations;
 use crate::{handle_open_request, init_headless, init_ui};
 use anyhow::{anyhow, Context, Result};
+use assistant::PromptBuilder;
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -14,21 +15,19 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
 use remote::SshConnectionOptions;
-use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{process, thread};
-use util::paths::PathLikeWithPosition;
+use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
-use workspace::{AppState, Workspace};
+use workspace::{AppState, OpenOptions, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
-    pub open_paths: Vec<PathLikeWithPosition<PathBuf>>,
+    pub open_paths: Vec<PathWithPosition>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
@@ -58,11 +57,8 @@ impl OpenRequest {
 
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
-            if let Some(path_buf) =
-                PathLikeWithPosition::parse_str(&decoded, |_, s| PathBuf::try_from(s)).log_err()
-            {
-                self.open_paths.push(path_buf)
-            }
+            let path_buf = PathWithPosition::parse_str(&decoded);
+            self.open_paths.push(path_buf)
         }
     }
 
@@ -193,7 +189,7 @@ fn connect_to_cli(
 }
 
 pub async fn open_paths_with_positions(
-    path_likes: &Vec<PathLikeWithPosition<PathBuf>>,
+    path_positions: &[PathWithPosition],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
@@ -203,10 +199,10 @@ pub async fn open_paths_with_positions(
 )> {
     let mut caret_positions = HashMap::default();
 
-    let paths = path_likes
+    let paths = path_positions
         .iter()
         .map(|path_with_position| {
-            let path = path_with_position.path_like.clone();
+            let path = path_with_position.path.clone();
             if let Some(row) = path_with_position.row {
                 if path.is_file() {
                     let row = row.saturating_sub(1);
@@ -250,6 +246,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
     mut cx: AsyncAppContext,
 ) {
     if let Some(request) = requests.next().await {
@@ -260,6 +257,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 dev_server_token,
+                env,
             } => {
                 if let Some(dev_server_token) = dev_server_token {
                     match cx
@@ -294,7 +292,12 @@ pub async fn handle_cli_connection(
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
                             Ok(open_request) => {
-                                handle_open_request(open_request, app_state.clone(), cx);
+                                handle_open_request(
+                                    open_request,
+                                    app_state.clone(),
+                                    prompt_builder.clone(),
+                                    cx,
+                                );
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
                             }
                             Err(e) => {
@@ -312,7 +315,7 @@ pub async fn handle_cli_connection(
                 }
 
                 if let Err(e) = cx
-                    .update(|cx| init_ui(app_state.clone(), cx))
+                    .update(|cx| init_ui(app_state.clone(), prompt_builder.clone(), cx))
                     .and_then(|r| r)
                 {
                     responses
@@ -330,6 +333,7 @@ pub async fn handle_cli_connection(
                     &responses,
                     wait,
                     app_state.clone(),
+                    env,
                     &mut cx,
                 )
                 .await;
@@ -347,14 +351,15 @@ async fn open_workspaces(
     responses: &IpcSender<CliResponse>,
     wait: bool,
     app_state: Arc<AppState>,
-    mut cx: &mut AsyncAppContext,
+    env: Option<collections::HashMap<String, String>>,
+    cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let grouped_paths = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
-            let locations = restorable_workspace_locations(&mut cx, &app_state).await;
+            let locations = restorable_workspace_locations(cx, &app_state).await;
             locations
                 .into_iter()
                 .flat_map(|locations| {
@@ -364,8 +369,8 @@ async fn open_workspaces(
                             location
                                 .paths()
                                 .iter()
-                                .map(|path| PathLikeWithPosition {
-                                    path_like: path.clone(),
+                                .map(|path| PathWithPosition {
+                                    path: path.clone(),
                                     row: None,
                                     column: None,
                                 })
@@ -380,10 +385,7 @@ async fn open_workspaces(
         let paths_with_position = paths
             .into_iter()
             .map(|path_with_position_string| {
-                PathLikeWithPosition::parse_str(&path_with_position_string, |_, path_str| {
-                    Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
-                })
-                .expect("Infallible")
+                PathWithPosition::parse_str(&path_with_position_string)
             })
             .collect();
         vec![paths_with_position]
@@ -398,7 +400,11 @@ async fn open_workspaces(
         // If not the first launch, show an empty window with empty editor
         else {
             cx.update(|cx| {
-                workspace::open_new(app_state, cx, |workspace, cx| {
+                let open_options = OpenOptions {
+                    env,
+                    ..Default::default()
+                };
+                workspace::open_new(open_options, app_state, cx, |workspace, cx| {
                     Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
@@ -415,8 +421,9 @@ async fn open_workspaces(
                 open_new_workspace,
                 wait,
                 responses,
+                env.as_ref(),
                 &app_state,
-                &mut cx,
+                cx,
             )
             .await;
 
@@ -434,10 +441,11 @@ async fn open_workspaces(
 }
 
 async fn open_workspace(
-    workspace_paths: Vec<PathLikeWithPosition<PathBuf>>,
+    workspace_paths: Vec<PathWithPosition>,
     open_new_workspace: Option<bool>,
     wait: bool,
     responses: &IpcSender<CliResponse>,
+    env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> bool {
@@ -448,6 +456,7 @@ async fn open_workspace(
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
+            env: env.cloned(),
             ..Default::default()
         },
         cx,
@@ -542,7 +551,7 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
-    use util::paths::PathLikeWithPosition;
+    use util::paths::PathWithPosition;
     use workspace::{AppState, Workspace};
 
     use crate::zed::{open_listener::open_workspace, tests::init_test};
@@ -656,9 +665,9 @@ mod tests {
     ) {
         let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
 
-        let path_like = PathBuf::from(path);
-        let workspace_paths = vec![PathLikeWithPosition {
-            path_like,
+        let path = PathBuf::from(path);
+        let workspace_paths = vec![PathWithPosition {
+            path,
             row: None,
             column: None,
         }];
@@ -670,6 +679,7 @@ mod tests {
                     open_new_workspace,
                     false,
                     &response_tx,
+                    None,
                     &app_state,
                     &mut cx,
                 )

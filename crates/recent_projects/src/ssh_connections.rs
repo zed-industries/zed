@@ -19,7 +19,7 @@ use ui::{
     h_flex, v_flex, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement,
     Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext, WindowContext,
 };
-use util::paths::PathLikeWithPosition;
+use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(Deserialize)]
@@ -94,7 +94,7 @@ impl SshPrompt {
             connection_string,
             status_message: None,
             prompt: None,
-            editor: cx.new_view(|cx| Editor::single_line(cx)),
+            editor: cx.new_view(Editor::single_line),
         }
     }
 
@@ -291,11 +291,24 @@ impl SshClientDelegate {
 
             self.update_status(Some("building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args(["build", "--package", "remote_server"])).await?;
-            run_cmd(Command::new("strip").args(["target/debug/remote_server"])).await?;
-            run_cmd(Command::new("gzip").args(["-9", "-f", "target/debug/remote_server"])).await?;
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+            // run_cmd(Command::new("strip").args(["target/remote_server/debug/remote_server"]))
+            // .await?;
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
 
-            let path = std::env::current_dir()?.join("target/debug/remote_server.gz");
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
             return Ok((path, version));
 
             async fn run_cmd(command: &mut Command) -> Result<()> {
@@ -345,7 +358,7 @@ pub fn connect_over_ssh(
 
 pub async fn open_ssh_project(
     connection_options: SshConnectionOptions,
-    paths: Vec<PathLikeWithPosition<PathBuf>>,
+    paths: Vec<PathWithPosition>,
     app_state: Arc<AppState>,
     _open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
@@ -358,6 +371,7 @@ pub async fn open_ssh_project(
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            None,
             cx,
         );
         cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
@@ -398,7 +412,7 @@ pub async fn open_ssh_project(
     for path in paths {
         project
             .update(cx, |project, cx| {
-                project.find_or_create_worktree(&path.path_like, true, cx)
+                project.find_or_create_worktree(&path.path, true, cx)
             })?
             .await?;
     }

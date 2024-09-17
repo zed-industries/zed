@@ -3,6 +3,7 @@ use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, S
 use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{value::RawValue, Value};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
@@ -64,15 +65,37 @@ impl Default for KeepAlive {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
+    pub display_name: Option<String>,
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
 }
 
+fn get_max_tokens(name: &str) -> usize {
+    /// Default context length for unknown models.
+    const DEFAULT_TOKENS: usize = 2048;
+    /// Magic number. Lets many Ollama models work with ~16GB of ram.
+    const MAXIMUM_TOKENS: usize = 16384;
+
+    match name.split(':').next().unwrap() {
+        "phi" | "tinyllama" | "granite-code" => 2048,
+        "llama2" | "yi" | "vicuna" | "stablelm2" => 4096,
+        "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
+        "codellama" | "starcoder2" => 16384,
+        "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "dolphin-mixtral" => 32768,
+        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" | "yi-coder" => 128000,
+        _ => DEFAULT_TOKENS,
+    }
+    .clamp(1, MAXIMUM_TOKENS)
+}
+
 impl Model {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
         Self {
             name: name.to_owned(),
-            max_tokens: 2048,
+            display_name: display_name
+                .map(ToString::to_string)
+                .or_else(|| name.strip_suffix(":latest").map(ToString::to_string)),
+            max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
         }
     }
@@ -82,7 +105,7 @@ impl Model {
     }
 
     pub fn display_name(&self) -> &str {
-        &self.name
+        self.display_name.as_ref().unwrap_or(&self.name)
     }
 
     pub fn max_token_count(&self) -> usize {
@@ -90,25 +113,66 @@ impl Model {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
-    Assistant { content: String },
-    User { content: String },
-    System { content: String },
+    Assistant {
+        content: String,
+        tool_calls: Option<Vec<OllamaToolCall>>,
+    },
+    User {
+        content: String,
+    },
+    System {
+        content: String,
+    },
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum OllamaToolCall {
+    Function(OllamaFunctionCall),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct OllamaFunctionCall {
+    pub name: String,
+    pub arguments: Box<RawValue>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct OllamaFunctionTool {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum OllamaTool {
+    Function { function: OllamaFunctionTool },
+}
+
+#[derive(Serialize, Debug)]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
     pub stream: bool,
     pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
+    pub tools: Vec<OllamaTool>,
+}
+
+impl ChatRequest {
+    pub fn with_tools(mut self, tools: Vec<OllamaTool>) -> Self {
+        self.stream = false;
+        self.tools = tools;
+        self
+    }
 }
 
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 pub struct ChatOptions {
     pub num_ctx: Option<usize>,
     pub num_predict: Option<isize>,
@@ -117,7 +181,7 @@ pub struct ChatOptions {
     pub top_p: Option<f32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct ChatResponseDelta {
     #[allow(unused)]
     pub model: String,
@@ -159,6 +223,38 @@ pub struct ModelDetails {
     pub families: Option<Vec<String>>,
     pub parameter_size: String,
     pub quantization_level: String,
+}
+
+pub async fn complete(
+    client: &dyn HttpClient,
+    api_url: &str,
+    request: ChatRequest,
+) -> Result<ChatResponseDelta> {
+    let uri = format!("{api_url}/api/chat");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    let serialized_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let response_message: ChatResponseDelta = serde_json::from_slice(&body)?;
+        Ok(response_message)
+    } else {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let body_str = std::str::from_utf8(&body)?;
+        Err(anyhow!(
+            "Failed to connect to API: {} {}",
+            response.status(),
+            body_str
+        ))
+    }
 }
 
 pub async fn stream_chat_completion(

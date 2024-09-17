@@ -654,7 +654,7 @@ mod tests {
     fn test_marking_tabs(cx: &mut gpui::AppContext) {
         let input = "\t \thello";
 
-        let buffer = MultiBuffer::build_simple(&input, cx);
+        let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);

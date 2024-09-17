@@ -19,6 +19,9 @@ impl IsahcHttpClient {
                 .unwrap(),
         ))
     }
+    pub fn builder() -> isahc::HttpClientBuilder {
+        isahc::HttpClientBuilder::new()
+    }
 }
 
 impl HttpClient for IsahcHttpClient {

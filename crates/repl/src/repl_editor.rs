@@ -6,13 +6,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use editor::Editor;
 use gpui::{prelude::*, AppContext, Entity, View, WeakView, WindowContext};
-use language::{BufferSnapshot, Language, Point};
+use language::{BufferSnapshot, Language, LanguageName, Point};
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
-pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
+pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -37,7 +37,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
 
         let kernel_specification = store.update(cx, |store, cx| {
             store
-                .kernelspec(&language, cx)
+                .kernelspec(language.code_fence_block_name().as_ref(), cx)
                 .with_context(|| format!("No kernel found for language: {}", language.name()))
         })?;
 
@@ -89,7 +89,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         }
 
         session.update(cx, |session, cx| {
-            session.execute(selected_text, anchor_range, next_cursor, cx);
+            session.execute(selected_text, anchor_range, next_cursor, move_down, cx);
         });
     }
 
@@ -99,7 +99,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
 pub enum SessionSupport {
     ActiveSession(View<Session>),
     Inactive(Box<KernelSpecification>),
-    RequiresSetup(Arc<str>),
+    RequiresSetup(LanguageName),
     Unsupported,
 }
 
@@ -114,7 +114,9 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
     let Some(language) = get_language(editor, cx) else {
         return SessionSupport::Unsupported;
     };
-    let kernelspec = store.update(cx, |store, cx| store.kernelspec(&language, cx));
+    let kernelspec = store.update(cx, |store, cx| {
+        store.kernelspec(language.code_fence_block_name().as_ref(), cx)
+    });
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
@@ -162,6 +164,27 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
 
     session.update(cx, |session, cx| {
         session.shutdown(cx);
+        cx.notify();
+    });
+}
+
+pub fn restart(editor: WeakView<Editor>, cx: &mut WindowContext) {
+    let Some(editor) = editor.upgrade() else {
+        return;
+    };
+
+    let entity_id = editor.entity_id();
+
+    let Some(session) = ReplStore::global(cx)
+        .read(cx)
+        .get_session(entity_id)
+        .cloned()
+    else {
+        return;
+    };
+
+    session.update(cx, |session, cx| {
+        session.restart(cx);
         cx.notify();
     });
 }
@@ -245,7 +268,7 @@ fn runnable_ranges(
     range: Range<Point>,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language() {
-        if language.name().as_ref() == "Markdown" {
+        if language.name() == "Markdown".into() {
             return (markdown_code_blocks(buffer, range.clone()), None);
         }
     }
@@ -282,7 +305,7 @@ fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Ran
 }
 
 fn language_supported(language: &Arc<Language>) -> bool {
-    match language.name().as_ref() {
+    match language.name().0.as_ref() {
         "TypeScript" | "Python" => true,
         _ => false,
     }
@@ -298,7 +321,7 @@ fn get_language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Lan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Context, Task};
+    use gpui::Context;
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
 
@@ -448,14 +471,13 @@ mod tests {
 
     #[gpui::test]
     fn test_markdown_code_blocks(cx: &mut AppContext) {
-        let markdown = languages::language("markdown", tree_sitter_md::language());
-        let typescript =
-            languages::language("typescript", tree_sitter_typescript::language_typescript());
-        let python = languages::language("python", tree_sitter_python::language());
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
+        let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+        let typescript = languages::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+        let python = languages::language("python", tree_sitter_python::LANGUAGE.into());
+        let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         language_registry.add(markdown.clone());
         language_registry.add(typescript.clone());
         language_registry.add(python.clone());

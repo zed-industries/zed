@@ -32,7 +32,7 @@ impl Blame {
         remote_url: Option<String>,
         provider_registry: Arc<GitHostingProviderRegistry>,
     ) -> Result<Self> {
-        let output = run_git_blame(git_binary, working_directory, path, &content)?;
+        let output = run_git_blame(git_binary, working_directory, path, content)?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -60,7 +60,7 @@ impl Blame {
 
         let shas = unique_shas.into_iter().collect::<Vec<_>>();
         let messages =
-            get_messages(&working_directory, &shas).context("failed to get commit messages")?;
+            get_messages(working_directory, &shas).context("failed to get commit messages")?;
 
         Ok(Self {
             entries,
@@ -71,8 +71,8 @@ impl Blame {
     }
 }
 
-const GIT_BLAME_NO_COMMIT_ERROR: &'static str = "fatal: no such ref: HEAD";
-const GIT_BLAME_NO_PATH: &'static str = "fatal: no such path";
+const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
+const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 
 fn run_git_blame(
     git_binary: &Path,

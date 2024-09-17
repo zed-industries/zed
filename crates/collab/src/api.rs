@@ -1,3 +1,4 @@
+pub mod billing;
 pub mod contributors;
 pub mod events;
 pub mod extensions;
@@ -13,7 +14,8 @@ use anyhow::anyhow;
 use axum::{
     body::Body,
     extract::{Path, Query},
-    http::{self, Request, StatusCode},
+    headers::Header,
+    http::{self, HeaderName, Request, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post},
@@ -21,20 +23,53 @@ use axum::{
 };
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tower::ServiceBuilder;
 
 pub use extensions::fetch_extensions_from_blob_store_periodically;
 
-pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<(), Body> {
+pub struct CloudflareIpCountryHeader(String);
+
+impl Header for CloudflareIpCountryHeader {
+    fn name() -> &'static HeaderName {
+        static CLOUDFLARE_IP_COUNTRY_HEADER: OnceLock<HeaderName> = OnceLock::new();
+        CLOUDFLARE_IP_COUNTRY_HEADER.get_or_init(|| HeaderName::from_static("cf-ipcountry"))
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        let country_code = values
+            .next()
+            .ok_or_else(axum::headers::Error::invalid)?
+            .to_str()
+            .map_err(|_| axum::headers::Error::invalid())?;
+
+        Ok(Self(country_code.to_string()))
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, _values: &mut E) {
+        unimplemented!()
+    }
+}
+
+impl std::fmt::Display for CloudflareIpCountryHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
+        .merge(billing::router())
         .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
-                .layer(Extension(state))
                 .layer(Extension(rpc_server))
                 .layer(middleware::from_fn(validate_api_token)),
         )
@@ -46,14 +81,14 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
         .get(http::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::BAD_REQUEST,
                 "missing authorization header".to_string(),
             )
         })?
         .strip_prefix("token ")
         .ok_or_else(|| {
-            Error::Http(
+            Error::http(
                 StatusCode::BAD_REQUEST,
                 "invalid authorization header".to_string(),
             )
@@ -62,7 +97,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
     let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
     if token != state.config.api_token {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::UNAUTHORIZED,
             "invalid authorization token".to_string(),
         ))?
@@ -73,9 +108,10 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
 #[derive(Debug, Deserialize)]
 struct AuthenticatedUserParams {
-    github_user_id: Option<i32>,
+    github_user_id: i32,
     github_login: String,
     github_email: Option<String>,
+    github_user_created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,11 +132,12 @@ async fn get_authenticated_user(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
+            params.github_user_created_at,
             initial_channel_id,
         )
         .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
-    return Ok(Json(AuthenticatedUserResponse { user, metrics_id }));
+    Ok(Json(AuthenticatedUserResponse { user, metrics_id }))
 }
 
 #[derive(Deserialize, Debug)]
@@ -116,12 +153,8 @@ struct CreateUserParams {
 }
 
 async fn get_rpc_server_snapshot(
-    Extension(rpc_server): Extension<Option<Arc<rpc::Server>>>,
+    Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<ErasedJson> {
-    let Some(rpc_server) = rpc_server else {
-        return Err(Error::Internal(anyhow!("rpc server is not available")));
-    };
-
     Ok(ErasedJson::pretty(rpc_server.snapshot().await))
 }
 
@@ -154,13 +187,13 @@ async fn create_access_token(
             if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
                 impersonated_user_id = Some(impersonated_user.id);
             } else {
-                return Err(Error::Http(
+                return Err(Error::http(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     format!("user {impersonate} does not exist"),
                 ));
             }
         } else {
-            return Err(Error::Http(
+            return Err(Error::http(
                 StatusCode::UNAUTHORIZED,
                 "you do not have permission to impersonate other users".to_string(),
             ));
