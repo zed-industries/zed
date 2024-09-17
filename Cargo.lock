@@ -5538,7 +5538,6 @@ dependencies = [
  "anyhow",
  "derive_more",
  "futures 0.3.30",
- "futures-lite 1.13.0",
  "http 0.2.12",
  "log",
  "serde",
