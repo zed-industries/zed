@@ -121,8 +121,8 @@
   //  4. A box drawn around the following character
   //     "hollow"
   //
-  // Default: bar
-  "cursor_shape": "bar",
+  // Default: not set, defaults to "bar"
+  "cursor_shape": null,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:

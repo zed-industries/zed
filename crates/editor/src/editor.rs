@@ -1904,7 +1904,9 @@ impl Editor {
             linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
-            cursor_shape: EditorSettings::get_global(cx).cursor_shape,
+            cursor_shape: EditorSettings::get_global(cx)
+                .cursor_shape
+                .unwrap_or_default(),
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -11820,7 +11822,9 @@ impl Editor {
             cx,
         );
         let editor_settings = EditorSettings::get_global(cx);
-        self.cursor_shape = editor_settings.cursor_shape;
+        if let Some(cursor_shape) = editor_settings.cursor_shape {
+            self.cursor_shape = cursor_shape;
+        }
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
 
