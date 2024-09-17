@@ -6,8 +6,8 @@ use crate::markdown_elements::{
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
-    SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
+    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
@@ -433,20 +433,25 @@ fn render_markdown_text(
                 any_element.push(x);
             }
             MarkdownParagraph::MarkdownImage(img) => {
-                let (link, source_range) = match img {
+                let (link, source_range, image_source) = match img {
                     Image::Web {
-                        link, source_range, ..
-                    } => (link, source_range),
+                        link,
+                        source_range,
+                        url,
+                    } => (link, source_range, ImageSource::Uri(url.clone().into())),
                     Image::Path {
-                        link, source_range, ..
-                    } => (link, source_range),
+                        link,
+                        source_range,
+                        path,
+                        ..
+                    } => (link, source_range, ImageSource::File(path.clone().into())),
                 };
                 let element_id = cx.next_id(source_range);
 
                 match link {
                     None => {
                         let element = div()
-                            .child(img.clone().into_any_element())
+                            .child(gpui::img(image_source))
                             .id(element_id)
                             .into_any();
                         any_element.push(element);
@@ -455,7 +460,7 @@ fn render_markdown_text(
                         let link_click = link.clone();
                         let link_tooltip = link.clone();
                         let element = div()
-                            .child(img.clone().into_any_element())
+                            .child(gpui::img(image_source))
                             .id(element_id)
                             .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
                             .on_click({

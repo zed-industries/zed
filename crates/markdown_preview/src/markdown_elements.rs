@@ -1,10 +1,8 @@
 use gpui::{
-    img, px, FontStyle, FontWeight, HighlightStyle, ImageSource, RenderOnce, SharedString,
-    StrikethroughStyle, Styled, UnderlineStyle,
+    px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle,
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
-use ui::{div, IntoElement, ParentElement};
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -290,7 +288,7 @@ impl Display for Link {
 }
 
 /// A Markdown Image
-#[derive(Debug, Clone, IntoElement)]
+#[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum Image {
     Web {
@@ -364,15 +362,5 @@ impl Display for Image {
                 link: _,
             } => write!(f, "{}", display_path.display()),
         }
-    }
-}
-
-impl RenderOnce for Image {
-    fn render(self, _: &mut ui::WindowContext) -> impl ui::IntoElement {
-        let image_src = match self {
-            Image::Web { url, .. } => ImageSource::Uri(url.into()),
-            Image::Path { path, .. } => ImageSource::File(path.into()),
-        };
-        div().size_full().child(img(image_src))
     }
 }
