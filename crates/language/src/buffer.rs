@@ -3025,7 +3025,7 @@ impl BufferSnapshot {
                 let mut start = text.len();
                 let end = start + buffer_range.len();
 
-                // When multiple names are captured, then the matcheable text
+                // When multiple names are captured, then the matchable text
                 // includes the whitespace in between the names.
                 if !name_ranges.is_empty() {
                     start -= 1;
