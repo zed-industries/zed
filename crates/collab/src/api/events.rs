@@ -146,8 +146,6 @@ pub async fn post_crash(
         os_version = %report.header.os_version,
         bundle_id = %report.header.bundle_id,
         incident_id = %report.header.incident_id,
-        // TODO: SYSTEM_ID
-        // system_id = %system_id,
         installation_id = %installation_id,
         description = %description,
         backtrace = %summary,

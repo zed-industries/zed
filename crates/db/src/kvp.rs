@@ -61,7 +61,6 @@ mod tests {
     }
 }
 
-// TODO: SYSTEM_ID - DRY THIS UP
 define_connection!(pub static ref GLOBAL_KEY_VALUE_STORE: GlobalKeyValueStore<()> =
     &[sql!(
         CREATE TABLE IF NOT EXISTS global_kv_store(
