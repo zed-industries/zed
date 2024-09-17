@@ -88,6 +88,7 @@ struct EvaluationQueryOutcome {
     overlapped_result_count: usize,
     covered_result_count: usize,
     total_result_count: usize,
+    covered_result_indices: Vec<usize>,
 }
 
 fn main() -> Result<()> {
@@ -379,12 +380,13 @@ async fn run_evaluation(
             let mut project_covered_result_count = 0;
             let mut project_overlapped_result_count = 0;
             let mut project_covered_file_count = 0;
+            let mut covered_result_indices = Vec::new();
             for expected_result in &query.expected_results {
                 let mut file_matched = false;
                 let mut range_overlapped = false;
                 let mut range_covered = false;
 
-                for result in results.iter() {
+                for (ix, result) in results.iter().enumerate() {
                     if result.path.as_ref() == Path::new(&expected_result.file) {
                         file_matched = true;
                         let start_matched =
@@ -397,6 +399,8 @@ async fn run_evaluation(
 
                         if start_matched && end_matched {
                             range_covered = true;
+                            covered_result_indices.push(ix);
+                            break;
                         }
                     }
                 }
@@ -428,6 +432,7 @@ async fn run_evaluation(
                         lines: result.row_range.clone(),
                     })
                     .collect(),
+                covered_result_indices,
             };
 
             overlapped_result_count += query_results.overlapped_result_count;
