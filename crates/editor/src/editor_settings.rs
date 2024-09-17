@@ -7,7 +7,7 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
-    pub cursor_shape: CursorShape,
+    pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
@@ -182,7 +182,7 @@ pub struct EditorSettingsContent {
     /// Cursor shape for the default editor.
     /// Can be "bar", "block", "underscore", or "hollow".
     ///
-    /// Default: bar
+    /// Default: None
     pub cursor_shape: Option<CursorShape>,
     /// How to highlight the current line in the editor.
     ///
