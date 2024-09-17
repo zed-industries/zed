@@ -4131,7 +4131,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 line_comments: vec!["// ".into(), "/// ".into()],
                 ..LanguageConfig::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ));
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
