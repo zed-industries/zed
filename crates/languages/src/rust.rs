@@ -61,7 +61,38 @@ impl LspAdapter for RustLspAdapter {
             }) => {
                 let path = delegate.which(Self::SERVER_NAME.as_ref()).await;
                 let env = delegate.shell_env().await;
-                (path, Some(env), None)
+
+                if let Some(path) = path {
+                    log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+
+                    let working_dir = delegate.worktree_root_path();
+                    let output = smol::process::Command::new(&path)
+                        .arg("--help")
+                        .envs(env.clone())
+                        .current_dir(working_dir)
+                        .output()
+                        .await;
+
+                    match output {
+                        Ok(output) => {
+                            let succeeded = output.status.success();
+                            if succeeded {
+                                (Some(path), Some(env), None)
+                            } else {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                log::error!("failed to run `rust-analyzer --help` after detecting it in PATH. binary: {:?}, stdout: {:?}, stderr: {:?}", path, stdout, stderr);
+                                (None, None, None)
+                            }
+                        }
+                        Err(err) => {
+                            log::error!("failed to run rust-analyzer after detecting it in PATH: {:?}: {:?}", path, err);
+                            (None, None, None)
+                        }
+                    }
+                } else {
+                    (None, None, None)
+                }
             }
             // Otherwise, we use the configured binary.
             Some(BinarySettings {
