@@ -416,7 +416,7 @@ strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"
 sys-locale = "0.3.1"
-sysinfo = "0.30.7"
+sysinfo = "0.31.0"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.9"

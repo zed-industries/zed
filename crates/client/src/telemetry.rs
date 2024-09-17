@@ -304,7 +304,10 @@ impl Telemetry {
 
                 let refresh_kind = ProcessRefreshKind::new().with_cpu().with_memory();
                 let current_process = Pid::from_u32(std::process::id());
-                system.refresh_process_specifics(current_process, refresh_kind);
+                system.refresh_processes_specifics(
+                    sysinfo::ProcessesToUpdate::Some(&[current_process]),
+                    refresh_kind,
+                );
 
                 // Waiting some amount of time before the first query is important to get a reasonable value
                 // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
@@ -314,7 +317,10 @@ impl Telemetry {
                     smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
 
                     let current_process = Pid::from_u32(std::process::id());
-                    system.refresh_process_specifics(current_process, refresh_kind);
+                    system.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::Some(&[current_process]),
+                        refresh_kind,
+                    );
                     let Some(process) = system.process(current_process) else {
                         log::error!(
                             "Failed to find own process {current_process:?} in system process table"
