@@ -20,17 +20,15 @@ mkdir -p ~/code
 cd ~/code
 git clone https://github.com/zed-industries/zed
 ```
-
-2. Launch Zed and Open Zed Extensions (`cmd-shift-x` / `ctrl-shift-x`)
-3. Open Zed
-4. Open Zed Extensions (`cmd-shift-x` / `ctrl-shift-x`)
-5. Click "Install Dev Extension"
-6. Navigate to the "extensions/perplexity" folder inside the zed git repo.
-7. Ensure your `PERPLEXITY_API_KEY` environment variable is set (instructions below)
+2. Open Zed
+3. Open Zed Extensions (`cmd-shift-x` / `ctrl-shift-x`)
+4. Click "Install Dev Extension"
+5. Navigate to the "extensions/perplexity" folder inside the zed git repo.
+6. Ensure your `PERPLEXITY_API_KEY` environment variable is set (instructions below)
 ```sh
 env |grep PERPLEXITY_API_KEY
 ```
-8. Quit and relaunch Zed
+7. Quit and relaunch Zed
 
 ## PERPLEXITY_API_KEY
 
