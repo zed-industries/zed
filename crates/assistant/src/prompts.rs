@@ -32,6 +32,11 @@ pub struct TerminalAssistantPromptContext {
     pub user_prompt: String,
 }
 
+#[derive(Serialize)]
+pub struct ProjectSlashCommandPromptContext {
+    pub context_buffer: String,
+}
+
 /// Context required to generate a workflow step resolution prompt.
 #[derive(Debug, Serialize)]
 pub struct StepResolutionContext {
@@ -296,5 +301,15 @@ impl PromptBuilder {
 
     pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("edit_workflow", &())
+    }
+
+    pub fn generate_project_slash_command_prompt(
+        &self,
+        context_buffer: String,
+    ) -> Result<String, RenderError> {
+        self.handlebars.lock().render(
+            "project_slash_command",
+            &ProjectSlashCommandPromptContext { context_buffer },
+        )
     }
 }

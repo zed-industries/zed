@@ -42,8 +42,9 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     auto_command, context_server_command, default_command, delta_command, diagnostics_command,
-    docs_command, fetch_command, file_command, now_command, project_command, prompt_command,
-    search_command, symbols_command, tab_command, terminal_command, workflow_command,
+    docs_command, fetch_command, file_command, now_command, project_command, project_command_2,
+    prompt_command, search_command, symbols_command, tab_command, terminal_command,
+    workflow_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -380,6 +381,10 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
             workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
+            true,
+        );
+        slash_command_registry.register_command(
+            project_command_2::ProjectSlashCommand::new(prompt_builder.clone()),
             true,
         );
     }
