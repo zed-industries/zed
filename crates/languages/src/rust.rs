@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
@@ -434,6 +435,7 @@ impl ContextProvider for RustContextProvider {
         &self,
         task_variables: &TaskVariables,
         location: &Location,
+        project_env: Option<&HashMap<String, String>>,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
         let local_abs_path = location
@@ -449,8 +451,8 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) =
-                local_abs_path.and_then(package_name_and_bin_name_from_abs_path)
+            if let Some((package_name, bin_name)) = local_abs_path
+                .and_then(|path| package_name_and_bin_name_from_abs_path(path, project_env))
             {
                 return Ok(TaskVariables::from_iter([
                     (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
@@ -461,7 +463,7 @@ impl ContextProvider for RustContextProvider {
 
         if let Some(package_name) = local_abs_path
             .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(human_readable_package_name)
+            .and_then(|path| human_readable_package_name(path, project_env))
         {
             return Ok(TaskVariables::from_iter([(
                 RUST_PACKAGE_TASK_VARIABLE.clone(),
@@ -615,8 +617,15 @@ struct CargoTarget {
     src_path: String,
 }
 
-fn package_name_and_bin_name_from_abs_path(abs_path: &Path) -> Option<(String, String)> {
-    let output = std::process::Command::new("cargo")
+fn package_name_and_bin_name_from_abs_path(
+    abs_path: &Path,
+    project_env: Option<&HashMap<String, String>>,
+) -> Option<(String, String)> {
+    let mut command = std::process::Command::new("cargo");
+    if let Some(envs) = project_env {
+        command.envs(envs);
+    }
+    let output = command
         .current_dir(abs_path.parent()?)
         .arg("metadata")
         .arg("--no-deps")
@@ -654,9 +663,17 @@ fn retrieve_package_id_and_bin_name_from_metadata(
     None
 }
 
-fn human_readable_package_name(package_directory: &Path) -> Option<String> {
+fn human_readable_package_name(
+    package_directory: &Path,
+    project_env: Option<&HashMap<String, String>>,
+) -> Option<String> {
+    let mut command = std::process::Command::new("cargo");
+    if let Some(envs) = project_env {
+        command.envs(envs);
+    }
+
     let pkgid = String::from_utf8(
-        std::process::Command::new("cargo")
+        command
             .current_dir(package_directory)
             .arg("pkgid")
             .output()

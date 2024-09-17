@@ -4890,21 +4890,6 @@ impl Project {
             };
 
             cx.spawn(|project, mut cx| async move {
-                let mut task_variables = cx
-                    .update(|cx| {
-                        combine_task_variables(
-                            captured_variables,
-                            location,
-                            BasicContextProvider::new(project.upgrade()?),
-                            cx,
-                        )
-                        .log_err()
-                    })
-                    .ok()
-                    .flatten()?;
-                // Remove all custom entries starting with _, as they're not intended for use by the end user.
-                task_variables.sweep();
-
                 let project_env = project
                     .update(&mut cx, |project, cx| {
                         let worktree_abs_path = worktree_abs_path.clone();
@@ -4914,6 +4899,22 @@ impl Project {
                     })
                     .ok()?
                     .await;
+
+                let mut task_variables = cx
+                    .update(|cx| {
+                        combine_task_variables(
+                            captured_variables,
+                            location,
+                            project_env.as_ref(),
+                            BasicContextProvider::new(project.upgrade()?),
+                            cx,
+                        )
+                        .log_err()
+                    })
+                    .ok()
+                    .flatten()?;
+                // Remove all custom entries starting with _, as they're not intended for use by the end user.
+                task_variables.sweep();
 
                 Some(TaskContext {
                     project_env: project_env.unwrap_or_default(),
@@ -5111,6 +5112,7 @@ impl Project {
 fn combine_task_variables(
     mut captured_variables: TaskVariables,
     location: Location,
+    project_env: Option<&HashMap<String, String>>,
     baseline: BasicContextProvider,
     cx: &mut AppContext,
 ) -> anyhow::Result<TaskVariables> {
@@ -5120,13 +5122,13 @@ fn combine_task_variables(
         .language()
         .and_then(|language| language.context_provider());
     let baseline = baseline
-        .build_context(&captured_variables, &location, cx)
+        .build_context(&captured_variables, &location, project_env, cx)
         .context("building basic default context")?;
     captured_variables.extend(baseline);
     if let Some(provider) = language_context_provider {
         captured_variables.extend(
             provider
-                .build_context(&captured_variables, &location, cx)
+                .build_context(&captured_variables, &location, project_env, cx)
                 .context("building provider context")?,
         );
     }
