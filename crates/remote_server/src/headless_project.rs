@@ -2,12 +2,13 @@ use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use node_runtime::DummyNodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
     search::SearchQuery,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, ProjectPath, WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
@@ -54,6 +55,16 @@ impl HeadlessProject {
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+        let prettier_store = cx.new_model(|cx| {
+            PrettierStore::new(
+                DummyNodeRuntime::new(),
+                fs.clone(),
+                languages.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
         let settings_observer = cx.new_model(|cx| {
             let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
@@ -64,6 +75,7 @@ impl HeadlessProject {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
+                prettier_store.clone(),
                 environment,
                 languages.clone(),
                 None,
