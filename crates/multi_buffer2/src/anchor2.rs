@@ -1,77 +1,67 @@
-use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
+use super::{MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
 use language::{OffsetUtf16, Point, TextDimension};
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},
 };
 use sum_tree::Bias;
-use text::BufferId;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
-pub struct Anchor {
-    pub buffer_id: Option<BufferId>,
-    pub excerpt_id: ExcerptId,
-    pub text_anchor: text::Anchor,
-}
+pub struct Anchor(pub text::Anchor);
 
 impl Anchor {
     pub fn min() -> Self {
-        Self {
-            buffer_id: None,
-            excerpt_id: ExcerptId::min(),
-            text_anchor: text::Anchor::MIN,
-        }
+        Self(text::Anchor::MIN)
     }
 
     pub fn max() -> Self {
-        Self {
-            buffer_id: None,
-            excerpt_id: ExcerptId::max(),
-            text_anchor: text::Anchor::MAX,
-        }
+        Self(text::Anchor::MAX)
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
-        if excerpt_id_cmp.is_eq() {
-            if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
-                Ordering::Equal
-            } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
-            } else {
-                Ordering::Equal
-            }
-        } else {
-            excerpt_id_cmp
-        }
+        todo!()
+        // let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
+        // if excerpt_id_cmp.is_eq() {
+        //     if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
+        //         Ordering::Equal
+        //     } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        //         self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
+        //     } else {
+        //         Ordering::Equal
+        //     }
+        // } else {
+        //     excerpt_id_cmp
+        // }
     }
 
     pub fn bias(&self) -> Bias {
-        self.text_anchor.bias
+        self.0.bias
     }
 
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Left {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
-                };
-            }
+        if self.0.bias != Bias::Left {
+            todo!()
+            // if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+            //     return Self {
+            //         buffer_id: self.buffer_id,
+            //         excerpt_id: self.excerpt_id,
+            //         text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
+            //     };
+            // }
         }
         *self
     }
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Right {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
-                };
-            }
+        if self.0.bias != Bias::Right {
+            todo!()
+            // if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+            //     return Self {
+            //         buffer_id: self.buffer_id,
+            //         excerpt_id: self.excerpt_id,
+            //         text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
+            //     };
+            // }
         }
         *self
     }
@@ -84,16 +74,17 @@ impl Anchor {
     }
 
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
-        if *self == Anchor::min() || *self == Anchor::max() {
-            true
-        } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-            excerpt.contains(self)
-                && (self.text_anchor == excerpt.range.context.start
-                    || self.text_anchor == excerpt.range.context.end
-                    || self.text_anchor.is_valid(&excerpt.buffer))
-        } else {
-            false
-        }
+        todo!()
+        // if *self == Anchor::min() || *self == Anchor::max() {
+        //     true
+        // } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        //     excerpt.contains(self)
+        //         && (self.text_anchor == excerpt.range.context.start
+        //             || self.text_anchor == excerpt.range.context.end
+        //             || self.text_anchor.is_valid(&excerpt.buffer))
+        // } else {
+        //     false
+        // }
     }
 }
 

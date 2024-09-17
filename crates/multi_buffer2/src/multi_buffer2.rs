@@ -6,7 +6,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use git::diff::DiffHunk;
-use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext};
+use gpui::{AppContext, EventEmitter, Model, ModelContext};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, LanguageSettings},
@@ -24,9 +24,9 @@ use std::{
     cmp, fmt,
     future::Future,
     io,
-    iter::{self, FromIterator},
-    mem,
+    iter::{self},
     ops::{Range, RangeBounds, Sub},
+    path::PathBuf,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -39,21 +39,10 @@ use text::{
 };
 use theme::SyntaxTheme;
 
-use util::post_inc;
-
 #[cfg(any(test, feature = "test-support"))]
 use gpui::Context;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
-
-#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ExcerptId(usize);
-
-impl From<ExcerptId> for EntityId {
-    fn from(id: ExcerptId) -> Self {
-        EntityId::from(id.0 as u64)
-    }
-}
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
@@ -75,31 +64,11 @@ pub struct MultiBuffer {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    ExcerptsAdded {
-        buffer: Model<Buffer>,
-        predecessor: ExcerptId,
-        excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
-    },
-    ExcerptsRemoved {
-        ids: Vec<ExcerptId>,
-    },
-    ExcerptsExpanded {
-        ids: Vec<ExcerptId>,
-    },
-    ExcerptsEdited {
-        ids: Vec<ExcerptId>,
-    },
-    Edited {
-        singleton_buffer_edited: bool,
-    },
-    TransactionUndone {
-        transaction_id: TransactionId,
-    },
+    Edited { singleton_buffer_edited: bool },
+    TransactionUndone { transaction_id: TransactionId },
     Reloaded,
     DiffBaseChanged,
-    DiffUpdated {
-        buffer: Model<Buffer>,
-    },
+    DiffUpdated { buffer: Model<Buffer> },
     LanguageChanged(BufferId),
     CapabilityChanged,
     Reparsed(BufferId),
@@ -169,7 +138,6 @@ struct BufferState {
 pub struct MultiBufferSnapshot {
     singleton: bool,
     excerpts: SumTree<Excerpt>,
-    excerpt_ids: SumTree<ExcerptIdMapping>,
     trailing_excerpt_update_count: usize,
     non_text_state_update_count: usize,
     edit_count: usize,
@@ -179,7 +147,6 @@ pub struct MultiBufferSnapshot {
 }
 
 pub struct ExcerptInfo {
-    pub id: ExcerptId,
     pub buffer: BufferSnapshot,
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
@@ -188,7 +155,6 @@ pub struct ExcerptInfo {
 impl std::fmt::Debug for ExcerptInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct(type_name::<Self>())
-            .field("id", &self.id)
             .field("buffer_id", &self.buffer_id)
             .field("range", &self.range)
             .finish()
@@ -217,10 +183,6 @@ impl ExcerptBoundary {
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
 #[derive(Clone)]
 struct Excerpt {
-    /// The unique identifier for this excerpt
-    id: ExcerptId,
-    /// The location of the excerpt in the [`MultiBuffer`]
-    locator: Locator,
     /// The buffer being excerpted
     buffer_id: BufferId,
     /// A snapshot of the buffer being excerpted
@@ -244,12 +206,6 @@ pub struct MultiBufferExcerpt<'a> {
     excerpt_offset: usize,
 }
 
-#[derive(Clone, Debug)]
-struct ExcerptIdMapping {
-    id: ExcerptId,
-    locator: Locator,
-}
-
 /// A range of text from a single [`Buffer`], to be shown as an [`Excerpt`].
 /// These ranges are relative to the buffer itself
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -263,9 +219,8 @@ pub struct ExcerptRange<T> {
 
 #[derive(Clone, Debug, Default)]
 pub struct ExcerptSummary {
-    excerpt_id: ExcerptId,
-    /// The location of the last [`Excerpt`] being summarized
-    excerpt_locator: Locator,
+    path: Option<PathBuf>,
+    buffer_id: Option<BufferId>,
     /// The maximum row of the [`Excerpt`]s being summarized
     max_buffer_row: MultiBufferRow,
     text: TextSummary,
@@ -299,7 +254,6 @@ pub struct ReversedMultiBufferBytes<'a> {
 }
 
 struct ExcerptChunks<'a> {
-    excerpt_id: ExcerptId,
     content_chunks: BufferChunks<'a>,
     footer_height: usize,
 }
@@ -432,7 +386,7 @@ impl MultiBuffer {
     pub fn singleton(buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self::new(buffer.read(cx).replica_id(), buffer.read(cx).capability());
         this.singleton = true;
-        this.push_excerpts(
+        this.insert_excerpts(
             buffer,
             [ExcerptRange {
                 context: text::Anchor::MIN..text::Anchor::MAX,
@@ -520,227 +474,231 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        if self.read_only() {
-            return;
-        }
-        if self.buffers.borrow().is_empty() {
-            return;
-        }
+        todo!()
+        //     if self.read_only() {
+        //         return;
+        //     }
+        //     if self.buffers.borrow().is_empty() {
+        //         return;
+        //     }
 
-        let snapshot = self.read(cx);
-        let edits = edits.into_iter().map(|(range, new_text)| {
-            let mut range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
-            if range.start > range.end {
-                mem::swap(&mut range.start, &mut range.end);
-            }
-            (range, new_text)
-        });
+        //     let snapshot = self.read(cx);
+        //     let edits = edits.into_iter().map(|(range, new_text)| {
+        //         let mut range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+        //         if range.start > range.end {
+        //             mem::swap(&mut range.start, &mut range.end);
+        //         }
+        //         (range, new_text)
+        //     });
 
-        if let Some(buffer) = self.as_singleton() {
-            buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, autoindent_mode, cx);
-            });
-            cx.emit(Event::ExcerptsEdited {
-                ids: self.excerpt_ids(),
-            });
-            return;
-        }
+        //     if let Some(buffer) = self.as_singleton() {
+        //         buffer.update(cx, |buffer, cx| {
+        //             buffer.edit(edits, autoindent_mode, cx);
+        //         });
+        //         // todo!()
+        //         // cx.emit(Event::ExcerptsEdited {
+        //         //     ids: self.excerpt_ids(),
+        //         // });
+        //         return;
+        //     }
 
-        let original_indent_columns = match &mut autoindent_mode {
-            Some(AutoindentMode::Block {
-                original_indent_columns,
-            }) => mem::take(original_indent_columns),
-            _ => Default::default(),
-        };
+        //     let original_indent_columns = match &mut autoindent_mode {
+        //         Some(AutoindentMode::Block {
+        //             original_indent_columns,
+        //         }) => mem::take(original_indent_columns),
+        //         _ => Default::default(),
+        //     };
 
-        struct BufferEdit {
-            range: Range<usize>,
-            new_text: Arc<str>,
-            is_insertion: bool,
-            original_indent_column: u32,
-        }
-        let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
-        let mut edited_excerpt_ids = Vec::new();
-        let mut cursor = snapshot.excerpts.cursor::<usize>();
-        for (ix, (range, new_text)) in edits.enumerate() {
-            let new_text: Arc<str> = new_text.into();
-            let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
-            cursor.seek(&range.start, Bias::Right, &());
-            if cursor.item().is_none() && range.start == *cursor.start() {
-                cursor.prev(&());
-            }
-            let start_excerpt = cursor.item().expect("start offset out of bounds");
-            let start_overshoot = range.start - cursor.start();
-            let buffer_start = start_excerpt
-                .range
-                .context
-                .start
-                .to_offset(&start_excerpt.buffer)
-                + start_overshoot;
-            edited_excerpt_ids.push(start_excerpt.id);
+        //     struct BufferEdit {
+        //         range: Range<usize>,
+        //         new_text: Arc<str>,
+        //         is_insertion: bool,
+        //         original_indent_column: u32,
+        //     }
+        //     let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
+        //     let mut edited_excerpt_ids = Vec::new();
+        //     let mut cursor = snapshot.excerpts.cursor::<usize>();
+        //     for (ix, (range, new_text)) in edits.enumerate() {
+        //         let new_text: Arc<str> = new_text.into();
+        //         let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
+        //         cursor.seek(&range.start, Bias::Right, &());
+        //         if cursor.item().is_none() && range.start == *cursor.start() {
+        //             cursor.prev(&());
+        //         }
+        //         let start_excerpt = cursor.item().expect("start offset out of bounds");
+        //         let start_overshoot = range.start - cursor.start();
+        //         let buffer_start = start_excerpt
+        //             .range
+        //             .context
+        //             .start
+        //             .to_offset(&start_excerpt.buffer)
+        //             + start_overshoot;
+        //         edited_excerpt_ids.push(start_excerpt.id);
 
-            cursor.seek(&range.end, Bias::Right, &());
-            if cursor.item().is_none() && range.end == *cursor.start() {
-                cursor.prev(&());
-            }
-            let end_excerpt = cursor.item().expect("end offset out of bounds");
-            let end_overshoot = range.end - cursor.start();
-            let buffer_end = end_excerpt
-                .range
-                .context
-                .start
-                .to_offset(&end_excerpt.buffer)
-                + end_overshoot;
+        //         cursor.seek(&range.end, Bias::Right, &());
+        //         if cursor.item().is_none() && range.end == *cursor.start() {
+        //             cursor.prev(&());
+        //         }
+        //         let end_excerpt = cursor.item().expect("end offset out of bounds");
+        //         let end_overshoot = range.end - cursor.start();
+        //         let buffer_end = end_excerpt
+        //             .range
+        //             .context
+        //             .start
+        //             .to_offset(&end_excerpt.buffer)
+        //             + end_overshoot;
 
-            if start_excerpt.id == end_excerpt.id {
-                buffer_edits
-                    .entry(start_excerpt.buffer_id)
-                    .or_default()
-                    .push(BufferEdit {
-                        range: buffer_start..buffer_end,
-                        new_text,
-                        is_insertion: true,
-                        original_indent_column,
-                    });
-            } else {
-                edited_excerpt_ids.push(end_excerpt.id);
-                let start_excerpt_range = buffer_start
-                    ..start_excerpt
-                        .range
-                        .context
-                        .end
-                        .to_offset(&start_excerpt.buffer);
-                let end_excerpt_range = end_excerpt
-                    .range
-                    .context
-                    .start
-                    .to_offset(&end_excerpt.buffer)
-                    ..buffer_end;
-                buffer_edits
-                    .entry(start_excerpt.buffer_id)
-                    .or_default()
-                    .push(BufferEdit {
-                        range: start_excerpt_range,
-                        new_text: new_text.clone(),
-                        is_insertion: true,
-                        original_indent_column,
-                    });
-                buffer_edits
-                    .entry(end_excerpt.buffer_id)
-                    .or_default()
-                    .push(BufferEdit {
-                        range: end_excerpt_range,
-                        new_text: new_text.clone(),
-                        is_insertion: false,
-                        original_indent_column,
-                    });
+        //         if start_excerpt.id == end_excerpt.id {
+        //             buffer_edits
+        //                 .entry(start_excerpt.buffer_id)
+        //                 .or_default()
+        //                 .push(BufferEdit {
+        //                     range: buffer_start..buffer_end,
+        //                     new_text,
+        //                     is_insertion: true,
+        //                     original_indent_column,
+        //                 });
+        //         } else {
+        //             edited_excerpt_ids.push(end_excerpt.id);
+        //             let start_excerpt_range = buffer_start
+        //                 ..start_excerpt
+        //                     .range
+        //                     .context
+        //                     .end
+        //                     .to_offset(&start_excerpt.buffer);
+        //             let end_excerpt_range = end_excerpt
+        //                 .range
+        //                 .context
+        //                 .start
+        //                 .to_offset(&end_excerpt.buffer)
+        //                 ..buffer_end;
+        //             buffer_edits
+        //                 .entry(start_excerpt.buffer_id)
+        //                 .or_default()
+        //                 .push(BufferEdit {
+        //                     range: start_excerpt_range,
+        //                     new_text: new_text.clone(),
+        //                     is_insertion: true,
+        //                     original_indent_column,
+        //                 });
+        //             buffer_edits
+        //                 .entry(end_excerpt.buffer_id)
+        //                 .or_default()
+        //                 .push(BufferEdit {
+        //                     range: end_excerpt_range,
+        //                     new_text: new_text.clone(),
+        //                     is_insertion: false,
+        //                     original_indent_column,
+        //                 });
 
-                cursor.seek(&range.start, Bias::Right, &());
-                cursor.next(&());
-                while let Some(excerpt) = cursor.item() {
-                    if excerpt.id == end_excerpt.id {
-                        break;
-                    }
-                    buffer_edits
-                        .entry(excerpt.buffer_id)
-                        .or_default()
-                        .push(BufferEdit {
-                            range: excerpt.range.context.to_offset(&excerpt.buffer),
-                            new_text: new_text.clone(),
-                            is_insertion: false,
-                            original_indent_column,
-                        });
-                    edited_excerpt_ids.push(excerpt.id);
-                    cursor.next(&());
-                }
-            }
-        }
+        //             cursor.seek(&range.start, Bias::Right, &());
+        //             cursor.next(&());
+        //             while let Some(excerpt) = cursor.item() {
+        //                 if excerpt.id == end_excerpt.id {
+        //                     break;
+        //                 }
+        //                 buffer_edits
+        //                     .entry(excerpt.buffer_id)
+        //                     .or_default()
+        //                     .push(BufferEdit {
+        //                         range: excerpt.range.context.to_offset(&excerpt.buffer),
+        //                         new_text: new_text.clone(),
+        //                         is_insertion: false,
+        //                         original_indent_column,
+        //                     });
+        //                 edited_excerpt_ids.push(excerpt.id);
+        //                 cursor.next(&());
+        //             }
+        //         }
+        //     }
 
-        drop(cursor);
-        drop(snapshot);
-        // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
-        fn tail(
-            this: &mut MultiBuffer,
-            buffer_edits: HashMap<BufferId, Vec<BufferEdit>>,
-            autoindent_mode: Option<AutoindentMode>,
-            edited_excerpt_ids: Vec<ExcerptId>,
-            cx: &mut ModelContext<MultiBuffer>,
-        ) {
-            for (buffer_id, mut edits) in buffer_edits {
-                edits.sort_unstable_by_key(|edit| edit.range.start);
-                this.buffers.borrow()[&buffer_id]
-                    .buffer
-                    .update(cx, |buffer, cx| {
-                        let mut edits = edits.into_iter().peekable();
-                        let mut insertions = Vec::new();
-                        let mut original_indent_columns = Vec::new();
-                        let mut deletions = Vec::new();
-                        let empty_str: Arc<str> = Arc::default();
-                        while let Some(BufferEdit {
-                            mut range,
-                            new_text,
-                            mut is_insertion,
-                            original_indent_column,
-                        }) = edits.next()
-                        {
-                            while let Some(BufferEdit {
-                                range: next_range,
-                                is_insertion: next_is_insertion,
-                                ..
-                            }) = edits.peek()
-                            {
-                                if range.end >= next_range.start {
-                                    range.end = cmp::max(next_range.end, range.end);
-                                    is_insertion |= *next_is_insertion;
-                                    edits.next();
-                                } else {
-                                    break;
-                                }
-                            }
+        //     drop(cursor);
+        //     drop(snapshot);
 
-                            if is_insertion {
-                                original_indent_columns.push(original_indent_column);
-                                insertions.push((
-                                    buffer.anchor_before(range.start)
-                                        ..buffer.anchor_before(range.end),
-                                    new_text.clone(),
-                                ));
-                            } else if !range.is_empty() {
-                                deletions.push((
-                                    buffer.anchor_before(range.start)
-                                        ..buffer.anchor_before(range.end),
-                                    empty_str.clone(),
-                                ));
-                            }
-                        }
+        //     // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
+        //     fn tail(
+        //         this: &mut MultiBuffer,
+        //         buffer_edits: HashMap<BufferId, Vec<BufferEdit>>,
+        //         autoindent_mode: Option<AutoindentMode>,
+        //         edited_excerpt_ids: Vec<ExcerptId>,
+        //         cx: &mut ModelContext<MultiBuffer>,
+        //     ) {
+        //         for (buffer_id, mut edits) in buffer_edits {
+        //             edits.sort_unstable_by_key(|edit| edit.range.start);
+        //             this.buffers.borrow()[&buffer_id]
+        //                 .buffer
+        //                 .update(cx, |buffer, cx| {
+        //                     let mut edits = edits.into_iter().peekable();
+        //                     let mut insertions = Vec::new();
+        //                     let mut original_indent_columns = Vec::new();
+        //                     let mut deletions = Vec::new();
+        //                     let empty_str: Arc<str> = Arc::default();
+        //                     while let Some(BufferEdit {
+        //                         mut range,
+        //                         new_text,
+        //                         mut is_insertion,
+        //                         original_indent_column,
+        //                     }) = edits.next()
+        //                     {
+        //                         while let Some(BufferEdit {
+        //                             range: next_range,
+        //                             is_insertion: next_is_insertion,
+        //                             ..
+        //                         }) = edits.peek()
+        //                         {
+        //                             if range.end >= next_range.start {
+        //                                 range.end = cmp::max(next_range.end, range.end);
+        //                                 is_insertion |= *next_is_insertion;
+        //                                 edits.next();
+        //                             } else {
+        //                                 break;
+        //                             }
+        //                         }
 
-                        let deletion_autoindent_mode =
-                            if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
-                                Some(AutoindentMode::Block {
-                                    original_indent_columns: Default::default(),
-                                })
-                            } else {
-                                None
-                            };
-                        let insertion_autoindent_mode =
-                            if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
-                                Some(AutoindentMode::Block {
-                                    original_indent_columns,
-                                })
-                            } else {
-                                None
-                            };
+        //                         if is_insertion {
+        //                             original_indent_columns.push(original_indent_column);
+        //                             insertions.push((
+        //                                 buffer.anchor_before(range.start)
+        //                                     ..buffer.anchor_before(range.end),
+        //                                 new_text.clone(),
+        //                             ));
+        //                         } else if !range.is_empty() {
+        //                             deletions.push((
+        //                                 buffer.anchor_before(range.start)
+        //                                     ..buffer.anchor_before(range.end),
+        //                                 empty_str.clone(),
+        //                             ));
+        //                         }
+        //                     }
 
-                        buffer.edit(deletions, deletion_autoindent_mode, cx);
-                        buffer.edit(insertions, insertion_autoindent_mode, cx);
-                    })
-            }
+        //                     let deletion_autoindent_mode =
+        //                         if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+        //                             Some(AutoindentMode::Block {
+        //                                 original_indent_columns: Default::default(),
+        //                             })
+        //                         } else {
+        //                             None
+        //                         };
+        //                     let insertion_autoindent_mode =
+        //                         if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+        //                             Some(AutoindentMode::Block {
+        //                                 original_indent_columns,
+        //                             })
+        //                         } else {
+        //                             None
+        //                         };
 
-            cx.emit(Event::ExcerptsEdited {
-                ids: edited_excerpt_ids,
-            });
-        }
-        tail(self, buffer_edits, autoindent_mode, edited_excerpt_ids, cx);
+        //                     buffer.edit(deletions, deletion_autoindent_mode, cx);
+        //                     buffer.edit(insertions, insertion_autoindent_mode, cx);
+        //                 })
+        //         }
+
+        //         cx.emit(Event::ExcerptsEdited {
+        //             ids: edited_excerpt_ids,
+        //         });
+        //     }
+
+        //     tail(self, buffer_edits, autoindent_mode, edited_excerpt_ids, cx);
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.
@@ -759,8 +717,7 @@ impl MultiBuffer {
                 buffer.insert_empty_line(multibuffer_point, space_above, space_below, cx)
             })
         } else {
-            let (buffer, buffer_point, _) =
-                self.point_to_buffer_point(multibuffer_point, cx).unwrap();
+            let (buffer, buffer_point) = self.to_buffer_point(multibuffer_point, cx).unwrap();
             self.start_transaction(cx);
             let empty_line_start = buffer.update(cx, |buffer, cx| {
                 buffer.insert_empty_line(buffer_point, space_above, space_below, cx)
@@ -827,58 +784,59 @@ impl MultiBuffer {
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
-        if let Some(buffer) = self.as_singleton() {
-            return buffer
-                .read(cx)
-                .edited_ranges_for_transaction_id(transaction_id)
-                .collect::<Vec<_>>();
-        }
+        todo!()
+        // if let Some(buffer) = self.as_singleton() {
+        //     return buffer
+        //         .read(cx)
+        //         .edited_ranges_for_transaction_id(transaction_id)
+        //         .collect::<Vec<_>>();
+        // }
 
-        let Some(transaction) = self.history.transaction(transaction_id) else {
-            return Vec::new();
-        };
+        // let Some(transaction) = self.history.transaction(transaction_id) else {
+        //     return Vec::new();
+        // };
 
-        let mut ranges = Vec::new();
-        let snapshot = self.read(cx);
-        let buffers = self.buffers.borrow();
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
+        // let mut ranges = Vec::new();
+        // let snapshot = self.read(cx);
+        // let buffers = self.buffers.borrow();
+        // let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
 
-        for (buffer_id, buffer_transaction) in &transaction.buffer_transactions {
-            let Some(buffer_state) = buffers.get(buffer_id) else {
-                continue;
-            };
+        // for (buffer_id, buffer_transaction) in &transaction.buffer_transactions {
+        //     let Some(buffer_state) = buffers.get(buffer_id) else {
+        //         continue;
+        //     };
 
-            let buffer = buffer_state.buffer.read(cx);
-            for range in buffer.edited_ranges_for_transaction_id::<D>(*buffer_transaction) {
-                for excerpt_id in &buffer_state.excerpts {
-                    cursor.seek(excerpt_id, Bias::Left, &());
-                    if let Some(excerpt) = cursor.item() {
-                        if excerpt.locator == *excerpt_id {
-                            let excerpt_buffer_start =
-                                excerpt.range.context.start.summary::<D>(buffer);
-                            let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(buffer);
-                            let excerpt_range = excerpt_buffer_start.clone()..excerpt_buffer_end;
-                            if excerpt_range.contains(&range.start)
-                                && excerpt_range.contains(&range.end)
-                            {
-                                let excerpt_start = D::from_text_summary(&cursor.start().text);
+        //     let buffer = buffer_state.buffer.read(cx);
+        //     for range in buffer.edited_ranges_for_transaction_id::<D>(*buffer_transaction) {
+        //         for excerpt_id in &buffer_state.excerpts {
+        //             cursor.seek(excerpt_id, Bias::Left, &());
+        //             if let Some(excerpt) = cursor.item() {
+        //                 if excerpt.locator == *excerpt_id {
+        //                     let excerpt_buffer_start =
+        //                         excerpt.range.context.start.summary::<D>(buffer);
+        //                     let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+        //                     let excerpt_range = excerpt_buffer_start.clone()..excerpt_buffer_end;
+        //                     if excerpt_range.contains(&range.start)
+        //                         && excerpt_range.contains(&range.end)
+        //                     {
+        //                         let excerpt_start = D::from_text_summary(&cursor.start().text);
 
-                                let mut start = excerpt_start.clone();
-                                start.add_assign(&(range.start - excerpt_buffer_start.clone()));
-                                let mut end = excerpt_start;
-                                end.add_assign(&(range.end - excerpt_buffer_start));
+        //                         let mut start = excerpt_start.clone();
+        //                         start.add_assign(&(range.start - excerpt_buffer_start.clone()));
+        //                         let mut end = excerpt_start;
+        //                         end.add_assign(&(range.end - excerpt_buffer_start));
 
-                                ranges.push(start..end);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        //                         ranges.push(start..end);
+        //                         break;
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
-        ranges.sort_by_key(|range| range.start.clone());
-        ranges
+        // ranges.sort_by_key(|range| range.start.clone());
+        // ranges
     }
 
     pub fn merge_transactions(
@@ -954,74 +912,75 @@ impl MultiBuffer {
         cursor_shape: CursorShape,
         cx: &mut ModelContext<Self>,
     ) {
-        let mut selections_by_buffer: HashMap<BufferId, Vec<Selection<text::Anchor>>> =
-            Default::default();
-        let snapshot = self.read(cx);
-        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
-        for selection in selections {
-            let start_locator = snapshot.excerpt_locator_for_id(selection.start.excerpt_id);
-            let end_locator = snapshot.excerpt_locator_for_id(selection.end.excerpt_id);
+        todo!()
+        // let mut selections_by_buffer: HashMap<BufferId, Vec<Selection<text::Anchor>>> =
+        //     Default::default();
+        // let snapshot = self.read(cx);
+        // let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
+        // for selection in selections {
+        //     let start_locator = snapshot.excerpt_locator_for_id(selection.start.excerpt_id);
+        //     let end_locator = snapshot.excerpt_locator_for_id(selection.end.excerpt_id);
 
-            cursor.seek(&Some(start_locator), Bias::Left, &());
-            while let Some(excerpt) = cursor.item() {
-                if excerpt.locator > *end_locator {
-                    break;
-                }
+        //     cursor.seek(&Some(start_locator), Bias::Left, &());
+        //     while let Some(excerpt) = cursor.item() {
+        //         if excerpt.locator > *end_locator {
+        //             break;
+        //         }
 
-                let mut start = excerpt.range.context.start;
-                let mut end = excerpt.range.context.end;
-                if excerpt.id == selection.start.excerpt_id {
-                    start = selection.start.text_anchor;
-                }
-                if excerpt.id == selection.end.excerpt_id {
-                    end = selection.end.text_anchor;
-                }
-                selections_by_buffer
-                    .entry(excerpt.buffer_id)
-                    .or_default()
-                    .push(Selection {
-                        id: selection.id,
-                        start,
-                        end,
-                        reversed: selection.reversed,
-                        goal: selection.goal,
-                    });
+        //         let mut start = excerpt.range.context.start;
+        //         let mut end = excerpt.range.context.end;
+        //         if excerpt.id == selection.start.excerpt_id {
+        //             start = selection.start.text_anchor;
+        //         }
+        //         if excerpt.id == selection.end.excerpt_id {
+        //             end = selection.end.text_anchor;
+        //         }
+        //         selections_by_buffer
+        //             .entry(excerpt.buffer_id)
+        //             .or_default()
+        //             .push(Selection {
+        //                 id: selection.id,
+        //                 start,
+        //                 end,
+        //                 reversed: selection.reversed,
+        //                 goal: selection.goal,
+        //             });
 
-                cursor.next(&());
-            }
-        }
+        //         cursor.next(&());
+        //     }
+        // }
 
-        for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
-            if !selections_by_buffer.contains_key(buffer_id) {
-                buffer_state
-                    .buffer
-                    .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
-            }
-        }
+        // for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
+        //     if !selections_by_buffer.contains_key(buffer_id) {
+        //         buffer_state
+        //             .buffer
+        //             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+        //     }
+        // }
 
-        for (buffer_id, mut selections) in selections_by_buffer {
-            self.buffers.borrow()[&buffer_id]
-                .buffer
-                .update(cx, |buffer, cx| {
-                    selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer));
-                    let mut selections = selections.into_iter().peekable();
-                    let merged_selections = Arc::from_iter(iter::from_fn(|| {
-                        let mut selection = selections.next()?;
-                        while let Some(next_selection) = selections.peek() {
-                            if selection.end.cmp(&next_selection.start, buffer).is_ge() {
-                                let next_selection = selections.next().unwrap();
-                                if next_selection.end.cmp(&selection.end, buffer).is_ge() {
-                                    selection.end = next_selection.end;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                        Some(selection)
-                    }));
-                    buffer.set_active_selections(merged_selections, line_mode, cursor_shape, cx);
-                });
-        }
+        // for (buffer_id, mut selections) in selections_by_buffer {
+        //     self.buffers.borrow()[&buffer_id]
+        //         .buffer
+        //         .update(cx, |buffer, cx| {
+        //             selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer));
+        //             let mut selections = selections.into_iter().peekable();
+        //             let merged_selections = Arc::from_iter(iter::from_fn(|| {
+        //                 let mut selection = selections.next()?;
+        //                 while let Some(next_selection) = selections.peek() {
+        //                     if selection.end.cmp(&next_selection.start, buffer).is_ge() {
+        //                         let next_selection = selections.next().unwrap();
+        //                         if next_selection.end.cmp(&selection.end, buffer).is_ge() {
+        //                             selection.end = next_selection.end;
+        //                         }
+        //                     } else {
+        //                         break;
+        //                     }
+        //                 }
+        //                 Some(selection)
+        //             }));
+        //             buffer.set_active_selections(merged_selections, line_mode, cursor_shape, cx);
+        //         });
+        // }
     }
 
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
@@ -1135,25 +1094,16 @@ impl MultiBuffer {
             let mut range_counts = range_counts.into_iter();
             for excerpt_ranges in excerpt_ranges.chunks(100) {
                 let excerpt_ids = match this.update(&mut cx, |this, cx| {
-                    this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
+                    this.insert_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
                 }) {
                     Ok(excerpt_ids) => excerpt_ids,
                     Err(_) => return,
                 };
 
-                for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
-                {
+                for range_count in range_counts.by_ref() {
                     for range in ranges.by_ref().take(range_count) {
-                        let start = Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: range.start,
-                        };
-                        let end = Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: range.end,
-                        };
+                        let start = Anchor(range.start);
+                        let end = Anchor(range.end);
                         if tx.send(start..end).await.is_err() {
                             break;
                         }
@@ -1166,244 +1116,258 @@ impl MultiBuffer {
         rx
     }
 
-    pub fn push_excerpts<O>(
+    pub fn insert_excerpts<O>(
         &mut self,
         buffer: Model<Buffer>,
         ranges: impl IntoIterator<Item = ExcerptRange<O>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Vec<ExcerptId>
-    where
-        O: text::ToOffset,
-    {
-        self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
-    }
-
-    pub fn push_excerpts_with_context_lines<O>(
-        &mut self,
-        buffer: Model<Buffer>,
-        ranges: Vec<Range<O>>,
-        context_line_count: u32,
-        cx: &mut ModelContext<Self>,
-    ) -> Vec<Range<Anchor>>
-    where
-        O: text::ToPoint + text::ToOffset,
-    {
-        let buffer_id = buffer.read(cx).remote_id();
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let (excerpt_ranges, range_counts) =
-            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-
-        let excerpt_ids = self.push_excerpts(buffer, excerpt_ranges, cx);
-
-        let mut anchor_ranges = Vec::new();
-        let mut ranges = ranges.into_iter();
-        for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.into_iter()) {
-            anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
-                let start = Anchor {
-                    buffer_id: Some(buffer_id),
-                    excerpt_id,
-                    text_anchor: buffer_snapshot.anchor_after(range.start),
-                };
-                let end = Anchor {
-                    buffer_id: Some(buffer_id),
-                    excerpt_id,
-                    text_anchor: buffer_snapshot.anchor_after(range.end),
-                };
-                start..end
-            }))
-        }
-        anchor_ranges
-    }
-
-    pub fn insert_excerpts_after<O>(
-        &mut self,
-        prev_excerpt_id: ExcerptId,
-        buffer: Model<Buffer>,
-        ranges: impl IntoIterator<Item = ExcerptRange<O>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Vec<ExcerptId>
-    where
-        O: text::ToOffset,
-    {
-        let mut ids = Vec::new();
-        let mut next_excerpt_id =
-            if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
-                last_entry.id.0 + 1
-            } else {
-                1
-            };
-        self.insert_excerpts_with_ids_after(
-            prev_excerpt_id,
-            buffer,
-            ranges.into_iter().map(|range| {
-                let id = ExcerptId(post_inc(&mut next_excerpt_id));
-                ids.push(id);
-                (id, range)
-            }),
-            cx,
-        );
-        ids
-    }
-
-    pub fn insert_excerpts_with_ids_after<O>(
-        &mut self,
-        prev_excerpt_id: ExcerptId,
-        buffer: Model<Buffer>,
-        ranges: impl IntoIterator<Item = (ExcerptId, ExcerptRange<O>)>,
         cx: &mut ModelContext<Self>,
     ) where
         O: text::ToOffset,
     {
-        assert_eq!(self.history.transaction_depth, 0);
-        let mut ranges = ranges.into_iter().peekable();
-        if ranges.peek().is_none() {
-            return Default::default();
-        }
-
-        self.sync(cx);
-
-        let buffer_id = buffer.read(cx).remote_id();
-        let buffer_snapshot = buffer.read(cx).snapshot();
-
-        let mut buffers = self.buffers.borrow_mut();
-        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
-            last_version: buffer_snapshot.version().clone(),
-            last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
-            excerpts: Default::default(),
-            _subscriptions: [
-                cx.observe(&buffer, |_, _, cx| cx.notify()),
-                cx.subscribe(&buffer, Self::on_buffer_event),
-            ],
-            buffer: buffer.clone(),
-        });
-
-        let mut snapshot = self.snapshot.borrow_mut();
-
-        let mut prev_locator = snapshot.excerpt_locator_for_id(prev_excerpt_id).clone();
-        let mut new_excerpt_ids = mem::take(&mut snapshot.excerpt_ids);
-        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
-        let mut new_excerpts = cursor.slice(&prev_locator, Bias::Right, &());
-        prev_locator = cursor.start().unwrap_or(Locator::min_ref()).clone();
-
-        let edit_start = new_excerpts.summary().text.len;
-        new_excerpts.update_last(
-            |excerpt| {
-                excerpt.has_trailing_newline = true;
-            },
-            &(),
-        );
-
-        let next_locator = if let Some(excerpt) = cursor.item() {
-            excerpt.locator.clone()
-        } else {
-            Locator::max()
-        };
-
-        let mut excerpts = Vec::new();
-        while let Some((id, range)) = ranges.next() {
-            let locator = Locator::between(&prev_locator, &next_locator);
-            if let Err(ix) = buffer_state.excerpts.binary_search(&locator) {
-                buffer_state.excerpts.insert(ix, locator.clone());
-            }
-            let range = ExcerptRange {
-                context: buffer_snapshot.anchor_before(&range.context.start)
-                    ..buffer_snapshot.anchor_after(&range.context.end),
-                primary: range.primary.map(|primary| {
-                    buffer_snapshot.anchor_before(&primary.start)
-                        ..buffer_snapshot.anchor_after(&primary.end)
-                }),
-            };
-            excerpts.push((id, range.clone()));
-            let excerpt = Excerpt::new(
-                id,
-                locator.clone(),
-                buffer_id,
-                buffer_snapshot.clone(),
-                range,
-                ranges.peek().is_some() || cursor.item().is_some(),
-            );
-            new_excerpts.push(excerpt, &());
-            prev_locator = locator.clone();
-
-            if let Some(last_mapping_entry) = new_excerpt_ids.last() {
-                assert!(id > last_mapping_entry.id, "excerpt ids must be increasing");
-            }
-            new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
-        }
-
-        let edit_end = new_excerpts.summary().text.len;
-
-        let suffix = cursor.suffix(&());
-        let changed_trailing_excerpt = suffix.is_empty();
-        new_excerpts.append(suffix, &());
-        drop(cursor);
-        snapshot.excerpts = new_excerpts;
-        snapshot.excerpt_ids = new_excerpt_ids;
-        if changed_trailing_excerpt {
-            snapshot.trailing_excerpt_update_count += 1;
-        }
-
-        self.subscriptions.publish_mut([Edit {
-            old: edit_start..edit_start,
-            new: edit_start..edit_end,
-        }]);
-        cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
-        });
-        cx.emit(Event::ExcerptsAdded {
-            buffer,
-            predecessor: prev_excerpt_id,
-            excerpts,
-        });
-        cx.notify();
+        todo!()
     }
 
-    pub fn clear(&mut self, cx: &mut ModelContext<Self>) {
-        self.sync(cx);
-        let ids = self.excerpt_ids();
-        self.buffers.borrow_mut().clear();
-        let mut snapshot = self.snapshot.borrow_mut();
-        let prev_len = snapshot.len();
-        snapshot.excerpts = Default::default();
-        snapshot.trailing_excerpt_update_count += 1;
-        snapshot.is_dirty = false;
-        snapshot.has_conflict = false;
+    // todo!("remove")
+    // pub fn push_excerpts<O>(
+    //     &mut self,
+    //     buffer: Model<Buffer>,
+    //     ranges: impl IntoIterator<Item = ExcerptRange<O>>,
+    //     cx: &mut ModelContext<Self>,
+    // ) -> Vec<ExcerptId>
+    // where
+    //     O: text::ToOffset,
+    // {
+    //     self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
+    // }
 
-        self.subscriptions.publish_mut([Edit {
-            old: 0..prev_len,
-            new: 0..0,
-        }]);
-        cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
-        });
-        cx.emit(Event::ExcerptsRemoved { ids });
-        cx.notify();
+    // pub fn push_excerpts_with_context_lines<O>(
+    //     &mut self,
+    //     buffer: Model<Buffer>,
+    //     ranges: Vec<Range<O>>,
+    //     context_line_count: u32,
+    //     cx: &mut ModelContext<Self>,
+    // ) -> Vec<Range<Anchor>>
+    // where
+    //     O: text::ToPoint + text::ToOffset,
+    // {
+    //     let buffer_id = buffer.read(cx).remote_id();
+    //     let buffer_snapshot = buffer.read(cx).snapshot();
+    //     let (excerpt_ranges, range_counts) =
+    //         build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+
+    //     let excerpt_ids = self.push_excerpts(buffer, excerpt_ranges, cx);
+
+    //     let mut anchor_ranges = Vec::new();
+    //     let mut ranges = ranges.into_iter();
+    //     for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.into_iter()) {
+    //         anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
+    //             let start = Anchor {
+    //                 buffer_id: Some(buffer_id),
+    //                 excerpt_id,
+    //                 text_anchor: buffer_snapshot.anchor_after(range.start),
+    //             };
+    //             let end = Anchor {
+    //                 buffer_id: Some(buffer_id),
+    //                 excerpt_id,
+    //                 text_anchor: buffer_snapshot.anchor_after(range.end),
+    //             };
+    //             start..end
+    //         }))
+    //     }
+    //     anchor_ranges
+    // }
+
+    // pub fn insert_excerpts_after<O>(
+    //     &mut self,
+    //     prev_excerpt_id: ExcerptId,
+    //     buffer: Model<Buffer>,
+    //     ranges: impl IntoIterator<Item = ExcerptRange<O>>,
+    //     cx: &mut ModelContext<Self>,
+    // ) -> Vec<ExcerptId>
+    // where
+    //     O: text::ToOffset,
+    // {
+    //     let mut ids = Vec::new();
+    //     let mut next_excerpt_id =
+    //         if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
+    //             last_entry.id.0 + 1
+    //         } else {
+    //             1
+    //         };
+    //     self.insert_excerpts_with_ids_after(
+    //         prev_excerpt_id,
+    //         buffer,
+    //         ranges.into_iter().map(|range| {
+    //             let id = ExcerptId(post_inc(&mut next_excerpt_id));
+    //             ids.push(id);
+    //             (id, range)
+    //         }),
+    //         cx,
+    //     );
+    //     ids
+    // }
+
+    // pub fn insert_excerpts_with_ids_after<O>(
+    //     &mut self,
+    //     prev_excerpt_id: ExcerptId,
+    //     buffer: Model<Buffer>,
+    //     ranges: impl IntoIterator<Item = (ExcerptId, ExcerptRange<O>)>,
+    //     cx: &mut ModelContext<Self>,
+    // ) where
+    //     O: text::ToOffset,
+    // {
+    //     assert_eq!(self.history.transaction_depth, 0);
+    //     let mut ranges = ranges.into_iter().peekable();
+    //     if ranges.peek().is_none() {
+    //         return Default::default();
+    //     }
+
+    //     self.sync(cx);
+
+    //     let buffer_id = buffer.read(cx).remote_id();
+    //     let buffer_snapshot = buffer.read(cx).snapshot();
+
+    //     let mut buffers = self.buffers.borrow_mut();
+    //     let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
+    //         last_version: buffer_snapshot.version().clone(),
+    //         last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
+    //         excerpts: Default::default(),
+    //         _subscriptions: [
+    //             cx.observe(&buffer, |_, _, cx| cx.notify()),
+    //             cx.subscribe(&buffer, Self::on_buffer_event),
+    //         ],
+    //         buffer: buffer.clone(),
+    //     });
+
+    //     let mut snapshot = self.snapshot.borrow_mut();
+
+    //     let mut prev_locator = snapshot.excerpt_locator_for_id(prev_excerpt_id).clone();
+    //     let mut new_excerpt_ids = mem::take(&mut snapshot.excerpt_ids);
+    //     let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
+    //     let mut new_excerpts = cursor.slice(&prev_locator, Bias::Right, &());
+    //     prev_locator = cursor.start().unwrap_or(Locator::min_ref()).clone();
+
+    //     let edit_start = new_excerpts.summary().text.len;
+    //     new_excerpts.update_last(
+    //         |excerpt| {
+    //             excerpt.has_trailing_newline = true;
+    //         },
+    //         &(),
+    //     );
+
+    //     let next_locator = if let Some(excerpt) = cursor.item() {
+    //         excerpt.locator.clone()
+    //     } else {
+    //         Locator::max()
+    //     };
+
+    //     let mut excerpts = Vec::new();
+    //     while let Some((id, range)) = ranges.next() {
+    //         let locator = Locator::between(&prev_locator, &next_locator);
+    //         if let Err(ix) = buffer_state.excerpts.binary_search(&locator) {
+    //             buffer_state.excerpts.insert(ix, locator.clone());
+    //         }
+    //         let range = ExcerptRange {
+    //             context: buffer_snapshot.anchor_before(&range.context.start)
+    //                 ..buffer_snapshot.anchor_after(&range.context.end),
+    //             primary: range.primary.map(|primary| {
+    //                 buffer_snapshot.anchor_before(&primary.start)
+    //                     ..buffer_snapshot.anchor_after(&primary.end)
+    //             }),
+    //         };
+    //         excerpts.push((id, range.clone()));
+    //         let excerpt = Excerpt::new(
+    //             id,
+    //             locator.clone(),
+    //             buffer_id,
+    //             buffer_snapshot.clone(),
+    //             range,
+    //             ranges.peek().is_some() || cursor.item().is_some(),
+    //         );
+    //         new_excerpts.push(excerpt, &());
+    //         prev_locator = locator.clone();
+
+    //         if let Some(last_mapping_entry) = new_excerpt_ids.last() {
+    //             assert!(id > last_mapping_entry.id, "excerpt ids must be increasing");
+    //         }
+    //         new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
+    //     }
+
+    //     let edit_end = new_excerpts.summary().text.len;
+
+    //     let suffix = cursor.suffix(&());
+    //     let changed_trailing_excerpt = suffix.is_empty();
+    //     new_excerpts.append(suffix, &());
+    //     drop(cursor);
+    //     snapshot.excerpts = new_excerpts;
+    //     snapshot.excerpt_ids = new_excerpt_ids;
+    //     if changed_trailing_excerpt {
+    //         snapshot.trailing_excerpt_update_count += 1;
+    //     }
+
+    //     self.subscriptions.publish_mut([Edit {
+    //         old: edit_start..edit_start,
+    //         new: edit_start..edit_end,
+    //     }]);
+    //     cx.emit(Event::Edited {
+    //         singleton_buffer_edited: false,
+    //     });
+    //     cx.emit(Event::ExcerptsAdded {
+    //         buffer,
+    //         predecessor: prev_excerpt_id,
+    //         excerpts,
+    //     });
+    //     cx.notify();
+    // }
+
+    pub fn clear(&mut self, cx: &mut ModelContext<Self>) {
+        todo!()
+        // self.sync(cx);
+        // let ids = self.excerpt_ids();
+        // self.buffers.borrow_mut().clear();
+        // let mut snapshot = self.snapshot.borrow_mut();
+        // let prev_len = snapshot.len();
+        // snapshot.excerpts = Default::default();
+        // snapshot.trailing_excerpt_update_count += 1;
+        // snapshot.is_dirty = false;
+        // snapshot.has_conflict = false;
+
+        // self.subscriptions.publish_mut([Edit {
+        //     old: 0..prev_len,
+        //     new: 0..0,
+        // }]);
+        // cx.emit(Event::Edited {
+        //     singleton_buffer_edited: false,
+        // });
+        // cx.emit(Event::ExcerptsRemoved { ids });
+        // cx.notify();
     }
 
     pub fn excerpts_for_buffer(
         &self,
         buffer: &Model<Buffer>,
         cx: &AppContext,
-    ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
-        let mut excerpts = Vec::new();
-        let snapshot = self.read(cx);
-        let buffers = self.buffers.borrow();
-        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
-        for locator in buffers
-            .get(&buffer.read(cx).remote_id())
-            .map(|state| &state.excerpts)
-            .into_iter()
-            .flatten()
-        {
-            cursor.seek_forward(&Some(locator), Bias::Left, &());
-            if let Some(excerpt) = cursor.item() {
-                if excerpt.locator == *locator {
-                    excerpts.push((excerpt.id, excerpt.range.clone()));
-                }
-            }
-        }
+    ) -> Vec<ExcerptRange<text::Anchor>> {
+        todo!()
+        // let mut excerpts = Vec::new();
+        // let snapshot = self.read(cx);
+        // let buffers = self.buffers.borrow();
+        // let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
+        // for locator in buffers
+        //     .get(&buffer.read(cx).remote_id())
+        //     .map(|state| &state.excerpts)
+        //     .into_iter()
+        //     .flatten()
+        // {
+        //     cursor.seek_forward(&Some(locator), Bias::Left, &());
+        //     if let Some(excerpt) = cursor.item() {
+        //         if excerpt.locator == *locator {
+        //             excerpts.push((excerpt.id, excerpt.range.clone()));
+        //         }
+        //     }
+        // }
 
-        excerpts
+        // excerpts
     }
 
     pub fn excerpt_buffer_ids(&self) -> Vec<BufferId> {
@@ -1415,20 +1379,11 @@ impl MultiBuffer {
             .collect()
     }
 
-    pub fn excerpt_ids(&self) -> Vec<ExcerptId> {
-        self.snapshot
-            .borrow()
-            .excerpts
-            .iter()
-            .map(|entry| entry.id)
-            .collect()
-    }
-
     pub fn excerpt_containing(
         &self,
         position: impl ToOffset,
         cx: &AppContext,
-    ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
+    ) -> Option<(Model<Buffer>, Range<text::Anchor>)> {
         let snapshot = self.read(cx);
         let position = position.to_offset(&snapshot);
 
@@ -1439,7 +1394,6 @@ impl MultiBuffer {
             .or_else(|| snapshot.excerpts.last())
             .map(|excerpt| {
                 (
-                    excerpt.id,
                     self.buffers
                         .borrow()
                         .get(&excerpt.buffer_id)
@@ -1452,11 +1406,11 @@ impl MultiBuffer {
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
-    pub fn point_to_buffer_offset<T: ToOffset>(
+    pub fn to_buffer_offset<T: ToOffset>(
         &self,
         point: T,
         cx: &AppContext,
-    ) -> Option<(Model<Buffer>, usize, ExcerptId)> {
+    ) -> Option<(Model<Buffer>, usize)> {
         let snapshot = self.read(cx);
         let offset = point.to_offset(&snapshot);
         let mut cursor = snapshot.excerpts.cursor::<usize>();
@@ -1470,16 +1424,16 @@ impl MultiBuffer {
             let buffer_point = excerpt_start + offset - *cursor.start();
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
 
-            (buffer, buffer_point, excerpt.id)
+            (buffer, buffer_point)
         })
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
-    pub fn point_to_buffer_point<T: ToPoint>(
+    pub fn to_buffer_point<T: ToPoint>(
         &self,
         point: T,
         cx: &AppContext,
-    ) -> Option<(Model<Buffer>, Point, ExcerptId)> {
+    ) -> Option<(Model<Buffer>, Point)> {
         let snapshot = self.read(cx);
         let point = point.to_point(&snapshot);
         let mut cursor = snapshot.excerpts.cursor::<Point>();
@@ -1493,15 +1447,15 @@ impl MultiBuffer {
             let buffer_point = excerpt_start + point - *cursor.start();
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
 
-            (buffer, buffer_point, excerpt.id)
+            (buffer, buffer_point)
         })
     }
 
-    pub fn range_to_buffer_ranges<T: ToOffset>(
+    pub fn to_buffer_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
         cx: &AppContext,
-    ) -> Vec<(Model<Buffer>, Range<usize>, ExcerptId)> {
+    ) -> Vec<(Model<Buffer>, Range<usize>)> {
         let snapshot = self.read(cx);
         let start = range.start.to_offset(&snapshot);
         let end = range.end.to_offset(&snapshot);
@@ -1526,100 +1480,101 @@ impl MultiBuffer {
             let start = excerpt_start + (cmp::max(start, *cursor.start()) - *cursor.start());
             let end = excerpt_start + (cmp::min(end, end_before_newline) - *cursor.start());
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
-            result.push((buffer, start..end, excerpt.id));
+            result.push((buffer, start..end));
             cursor.next(&());
         }
 
         result
     }
 
-    pub fn remove_excerpts(
-        &mut self,
-        excerpt_ids: impl IntoIterator<Item = ExcerptId>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.sync(cx);
-        let ids = excerpt_ids.into_iter().collect::<Vec<_>>();
-        if ids.is_empty() {
-            return;
-        }
+    // todo!("Fix the interface to take buffer + ranges instead of excerpt ids")
+    // pub fn remove_excerpts(
+    //     &mut self,
+    //     excerpt_ids: impl IntoIterator<Item = ExcerptId>,
+    //     cx: &mut ModelContext<Self>,
+    // ) {
+    //     self.sync(cx);
+    //     let ids = excerpt_ids.into_iter().collect::<Vec<_>>();
+    //     if ids.is_empty() {
+    //         return;
+    //     }
 
-        let mut buffers = self.buffers.borrow_mut();
-        let mut snapshot = self.snapshot.borrow_mut();
-        let mut new_excerpts = SumTree::new();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
-        let mut edits = Vec::new();
-        let mut excerpt_ids = ids.iter().copied().peekable();
+    //     let mut buffers = self.buffers.borrow_mut();
+    //     let mut snapshot = self.snapshot.borrow_mut();
+    //     let mut new_excerpts = SumTree::new();
+    //     let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
+    //     let mut edits = Vec::new();
+    //     let mut excerpt_ids = ids.iter().copied().peekable();
 
-        while let Some(excerpt_id) = excerpt_ids.next() {
-            // Seek to the next excerpt to remove, preserving any preceding excerpts.
-            let locator = snapshot.excerpt_locator_for_id(excerpt_id);
-            new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
+    //     while let Some(excerpt_id) = excerpt_ids.next() {
+    //         // Seek to the next excerpt to remove, preserving any preceding excerpts.
+    //         let locator = snapshot.excerpt_locator_for_id(excerpt_id);
+    //         new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
 
-            if let Some(mut excerpt) = cursor.item() {
-                if excerpt.id != excerpt_id {
-                    continue;
-                }
-                let mut old_start = cursor.start().1;
+    //         if let Some(mut excerpt) = cursor.item() {
+    //             if excerpt.id != excerpt_id {
+    //                 continue;
+    //             }
+    //             let mut old_start = cursor.start().1;
 
-                // Skip over the removed excerpt.
-                'remove_excerpts: loop {
-                    if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
-                        buffer_state.excerpts.retain(|l| l != &excerpt.locator);
-                        if buffer_state.excerpts.is_empty() {
-                            buffers.remove(&excerpt.buffer_id);
-                        }
-                    }
-                    cursor.next(&());
+    //             // Skip over the removed excerpt.
+    //             'remove_excerpts: loop {
+    //                 if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
+    //                     buffer_state.excerpts.retain(|l| l != &excerpt.locator);
+    //                     if buffer_state.excerpts.is_empty() {
+    //                         buffers.remove(&excerpt.buffer_id);
+    //                     }
+    //                 }
+    //                 cursor.next(&());
 
-                    // Skip over any subsequent excerpts that are also removed.
-                    if let Some(&next_excerpt_id) = excerpt_ids.peek() {
-                        let next_locator = snapshot.excerpt_locator_for_id(next_excerpt_id);
-                        if let Some(next_excerpt) = cursor.item() {
-                            if next_excerpt.locator == *next_locator {
-                                excerpt_ids.next();
-                                excerpt = next_excerpt;
-                                continue 'remove_excerpts;
-                            }
-                        }
-                    }
+    //                 // Skip over any subsequent excerpts that are also removed.
+    //                 if let Some(&next_excerpt_id) = excerpt_ids.peek() {
+    //                     let next_locator = snapshot.excerpt_locator_for_id(next_excerpt_id);
+    //                     if let Some(next_excerpt) = cursor.item() {
+    //                         if next_excerpt.locator == *next_locator {
+    //                             excerpt_ids.next();
+    //                             excerpt = next_excerpt;
+    //                             continue 'remove_excerpts;
+    //                         }
+    //                     }
+    //                 }
 
-                    break;
-                }
+    //                 break;
+    //             }
 
-                // When removing the last excerpt, remove the trailing newline from
-                // the previous excerpt.
-                if cursor.item().is_none() && old_start > 0 {
-                    old_start -= 1;
-                    new_excerpts.update_last(|e| e.has_trailing_newline = false, &());
-                }
+    //             // When removing the last excerpt, remove the trailing newline from
+    //             // the previous excerpt.
+    //             if cursor.item().is_none() && old_start > 0 {
+    //                 old_start -= 1;
+    //                 new_excerpts.update_last(|e| e.has_trailing_newline = false, &());
+    //             }
 
-                // Push an edit for the removal of this run of excerpts.
-                let old_end = cursor.start().1;
-                let new_start = new_excerpts.summary().text.len;
-                edits.push(Edit {
-                    old: old_start..old_end,
-                    new: new_start..new_start,
-                });
-            }
-        }
-        let suffix = cursor.suffix(&());
-        let changed_trailing_excerpt = suffix.is_empty();
-        new_excerpts.append(suffix, &());
-        drop(cursor);
-        snapshot.excerpts = new_excerpts;
+    //             // Push an edit for the removal of this run of excerpts.
+    //             let old_end = cursor.start().1;
+    //             let new_start = new_excerpts.summary().text.len;
+    //             edits.push(Edit {
+    //                 old: old_start..old_end,
+    //                 new: new_start..new_start,
+    //             });
+    //         }
+    //     }
+    //     let suffix = cursor.suffix(&());
+    //     let changed_trailing_excerpt = suffix.is_empty();
+    //     new_excerpts.append(suffix, &());
+    //     drop(cursor);
+    //     snapshot.excerpts = new_excerpts;
 
-        if changed_trailing_excerpt {
-            snapshot.trailing_excerpt_update_count += 1;
-        }
+    //     if changed_trailing_excerpt {
+    //         snapshot.trailing_excerpt_update_count += 1;
+    //     }
 
-        self.subscriptions.publish_mut(edits);
-        cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
-        });
-        cx.emit(Event::ExcerptsRemoved { ids });
-        cx.notify();
-    }
+    //     self.subscriptions.publish_mut(edits);
+    //     cx.emit(Event::Edited {
+    //         singleton_buffer_edited: false,
+    //     });
+    //     cx.emit(Event::ExcerptsRemoved { ids });
+    //     cx.notify();
+    // }
 
     pub fn wait_for_anchors<'a>(
         &self,
@@ -1633,7 +1588,7 @@ impl MultiBuffer {
             if let Some(buffer_id) = anchor.buffer_id {
                 if let Some(buffer) = borrow.get(&buffer_id) {
                     buffer.buffer.update(cx, |buffer, _| {
-                        futures.push(buffer.wait_for_anchors([anchor.text_anchor]))
+                        futures.push(buffer.wait_for_anchors([anchor.0]))
                     });
                 } else {
                     error = Some(anyhow!(
@@ -1667,7 +1622,7 @@ impl MultiBuffer {
             .get(&anchor.buffer_id?)?
             .buffer
             .clone();
-        Some((buffer, anchor.text_anchor))
+        Some((buffer, anchor.0))
     }
 
     fn on_buffer_event(
@@ -1719,8 +1674,8 @@ impl MultiBuffer {
     }
 
     pub fn language_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> Option<Arc<Language>> {
-        self.point_to_buffer_offset(point, cx)
-            .and_then(|(buffer, offset, _)| buffer.read(cx).language_at(offset))
+        self.to_buffer_offset(point, cx)
+            .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
     pub fn settings_at<'a, T: ToOffset>(
@@ -1730,7 +1685,7 @@ impl MultiBuffer {
     ) -> &'a LanguageSettings {
         let mut language = None;
         let mut file = None;
-        if let Some((buffer, offset, _)) = self.point_to_buffer_offset(point, cx) {
+        if let Some((buffer, offset)) = self.to_buffer_offset(point, cx) {
             let buffer = buffer.read(cx);
             language = buffer.language_at(offset);
             file = buffer.file();
@@ -1786,102 +1741,103 @@ impl MultiBuffer {
         self.as_singleton().unwrap().read(cx).is_parsing()
     }
 
-    pub fn expand_excerpts(
-        &mut self,
-        ids: impl IntoIterator<Item = ExcerptId>,
-        line_count: u32,
-        direction: ExpandExcerptDirection,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if line_count == 0 {
-            return;
-        }
-        self.sync(cx);
+    // todo!("revisit this interface")
+    // pub fn expand_excerpts(
+    //     &mut self,
+    //     ids: impl IntoIterator<Item = ExcerptId>,
+    //     line_count: u32,
+    //     direction: ExpandExcerptDirection,
+    //     cx: &mut ModelContext<Self>,
+    // ) {
+    //     if line_count == 0 {
+    //         return;
+    //     }
+    //     self.sync(cx);
 
-        let ids = ids.into_iter().collect::<Vec<_>>();
-        let snapshot = self.snapshot(cx);
-        let locators = snapshot.excerpt_locators_for_ids(ids.iter().copied());
-        let mut new_excerpts = SumTree::new();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
-        let mut edits = Vec::<Edit<usize>>::new();
+    //     let ids = ids.into_iter().collect::<Vec<_>>();
+    //     let snapshot = self.snapshot(cx);
+    //     let locators = snapshot.excerpt_locators_for_ids(ids.iter().copied());
+    //     let mut new_excerpts = SumTree::new();
+    //     let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
+    //     let mut edits = Vec::<Edit<usize>>::new();
 
-        for locator in &locators {
-            let prefix = cursor.slice(&Some(locator), Bias::Left, &());
-            new_excerpts.append(prefix, &());
+    //     for locator in &locators {
+    //         let prefix = cursor.slice(&Some(locator), Bias::Left, &());
+    //         new_excerpts.append(prefix, &());
 
-            let mut excerpt = cursor.item().unwrap().clone();
-            let old_text_len = excerpt.text_summary.len;
+    //         let mut excerpt = cursor.item().unwrap().clone();
+    //         let old_text_len = excerpt.text_summary.len;
 
-            let up_line_count = if direction.should_expand_up() {
-                line_count
-            } else {
-                0
-            };
+    //         let up_line_count = if direction.should_expand_up() {
+    //             line_count
+    //         } else {
+    //             0
+    //         };
 
-            let start_row = excerpt
-                .range
-                .context
-                .start
-                .to_point(&excerpt.buffer)
-                .row
-                .saturating_sub(up_line_count);
-            let start_point = Point::new(start_row, 0);
-            excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
+    //         let start_row = excerpt
+    //             .range
+    //             .context
+    //             .start
+    //             .to_point(&excerpt.buffer)
+    //             .row
+    //             .saturating_sub(up_line_count);
+    //         let start_point = Point::new(start_row, 0);
+    //         excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
 
-            let down_line_count = if direction.should_expand_down() {
-                line_count
-            } else {
-                0
-            };
+    //         let down_line_count = if direction.should_expand_down() {
+    //             line_count
+    //         } else {
+    //             0
+    //         };
 
-            let mut end_point = excerpt.buffer.clip_point(
-                excerpt.range.context.end.to_point(&excerpt.buffer)
-                    + Point::new(down_line_count, 0),
-                Bias::Left,
-            );
-            end_point.column = excerpt.buffer.line_len(end_point.row);
-            excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
-            excerpt.max_buffer_row = end_point.row;
+    //         let mut end_point = excerpt.buffer.clip_point(
+    //             excerpt.range.context.end.to_point(&excerpt.buffer)
+    //                 + Point::new(down_line_count, 0),
+    //             Bias::Left,
+    //         );
+    //         end_point.column = excerpt.buffer.line_len(end_point.row);
+    //         excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
+    //         excerpt.max_buffer_row = end_point.row;
 
-            excerpt.text_summary = excerpt
-                .buffer
-                .text_summary_for_range(excerpt.range.context.clone());
+    //         excerpt.text_summary = excerpt
+    //             .buffer
+    //             .text_summary_for_range(excerpt.range.context.clone());
 
-            let new_start_offset = new_excerpts.summary().text.len;
-            let old_start_offset = cursor.start().1;
-            let edit = Edit {
-                old: old_start_offset..old_start_offset + old_text_len,
-                new: new_start_offset..new_start_offset + excerpt.text_summary.len,
-            };
+    //         let new_start_offset = new_excerpts.summary().text.len;
+    //         let old_start_offset = cursor.start().1;
+    //         let edit = Edit {
+    //             old: old_start_offset..old_start_offset + old_text_len,
+    //             new: new_start_offset..new_start_offset + excerpt.text_summary.len,
+    //         };
 
-            if let Some(last_edit) = edits.last_mut() {
-                if last_edit.old.end == edit.old.start {
-                    last_edit.old.end = edit.old.end;
-                    last_edit.new.end = edit.new.end;
-                } else {
-                    edits.push(edit);
-                }
-            } else {
-                edits.push(edit);
-            }
+    //         if let Some(last_edit) = edits.last_mut() {
+    //             if last_edit.old.end == edit.old.start {
+    //                 last_edit.old.end = edit.old.end;
+    //                 last_edit.new.end = edit.new.end;
+    //             } else {
+    //                 edits.push(edit);
+    //             }
+    //         } else {
+    //             edits.push(edit);
+    //         }
 
-            new_excerpts.push(excerpt, &());
+    //         new_excerpts.push(excerpt, &());
 
-            cursor.next(&());
-        }
+    //         cursor.next(&());
+    //     }
 
-        new_excerpts.append(cursor.suffix(&()), &());
+    //     new_excerpts.append(cursor.suffix(&()), &());
 
-        drop(cursor);
-        self.snapshot.borrow_mut().excerpts = new_excerpts;
+    //     drop(cursor);
+    //     self.snapshot.borrow_mut().excerpts = new_excerpts;
 
-        self.subscriptions.publish_mut(edits);
-        cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
-        });
-        cx.emit(Event::ExcerptsExpanded { ids });
-        cx.notify();
-    }
+    //     self.subscriptions.publish_mut(edits);
+    //     cx.emit(Event::Edited {
+    //         singleton_buffer_edited: false,
+    //     });
+    //     cx.emit(Event::ExcerptsExpanded { ids });
+    //     cx.notify();
+    // }
 
     fn sync(&self, cx: &AppContext) {
         let mut snapshot = self.snapshot.borrow_mut();
@@ -1999,7 +1955,7 @@ impl MultiBuffer {
                 primary: None,
             });
             multi.update(cx, |multi, cx| {
-                multi.push_excerpts(buffer, excerpt_ranges, cx)
+                multi.insert_excerpts(buffer, excerpt_ranges, cx)
             });
         }
 
@@ -2062,100 +2018,101 @@ impl MultiBuffer {
         mutation_count: usize,
         cx: &mut ModelContext<Self>,
     ) {
-        use rand::prelude::*;
-        use std::env;
-        use util::RandomCharIter;
+        todo!()
+        // use rand::prelude::*;
+        // use std::env;
+        // use util::RandomCharIter;
 
-        let max_excerpts = env::var("MAX_EXCERPTS")
-            .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
-            .unwrap_or(5);
+        // let max_excerpts = env::var("MAX_EXCERPTS")
+        //     .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
+        //     .unwrap_or(5);
 
-        let mut buffers = Vec::new();
-        for _ in 0..mutation_count {
-            if rng.gen_bool(0.05) {
-                log::info!("Clearing multi-buffer");
-                self.clear(cx);
-                continue;
-            } else if rng.gen_bool(0.1) && !self.excerpt_ids().is_empty() {
-                let ids = self.excerpt_ids();
-                let mut excerpts = HashSet::default();
-                for _ in 0..rng.gen_range(0..ids.len()) {
-                    excerpts.extend(ids.choose(rng).copied());
-                }
+        // let mut buffers = Vec::new();
+        // for _ in 0..mutation_count {
+        //     if rng.gen_bool(0.05) {
+        //         log::info!("Clearing multi-buffer");
+        //         self.clear(cx);
+        //         continue;
+        //     } else if rng.gen_bool(0.1) && !self.excerpt_ids().is_empty() {
+        //         let ids = self.excerpt_ids();
+        //         let mut excerpts = HashSet::default();
+        //         for _ in 0..rng.gen_range(0..ids.len()) {
+        //             excerpts.extend(ids.choose(rng).copied());
+        //         }
 
-                let line_count = rng.gen_range(0..5);
+        //         let line_count = rng.gen_range(0..5);
 
-                log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
+        //         log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
 
-                self.expand_excerpts(
-                    excerpts.iter().cloned(),
-                    line_count,
-                    ExpandExcerptDirection::UpAndDown,
-                    cx,
-                );
-                continue;
-            }
+        //         self.expand_excerpts(
+        //             excerpts.iter().cloned(),
+        //             line_count,
+        //             ExpandExcerptDirection::UpAndDown,
+        //             cx,
+        //         );
+        //         continue;
+        //     }
 
-            let excerpt_ids = self.excerpt_ids();
-            if excerpt_ids.is_empty() || (rng.gen() && excerpt_ids.len() < max_excerpts) {
-                let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
-                    let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
-                    buffers.push(cx.new_model(|cx| Buffer::local(text, cx)));
-                    let buffer = buffers.last().unwrap().read(cx);
-                    log::info!(
-                        "Creating new buffer {} with text: {:?}",
-                        buffer.remote_id(),
-                        buffer.text()
-                    );
-                    buffers.last().unwrap().clone()
-                } else {
-                    self.buffers
-                        .borrow()
-                        .values()
-                        .choose(rng)
-                        .unwrap()
-                        .buffer
-                        .clone()
-                };
+        //     let excerpt_ids = self.excerpt_ids();
+        //     if excerpt_ids.is_empty() || (rng.gen() && excerpt_ids.len() < max_excerpts) {
+        //         let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
+        //             let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
+        //             buffers.push(cx.new_model(|cx| Buffer::local(text, cx)));
+        //             let buffer = buffers.last().unwrap().read(cx);
+        //             log::info!(
+        //                 "Creating new buffer {} with text: {:?}",
+        //                 buffer.remote_id(),
+        //                 buffer.text()
+        //             );
+        //             buffers.last().unwrap().clone()
+        //         } else {
+        //             self.buffers
+        //                 .borrow()
+        //                 .values()
+        //                 .choose(rng)
+        //                 .unwrap()
+        //                 .buffer
+        //                 .clone()
+        //         };
 
-                let buffer = buffer_handle.read(cx);
-                let buffer_text = buffer.text();
-                let ranges = (0..rng.gen_range(0..5))
-                    .map(|_| {
-                        let end_ix =
-                            buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
-                        let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
-                        ExcerptRange {
-                            context: start_ix..end_ix,
-                            primary: None,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                log::info!(
-                    "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
-                    buffer_handle.read(cx).remote_id(),
-                    ranges.iter().map(|r| &r.context).collect::<Vec<_>>(),
-                    ranges
-                        .iter()
-                        .map(|r| &buffer_text[r.context.clone()])
-                        .collect::<Vec<_>>()
-                );
+        //         let buffer = buffer_handle.read(cx);
+        //         let buffer_text = buffer.text();
+        //         let ranges = (0..rng.gen_range(0..5))
+        //             .map(|_| {
+        //                 let end_ix =
+        //                     buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
+        //                 let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+        //                 ExcerptRange {
+        //                     context: start_ix..end_ix,
+        //                     primary: None,
+        //                 }
+        //             })
+        //             .collect::<Vec<_>>();
+        //         log::info!(
+        //             "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
+        //             buffer_handle.read(cx).remote_id(),
+        //             ranges.iter().map(|r| &r.context).collect::<Vec<_>>(),
+        //             ranges
+        //                 .iter()
+        //                 .map(|r| &buffer_text[r.context.clone()])
+        //                 .collect::<Vec<_>>()
+        //         );
 
-                let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
-                log::info!("Inserted with ids: {:?}", excerpt_id);
-            } else {
-                let remove_count = rng.gen_range(1..=excerpt_ids.len());
-                let mut excerpts_to_remove = excerpt_ids
-                    .choose_multiple(rng, remove_count)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let snapshot = self.snapshot.borrow();
-                excerpts_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
-                drop(snapshot);
-                log::info!("Removing excerpts {:?}", excerpts_to_remove);
-                self.remove_excerpts(excerpts_to_remove, cx);
-            }
-        }
+        //         let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
+        //         log::info!("Inserted with ids: {:?}", excerpt_id);
+        //     } else {
+        //         let remove_count = rng.gen_range(1..=excerpt_ids.len());
+        //         let mut excerpts_to_remove = excerpt_ids
+        //             .choose_multiple(rng, remove_count)
+        //             .cloned()
+        //             .collect::<Vec<_>>();
+        //         let snapshot = self.snapshot.borrow();
+        //         excerpts_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
+        //         drop(snapshot);
+        //         log::info!("Removing excerpts {:?}", excerpts_to_remove);
+        //         self.remove_excerpts(excerpts_to_remove, cx);
+        //     }
+        // }
     }
 
     pub fn randomly_mutate(
@@ -2193,29 +2150,30 @@ impl MultiBuffer {
     }
 
     fn check_invariants(&self, cx: &mut ModelContext<Self>) {
-        let snapshot = self.read(cx);
-        let excerpts = snapshot.excerpts.items(&());
-        let excerpt_ids = snapshot.excerpt_ids.items(&());
+        todo!()
+        // let snapshot = self.read(cx);
+        // let excerpts = snapshot.excerpts.items(&());
+        // let excerpt_ids = snapshot.excerpt_ids.items(&());
 
-        for (ix, excerpt) in excerpts.iter().enumerate() {
-            if ix == 0 {
-                if excerpt.locator <= Locator::min() {
-                    panic!("invalid first excerpt locator {:?}", excerpt.locator);
-                }
-            } else if excerpt.locator <= excerpts[ix - 1].locator {
-                panic!("excerpts are out-of-order: {:?}", excerpts);
-            }
-        }
+        // for (ix, excerpt) in excerpts.iter().enumerate() {
+        //     if ix == 0 {
+        //         if excerpt.locator <= Locator::min() {
+        //             panic!("invalid first excerpt locator {:?}", excerpt.locator);
+        //         }
+        //     } else if excerpt.locator <= excerpts[ix - 1].locator {
+        //         panic!("excerpts are out-of-order: {:?}", excerpts);
+        //     }
+        // }
 
-        for (ix, entry) in excerpt_ids.iter().enumerate() {
-            if ix == 0 {
-                if entry.id.cmp(&ExcerptId::min(), &snapshot).is_le() {
-                    panic!("invalid first excerpt id {:?}", entry.id);
-                }
-            } else if entry.id <= excerpt_ids[ix - 1].id {
-                panic!("excerpt ids are out-of-order: {:?}", excerpt_ids);
-            }
-        }
+        // for (ix, entry) in excerpt_ids.iter().enumerate() {
+        //     if ix == 0 {
+        //         if entry.id.cmp(&ExcerptId::min(), &snapshot).is_le() {
+        //             panic!("invalid first excerpt id {:?}", entry.id);
+        //         }
+        //     } else if entry.id <= excerpt_ids[ix - 1].id {
+        //         panic!("excerpt ids are out-of-order: {:?}", excerpt_ids);
+        //     }
+        // }
     }
 }
 
@@ -2329,12 +2287,12 @@ impl MultiBufferSnapshot {
         (start..end, word_kind)
     }
 
-    pub fn as_singleton(&self) -> Option<(&ExcerptId, BufferId, &BufferSnapshot)> {
+    pub fn as_singleton(&self) -> Option<(BufferId, &BufferSnapshot)> {
         if self.singleton {
             self.excerpts
                 .iter()
                 .next()
-                .map(|e| (&e.id, e.buffer_id, &e.buffer))
+                .map(|e| (e.buffer_id, &e.buffer))
         } else {
             None
         }
@@ -2353,7 +2311,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.clip_offset(offset, bias);
         }
 
@@ -2372,7 +2330,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.clip_point(point, bias);
         }
 
@@ -2391,7 +2349,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.clip_offset_utf16(offset, bias);
         }
 
@@ -2410,7 +2368,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.clip_point_utf16(point, bias);
         }
 
@@ -2501,7 +2459,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_to_point(&self, offset: usize) -> Point {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.offset_to_point(offset);
         }
 
@@ -2522,7 +2480,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.offset_to_point_utf16(offset);
         }
 
@@ -2543,7 +2501,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.point_to_point_utf16(point);
         }
 
@@ -2565,7 +2523,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_to_offset(&self, point: Point) -> usize {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.point_to_offset(point);
         }
 
@@ -2586,7 +2544,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_utf16_to_offset(&self, offset_utf16: OffsetUtf16) -> usize {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.offset_utf16_to_offset(offset_utf16);
         }
 
@@ -2608,7 +2566,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.offset_to_offset_utf16(offset);
         }
 
@@ -2632,7 +2590,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer.point_utf16_to_offset(point);
         }
 
@@ -2654,10 +2612,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn point_to_buffer_offset<T: ToOffset>(
-        &self,
-        point: T,
-    ) -> Option<(&BufferSnapshot, usize)> {
+    pub fn to_buffer_offset<T: ToOffset>(&self, point: T) -> Option<(&BufferSnapshot, usize)> {
         let offset = point.to_offset(self);
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
@@ -2856,30 +2811,31 @@ impl MultiBufferSnapshot {
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
-        let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
-        let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
+        todo!()
+        // let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
+        // let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
 
-        cursor.seek(locator, Bias::Left, &());
-        if cursor.item().is_none() {
-            cursor.next(&());
-        }
+        // cursor.seek(locator, Bias::Left, &());
+        // if cursor.item().is_none() {
+        //     cursor.next(&());
+        // }
 
-        let mut position = D::from_text_summary(&cursor.start().text);
-        if let Some(excerpt) = cursor.item() {
-            if excerpt.id == anchor.excerpt_id {
-                let excerpt_buffer_start =
-                    excerpt.range.context.start.summary::<D>(&excerpt.buffer);
-                let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
-                let buffer_position = cmp::min(
-                    excerpt_buffer_end,
-                    anchor.text_anchor.summary::<D>(&excerpt.buffer),
-                );
-                if buffer_position > excerpt_buffer_start {
-                    position.add_assign(&(buffer_position - excerpt_buffer_start));
-                }
-            }
-        }
-        position
+        // let mut position = D::from_text_summary(&cursor.start().text);
+        // if let Some(excerpt) = cursor.item() {
+        //     if excerpt.id == anchor.excerpt_id {
+        //         let excerpt_buffer_start =
+        //             excerpt.range.context.start.summary::<D>(&excerpt.buffer);
+        //         let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
+        //         let buffer_position = cmp::min(
+        //             excerpt_buffer_end,
+        //             anchor.text_anchor.summary::<D>(&excerpt.buffer),
+        //         );
+        //         if buffer_position > excerpt_buffer_start {
+        //             position.add_assign(&(buffer_position - excerpt_buffer_start));
+        //         }
+        //     }
+        // }
+        // position
     }
 
     pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
@@ -2887,61 +2843,62 @@ impl MultiBufferSnapshot {
         D: TextDimension + Ord + Sub<D, Output = D>,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
-        if let Some((_, _, buffer)) = self.as_singleton() {
+        if let Some((_, buffer)) = self.as_singleton() {
             return buffer
-                .summaries_for_anchors(anchors.into_iter().map(|a| &a.text_anchor))
+                .summaries_for_anchors(anchors.into_iter().map(|a| &a.0))
                 .collect();
         }
 
-        let mut anchors = anchors.into_iter().peekable();
-        let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
-        let mut summaries = Vec::new();
-        while let Some(anchor) = anchors.peek() {
-            let excerpt_id = anchor.excerpt_id;
-            let excerpt_anchors = iter::from_fn(|| {
-                let anchor = anchors.peek()?;
-                if anchor.excerpt_id == excerpt_id {
-                    Some(&anchors.next().unwrap().text_anchor)
-                } else {
-                    None
-                }
-            });
+        todo!()
+        // let mut anchors = anchors.into_iter().peekable();
+        // let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
+        // let mut summaries = Vec::new();
+        // while let Some(anchor) = anchors.peek() {
+        //     let excerpt_id = anchor.excerpt_id;
+        //     let excerpt_anchors = iter::from_fn(|| {
+        //         let anchor = anchors.peek()?;
+        //         if anchor.excerpt_id == excerpt_id {
+        //             Some(&anchors.next().unwrap().text_anchor)
+        //         } else {
+        //             None
+        //         }
+        //     });
 
-            let locator = self.excerpt_locator_for_id(excerpt_id);
-            cursor.seek_forward(locator, Bias::Left, &());
-            if cursor.item().is_none() {
-                cursor.next(&());
-            }
+        //     let locator = self.excerpt_locator_for_id(excerpt_id);
+        //     cursor.seek_forward(locator, Bias::Left, &());
+        //     if cursor.item().is_none() {
+        //         cursor.next(&());
+        //     }
 
-            let position = D::from_text_summary(&cursor.start().text);
-            if let Some(excerpt) = cursor.item() {
-                if excerpt.id == excerpt_id {
-                    let excerpt_buffer_start =
-                        excerpt.range.context.start.summary::<D>(&excerpt.buffer);
-                    let excerpt_buffer_end =
-                        excerpt.range.context.end.summary::<D>(&excerpt.buffer);
-                    summaries.extend(
-                        excerpt
-                            .buffer
-                            .summaries_for_anchors::<D, _>(excerpt_anchors)
-                            .map(move |summary| {
-                                let summary = cmp::min(excerpt_buffer_end.clone(), summary);
-                                let mut position = position.clone();
-                                let excerpt_buffer_start = excerpt_buffer_start.clone();
-                                if summary > excerpt_buffer_start {
-                                    position.add_assign(&(summary - excerpt_buffer_start));
-                                }
-                                position
-                            }),
-                    );
-                    continue;
-                }
-            }
+        //     let position = D::from_text_summary(&cursor.start().text);
+        //     if let Some(excerpt) = cursor.item() {
+        //         if excerpt.id == excerpt_id {
+        //             let excerpt_buffer_start =
+        //                 excerpt.range.context.start.summary::<D>(&excerpt.buffer);
+        //             let excerpt_buffer_end =
+        //                 excerpt.range.context.end.summary::<D>(&excerpt.buffer);
+        //             summaries.extend(
+        //                 excerpt
+        //                     .buffer
+        //                     .summaries_for_anchors::<D, _>(excerpt_anchors)
+        //                     .map(move |summary| {
+        //                         let summary = cmp::min(excerpt_buffer_end.clone(), summary);
+        //                         let mut position = position.clone();
+        //                         let excerpt_buffer_start = excerpt_buffer_start.clone();
+        //                         if summary > excerpt_buffer_start {
+        //                             position.add_assign(&(summary - excerpt_buffer_start));
+        //                         }
+        //                         position
+        //                     }),
+        //             );
+        //             continue;
+        //         }
+        //     }
 
-            summaries.extend(excerpt_anchors.map(|_| position.clone()));
-        }
+        //     summaries.extend(excerpt_anchors.map(|_| position.clone()));
+        // }
 
-        summaries
+        // summaries
     }
 
     pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(usize, Anchor, bool)>
@@ -3003,36 +2960,28 @@ impl MultiBufferSnapshot {
                             .range
                             .context
                             .start
-                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
+                            .bias(anchor.0.bias, &excerpt.buffer);
                         if text_anchor
                             .cmp(&excerpt.range.context.end, &excerpt.buffer)
                             .is_gt()
                         {
                             text_anchor = excerpt.range.context.end;
                         }
-                        Anchor {
-                            buffer_id: Some(excerpt.buffer_id),
-                            excerpt_id: excerpt.id,
-                            text_anchor,
-                        }
+                        Anchor(Some(excerpt.buffer_id), excerpt.id, text_anchor)
                     } else if let Some(excerpt) = prev_excerpt {
                         let mut text_anchor = excerpt
                             .range
                             .context
                             .end
-                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
+                            .bias(anchor.0.bias, &excerpt.buffer);
                         if text_anchor
                             .cmp(&excerpt.range.context.start, &excerpt.buffer)
                             .is_lt()
                         {
                             text_anchor = excerpt.range.context.start;
                         }
-                        Anchor {
-                            buffer_id: Some(excerpt.buffer_id),
-                            excerpt_id: excerpt.id,
-                            text_anchor,
-                        }
-                    } else if anchor.text_anchor.bias == Bias::Left {
+                        Anchor(Some(excerpt.buffer_id), excerpt.id, text_anchor)
+                    } else if anchor.0.bias == Bias::Left {
                         Anchor::min()
                     } else {
                         Anchor::max()
@@ -3057,11 +3006,7 @@ impl MultiBufferSnapshot {
     pub fn anchor_at<T: ToOffset>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
-            return Anchor {
-                buffer_id: Some(buffer_id),
-                excerpt_id: *excerpt_id,
-                text_anchor: buffer.anchor_at(offset, bias),
-            };
+            return Anchor(Some(buffer_id), *excerpt_id, buffer.anchor_at(offset, bias));
         }
 
         let mut cursor = self.excerpts.cursor::<(usize, Option<ExcerptId>)>();
@@ -3079,11 +3024,7 @@ impl MultiBufferSnapshot {
             let buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
             let text_anchor =
                 excerpt.clip_anchor(excerpt.buffer.anchor_at(buffer_start + overshoot, bias));
-            Anchor {
-                buffer_id: Some(excerpt.buffer_id),
-                excerpt_id: excerpt.id,
-                text_anchor,
-            }
+            Anchor(Some(excerpt.buffer_id), excerpt.id, text_anchor)
         } else if offset == 0 && bias == Bias::Left {
             Anchor::min()
         } else {
@@ -3105,11 +3046,7 @@ impl MultiBufferSnapshot {
             if excerpt.id == excerpt_id {
                 let text_anchor = excerpt.clip_anchor(text_anchor);
                 drop(cursor);
-                return Some(Anchor {
-                    buffer_id: Some(excerpt.buffer_id),
-                    excerpt_id,
-                    text_anchor,
-                });
+                return Some(Anchor(Some(excerpt.buffer_id), excerpt_id, text_anchor));
             }
         }
         None
@@ -3119,7 +3056,7 @@ impl MultiBufferSnapshot {
         if anchor.excerpt_id == ExcerptId::min() || anchor.excerpt_id == ExcerptId::max() {
             true
         } else if let Some(excerpt) = self.excerpt(anchor.excerpt_id) {
-            excerpt.buffer.can_resolve(&anchor.text_anchor)
+            excerpt.buffer.can_resolve(&anchor.0)
         } else {
             false
         }
@@ -3399,7 +3336,7 @@ impl MultiBufferSnapshot {
         if let Some((_, _, snapshot)) = self.as_singleton() {
             return snapshot
                 .indent_guides_in_range(
-                    range.start.text_anchor..range.end.text_anchor,
+                    range.start.0..range.end.0,
                     ignore_disabled_for_language,
                     cx,
                 )
@@ -3449,12 +3386,12 @@ impl MultiBufferSnapshot {
     }
 
     pub fn file_at<T: ToOffset>(&self, point: T) -> Option<&Arc<dyn File>> {
-        self.point_to_buffer_offset(point)
+        self.to_buffer_offset(point)
             .and_then(|(buffer, _)| buffer.file())
     }
 
     pub fn language_at<T: ToOffset>(&self, point: T) -> Option<&Arc<Language>> {
-        self.point_to_buffer_offset(point)
+        self.to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
@@ -3465,7 +3402,7 @@ impl MultiBufferSnapshot {
     ) -> &'a LanguageSettings {
         let mut language = None;
         let mut file = None;
-        if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
+        if let Some((buffer, offset)) = self.to_buffer_offset(point) {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
@@ -3473,12 +3410,12 @@ impl MultiBufferSnapshot {
     }
 
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
-        self.point_to_buffer_offset(point)
+        self.to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
-        self.point_to_buffer_offset(point)
+        self.to_buffer_offset(point)
             .map(|(buffer, offset)| buffer.char_classifier_at(offset))
             .unwrap_or_default()
     }
@@ -3488,7 +3425,7 @@ impl MultiBufferSnapshot {
         position: T,
         cx: &AppContext,
     ) -> Option<IndentSize> {
-        let (buffer_snapshot, offset) = self.point_to_buffer_offset(position)?;
+        let (buffer_snapshot, offset) = self.to_buffer_offset(position)?;
         Some(buffer_snapshot.language_indent_size_at(offset, cx))
     }
 
@@ -3744,7 +3681,7 @@ impl MultiBufferSnapshot {
             excerpt.buffer_id,
             excerpt
                 .buffer
-                .symbols_containing(anchor.text_anchor, theme)
+                .symbols_containing(anchor.0, theme)
                 .into_iter()
                 .flatten()
                 .flat_map(|item| {
@@ -3913,16 +3850,16 @@ impl MultiBufferSnapshot {
             let buffer_range = MultiBufferExcerpt::new(excerpt, *cursor.start())
                 .map_range_to_buffer(range_start_in_excerpt..range_end_in_excerpt);
 
-            let subrange_start_anchor = Anchor {
-                buffer_id: Some(excerpt.buffer_id),
-                excerpt_id: excerpt.id,
-                text_anchor: excerpt.buffer.anchor_before(buffer_range.start),
-            };
-            let subrange_end_anchor = Anchor {
-                buffer_id: Some(excerpt.buffer_id),
-                excerpt_id: excerpt.id,
-                text_anchor: excerpt.buffer.anchor_after(buffer_range.end),
-            };
+            let subrange_start_anchor = Anchor(
+                Some(excerpt.buffer_id),
+                excerpt.id,
+                excerpt.buffer.anchor_before(buffer_range.start),
+            );
+            let subrange_end_anchor = Anchor(
+                Some(excerpt.buffer_id),
+                excerpt.id,
+                excerpt.buffer.anchor_after(buffer_range.end),
+            );
 
             if range.end > cursor.end(&()) {
                 cursor.next(&());
@@ -3989,10 +3926,10 @@ impl MultiBufferSnapshot {
             .flat_map(move |excerpt| {
                 let mut query_range = excerpt.range.context.start..excerpt.range.context.end;
                 if excerpt.id == range.start.excerpt_id {
-                    query_range.start = range.start.text_anchor;
+                    query_range.start = range.start.0;
                 }
                 if excerpt.id == range.end.excerpt_id {
-                    query_range.end = range.end.text_anchor;
+                    query_range.end = range.end.0;
                 }
 
                 excerpt
@@ -4000,16 +3937,10 @@ impl MultiBufferSnapshot {
                     .selections_in_range(query_range, include_local)
                     .flat_map(move |(replica_id, line_mode, cursor_shape, selections)| {
                         selections.map(move |selection| {
-                            let mut start = Anchor {
-                                buffer_id: Some(excerpt.buffer_id),
-                                excerpt_id: excerpt.id,
-                                text_anchor: selection.start,
-                            };
-                            let mut end = Anchor {
-                                buffer_id: Some(excerpt.buffer_id),
-                                excerpt_id: excerpt.id,
-                                text_anchor: selection.end,
-                            };
+                            let mut start =
+                                Anchor(Some(excerpt.buffer_id), excerpt.id, selection.start);
+                            let mut end =
+                                Anchor(Some(excerpt.buffer_id), excerpt.id, selection.end);
                             if range.start.cmp(&start, self).is_gt() {
                                 start = range.start;
                             }
@@ -4374,14 +4305,9 @@ impl Excerpt {
                 .range
                 .context
                 .start
-                .cmp(&anchor.text_anchor, &self.buffer)
+                .cmp(&anchor.0, &self.buffer)
                 .is_le()
-            && self
-                .range
-                .context
-                .end
-                .cmp(&anchor.text_anchor, &self.buffer)
-                .is_ge()
+            && self.range.context.end.cmp(&anchor.0, &self.buffer).is_ge()
     }
 
     /// The [`Excerpt`]'s start offset in its [`Buffer`]
