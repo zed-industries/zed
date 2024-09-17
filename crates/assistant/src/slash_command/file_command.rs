@@ -8,7 +8,7 @@ use project::{PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::Write,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
@@ -342,7 +342,10 @@ fn collect_files(
     })
 }
 
-pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32>>) -> String {
+pub fn codeblock_fence_for_path(
+    path: Option<&Path>,
+    row_range: Option<RangeInclusive<u32>>,
+) -> String {
     let mut text = String::new();
     write!(text, "```").unwrap();
 
@@ -357,7 +360,7 @@ pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32
     }
 
     if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start + 1, row_range.end + 1).unwrap();
+        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
     }
 
     text.push('\n');

@@ -101,7 +101,7 @@ jobs:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     runs-on:
-      - hosted-linux-x86-1
+      - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -110,6 +110,11 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Linux dependencies
         run: ./script/linux
@@ -264,7 +269,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Linux bundle
     runs-on:
-      - hosted-linux-x86-1
+      - buildjet-16vcpu-ubuntu-2204
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
@@ -278,9 +283,6 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux
-
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -335,7 +337,7 @@ jobs:
     timeout-minutes: 60
     name: Create arm64 Linux bundle
     runs-on:
-      - hosted-linux-arm-1
+      - buildjet-16vcpu-ubuntu-2204-arm
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
@@ -349,9 +351,6 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux
-
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
