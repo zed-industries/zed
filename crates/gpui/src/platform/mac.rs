@@ -4,6 +4,7 @@ mod dispatcher;
 mod display;
 mod display_link;
 mod events;
+mod keyboard;
 
 #[cfg(not(feature = "macos-blade"))]
 mod metal_atlas;
@@ -39,6 +40,7 @@ use std::{
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
+pub(crate) use keyboard::*;
 pub(crate) use keyboard_layout::*;
 pub(crate) use platform::*;
 pub(crate) use text_system::*;

@@ -110,6 +110,11 @@ pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn current_keyboard() -> Rc<dyn PlatformKeyboard> {
+    Rc::new(MacKeyboard {})
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn current_keyboard() -> Rc<dyn PlatformKeyboard> {
     Rc::new(WindowsKeyboard {})

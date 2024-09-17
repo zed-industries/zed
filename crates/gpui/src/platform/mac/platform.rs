@@ -322,7 +322,7 @@ impl MacPlatform {
                             .initWithTitle_action_keyEquivalent_(
                                 ns_string(&name),
                                 selector,
-                                ns_string(key_to_native(&keystroke.key).as_ref()),
+                                ns_string(key_to_native(&keystroke.code).as_ref()),
                             )
                             .autorelease();
                         item.setKeyEquivalentModifierMask_(mask);

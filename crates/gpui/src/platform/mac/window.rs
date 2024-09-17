@@ -3,10 +3,10 @@ use crate::{
     check_current_keyboard_type, keyboard_layouts::KeyboardLayoutMapping,
     platform::PlatformInputHandler, point, px, retrieve_current_keboard_layout, size,
     AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowParams,
+    KeyCodes, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -1477,8 +1477,8 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
 
     let keystroke = Keystroke {
         modifiers: Default::default(),
-        // key: ".".into(),
-        key: crate::VirtualKeyCode::OEMPeriod,
+        key: "Unknown".to_string(),
+        code: KeyCodes::Period,
         ime_key: None,
     };
     let event = PlatformInput::KeyDown(KeyDownEvent {
