@@ -450,10 +450,7 @@ fn render_markdown_text(
 
                 match link {
                     None => {
-                        let element = div()
-                            .child(img(image_source))
-                            .id(element_id)
-                            .into_any();
+                        let element = div().child(img(image_source)).id(element_id).into_any();
                         any_element.push(element);
                     }
                     Some(link) => {
