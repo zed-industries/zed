@@ -652,7 +652,6 @@ impl Telemetry {
                             release_channel: state.release_channel.map(Into::into),
                             events,
                         };
-                        dbg!(&request_body);
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
