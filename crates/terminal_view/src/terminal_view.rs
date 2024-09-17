@@ -1008,7 +1008,7 @@ impl Item for TerminalView {
         };
 
         h_flex()
-            .gap_2()
+            .gap_1()
             .group("term-tab-icon")
             .child(
                 h_flex()

@@ -26,7 +26,8 @@ To use the Deno Language Server with TypeScript and TSX files, you will likely w
         "!typescript-language-server",
         "!vtsls",
         "!eslint"
-      ]
+      ],
+      "formatter": "language_server"
     },
     "TSX": {
       "language_servers": [
@@ -34,7 +35,8 @@ To use the Deno Language Server with TypeScript and TSX files, you will likely w
         "!typescript-language-server",
         "!vtsls",
         "!eslint"
-      ]
+      ],
+      "formatter": "language_server"
     }
   }
 }

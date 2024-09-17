@@ -645,37 +645,42 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        if self.summary.error_count == 0 && self.summary.warning_count == 0 {
-            Label::new("No problems")
-                .color(params.text_color())
-                .into_any_element()
-        } else {
-            h_flex()
-                .gap_1()
-                .when(self.summary.error_count > 0, |then| {
+        h_flex()
+            .gap_1()
+            .when(
+                self.summary.error_count == 0 && self.summary.warning_count == 0,
+                |then| {
                     then.child(
                         h_flex()
                             .gap_1()
-                            .child(Icon::new(IconName::XCircle).color(Color::Error))
-                            .child(
-                                Label::new(self.summary.error_count.to_string())
-                                    .color(params.text_color()),
-                            ),
+                            .child(Icon::new(IconName::Check).color(Color::Success))
+                            .child(Label::new("No problems").color(params.text_color())),
                     )
-                })
-                .when(self.summary.warning_count > 0, |then| {
-                    then.child(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::Warning).color(Color::Warning))
-                            .child(
-                                Label::new(self.summary.warning_count.to_string())
-                                    .color(params.text_color()),
-                            ),
-                    )
-                })
-                .into_any_element()
-        }
+                },
+            )
+            .when(self.summary.error_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::XCircle).color(Color::Error))
+                        .child(
+                            Label::new(self.summary.error_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .when(self.summary.warning_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Warning).color(Color::Warning))
+                        .child(
+                            Label::new(self.summary.warning_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

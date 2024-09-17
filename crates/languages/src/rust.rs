@@ -38,45 +38,55 @@ impl LspAdapter for RustLspAdapter {
         delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, Self::SERVER_NAME, cx).and_then(|s| s.binary.clone())
-        });
+        let configured_binary = cx
+            .update(|cx| {
+                language_server_settings(delegate, Self::SERVER_NAME, cx)
+                    .and_then(|s| s.binary.clone())
+            })
+            .ok()?;
 
-        match configured_binary {
-            Ok(Some(BinarySettings {
-                path,
+        let (path, env, arguments) = match configured_binary {
+            // If nothing is configured, or path_lookup explicitly enabled,
+            // we lookup the binary in the path.
+            None
+            | Some(BinarySettings {
+                path: None,
+                path_lookup: Some(true),
+                ..
+            })
+            | Some(BinarySettings {
+                path: None,
+                path_lookup: None,
+                ..
+            }) => {
+                let path = delegate.which(Self::SERVER_NAME.as_ref()).await;
+                let env = delegate.shell_env().await;
+                (path, Some(env), None)
+            }
+            // Otherwise, we use the configured binary.
+            Some(BinarySettings {
+                path: Some(path),
                 arguments,
                 path_lookup,
-            })) => {
-                let (path, env) = match (path, path_lookup) {
-                    (Some(path), lookup) => {
-                        if lookup.is_some() {
-                            log::warn!(
-                                "Both `path` and `path_lookup` are set, ignoring `path_lookup`"
-                            );
-                        }
-                        (Some(path.into()), None)
-                    }
-                    (None, Some(true)) | (None, None) => {
-                        // Try to lookup rust-analyzer in PATH by default.
-                        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-                        let env = delegate.shell_env().await;
-                        (Some(path), Some(env))
-                    }
-                    (None, Some(false)) => (None, None),
-                };
-                path.map(|path| LanguageServerBinary {
-                    path,
-                    arguments: arguments
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|arg| arg.into())
-                        .collect(),
-                    env,
-                })
+            }) => {
+                if path_lookup.is_some() {
+                    log::warn!("Both `path` and `path_lookup` are set, ignoring `path_lookup`");
+                }
+                (Some(path.into()), None, arguments)
             }
-            _ => None,
-        }
+
+            _ => (None, None, None),
+        };
+
+        path.map(|path| LanguageServerBinary {
+            path,
+            env,
+            arguments: arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
+        })
     }
 
     async fn fetch_latest_server_version(

@@ -111,6 +111,18 @@
   "use_system_path_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // Cursor shape for the default editor.
+  //  1. A vertical bar
+  //     "bar"
+  //  2. A block that surrounds the following character
+  //     "block"
+  //  3. An underline that runs along the following character
+  //     "underscore"
+  //  4. A box drawn around the following character
+  //     "hollow"
+  //
+  // Default: not set, defaults to "bar"
+  "cursor_shape": null,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -698,7 +710,7 @@
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
-        // Can also be `csh`, `fish`, and `nushell`
+        // Can also be `csh`, `fish`, `nushell` and `power_shell`
         "activate_script": "default"
       }
     },

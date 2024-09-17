@@ -4646,7 +4646,7 @@ impl LspStore {
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::for_local(self, worktree_handle, cx);
-        let cli_environment = local.environment.update(cx, |environment, cx| {
+        let project_environment = local.environment.update(cx, |environment, cx| {
             environment.get_environment(Some(worktree_id), Some(worktree_path.clone()), cx)
         });
 
@@ -4656,7 +4656,7 @@ impl LspStore {
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
-            cli_environment,
+            project_environment,
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -6383,21 +6383,16 @@ impl LspStore {
                                 let buffer_id = buffer_to_edit.read(cx).remote_id();
                                 let version = if let Some(buffer_version) = op.text_document.version
                                 {
-                                    this.buffer_snapshots
-                                        .get(&buffer_id)
-                                        .and_then(|server_to_snapshots| {
-                                            let all_snapshots = server_to_snapshots
-                                                .get(&language_server.server_id())?;
-                                            all_snapshots
-                                                .binary_search_by_key(&buffer_version, |snapshot| {
-                                                    snapshot.version
-                                                })
-                                                .ok()
-                                                .and_then(|index| all_snapshots.get(index))
-                                        })
-                                        .map(|lsp_snapshot| lsp_snapshot.snapshot.version())
+                                    this.buffer_snapshot_for_lsp_version(
+                                        &buffer_to_edit,
+                                        language_server.server_id(),
+                                        Some(buffer_version),
+                                        cx,
+                                    )
+                                    .ok()
+                                    .map(|snapshot| snapshot.version)
                                 } else {
-                                    Some(buffer_to_edit.read(cx).saved_version())
+                                    Some(buffer_to_edit.read(cx).saved_version().clone())
                                 };
 
                                 let most_recent_edit = version.and_then(|version| {
