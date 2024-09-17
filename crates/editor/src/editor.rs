@@ -98,6 +98,7 @@ use language::{
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
+use similar::{ChangeTag, TextDiff};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -413,6 +414,22 @@ impl Default for EditorStyle {
 
 type CompletionId = usize;
 
+#[derive(Clone, Debug)]
+struct CompletionState {
+    // render_inlay_ids represents the inlay hints that are inserted
+    // for rendering the inline completions. They may be discontinuous
+    // in the event that the completion provider returns some intersection
+    // with the existing content.
+    render_inlay_ids: Vec<InlayId>,
+    // text is the resulting rope that is inserted when the user accepts a completion.
+    text: Rope,
+    // position is the position of the cursor when the completion was triggered.
+    position: multi_buffer::Anchor,
+    // delete_range is the range of text that this completion state covers.
+    // if the completion is accepted, this range should be deleted.
+    delete_range: Option<Range<multi_buffer::Anchor>>,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
 struct EditorActionId(usize);
 
@@ -556,7 +573,7 @@ pub struct Editor {
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
-    active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
+    active_inline_completion: Option<CompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
     enable_inline_completions: bool,
@@ -1887,7 +1904,9 @@ impl Editor {
             linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
-            cursor_shape: Default::default(),
+            cursor_shape: EditorSettings::get_global(cx)
+                .cursor_shape
+                .unwrap_or_default(),
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -5068,7 +5087,7 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some((completion, delete_range)) = self.take_active_inline_completion(cx) else {
+        let Some(completion) = self.take_active_inline_completion(cx) else {
             return;
         };
         if let Some(provider) = self.inline_completion_provider() {
@@ -5080,7 +5099,7 @@ impl Editor {
             text: completion.text.to_string().into(),
         });
 
-        if let Some(range) = delete_range {
+        if let Some(range) = completion.delete_range {
             self.change_selections(None, cx, |s| s.select_ranges([range]))
         }
         self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
@@ -5094,7 +5113,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if self.selections.count() == 1 && self.has_active_inline_completion(cx) {
-            if let Some((completion, delete_range)) = self.take_active_inline_completion(cx) {
+            if let Some(completion) = self.take_active_inline_completion(cx) {
                 let mut partial_completion = completion
                     .text
                     .chars()
@@ -5115,7 +5134,7 @@ impl Editor {
                     text: partial_completion.clone().into(),
                 });
 
-                if let Some(range) = delete_range {
+                if let Some(range) = completion.delete_range {
                     self.change_selections(None, cx, |s| s.select_ranges([range]))
                 }
                 self.insert_with_autoindent_mode(&partial_completion, None, cx);
@@ -5141,7 +5160,7 @@ impl Editor {
     pub fn has_active_inline_completion(&self, cx: &AppContext) -> bool {
         if let Some(completion) = self.active_inline_completion.as_ref() {
             let buffer = self.buffer.read(cx).read(cx);
-            completion.0.position.is_valid(&buffer)
+            completion.position.is_valid(&buffer)
         } else {
             false
         }
@@ -5150,14 +5169,15 @@ impl Editor {
     fn take_active_inline_completion(
         &mut self,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(Inlay, Option<Range<Anchor>>)> {
+    ) -> Option<CompletionState> {
         let completion = self.active_inline_completion.take()?;
+        let render_inlay_ids = completion.render_inlay_ids.clone();
         self.display_map.update(cx, |map, cx| {
-            map.splice_inlays(vec![completion.0.id], Default::default(), cx);
+            map.splice_inlays(render_inlay_ids, Default::default(), cx);
         });
         let buffer = self.buffer.read(cx).read(cx);
 
-        if completion.0.position.is_valid(&buffer) {
+        if completion.position.is_valid(&buffer) {
             Some(completion)
         } else {
             None
@@ -5178,31 +5198,50 @@ impl Editor {
                 if let Some((buffer, cursor_buffer_position)) =
                     self.buffer.read(cx).text_anchor_for_position(cursor, cx)
                 {
-                    if let Some((text, text_anchor_range)) =
+                    if let Some(proposal) =
                         provider.active_completion_text(&buffer, cursor_buffer_position, cx)
                     {
-                        let text = Rope::from(text);
                         let mut to_remove = Vec::new();
                         if let Some(completion) = self.active_inline_completion.take() {
-                            to_remove.push(completion.0.id);
+                            to_remove.extend(completion.render_inlay_ids.iter());
                         }
 
-                        let completion_inlay =
-                            Inlay::suggestion(post_inc(&mut self.next_inlay_id), cursor, text);
+                        let to_add = proposal
+                            .inlays
+                            .iter()
+                            .filter_map(|inlay| {
+                                let snapshot = self.buffer.read(cx).snapshot(cx);
+                                let id = post_inc(&mut self.next_inlay_id);
+                                match inlay {
+                                    InlayProposal::Hint(position, hint) => {
+                                        let position =
+                                            snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                                        Some(Inlay::hint(id, position, hint))
+                                    }
+                                    InlayProposal::Suggestion(position, text) => {
+                                        let position =
+                                            snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                                        Some(Inlay::suggestion(id, position, text.clone()))
+                                    }
+                                }
+                            })
+                            .collect_vec();
 
-                        let multibuffer_anchor_range = text_anchor_range.and_then(|range| {
-                            let snapshot = self.buffer.read(cx).snapshot(cx);
-                            Some(
-                                snapshot.anchor_in_excerpt(excerpt_id, range.start)?
-                                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?,
-                            )
+                        self.active_inline_completion = Some(CompletionState {
+                            position: cursor,
+                            text: proposal.text,
+                            delete_range: proposal.delete_range.and_then(|range| {
+                                let snapshot = self.buffer.read(cx).snapshot(cx);
+                                let start = snapshot.anchor_in_excerpt(excerpt_id, range.start);
+                                let end = snapshot.anchor_in_excerpt(excerpt_id, range.end);
+                                Some(start?..end?)
+                            }),
+                            render_inlay_ids: to_add.iter().map(|i| i.id).collect(),
                         });
-                        self.active_inline_completion =
-                            Some((completion_inlay.clone(), multibuffer_anchor_range));
 
-                        self.display_map.update(cx, move |map, cx| {
-                            map.splice_inlays(to_remove, vec![completion_inlay], cx)
-                        });
+                        self.display_map
+                            .update(cx, move |map, cx| map.splice_inlays(to_remove, to_add, cx));
+
                         cx.notify();
                         return;
                     }
@@ -6657,6 +6696,161 @@ impl Editor {
                 s.select(selections);
             });
         });
+    }
+
+    pub fn rewrap(&mut self, _: &Rewrap, cx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let selections = self.selections.all::<Point>(cx);
+        let mut selections = selections.iter().peekable();
+
+        let mut edits = Vec::new();
+        let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
+
+        while let Some(selection) = selections.next() {
+            let mut start_row = selection.start.row;
+            let mut end_row = selection.end.row;
+
+            // Skip selections that overlap with a range that has already been rewrapped.
+            let selection_range = start_row..end_row;
+            if rewrapped_row_ranges
+                .iter()
+                .any(|range| range.overlaps(&selection_range))
+            {
+                continue;
+            }
+
+            let mut should_rewrap = false;
+
+            if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
+                match language_scope.language_name().0.as_ref() {
+                    "Markdown" | "Plain Text" => {
+                        should_rewrap = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            let row = selection.head().row;
+            let indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
+            let indent_end = Point::new(row, indent_size.len);
+
+            let mut line_prefix = indent_size.chars().collect::<String>();
+
+            if selection.is_empty() {
+                if let Some(comment_prefix) =
+                    buffer
+                        .language_scope_at(selection.head())
+                        .and_then(|language| {
+                            language
+                                .line_comment_prefixes()
+                                .iter()
+                                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                                .cloned()
+                        })
+                {
+                    line_prefix.push_str(&comment_prefix);
+                    should_rewrap = true;
+                }
+
+                'expand_upwards: while start_row > 0 {
+                    let prev_row = start_row - 1;
+                    if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
+                        && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+                    {
+                        start_row = prev_row;
+                    } else {
+                        break 'expand_upwards;
+                    }
+                }
+
+                'expand_downwards: while end_row < buffer.max_point().row {
+                    let next_row = end_row + 1;
+                    if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
+                        && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+                    {
+                        end_row = next_row;
+                    } else {
+                        break 'expand_downwards;
+                    }
+                }
+            }
+
+            if !should_rewrap {
+                continue;
+            }
+
+            let start = Point::new(start_row, 0);
+            let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
+            let selection_text = buffer.text_for_range(start..end).collect::<String>();
+            let unwrapped_text = selection_text
+                .lines()
+                .map(|line| line.strip_prefix(&line_prefix).unwrap())
+                .join(" ");
+            let wrap_column = buffer
+                .settings_at(Point::new(start_row, 0), cx)
+                .preferred_line_length as usize;
+            let mut wrapped_text = String::new();
+            let mut current_line = line_prefix.clone();
+            for word in unwrapped_text.split_whitespace() {
+                if current_line.len() + word.len() >= wrap_column {
+                    wrapped_text.push_str(&current_line);
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                }
+
+                if current_line.len() > line_prefix.len() {
+                    current_line.push(' ');
+                }
+
+                current_line.push_str(word);
+            }
+
+            if !current_line.is_empty() {
+                wrapped_text.push_str(&current_line);
+            }
+
+            let diff = TextDiff::from_lines(&selection_text, &wrapped_text);
+            let mut offset = start.to_offset(&buffer);
+            let mut moved_since_edit = true;
+
+            for change in diff.iter_all_changes() {
+                let value = change.value();
+                match change.tag() {
+                    ChangeTag::Equal => {
+                        offset += value.len();
+                        moved_since_edit = true;
+                    }
+                    ChangeTag::Delete => {
+                        let start = buffer.anchor_after(offset);
+                        let end = buffer.anchor_before(offset + value.len());
+
+                        if moved_since_edit {
+                            edits.push((start..end, String::new()));
+                        } else {
+                            edits.last_mut().unwrap().0.end = end;
+                        }
+
+                        offset += value.len();
+                        moved_since_edit = false;
+                    }
+                    ChangeTag::Insert => {
+                        if moved_since_edit {
+                            let anchor = buffer.anchor_after(offset);
+                            edits.push((anchor..anchor, value.to_string()));
+                        } else {
+                            edits.last_mut().unwrap().1.push_str(value);
+                        }
+
+                        moved_since_edit = false;
+                    }
+                }
+            }
+
+            rewrapped_row_ranges.push(start_row..=end_row);
+        }
+
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
     }
 
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
@@ -11628,6 +11822,9 @@ impl Editor {
             cx,
         );
         let editor_settings = EditorSettings::get_global(cx);
+        if let Some(cursor_shape) = editor_settings.cursor_shape {
+            self.cursor_shape = cursor_shape;
+        }
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
 

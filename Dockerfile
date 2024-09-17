@@ -4,6 +4,9 @@ FROM rust:1.81-bookworm as builder
 WORKDIR app
 COPY . .
 
+# Replace the Cargo configuration with the one used by collab.
+COPY ./.cargo/collab-config.toml ./.cargo/config.toml
+
 # Compile collab server
 ARG CARGO_PROFILE_RELEASE_PANIC=abort
 ARG GITHUB_SHA
@@ -12,6 +15,8 @@ ENV GITHUB_SHA=$GITHUB_SHA
 
 # At some point in the past 3 weeks, additional dependencies on `xkbcommon` and
 # `xkbcommon-x11` were introduced into collab.
+#
+# A `git bisect` points to this commit as being the culprit: `b8e6098f60e5dabe98fe8281f993858dacc04a55`.
 #
 # Now when we try to build collab for the Docker image, it fails with the following
 # error:

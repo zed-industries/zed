@@ -1673,31 +1673,33 @@ impl MultiBuffer {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(match event {
-            language::Event::Edited => Event::Edited {
+            language::BufferEvent::Edited => Event::Edited {
                 singleton_buffer_edited: true,
             },
-            language::Event::DirtyChanged => Event::DirtyChanged,
-            language::Event::Saved => Event::Saved,
-            language::Event::FileHandleChanged => Event::FileHandleChanged,
-            language::Event::Reloaded => Event::Reloaded,
-            language::Event::DiffBaseChanged => Event::DiffBaseChanged,
-            language::Event::DiffUpdated => Event::DiffUpdated { buffer },
-            language::Event::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
-            language::Event::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
-            language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
-            language::Event::Closed => Event::Closed,
-            language::Event::Discarded => Event::Discarded,
-            language::Event::CapabilityChanged => {
+            language::BufferEvent::DirtyChanged => Event::DirtyChanged,
+            language::BufferEvent::Saved => Event::Saved,
+            language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
+            language::BufferEvent::Reloaded => Event::Reloaded,
+            language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
+            language::BufferEvent::DiffUpdated => Event::DiffUpdated { buffer },
+            language::BufferEvent::LanguageChanged => {
+                Event::LanguageChanged(buffer.read(cx).remote_id())
+            }
+            language::BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
+            language::BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
+            language::BufferEvent::Closed => Event::Closed,
+            language::BufferEvent::Discarded => Event::Discarded,
+            language::BufferEvent::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
                 Event::CapabilityChanged
             }
 
             //
-            language::Event::Operation(_) => return,
+            language::BufferEvent::Operation(_) => return,
         });
     }
 

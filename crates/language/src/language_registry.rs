@@ -12,7 +12,7 @@ use collections::{hash_map, HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
-    Future, FutureExt as _,
+    Future,
 };
 use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
@@ -79,7 +79,6 @@ impl<'a> From<&'a str> for LanguageName {
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
-    login_shell_env_loaded: Shared<Task<()>>,
     executor: BackgroundExecutor,
     lsp_binary_status_tx: LspBinaryStatusSender,
 }
@@ -100,10 +99,15 @@ struct LanguageRegistryState {
     reload_count: usize,
 
     #[cfg(any(test, feature = "test-support"))]
-    fake_server_txs: HashMap<
-        LanguageName,
-        Vec<futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>>,
-    >,
+    fake_server_entries: HashMap<LanguageServerName, FakeLanguageServerEntry>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct FakeLanguageServerEntry {
+    pub capabilities: lsp::ServerCapabilities,
+    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    pub tx: futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+    pub _server: Option<lsp::FakeLanguageServer>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -204,7 +208,7 @@ struct LspBinaryStatusSender {
 }
 
 impl LanguageRegistry {
-    pub fn new(login_shell_env_loaded: Task<()>, executor: BackgroundExecutor) -> Self {
+    pub fn new(executor: BackgroundExecutor) -> Self {
         let this = Self {
             state: RwLock::new(LanguageRegistryState {
                 next_language_server_id: 0,
@@ -221,10 +225,9 @@ impl LanguageRegistry {
                 reload_count: 0,
 
                 #[cfg(any(test, feature = "test-support"))]
-                fake_server_txs: Default::default(),
+                fake_server_entries: Default::default(),
             }),
             language_server_download_dir: None,
-            login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_status_tx: Default::default(),
             executor,
         };
@@ -234,7 +237,7 @@ impl LanguageRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(executor: BackgroundExecutor) -> Self {
-        let mut this = Self::new(Task::ready(()), executor);
+        let mut this = Self::new(executor);
         this.language_server_download_dir = Some(Path::new("/the-download-dir").into());
         this
     }
@@ -332,12 +335,35 @@ impl LanguageRegistry {
             .push(CachedLspAdapter::new(adapter));
     }
 
+    /// Register a fake language server and adapter
+    /// The returned channel receives a new instance of the language server every time it is started
+    #[cfg(any(feature = "test-support", test))]
+    pub fn register_fake_lsp(
+        &self,
+        language_name: impl Into<LanguageName>,
+        mut adapter: crate::FakeLspAdapter,
+    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+        let language_name = language_name.into();
+        let adapter_name = LanguageServerName(adapter.name.into());
+        let capabilities = adapter.capabilities.clone();
+        let initializer = adapter.initializer.take();
+        self.state
+            .write()
+            .lsp_adapters
+            .entry(language_name.clone())
+            .or_default()
+            .push(CachedLspAdapter::new(Arc::new(adapter)));
+        self.register_fake_language_server(adapter_name, capabilities, initializer)
+    }
+
+    /// Register a fake lsp adapter (without the language server)
+    /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
     pub fn register_fake_lsp_adapter(
         &self,
         language_name: impl Into<LanguageName>,
         adapter: crate::FakeLspAdapter,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+    ) {
         let language_name = language_name.into();
         self.state
             .write()
@@ -345,21 +371,27 @@ impl LanguageRegistry {
             .entry(language_name.clone())
             .or_default()
             .push(CachedLspAdapter::new(Arc::new(adapter)));
-        self.fake_language_servers(language_name)
     }
 
+    /// Register a fake language server (without the adapter)
+    /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
-    pub fn fake_language_servers(
+    pub fn register_fake_language_server(
         &self,
-        language_name: LanguageName,
+        lsp_name: LanguageServerName,
+        capabilities: lsp::ServerCapabilities,
+        initializer: Option<Box<dyn Fn(&mut lsp::FakeLanguageServer) + Send + Sync>>,
     ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = futures::channel::mpsc::unbounded();
-        self.state
-            .write()
-            .fake_server_txs
-            .entry(language_name)
-            .or_default()
-            .push(servers_tx);
+        self.state.write().fake_server_entries.insert(
+            lsp_name,
+            FakeLanguageServerEntry {
+                tx: servers_tx,
+                capabilities,
+                initializer,
+                _server: None,
+            },
+        );
         servers_rx
     }
 
@@ -407,12 +439,12 @@ impl LanguageRegistry {
     /// grammar controls how the source code is parsed.
     pub fn register_native_grammars(
         &self,
-        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, tree_sitter::Language)>,
+        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, impl Into<tree_sitter::Language>)>,
     ) {
         self.state.write().grammars.extend(
             grammars
                 .into_iter()
-                .map(|(name, grammar)| (name.into(), AvailableGrammar::Native(grammar))),
+                .map(|(name, grammar)| (name.into(), AvailableGrammar::Native(grammar.into()))),
         );
     }
 
@@ -828,7 +860,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cli_environment: Option<HashMap<String, String>>,
+        project_environment: Shared<Task<Option<HashMap<String, String>>>>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -837,22 +869,19 @@ impl LanguageRegistry {
             adapter.name.0
         );
 
-        let download_dir = self
-            .language_server_download_dir
+        let download_dir = &self
+                    .language_server_download_dir
             .clone()
             .ok_or_else(|| anyhow!("language server download directory has not been assigned before starting server"))
             .log_err()?;
         let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
-        let login_shell_env_loaded = self.login_shell_env_loaded.clone();
         let this = Arc::downgrade(self);
 
         let task = cx.spawn({
             let container_dir = container_dir.clone();
             move |mut cx| async move {
-                // If we want to install a binary globally, we need to wait for
-                // the login shell to be set on our process.
-                login_shell_env_loaded.await;
+                let project_environment = project_environment.await;
 
                 let binary_result = adapter
                     .clone()
@@ -863,15 +892,16 @@ impl LanguageRegistry {
 
                 let mut binary = binary_result?;
 
-                // If this Zed project was opened from the CLI and the language server command itself
+                // If we do have a project environment (either by spawning a shell in in the project directory
+                // or by getting it from the CLI) and the language server command itself
                 // doesn't have an environment (which it would have, if it was found in $PATH), then
-                // we pass along the CLI environment that we inherited.
-                if binary.env.is_none() && cli_environment.is_some() {
+                // we use the project environment.
+                if binary.env.is_none() && project_environment.is_some() {
                     log::info!(
-                        "using CLI environment for language server {:?}, id: {server_id}",
+                        "using project environment for language server {:?}, id: {server_id}",
                         adapter.name.0
                     );
-                    binary.env = cli_environment.clone();
+                    binary.env = project_environment.clone();
                 }
 
                 let options = adapter
@@ -882,52 +912,43 @@ impl LanguageRegistry {
 
                 #[cfg(any(test, feature = "test-support"))]
                 if true {
-                    let capabilities = adapter
-                        .as_fake()
-                        .map(|fake_adapter| fake_adapter.capabilities.clone())
-                        .unwrap_or_else(|| lsp::ServerCapabilities {
-                            completion_provider: Some(Default::default()),
-                            ..Default::default()
-                        });
+                    if let Some(this) = this.upgrade() {
+                        if let Some(fake_entry) = this
+                            .state
+                            .write()
+                            .fake_server_entries
+                            .get_mut(&adapter.name)
+                        {
+                            let (server, mut fake_server) = lsp::FakeLanguageServer::new(
+                                server_id,
+                                binary,
+                                adapter.name.0.to_string(),
+                                fake_entry.capabilities.clone(),
+                                cx.clone(),
+                            );
+                            fake_entry._server = Some(fake_server.clone());
 
-                    let (server, mut fake_server) = lsp::FakeLanguageServer::new(
-                        server_id,
-                        binary,
-                        adapter.name.0.to_string(),
-                        capabilities,
-                        cx.clone(),
-                    );
+                            if let Some(initializer) = &fake_entry.initializer {
+                                initializer(&mut fake_server);
+                            }
 
-                    if let Some(fake_adapter) = adapter.as_fake() {
-                        if let Some(initializer) = &fake_adapter.initializer {
-                            initializer(&mut fake_server);
+                            let tx = fake_entry.tx.clone();
+                            cx.background_executor()
+                                .spawn(async move {
+                                    if fake_server
+                                        .try_receive_notification::<lsp::notification::Initialized>(
+                                        )
+                                        .await
+                                        .is_some()
+                                    {
+                                        tx.unbounded_send(fake_server.clone()).ok();
+                                    }
+                                })
+                                .detach();
+
+                            return Ok((server, options));
                         }
                     }
-
-                    cx.background_executor()
-                        .spawn(async move {
-                            if fake_server
-                                .try_receive_notification::<lsp::notification::Initialized>()
-                                .await
-                                .is_some()
-                            {
-                                if let Some(this) = this.upgrade() {
-                                    if let Some(txs) = this
-                                        .state
-                                        .write()
-                                        .fake_server_txs
-                                        .get_mut(&_language_name_for_tests)
-                                    {
-                                        for tx in txs {
-                                            tx.unbounded_send(fake_server.clone()).ok();
-                                        }
-                                    }
-                                }
-                            }
-                        })
-                        .detach();
-
-                    return Ok((server, options));
                 }
 
                 drop(this);

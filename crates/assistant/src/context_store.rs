@@ -2,7 +2,6 @@ use crate::{
     prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
     SavedContext, SavedContextMetadata,
 };
-use ::proto::AnyProtoClient;
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
@@ -16,6 +15,7 @@ use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
+use rpc::AnyProtoClient;
 use std::{
     cmp::Reverse,
     ffi::OsStr,

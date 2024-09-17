@@ -26,7 +26,7 @@ gpui.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 prost.workspace = true
-rpc.workspace = true
+rpc = { workspace = true, features = ["gpui"] }
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
