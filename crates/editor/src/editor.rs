@@ -3056,9 +3056,19 @@ impl Editor {
         if self.linked_edit_ranges.is_empty() {
             return None;
         }
-        let ((base_range, linked_ranges), buffer_snapshot, buffer) =
-            selection.end.buffer_id.and_then(|end_buffer_id| {
-                if selection.start.buffer_id != Some(end_buffer_id) {
+
+        let selection_start_buffer_id = match selection.start {
+            text::Anchor::Start | text::Anchor::End => None,
+            text::Anchor::Character { buffer_id, .. } => Some(buffer_id),
+        };
+        let selection_end_buffer_id = match selection.end {
+            text::Anchor::Start | text::Anchor::End => None,
+            text::Anchor::Character { buffer_id, .. } => Some(buffer_id),
+        };
+
+        let ((base_range, linked_ranges), buffer_snapshot, buffer) = selection_end_buffer_id
+            .and_then(|end_buffer_id| {
+                if selection_start_buffer_id != Some(end_buffer_id) {
                     return None;
                 }
                 let buffer = self.buffer.read(cx).buffer(end_buffer_id)?;
@@ -3085,8 +3095,8 @@ impl Editor {
                 continue;
             }
             if self.selections.disjoint_anchor_ranges().iter().any(|s| {
-                if s.start.buffer_id != selection.start.buffer_id
-                    || s.end.buffer_id != selection.end.buffer_id
+                if s.start.buffer_id != selection_start_buffer_id
+                    || s.end.buffer_id != selection_end_buffer_id
                 {
                     return false;
                 }
@@ -5546,7 +5556,15 @@ impl Editor {
                 for selection in selections.iter() {
                     let selection_start = snapshot.anchor_before(selection.start).text_anchor;
                     let selection_end = snapshot.anchor_after(selection.end).text_anchor;
-                    if selection_start.buffer_id != selection_end.buffer_id {
+                    let selection_start_buffer_id = match selection_start {
+                        text::Anchor::Start | text::Anchor::End => None,
+                        text::Anchor::Character { buffer_id, .. } => Some(buffer_id),
+                    };
+                    let selection_end_buffer_id = match selection_end {
+                        text::Anchor::Start | text::Anchor::End => None,
+                        text::Anchor::Character { buffer_id, .. } => Some(buffer_id),
+                    };
+                    if selection_start_buffer_id != selection_end_buffer_id {
                         continue;
                     }
                     if let Some(ranges) =
@@ -12503,7 +12521,7 @@ fn snippet_completions(
         return vec![];
     }
     let snapshot = buffer.read(cx).text_snapshot();
-    let chunks = snapshot.reversed_chunks_in_range(text::Anchor::MIN..buffer_position);
+    let chunks = snapshot.reversed_chunks_in_range(text::Anchor::Start..buffer_position);
 
     let mut lines = chunks.lines();
     let Some(line_at) = lines.next().filter(|line| !line.is_empty()) else {
