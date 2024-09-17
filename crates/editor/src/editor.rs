@@ -6736,22 +6736,22 @@ impl Editor {
 
             let mut line_prefix = indent_size.chars().collect::<String>();
 
-            if selection.is_empty() {
-                if let Some(comment_prefix) =
-                    buffer
-                        .language_scope_at(selection.head())
-                        .and_then(|language| {
-                            language
-                                .line_comment_prefixes()
-                                .iter()
-                                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                                .cloned()
-                        })
-                {
-                    line_prefix.push_str(&comment_prefix);
-                    should_rewrap = true;
-                }
+            if let Some(comment_prefix) =
+                buffer
+                    .language_scope_at(selection.head())
+                    .and_then(|language| {
+                        language
+                            .line_comment_prefixes()
+                            .iter()
+                            .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                            .cloned()
+                    })
+            {
+                line_prefix.push_str(&comment_prefix);
+                should_rewrap = true;
+            }
 
+            if selection.is_empty() {
                 'expand_upwards: while start_row > 0 {
                     let prev_row = start_row - 1;
                     if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
