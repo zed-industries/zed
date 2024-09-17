@@ -121,12 +121,12 @@ impl GitBlame {
         );
 
         let buffer_subscriptions = cx.subscribe(&buffer, |this, buffer, event, cx| match event {
-            language::Event::DirtyChanged => {
+            language::BufferEvent::DirtyChanged => {
                 if !buffer.read(cx).is_dirty() {
                     this.generate(cx);
                 }
             }
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 this.regenerate_on_edit(cx);
             }
             _ => {}

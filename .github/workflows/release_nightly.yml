@@ -1,9 +1,6 @@
 name: Release Nightly
 
 on:
-  schedule:
-    # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
-    - cron: "0 7 * * *"
   push:
     tags:
       - "nightly"
@@ -148,23 +145,8 @@ jobs:
         with:
           clean: false
 
-      - name: "Setup jq"
-        uses: dcarbone/install-jq-action@8867ddb4788346d7c22b72ea2e2ffe4d514c7bcb # v2
-
-      - name: Set up Clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
-          echo "/usr/lib/llvm-10/bin" >> $GITHUB_PATH
-
-      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
-        with:
-          mold-version: 2.32.0
-
-      - name: rustup
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100

@@ -293,6 +293,38 @@ List of `string` values
 
 `boolean` values
 
+## Cursor Shape
+
+- Description: Cursor shape for the default editor.
+- Setting: `cursor_shape`
+- Default: `bar`
+
+**Options**
+
+1. A vertical bar:
+
+```json
+"cursor_shape": "bar"
+```
+
+2. A block that surrounds the following character:
+
+```json
+"cursor_shape": "block"
+```
+
+3. An underline that runs along the following character:
+
+```json
+"cursor_shape": "underline"
+```
+
+4. An box drawn around the following character:
+
+```json
+"cursor_shape": "hollow"
+```
+
 ## Default Dock Anchor
 
 - Description: The default anchor for new docks.
@@ -1061,6 +1093,45 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+## Network Proxy
+
+- Description: Configure a network proxy for Zed.
+- Setting: `proxy`
+- Default: `null`
+
+**Options**
+
+The proxy setting must contain a URL to the proxy.
+
+The following URI schemes are supported:
+
+- `http`
+- `https`
+- `socks4`
+- `socks4a`
+- `socks5`
+- `socks5h`
+
+`http` will be used when no scheme is specified.
+
+By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
+
+For example, to set an `http` proxy, add the following to your settings:
+
+```json
+{
+  "proxy": "http://127.0.0.1:10809"
+}
+```
+
+Or to set a `socks5` proxy:
+
+```json
+{
+  "proxy": "socks5://localhost:10808"
+}
+```
+
 ## Preview tabs
 
 - Description:
@@ -1140,7 +1211,7 @@ These values take in the same options as the root-level settings with the same n
 - Setting: `search`
 - Default:
 
-```
+```json
 "search": {
   "whole_word": false,
   "case_sensitive": false,
@@ -1477,14 +1548,14 @@ The name of any font family installed on the user's system
 
 See Buffer Font Features
 
-```jsonc
+```json
 {
   "terminal": {
     "font_features": {
-      "calt": false,
+      "calt": false
       // See Buffer Font Features for more features
-    },
-  },
+    }
+  }
 }
 ```
 
@@ -1498,33 +1569,33 @@ See Buffer Font Features
 
 1. Use a line height that's `comfortable` for reading, 1.618. (default)
 
-```jsonc
+```json
 {
   "terminal": {
-    "line_height": "comfortable",
-  },
+    "line_height": "comfortable"
+  }
 }
 ```
 
 2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
 
-```jsonc
+```json
 {
   "terminal": {
-    "line_height": "standard",
-  },
+    "line_height": "standard"
+  }
 }
 ```
 
 3.  Use a custom line height.
 
-```jsonc
+```json
 {
   "terminal": {
     "line_height": {
-      "custom": 2,
-    },
-  },
+      "custom": 2
+    }
+  }
 }
 ```
 

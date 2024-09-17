@@ -79,7 +79,7 @@ fn test_select_language(cx: &mut AppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
@@ -90,7 +90,7 @@ fn test_select_language(cx: &mut AppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
 
     // matching file extension
@@ -275,7 +275,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
         |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
-                Event::Operation(op) => buffer1_ops.lock().push(op),
+                BufferEvent::Operation(op) => buffer1_ops.lock().push(op),
                 event => buffer_1_events.lock().push(event),
             })
             .detach();
@@ -313,15 +313,15 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            Event::Edited,
-            Event::DirtyChanged,
-            Event::Edited,
-            Event::Edited,
+            BufferEvent::Edited,
+            BufferEvent::DirtyChanged,
+            BufferEvent::Edited,
+            BufferEvent::Edited,
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
     );
 
     buffer1.update(cx, |buffer, cx| {
@@ -336,11 +336,11 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged,]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged,]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
     );
 }
 
@@ -1671,7 +1671,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
                     auto_indent_using_last_non_empty_line: false,
                     ..Default::default()
                 },
-                Some(tree_sitter_json::language()),
+                Some(tree_sitter_json::LANGUAGE.into()),
             )),
             cx,
         );
@@ -1999,7 +1999,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_typescript::language_tsx()),
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         )
         .with_override_query(
             r#"
@@ -2121,7 +2121,7 @@ fn test_language_scope_at_with_rust(cx: &mut AppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_override_query(
             r#"
@@ -2411,7 +2411,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                if let Event::Operation(op) = event {
+                if let BufferEvent::Operation(op) = event {
                     network
                         .lock()
                         .broadcast(buffer.replica_id(), vec![proto::serialize_operation(op)]);
@@ -2539,7 +2539,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
                     cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                        if let Event::Operation(op) = event {
+                        if let BufferEvent::Operation(op) = event {
                             network.lock().broadcast(
                                 buffer.replica_id(),
                                 vec![proto::serialize_operation(op)],
@@ -2731,7 +2731,7 @@ fn ruby_lang() -> Language {
             line_comments: vec!["# ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_ruby::language()),
+        Some(tree_sitter_ruby::LANGUAGE.into()),
     )
     .with_indents_query(
         r#"
@@ -2782,7 +2782,7 @@ fn erb_lang() -> Language {
             block_comment: Some(("<%#".into(), "%>".into())),
             ..Default::default()
         },
-        Some(tree_sitter_embedded_template::language()),
+        Some(tree_sitter_embedded_template::LANGUAGE.into()),
     )
     .with_injection_query(
         r#"
@@ -2812,7 +2812,7 @@ fn rust_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )
     .with_indents_query(
         r#"
@@ -2870,7 +2870,7 @@ fn json_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_json::language()),
+        Some(tree_sitter_json::LANGUAGE.into()),
     )
 }
 
@@ -2880,7 +2880,7 @@ fn javascript_lang() -> Language {
             name: "JavaScript".into(),
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     )
     .with_brackets_query(
         r#"
@@ -2907,7 +2907,7 @@ pub fn markdown_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_md::language()),
+        Some(tree_sitter_md::LANGUAGE.into()),
     )
     .with_injection_query(
         r#"
@@ -2930,7 +2930,7 @@ pub fn markdown_inline_lang() -> Language {
             hidden: true,
             ..LanguageConfig::default()
         },
-        Some(tree_sitter_md::inline_language()),
+        Some(tree_sitter_md::INLINE_LANGUAGE.into()),
     )
     .with_highlights_query("(emphasis) @emphasis")
     .unwrap()

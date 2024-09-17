@@ -48,12 +48,7 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
     ) -> Result<(), ClientError> {
         let ic_attributes = client
             .build_ic_attributes()
-            .push(
-                AttributeName::InputStyle,
-                InputStyle::PREEDIT_CALLBACKS
-                    | InputStyle::STATUS_NOTHING
-                    | InputStyle::PREEDIT_NONE,
-            )
+            .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
             .push(AttributeName::ClientWindow, self.window)
             .push(AttributeName::FocusWindow, self.window)
             .build();
@@ -108,15 +103,6 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
 
     fn handle_close(&mut self, client: &mut C, _input_method_id: u16) -> Result<(), ClientError> {
         client.disconnect()
-    }
-
-    fn handle_destroy_ic(
-        &mut self,
-        client: &mut C,
-        input_method_id: u16,
-        _input_context_id: u16,
-    ) -> Result<(), ClientError> {
-        client.close(input_method_id)
     }
 
     fn handle_preedit_draw(

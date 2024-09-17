@@ -2322,7 +2322,7 @@ async fn test_newline_above(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2370,7 +2370,7 @@ async fn test_newline_below(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2524,7 +2524,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut gpui::TestAp
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2585,7 +2585,7 @@ async fn test_tab_with_mixed_whitespace(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
         .unwrap(),
@@ -3980,6 +3980,245 @@ fn test_transpose(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rewrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that cursors that expand to the same region are collapsed.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
+            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇˇˇˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that non-contiguous selections are treated separately.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
+            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
+            //
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque.ˇˇ
+            //
+            // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
+            // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
+            // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
+            // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
+            // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that different comment prefixes are supported.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["# ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            # Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            # purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            # eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            # hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            # lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit
+            # amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet
+            # in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur
+            # adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis.
+            # Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id
+            # accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping is ignored outside of comments in most languages.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into(), "/// ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            /// Adds two numbers.
+            /// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
+            fn add(a: u32, b: u32) -> u32 {
+                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            /// Adds two numbers. Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+            /// Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
+            fn add(a: u32, b: u32) -> u32 {
+                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping works in Markdown and Plain Text languages.
+    {
+        let markdown_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+        let unwrapped_text = indoc! {"
+            # Hello
+
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
+        "};
+
+        let wrapped_text = indoc! {"
+            # Hello
+
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
+            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
+            Integer sit amet scelerisque nisi.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+
+        let plaintext_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Plain Text".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(plaintext_language), cx));
+
+        let unwrapped_text = indoc! {"
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
+        "};
+
+        let wrapped_text = indoc! {"
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
+            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
+            Integer sit amet scelerisque nisi.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -4072,7 +4311,7 @@ async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -4783,7 +5022,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -4992,7 +5231,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(
             r#"
@@ -5085,7 +5324,7 @@ async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5257,7 +5496,7 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5397,7 +5636,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -5572,7 +5811,7 @@ async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_override_query("(string_literal) @string")
         .unwrap(),
@@ -5677,7 +5916,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -5826,7 +6065,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
             autoclose_before: "}".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -5953,7 +6192,7 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -6023,7 +6262,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let buffer = cx.new_model(|cx| Buffer::local("", cx).with_language(language, cx));
@@ -6205,7 +6444,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6361,7 +6600,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6557,7 +6796,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6698,7 +6937,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             },
             ..LanguageConfig::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
@@ -6708,7 +6947,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             ..PrettierSettings::default()
         });
     });
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -7033,7 +7272,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -7175,7 +7414,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -7968,7 +8207,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -8089,7 +8328,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -8242,7 +8481,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -8650,7 +8889,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query("")
         .unwrap(),
@@ -9486,9 +9725,9 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -9599,9 +9838,9 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: language_server_name,
@@ -9832,7 +10071,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_typescript::language_tsx()),
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         )
         .with_override_query("(jsx_self_closing_element) @element")
         .unwrap(),
@@ -9935,7 +10174,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         settings.defaults.prettier = Some(PrettierSettings {
@@ -9945,7 +10184,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     });
 
     let test_plugin = "test_plugin";
-    let _ = language_registry.register_fake_lsp_adapter(
+    let _ = language_registry.register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
@@ -13652,7 +13891,7 @@ pub(crate) fn rust_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 

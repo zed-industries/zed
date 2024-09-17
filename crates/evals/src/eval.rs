@@ -4,14 +4,15 @@ use clap::Parser;
 use client::{Client, UserStore};
 use clock::RealSystemClock;
 use collections::BTreeMap;
+use feature_flags::FeatureFlagAppExt as _;
 use git::GitHostingProviderRegistry;
-use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model, Task};
+use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
-use semantic_index::{OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex, Status};
+use semantic_index::{OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status};
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smol::channel::bounded;
@@ -246,6 +247,7 @@ async fn run_evaluation(
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);
+        cx.update_flags(false, vec![]);
     })
     .unwrap();
 
@@ -286,7 +288,7 @@ async fn run_evaluation(
         api_key,
     ));
 
-    let language_registry = Arc::new(LanguageRegistry::new(Task::ready(()), executor.clone()));
+    let language_registry = Arc::new(LanguageRegistry::new(executor.clone()));
     cx.update(|cx| languages::init(language_registry.clone(), node_runtime.clone(), cx))
         .unwrap();
 
@@ -318,7 +320,7 @@ async fn run_evaluation(
 
         let repo_db_path =
             db_path.join(format!("{}.db", evaluation_project.repo.replace('/', "_")));
-        let mut semantic_index = SemanticIndex::new(repo_db_path, embedding_provider.clone(), cx)
+        let mut semantic_index = SemanticDb::new(repo_db_path, embedding_provider.clone(), cx)
             .await
             .unwrap();
 
@@ -356,7 +358,7 @@ async fn run_evaluation(
             .await;
 
         let project_index = cx
-            .update(|cx| semantic_index.project_index(project.clone(), cx))
+            .update(|cx| semantic_index.create_project_index(project.clone(), cx))
             .unwrap();
         wait_for_indexing_complete(&project_index, cx, Some(Duration::from_secs(120))).await;
 
@@ -370,7 +372,7 @@ async fn run_evaluation(
                 .await
                 .unwrap();
 
-            let results = SemanticIndex::load_results(results, &fs.clone(), &cx)
+            let results = SemanticDb::load_results(results, &fs.clone(), &cx)
                 .await
                 .unwrap();
 

@@ -1,6 +1,6 @@
 use crate::{
-    h_flex, rems_from_px, v_flex, Clickable, Color, Headline, HeadlineSize, IconButton,
-    IconButtonShape, IconName, Label, LabelCommon, LabelSize, Spacing,
+    h_flex, v_flex, Clickable, Color, Headline, HeadlineSize, IconButton, IconButtonShape,
+    IconName, Label, LabelCommon, LabelSize, Spacing,
 };
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -210,7 +210,7 @@ impl ParentElement for ModalRow {
 
 impl RenderOnce for ModalRow {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        h_flex().w_full().px_2().py_1().children(self.children)
+        h_flex().w_full().py_1().children(self.children)
     }
 }
 
@@ -326,7 +326,6 @@ impl RenderOnce for Section {
                     .border_color(cx.theme().colors().border)
                     .bg(section_bg)
                     .py(Spacing::Medium.rems(cx))
-                    .px(Spacing::Large.rems(cx) - rems_from_px(1.0))
                     .gap_y(Spacing::Small.rems(cx))
                     .child(div().flex().flex_1().size_full().children(self.children)),
             )
@@ -334,7 +333,7 @@ impl RenderOnce for Section {
             v_flex()
                 .w_full()
                 .gap_y(Spacing::Small.rems(cx))
-                .px(Spacing::Large.rems(cx) + Spacing::Large.rems(cx))
+                .px(Spacing::Medium.rems(cx) + Spacing::Medium.rems(cx))
                 .children(self.children)
         };
 

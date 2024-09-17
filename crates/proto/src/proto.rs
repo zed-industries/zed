@@ -2,11 +2,9 @@
 
 pub mod error;
 mod macros;
-mod proto_client;
 mod typed_envelope;
 
 pub use error::*;
-pub use proto_client::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;
@@ -367,7 +365,11 @@ messages!(
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
-    (CreateLanguageServer, Foreground)
+    (CreateLanguageServer, Foreground),
+    (WhichCommand, Foreground),
+    (WhichCommandResponse, Foreground),
+    (ShellEnv, Foreground),
+    (ShellEnvResponse, Foreground),
 );
 
 request_messages!(
@@ -491,7 +493,9 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CreateLanguageServer, Ack)
+    (CreateLanguageServer, Ack),
+    (WhichCommand, WhichCommandResponse),
+    (ShellEnv, ShellEnvResponse)
 );
 
 entity_messages!(
@@ -565,7 +569,9 @@ entity_messages!(
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
-    CreateLanguageServer
+    CreateLanguageServer,
+    WhichCommand,
+    ShellEnv
 );
 
 entity_messages!(

@@ -34,6 +34,7 @@ use editor::{
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
@@ -46,11 +47,11 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
-use language_model::LanguageModelToolUse;
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
 };
+use language_model::{LanguageModelImage, LanguageModelToolUse};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::ProjectLspAdapterDelegate;
@@ -1905,7 +1906,22 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
-            let output = command.run(arguments, workspace, self.lsp_adapter_delegate.clone(), cx);
+            let context = self.context.read(cx);
+            let sections = context
+                .slash_command_output_sections()
+                .into_iter()
+                .filter(|section| section.is_valid(context.buffer().read(cx)))
+                .cloned()
+                .collect::<Vec<_>>();
+            let snapshot = context.buffer().read(cx).snapshot();
+            let output = command.run(
+                arguments,
+                &sections,
+                snapshot,
+                workspace,
+                self.lsp_adapter_delegate.clone(),
+                cx,
+            );
             self.context.update(cx, |context, cx| {
                 context.insert_command_output(
                     command_range,
@@ -3551,10 +3567,22 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
+                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                        continue;
+                    };
                     let image_id = image.id();
-                    context.insert_image(image, cx);
+                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+
                     for image_position in image_positions.iter() {
-                        context.insert_image_content(image_id, image_position.text_anchor, cx);
+                        context.insert_content(
+                            Content::Image {
+                                anchor: image_position.text_anchor,
+                                image_id,
+                                image: image_task.clone(),
+                                render_image: render_image.clone(),
+                            },
+                            cx,
+                        );
                     }
                 }
             });
@@ -4097,16 +4125,18 @@ impl ContextEditor {
                         h_flex()
                             .gap_3()
                             .child(
-                                Icon::new(IconName::ExclamationTriangle)
+                                Icon::new(IconName::Warning)
                                     .size(IconSize::Small)
                                     .color(Color::Warning),
                             )
                             .child(Label::new(label)),
                     )
                     .child(
-                        Button::new("open-configuration", "Open configuration")
+                        Button::new("open-configuration", "Configure Providers")
                             .size(ButtonSize::Compact)
+                            .icon(Some(IconName::SlidersVertical))
                             .icon_size(IconSize::Small)
+                            .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
@@ -4710,6 +4740,20 @@ impl Render for ContextEditorToolbarItem {
         let weak_self = cx.view().downgrade();
         let right_side = h_flex()
             .gap_2()
+            // TODO display this in a nicer way, once we have a design for it.
+            // .children({
+            //     let project = self
+            //         .workspace
+            //         .upgrade()
+            //         .map(|workspace| workspace.read(cx).project().downgrade());
+            //
+            //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
+            //         project.and_then(|project| db.remaining_summaries(&project, cx))
+            //     });
+
+            //     scan_items_remaining
+            //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
+            // })
             .child(
                 ModelSelector::new(
                     self.fs.clone(),
@@ -5208,7 +5252,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
                     .layer(ElevationIndex::ElevatedSurface)
-                    .child(Icon::new(IconName::TextSelect))
+                    .child(Icon::new(IconName::TextSnippet))
                     .child(Label::new(title.clone()).single_line())
                     .on_click(move |_, cx| {
                         editor
@@ -5312,7 +5356,7 @@ fn render_docs_slash_command_trailer(
             div()
                 .id(("latest-error", row.0))
                 .child(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
@@ -5349,7 +5393,7 @@ fn make_lsp_adapter_delegate(
         let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
             Ok(
-                ProjectLspAdapterDelegate::new(lsp_store, &worktree, http_client, fs, cx)
+                ProjectLspAdapterDelegate::new(lsp_store, &worktree, http_client, fs, None, cx)
                     as Arc<dyn LspAdapterDelegate>,
             )
         })

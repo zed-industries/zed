@@ -6,8 +6,9 @@ use gpui::{Context, Model, TestAppContext};
 use http_client::FakeHttpClient;
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
 };
+use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
 use node_runtime::FakeNodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},
@@ -317,6 +318,15 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             },
         )
     });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_language_server(
+            LanguageServerName("rust-analyzer".into()),
+            Default::default(),
+            None,
+        )
+    });
+
     cx.run_until_parked();
 
     let worktree_id = project
@@ -338,6 +348,8 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         .await
         .unwrap();
     cx.run_until_parked();
+
+    let fake_lsp = fake_lsp.next().await.unwrap();
 
     cx.read(|cx| {
         let file = buffer.read(cx).file();
@@ -370,6 +382,62 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         let lsp_store = headless.read(cx).lsp_store.read(cx);
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     });
+
+    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
+            label: "boop".to_string(),
+            ..Default::default()
+        }])))
+    });
+
+    let result = project
+        .update(cx, |project, cx| {
+            project.completions(
+                &buffer,
+                0,
+                CompletionContext {
+                    trigger_kind: CompletionTriggerKind::INVOKED,
+                    trigger_character: None,
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.into_iter().map(|c| c.label.text).collect::<Vec<_>>(),
+        vec!["boop".to_string()]
+    );
+
+    fake_lsp.handle_request::<lsp::request::Rename, _, _>(|_, _| async move {
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: Some(
+                [(
+                    lsp::Url::from_file_path("/code/project1/src/lib.rs").unwrap(),
+                    vec![lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
+                        "two".to_string(),
+                    )],
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..Default::default()
+        }))
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 3, "two".to_string(), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
+    })
 }
 
 fn init_logger() {
