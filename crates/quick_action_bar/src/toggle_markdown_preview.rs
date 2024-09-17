@@ -31,7 +31,7 @@ impl QuickActionBar {
             // TODO:
             // What's this?
             // key: "click".into(),
-            key: gpui::VirtualKeyCode::Unknown,
+            key: gpui::Keys::Unknown,
             modifiers: Modifiers::alt(),
             ..Default::default()
         };

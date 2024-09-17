@@ -1,5 +1,5 @@
 use crate::{
-    keycodes::VirtualKeyCode, point, prelude::*, px, size, transparent_black, Action, AnyDrag,
+    keycodes::Keys, point, prelude::*, px, size, transparent_black, Action, AnyDrag,
     AnyElement, AnyTooltip, AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace,
     Bounds, BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
@@ -3245,11 +3245,11 @@ impl<'a> WindowContext<'a> {
                 && !self.window.pending_modifier.saw_keystroke
             {
                 let key = match self.window.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some(VirtualKeyCode::Shift),
-                    modifiers if modifiers.control => Some(VirtualKeyCode::Control),
-                    modifiers if modifiers.alt => Some(VirtualKeyCode::Alt),
-                    modifiers if modifiers.platform => Some(VirtualKeyCode::LeftPlatform),
-                    modifiers if modifiers.function => Some(VirtualKeyCode::Function),
+                    modifiers if modifiers.shift => Some(Keys::Shift),
+                    modifiers if modifiers.control => Some(Keys::Control),
+                    modifiers if modifiers.alt => Some(Keys::Alt),
+                    modifiers if modifiers.platform => Some(Keys::LeftPlatform),
+                    modifiers if modifiers.function => Some(Keys::Function),
                     _ => None,
                 };
                 if let Some(key) = key {

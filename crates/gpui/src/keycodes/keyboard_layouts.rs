@@ -12,9 +12,9 @@ pub(crate) use czech::*;
 pub(crate) use german::*;
 pub(crate) use russian::*;
 
-use super::VirtualKeyCode;
+use super::Keys;
 
-pub(crate) type KeyboardLayoutMapping = &'static LazyLock<FxHashMap<u16, VirtualKeyCode>>;
+pub(crate) type KeyboardLayoutMapping = &'static LazyLock<FxHashMap<u16, Keys>>;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) enum KeyboardLayout {

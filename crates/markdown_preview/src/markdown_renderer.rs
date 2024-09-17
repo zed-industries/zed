@@ -203,7 +203,7 @@ fn render_markdown_list_item(
             .hover(|s| s.cursor_pointer())
             .tooltip(|cx| {
                 let secondary_modifier = Keystroke {
-                    key: gpui::VirtualKeyCode::Unknown,
+                    key: gpui::Keys::Unknown,
                     modifiers: Modifiers::secondary_key(),
                     ime_key: None,
                 };
