@@ -15,12 +15,9 @@ use gpui::{
 use http_client::Url;
 use language::{
     proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
-    Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
+    Buffer, BufferEvent, Capability, File as _, Language, Operation,
 };
-use rpc::{
-    proto::{self, AnyProtoClient},
-    ErrorExt as _, TypedEnvelope,
-};
+use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use smol::channel::Receiver;
 use std::{io, path::Path, str::FromStr as _, sync::Arc, time::Instant};
 use text::BufferId;
@@ -65,7 +62,7 @@ pub enum BufferStoreEvent {
     },
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>);
 
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
@@ -1057,7 +1054,11 @@ impl BufferStore {
                         buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
                     }
                     OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
-                    OpenBuffer::Weak(_) => {}
+                    OpenBuffer::Weak(buffer) => {
+                        if let Some(buffer) = buffer.upgrade() {
+                            buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        }
+                    }
                 },
                 hash_map::Entry::Vacant(e) => {
                     e.insert(OpenBuffer::Operations(ops));

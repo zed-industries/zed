@@ -1,22 +1,25 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
-use language::LanguageRegistry;
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use project::{
-    buffer_store::BufferStore, project_settings::SettingsObserver, search::SearchQuery,
-    worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId, WorktreeSettings,
+    buffer_store::{BufferStore, BufferStoreEvent},
+    project_settings::SettingsObserver,
+    search::SearchQuery,
+    worktree_store::WorktreeStore,
+    LspStore, LspStoreEvent, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
-    proto::{self, AnyProtoClient, SSH_PEER_ID, SSH_PROJECT_ID},
-    TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
+    AnyProtoClient, TypedEnvelope,
 };
-use settings::Settings as _;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt;
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -27,21 +30,22 @@ pub struct HeadlessProject {
     pub lsp_store: Model<LspStore>,
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
+    pub languages: Arc<LanguageRegistry>,
 }
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
         settings::init(cx);
         language::init(cx);
-        WorktreeSettings::register(cx);
+        project::Project::init_settings(cx);
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        // TODO: we should load the env correctly (as we do in login_shell_env_loaded when stdout is not a pty). Can we re-use the ProjectEnvironment for that?
-        let languages = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
+        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
+        languages
+            .set_language_server_download_dir(PathBuf::from("/Users/conrad/what-could-go-wrong"));
+
+        let languages = Arc::new(languages);
 
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
@@ -57,19 +61,31 @@ impl HeadlessProject {
         });
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
-            LspStore::new(
+            let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                Some(environment),
-                languages,
+                environment,
+                languages.clone(),
                 None,
                 fs.clone(),
-                Some(session.clone().into()),
-                None,
-                Some(0),
                 cx,
-            )
+            );
+            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            lsp_store
         });
+
+        cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+        cx.subscribe(
+            &buffer_store,
+            |_this, _buffer_store, event, cx| match event {
+                BufferStoreEvent::BufferAdded(buffer) => {
+                    cx.subscribe(buffer, Self::on_buffer_event).detach();
+                }
+                _ => {}
+            },
+        )
+        .detach();
 
         let client: AnyProtoClient = session.clone().into();
 
@@ -88,9 +104,14 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
+        client.add_model_request_handler(LspStore::handle_create_language_server);
+        client.add_model_request_handler(LspStore::handle_which_command);
+        client.add_model_request_handler(LspStore::handle_shell_env);
+
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
+        LspStore::init(&client);
 
         HeadlessProject {
             session: client,
@@ -100,6 +121,49 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             next_entry_id: Default::default(),
+            languages,
+        }
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferEvent::Operation(op) => cx
+                .background_executor()
+                .spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: SSH_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(op)],
+                }))
+                .detach(),
+            _ => {}
+        }
+    }
+
+    fn on_lsp_store_event(
+        &mut self,
+        _lsp_store: Model<LspStore>,
+        event: &LspStoreEvent,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            LspStoreEvent::LanguageServerUpdate {
+                language_server_id,
+                message,
+            } => {
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: SSH_PROJECT_ID,
+                        language_server_id: language_server_id.to_proto(),
+                        variant: Some(message.clone()),
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 

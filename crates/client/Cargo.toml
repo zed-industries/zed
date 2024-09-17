@@ -34,7 +34,7 @@ parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
 release_channel.workspace = true
-rpc.workspace = true
+rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

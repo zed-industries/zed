@@ -5,9 +5,9 @@ use gpui::AsyncAppContext;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use serde_json::Value;
-use settings::Settings;
+
 use std::{
     any::Any,
     borrow::Cow,
@@ -177,13 +177,11 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
+            language_server_settings(adapter.as_ref(), Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })
@@ -309,7 +307,7 @@ mod tests {
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let language = crate::language("python", tree_sitter_python::language());
+        let language = crate::language("python", tree_sitter_python::LANGUAGE.into());
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);

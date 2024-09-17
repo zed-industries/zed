@@ -182,6 +182,12 @@ impl Render for TitleBar {
                             .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
                                 this.should_move = false;
                             }))
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _ev, _cx| {
+                                    this.should_move = false;
+                                }),
+                            )
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(move |this, _ev, _cx| {

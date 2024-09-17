@@ -22,6 +22,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional component `MSVC v*** - VS YYYY C++ x64/x86 build tools` (`v***` is your VS version and `YYYY` is year when your VS was released)
 - Install Windows 11 or 10 SDK depending on your system, but ensure that at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed on your machine. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/)
+- Install [CMake](https://cmake.org/download)
 
 ## Backend dependencies
 

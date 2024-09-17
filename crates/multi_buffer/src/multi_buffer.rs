@@ -1673,31 +1673,33 @@ impl MultiBuffer {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(match event {
-            language::Event::Edited => Event::Edited {
+            language::BufferEvent::Edited => Event::Edited {
                 singleton_buffer_edited: true,
             },
-            language::Event::DirtyChanged => Event::DirtyChanged,
-            language::Event::Saved => Event::Saved,
-            language::Event::FileHandleChanged => Event::FileHandleChanged,
-            language::Event::Reloaded => Event::Reloaded,
-            language::Event::DiffBaseChanged => Event::DiffBaseChanged,
-            language::Event::DiffUpdated => Event::DiffUpdated { buffer },
-            language::Event::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
-            language::Event::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
-            language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
-            language::Event::Closed => Event::Closed,
-            language::Event::Discarded => Event::Discarded,
-            language::Event::CapabilityChanged => {
+            language::BufferEvent::DirtyChanged => Event::DirtyChanged,
+            language::BufferEvent::Saved => Event::Saved,
+            language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
+            language::BufferEvent::Reloaded => Event::Reloaded,
+            language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
+            language::BufferEvent::DiffUpdated => Event::DiffUpdated { buffer },
+            language::BufferEvent::LanguageChanged => {
+                Event::LanguageChanged(buffer.read(cx).remote_id())
+            }
+            language::BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
+            language::BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
+            language::BufferEvent::Closed => Event::Closed,
+            language::BufferEvent::Discarded => Event::Discarded,
+            language::BufferEvent::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
                 Event::CapabilityChanged
             }
 
             //
-            language::Event::Operation(_) => return,
+            language::BufferEvent::Operation(_) => return,
         });
     }
 
@@ -3788,7 +3790,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    // Returns the locators referenced by the given excerpt ids, sorted by locator.
+    /// Returns the locators referenced by the given excerpt IDs, sorted by locator.
     fn excerpt_locators_for_ids(
         &self,
         ids: impl IntoIterator<Item = ExcerptId>,
@@ -3799,13 +3801,17 @@ impl MultiBufferSnapshot {
 
         while sorted_ids.last() == Some(&ExcerptId::max()) {
             sorted_ids.pop();
-            locators.push(Locator::max());
+            if let Some(mapping) = self.excerpt_ids.last() {
+                locators.push(mapping.locator.clone());
+            }
         }
 
         let mut sorted_ids = sorted_ids.into_iter().dedup().peekable();
         if sorted_ids.peek() == Some(&ExcerptId::min()) {
             sorted_ids.next();
-            locators.push(Locator::min());
+            if let Some(mapping) = self.excerpt_ids.first() {
+                locators.push(mapping.locator.clone());
+            }
         }
 
         let mut cursor = self.excerpt_ids.cursor::<ExcerptId>();

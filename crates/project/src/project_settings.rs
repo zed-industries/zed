@@ -2,10 +2,7 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Model, ModelContext};
 use paths::local_settings_file_relative_path;
-use rpc::{
-    proto::{self, AnyProtoClient},
-    TypedEnvelope,
-};
+use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
@@ -19,7 +16,7 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///

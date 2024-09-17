@@ -337,7 +337,7 @@ impl InlayHintCache {
     /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
     /// To reduce inlay hint jumping, attempts to query a visible range of the editor(s) first,
     /// followed by the delayed queries of the same range above and below the visible one.
-    /// This way, concequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
+    /// This way, subsequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
     pub(super) fn spawn_hint_refresh(
         &mut self,
         reason_description: &'static str,
@@ -1575,9 +1575,9 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )));
-            let fake_servers = language_registry.register_fake_lsp_adapter(
+            let fake_servers = language_registry.register_fake_lsp(
                 name,
                 FakeLspAdapter {
                     name,
@@ -2273,7 +2273,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -2569,7 +2569,7 @@ pub mod tests {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let language = crate::editor_tests::rust_lang();
         language_registry.add(language);
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -2919,7 +2919,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -3148,7 +3148,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -3389,7 +3389,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {

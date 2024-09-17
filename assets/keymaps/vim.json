@@ -124,6 +124,7 @@
       "g i": "vim::InsertAtPrevious",
       "g ,": "vim::ChangeListNewer",
       "g ;": "vim::ChangeListOlder",
+      "g q": "editor::Rewrap",
       "shift-h": "vim::WindowTop",
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",

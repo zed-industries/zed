@@ -408,8 +408,13 @@ impl Asset for ImageAsset {
                     // TODO: Can we make svgs always rescale?
                     svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(1.0))?;
 
-                let buffer =
+                let mut buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
+
+                // Convert from RGBA to BGRA.
+                for pixel in buffer.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
 
                 RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
             };

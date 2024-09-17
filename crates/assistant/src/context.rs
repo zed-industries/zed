@@ -20,8 +20,8 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, AsyncAppContext, Context as _, EventEmitter, Image, Model, ModelContext,
-    RenderImage, SharedString, Subscription, Task,
+    AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage,
+    SharedString, Subscription, Task,
 };
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -38,7 +38,6 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, max, Ordering},
-    collections::hash_map,
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -163,6 +162,9 @@ impl ContextOperation {
                                 )?,
                                 icon: section.icon_name.parse()?,
                                 label: section.label.into(),
+                                metadata: section
+                                    .metadata
+                                    .and_then(|metadata| serde_json::from_str(&metadata).log_err()),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?,
@@ -243,6 +245,9 @@ impl ContextOperation {
                                     )),
                                     icon_name: icon_name.to_string(),
                                     label: section.label.to_string(),
+                                    metadata: section.metadata.as_ref().and_then(|metadata| {
+                                        serde_json::to_string(metadata).log_err()
+                                    }),
                                 }
                             })
                             .collect(),
@@ -468,7 +473,6 @@ pub struct Context {
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
-    images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
@@ -564,7 +568,6 @@ impl Context {
             operations: Vec::new(),
             message_anchors: Default::default(),
             contents: Default::default(),
-            images: Default::default(),
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
@@ -638,12 +641,13 @@ impl Context {
                 .slash_command_output_sections
                 .iter()
                 .filter_map(|section| {
-                    let range = section.range.to_offset(buffer);
-                    if section.range.start.is_valid(buffer) && !range.is_empty() {
+                    if section.is_valid(buffer) {
+                        let range = section.range.to_offset(buffer);
                         Some(assistant_slash_command::SlashCommandOutputSection {
                             range,
                             icon: section.icon,
                             label: section.label.clone(),
+                            metadata: section.metadata.clone(),
                         })
                     } else {
                         None
@@ -1000,14 +1004,14 @@ impl Context {
     fn handle_buffer_event(
         &mut self,
         _: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::Event::Operation(operation) => cx.emit(ContextEvent::Operation(
+            language::BufferEvent::Operation(operation) => cx.emit(ContextEvent::Operation(
                 ContextOperation::BufferOperation(operation.clone()),
             )),
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
                 cx.emit(ContextEvent::MessagesEdited);
@@ -1839,6 +1843,7 @@ impl Context {
                                         ..buffer.anchor_before(start + section.range.end),
                                     icon: section.icon,
                                     label: section.label,
+                                    metadata: section.metadata,
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
@@ -2382,36 +2387,6 @@ impl Context {
             Some(anchor)
         } else {
             None
-        }
-    }
-
-    pub fn insert_image(&mut self, image: Image, cx: &mut ModelContext<Self>) -> Option<()> {
-        if let hash_map::Entry::Vacant(entry) = self.images.entry(image.id()) {
-            entry.insert((
-                image.to_image_data(cx).log_err()?,
-                LanguageModelImage::from_image(image, cx).shared(),
-            ));
-        }
-
-        Some(())
-    }
-
-    pub fn insert_image_content(
-        &mut self,
-        image_id: u64,
-        anchor: language::Anchor,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some((render_image, image)) = self.images.get(&image_id) {
-            self.insert_content(
-                Content::Image {
-                    anchor,
-                    image_id,
-                    image: image.clone(),
-                    render_image: render_image.clone(),
-                },
-                cx,
-            );
         }
     }
 
@@ -3021,6 +2996,7 @@ impl SavedContext {
                             ..buffer.anchor_before(section.range.end),
                         icon: section.icon,
                         label: section.label,
+                        metadata: section.metadata,
                     }
                 })
                 .collect(),

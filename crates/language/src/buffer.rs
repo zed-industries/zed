@@ -26,6 +26,8 @@ use gpui::{
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
 use similar::{ChangeTag, TextDiff};
@@ -161,7 +163,8 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
     #[default]
@@ -302,7 +305,7 @@ pub enum Operation {
 
 /// An event that occurs in a buffer.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Event {
+pub enum BufferEvent {
     /// The buffer was changed in a way that must be
     /// propagated to its other replicas.
     Operation(Operation),
@@ -809,7 +812,7 @@ impl Buffer {
         self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
-        cx.emit(Event::LanguageChanged);
+        cx.emit(BufferEvent::LanguageChanged);
     }
 
     /// Assign a language registry to the buffer. This allows the buffer to retrieve
@@ -827,7 +830,7 @@ impl Buffer {
     /// Assign the buffer a new [Capability].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
-        cx.emit(Event::CapabilityChanged)
+        cx.emit(BufferEvent::CapabilityChanged)
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -842,13 +845,13 @@ impl Buffer {
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
-        cx.emit(Event::Saved);
+        cx.emit(BufferEvent::Saved);
         cx.notify();
     }
 
     /// This method is called to signal that the buffer has been discarded.
     pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::Discarded);
+        cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
@@ -911,7 +914,7 @@ impl Buffer {
             .set((self.saved_version.clone(), false));
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
-        cx.emit(Event::Reloaded);
+        cx.emit(BufferEvent::Reloaded);
         cx.notify();
     }
 
@@ -929,7 +932,7 @@ impl Buffer {
                 if !old_file.is_deleted() {
                     file_changed = true;
                     if !self.is_dirty() {
-                        cx.emit(Event::DirtyChanged);
+                        cx.emit(BufferEvent::DirtyChanged);
                     }
                 }
             } else {
@@ -949,7 +952,7 @@ impl Buffer {
         self.file = Some(new_file);
         if file_changed {
             self.non_text_state_update_count += 1;
-            cx.emit(Event::FileHandleChanged);
+            cx.emit(BufferEvent::FileHandleChanged);
             cx.notify();
         }
     }
@@ -974,7 +977,7 @@ impl Buffer {
                 recalc_task.await;
                 buffer
                     .update(&mut cx, |_, cx| {
-                        cx.emit(Event::DiffBaseChanged);
+                        cx.emit(BufferEvent::DiffBaseChanged);
                     })
                     .ok();
             })
@@ -1003,7 +1006,7 @@ impl Buffer {
             this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
                 this.non_text_state_update_count += 1;
-                cx.emit(Event::DiffUpdated);
+                cx.emit(BufferEvent::DiffUpdated);
             })
             .ok();
         }))
@@ -1142,7 +1145,7 @@ impl Buffer {
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
-        cx.emit(Event::Reparsed);
+        cx.emit(BufferEvent::Reparsed);
         cx.notify();
     }
 
@@ -1900,9 +1903,9 @@ impl Buffer {
 
         self.reparse(cx);
 
-        cx.emit(Event::Edited);
+        cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
-            cx.emit(Event::DirtyChanged);
+            cx.emit(BufferEvent::DirtyChanged);
         }
         cx.notify();
     }
@@ -2106,12 +2109,12 @@ impl Buffer {
             self.non_text_state_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
             cx.notify();
-            cx.emit(Event::DiagnosticsUpdated);
+            cx.emit(BufferEvent::DiagnosticsUpdated);
         }
     }
 
     fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::Operation(operation));
+        cx.emit(BufferEvent::Operation(operation));
     }
 
     /// Removes the selections for a given peer.
@@ -2300,7 +2303,7 @@ impl Buffer {
     }
 }
 
-impl EventEmitter<Event> for Buffer {}
+impl EventEmitter<BufferEvent> for Buffer {}
 
 impl Deref for Buffer {
     type Target = TextBuffer;
@@ -3022,7 +3025,7 @@ impl BufferSnapshot {
                 let mut start = text.len();
                 let end = start + buffer_range.len();
 
-                // When multiple names are captured, then the matcheable text
+                // When multiple names are captured, then the matchable text
                 // includes the whitespace in between the names.
                 if !name_ranges.is_empty() {
                     start -= 1;

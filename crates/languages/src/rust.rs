@@ -7,9 +7,8 @@ use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use language_settings::all_language_settings;
 use lsp::LanguageServerBinary;
-use project::project_settings::{BinarySettings, ProjectSettings};
+use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use regex::Regex;
-use settings::Settings;
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -39,47 +38,76 @@ impl LspAdapter for RustLspAdapter {
         delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.binary.clone())
-        });
+        let configured_binary = cx
+            .update(|cx| {
+                language_server_settings(delegate, Self::SERVER_NAME, cx)
+                    .and_then(|s| s.binary.clone())
+            })
+            .ok()?;
 
-        match configured_binary {
-            Ok(Some(BinarySettings {
-                path,
+        let (path, env, arguments) = match configured_binary {
+            // If nothing is configured, or path_lookup explicitly enabled,
+            // we lookup the binary in the path.
+            None
+            | Some(BinarySettings {
+                path: None,
+                path_lookup: Some(true),
+                ..
+            })
+            | Some(BinarySettings {
+                path: None,
+                path_lookup: None,
+                ..
+            }) => {
+                let path = delegate.which(Self::SERVER_NAME.as_ref()).await;
+                let env = delegate.shell_env().await;
+
+                if let Some(path) = path {
+                    // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+                    // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+                    log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+                    match delegate
+                        .try_exec(LanguageServerBinary {
+                            path: path.clone(),
+                            arguments: vec!["--help".into()],
+                            env: Some(env.clone()),
+                        })
+                        .await
+                    {
+                        Ok(()) => (Some(path), Some(env), None),
+                        Err(err) => {
+                            log::error!("failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {:?}", path, err);
+                            (None, None, None)
+                        }
+                    }
+                } else {
+                    (None, None, None)
+                }
+            }
+            // Otherwise, we use the configured binary.
+            Some(BinarySettings {
+                path: Some(path),
                 arguments,
                 path_lookup,
-            })) => {
-                let (path, env) = match (path, path_lookup) {
-                    (Some(path), lookup) => {
-                        if lookup.is_some() {
-                            log::warn!(
-                                "Both `path` and `path_lookup` are set, ignoring `path_lookup`"
-                            );
-                        }
-                        (Some(path.into()), None)
-                    }
-                    (None, Some(true)) => {
-                        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-                        let env = delegate.shell_env().await;
-                        (Some(path), Some(env))
-                    }
-                    (None, Some(false)) | (None, None) => (None, None),
-                };
-                path.map(|path| LanguageServerBinary {
-                    path,
-                    arguments: arguments
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|arg| arg.into())
-                        .collect(),
-                    env,
-                })
+            }) => {
+                if path_lookup.is_some() {
+                    log::warn!("Both `path` and `path_lookup` are set, ignoring `path_lookup`");
+                }
+                (Some(path.into()), None, arguments)
             }
-            _ => None,
-        }
+
+            _ => (None, None, None),
+        };
+
+        path.map(|path| LanguageServerBinary {
+            path,
+            env,
+            arguments: arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -451,7 +479,7 @@ impl ContextProvider for RustContextProvider {
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         let package_to_run = all_language_settings(file.as_ref(), cx)
-            .language(Some("Rust"))
+            .language(Some(&"Rust".into()))
             .tasks
             .variables
             .get(DEFAULT_RUN_NAME_STR);
@@ -746,7 +774,7 @@ mod tests {
     #[gpui::test]
     async fn test_rust_label_for_completion() {
         let adapter = Arc::new(RustLspAdapter);
-        let language = language("rust", tree_sitter_rust::language());
+        let language = language("rust", tree_sitter_rust::LANGUAGE.into());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -871,7 +899,7 @@ mod tests {
     #[gpui::test]
     async fn test_rust_label_for_symbol() {
         let adapter = Arc::new(RustLspAdapter);
-        let language = language("rust", tree_sitter_rust::language());
+        let language = language("rust", tree_sitter_rust::LANGUAGE.into());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -923,7 +951,7 @@ mod tests {
             });
         });
 
-        let language = crate::language("rust", tree_sitter_rust::language());
+        let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);

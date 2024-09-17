@@ -421,6 +421,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "terminal.foreground")]
     pub terminal_foreground: Option<String>,
 
+    /// Terminal ANSI background color.
+    #[serde(rename = "terminal.ansi.background")]
+    pub terminal_ansi_background: Option<String>,
+
     /// Bright terminal foreground color.
     #[serde(rename = "terminal.bright_foreground")]
     pub terminal_bright_foreground: Option<String>,
@@ -790,6 +794,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             terminal_background: self
                 .terminal_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            terminal_ansi_background: self
+                .terminal_ansi_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             terminal_foreground: self

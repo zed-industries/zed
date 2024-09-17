@@ -127,7 +127,7 @@ impl WasmHost {
                 },
             );
 
-            let (mut extension, instance) = Extension::instantiate_async(
+            let mut extension = Extension::instantiate_async(
                 &mut store,
                 this.release_channel,
                 zed_api_version,
@@ -143,7 +143,6 @@ impl WasmHost {
             let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
             executor
                 .spawn(async move {
-                    let _instance = instance;
                     while let Some(call) = rx.next().await {
                         (call)(&mut extension, &mut store).await;
                     }
