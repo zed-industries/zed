@@ -63,30 +63,20 @@ impl LspAdapter for RustLspAdapter {
                 let env = delegate.shell_env().await;
 
                 if let Some(path) = path {
+                    // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+                    // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
                     log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
-
-                    let working_dir = delegate.worktree_root_path();
-                    let output = smol::process::Command::new(&path)
-                        .arg("--help")
-                        .envs(env.clone())
-                        .current_dir(working_dir)
-                        .output()
-                        .await;
-
-                    match output {
-                        Ok(output) => {
-                            let succeeded = output.status.success();
-                            if succeeded {
-                                (Some(path), Some(env), None)
-                            } else {
-                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                let stderr = String::from_utf8_lossy(&output.stderr);
-                                log::error!("failed to run `rust-analyzer --help` after detecting it in PATH. binary: {:?}, stdout: {:?}, stderr: {:?}", path, stdout, stderr);
-                                (None, None, None)
-                            }
-                        }
+                    match delegate
+                        .try_exec(LanguageServerBinary {
+                            path: path.clone(),
+                            arguments: vec!["--help".into()],
+                            env: Some(env.clone()),
+                        })
+                        .await
+                    {
+                        Ok(()) => (Some(path), Some(env), None),
                         Err(err) => {
-                            log::error!("failed to run rust-analyzer after detecting it in PATH: {:?}: {:?}", path, err);
+                            log::error!("failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {:?}", path, err);
                             (None, None, None)
                         }
                     }
