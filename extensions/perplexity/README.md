@@ -28,9 +28,9 @@ Open the AI Assistant panel (`cmd-r` or `ctrl-r`) and enter:
 1. Navigate to the "extensions/perplexity" folder inside the zed git repo.
 1. Ensure your `PERPLEXITY_API_KEY` environment variable is set (instructions below)
 
-```sh
-env | grep PERPLEXITY_API_KEY
-```
+   ```sh
+   env | grep PERPLEXITY_API_KEY
+   ```
 
 1. Quit and relaunch Zed
 
