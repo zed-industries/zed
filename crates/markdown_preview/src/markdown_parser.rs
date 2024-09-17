@@ -1277,7 +1277,7 @@ fn main() {
                 collapsed_placeholder: " /* ... */ ".to_string(),
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 

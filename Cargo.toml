@@ -430,43 +430,43 @@ tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.22", features = ["wasm"] }
-tree-sitter-bash = "0.21"
-tree-sitter-c = "0.21"
-tree-sitter-cpp = "0.22"
-tree-sitter-css = "0.21"
-tree-sitter-elixir = "0.2"
-tree-sitter-embedded-template = "0.20.0"
-tree-sitter-go = "0.21"
-tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "1f55029bacd0a6a11f6eb894c4312d429dcf735c", package = "tree-sitter-gomod" }
-tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work", rev = "dcbabff454703c3a4bc98a23cf8778d4be46fd22" }
-tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "6dd0303acf7138dd2b9b432a229e16539581c701" }
+tree-sitter = { version = "0.23", features = ["wasm"] }
+tree-sitter-bash = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-elixir = "0.3"
+tree-sitter-embedded-template = "0.23.0"
+tree-sitter-go = "0.23"
+tree-sitter-go-mod = { git = "https://github.com/zed-industries/tree-sitter-go-mod", rev = "a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca", package = "tree-sitter-gomod" }
+tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
+tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
 tree-sitter-html = "0.20"
-tree-sitter-jsdoc = "0.21"
-tree-sitter-json = "0.21"
-tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "e3855e37f8f2c71aa7513c18a9c95fb7461b1b10" }
-protols-tree-sitter-proto = "0.2"
-tree-sitter-python = "0.21"
-tree-sitter-regex = "0.21"
-tree-sitter-ruby = "0.21"
-tree-sitter-rust = "0.21"
-tree-sitter-typescript = "0.21"
-tree-sitter-yaml = "0.6"
+tree-sitter-jsdoc = "0.23"
+tree-sitter-json = "0.23"
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "4cfa6aad6b75052a5077c80fd934757d9267d81b" }
+protols-tree-sitter-proto = { git = "https://github.com/zed-industries/tree-sitter-proto", rev = "0848bd30a64be48772e15fbb9d5ba8c0cc5772ad" }
+tree-sitter-python = "0.23"
+tree-sitter-regex = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml =  { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unindent = "0.1.7"
 unicase = "2.6"
 unicode-segmentation = "1.10"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
-wasmparser = "0.201"
-wasm-encoder = "0.201"
-wasmtime = { version = "21.0.1", default-features = false, features = [
+wasmparser = "0.215"
+wasm-encoder = "0.215"
+wasmtime = { version = "24", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
     "cranelift",
     "component-model",
 ] }
-wasmtime-wasi = "21.0.1"
+wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
 
@@ -522,10 +522,6 @@ features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ]
-
-[patch.crates-io]
-# Patch Tree-sitter for updated wasmtime.
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7f4a57817d58a2f134fe863674acad6bbf007228" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

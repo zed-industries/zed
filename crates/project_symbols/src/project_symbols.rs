@@ -288,7 +288,7 @@ mod tests {
             None,
         )));
         let mut fake_servers =
-            language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+            language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
         let _buffer = project
             .update(cx, |project, cx| {

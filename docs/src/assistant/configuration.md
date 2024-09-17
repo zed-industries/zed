@@ -152,6 +152,8 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 
 If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
+You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc., For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120seconds.
+
 ### OpenAI {#openai}
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)

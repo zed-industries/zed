@@ -143,7 +143,7 @@ xkbcommon = { git = "https://github.com/ConradIrwin/xkbcommon-rs", rev = "fcbb46
     "wayland",
     "x11",
 ] }
-xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca4afad184ab6e7c16af", features = [
+xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf65a0ea94c70d3c4fd", features = [
     "x11rb-xcb",
     "x11rb-client",
 ] }

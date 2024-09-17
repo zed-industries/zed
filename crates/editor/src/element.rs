@@ -216,6 +216,7 @@ impl EditorElement {
         register_action(view, cx, Editor::move_line_up);
         register_action(view, cx, Editor::move_line_down);
         register_action(view, cx, Editor::transpose);
+        register_action(view, cx, Editor::rewrap);
         register_action(view, cx, Editor::cut);
         register_action(view, cx, Editor::copy);
         register_action(view, cx, Editor::paste);

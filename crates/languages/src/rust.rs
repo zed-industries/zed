@@ -57,12 +57,13 @@ impl LspAdapter for RustLspAdapter {
                         }
                         (Some(path.into()), None)
                     }
-                    (None, Some(true)) => {
+                    (None, Some(true)) | (None, None) => {
+                        // Try to lookup rust-analyzer in PATH by default.
                         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
                         let env = delegate.shell_env().await;
                         (Some(path), Some(env))
                     }
-                    (None, Some(false)) | (None, None) => (None, None),
+                    (None, Some(false)) => (None, None),
                 };
                 path.map(|path| LanguageServerBinary {
                     path,
@@ -742,7 +743,7 @@ mod tests {
     #[gpui::test]
     async fn test_rust_label_for_completion() {
         let adapter = Arc::new(RustLspAdapter);
-        let language = language("rust", tree_sitter_rust::language());
+        let language = language("rust", tree_sitter_rust::LANGUAGE.into());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -867,7 +868,7 @@ mod tests {
     #[gpui::test]
     async fn test_rust_label_for_symbol() {
         let adapter = Arc::new(RustLspAdapter);
-        let language = language("rust", tree_sitter_rust::language());
+        let language = language("rust", tree_sitter_rust::LANGUAGE.into());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -919,7 +920,7 @@ mod tests {
             });
         });
 
-        let language = crate::language("rust", tree_sitter_rust::language());
+        let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);

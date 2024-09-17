@@ -201,9 +201,7 @@ impl X11ClientStatePtr {
             .build_ic_attributes()
             .push(
                 xim::AttributeName::InputStyle,
-                xim::InputStyle::PREEDIT_CALLBACKS
-                    | xim::InputStyle::STATUS_NOTHING
-                    | xim::InputStyle::PREEDIT_POSITION,
+                xim::InputStyle::PREEDIT_CALLBACKS,
             )
             .push(xim::AttributeName::ClientWindow, xim_handler.window)
             .push(xim::AttributeName::FocusWindow, xim_handler.window)
@@ -572,12 +570,7 @@ impl X11Client {
         let mut xim_handler = state.xim_handler.take().unwrap();
         let mut ic_attributes = ximc
             .build_ic_attributes()
-            .push(
-                AttributeName::InputStyle,
-                InputStyle::PREEDIT_CALLBACKS
-                    | InputStyle::STATUS_NOTHING
-                    | InputStyle::PREEDIT_NONE,
-            )
+            .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
             .push(AttributeName::ClientWindow, xim_handler.window)
             .push(AttributeName::FocusWindow, xim_handler.window);
 
@@ -605,12 +598,12 @@ impl X11Client {
         state.ximc = Some(ximc);
     }
 
-    pub fn disable_ime(&self) {
+    pub fn reset_ime(&self) {
         let mut state = self.0.borrow_mut();
         state.composing = false;
         if let Some(mut ximc) = state.ximc.take() {
             let xim_handler = state.xim_handler.as_ref().unwrap();
-            ximc.destroy_ic(xim_handler.im_id, xim_handler.ic_id).ok();
+            ximc.reset_ic(xim_handler.im_id, xim_handler.ic_id).ok();
             state.ximc = Some(ximc);
         }
     }
@@ -768,6 +761,9 @@ impl X11Client {
                 window.set_active(true);
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = Some(event.event);
+                if let Some(handler) = state.xim_handler.as_mut() {
+                    handler.window = event.event;
+                }
                 drop(state);
                 self.enable_ime();
             }
@@ -781,7 +777,7 @@ impl X11Client {
                 }
                 state.pre_edit_text.take();
                 drop(state);
-                self.disable_ime();
+                self.reset_ime();
                 window.handle_ime_delete();
             }
             Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
@@ -940,8 +936,7 @@ impl X11Client {
 
                 if state.composing && state.ximc.is_some() {
                     drop(state);
-                    self.disable_ime();
-                    self.enable_ime();
+                    self.reset_ime();
                     window.handle_ime_unmark();
                     state = self.0.borrow_mut();
                 } else if let Some(text) = state.pre_edit_text.take() {
@@ -1199,9 +1194,7 @@ impl X11Client {
                 .build_ic_attributes()
                 .push(
                     xim::AttributeName::InputStyle,
-                    xim::InputStyle::PREEDIT_CALLBACKS
-                        | xim::InputStyle::STATUS_NOTHING
-                        | xim::InputStyle::PREEDIT_POSITION,
+                    xim::InputStyle::PREEDIT_CALLBACKS,
                 )
                 .push(xim::AttributeName::ClientWindow, xim_handler.window)
                 .push(xim::AttributeName::FocusWindow, xim_handler.window)

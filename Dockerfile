@@ -4,11 +4,38 @@ FROM rust:1.81-bookworm as builder
 WORKDIR app
 COPY . .
 
+# Replace the Cargo configuration with the one used by collab.
+COPY ./.cargo/collab-config.toml ./.cargo/config.toml
+
 # Compile collab server
 ARG CARGO_PROFILE_RELEASE_PANIC=abort
 ARG GITHUB_SHA
 
 ENV GITHUB_SHA=$GITHUB_SHA
+
+# At some point in the past 3 weeks, additional dependencies on `xkbcommon` and
+# `xkbcommon-x11` were introduced into collab.
+#
+# A `git bisect` points to this commit as being the culprit: `b8e6098f60e5dabe98fe8281f993858dacc04a55`.
+#
+# Now when we try to build collab for the Docker image, it fails with the following
+# error:
+#
+# ```
+# 985.3   = note: /usr/bin/ld: cannot find -lxkbcommon: No such file or directory
+# 985.3           /usr/bin/ld: cannot find -lxkbcommon-x11: No such file or directory
+# 985.3           collect2: error: ld returned 1 exit status
+# ```
+#
+# The last successful deploys were at:
+# - Staging: `4f408ec65a3867278322a189b4eb20f1ab51f508`
+# - Production: `fc4c533d0a8c489e5636a4249d2b52a80039fbd7`
+#
+# Installing these as a temporary workaround, but I think ideally we'd want to figure
+# out what caused them to be included in the first place.
+RUN apt-get update; \
+    apt-get install -y --no-install-recommends libxkbcommon-dev libxkbcommon-x11-dev
+
 RUN --mount=type=cache,target=./script/node_modules \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \

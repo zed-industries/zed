@@ -49,7 +49,7 @@ use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;
 
-use rpc::proto::AnyProtoClient;
+use rpc::AnyProtoClient;
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
@@ -501,15 +501,15 @@ impl LspStore {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::Event::Edited { .. } => {
+            language::BufferEvent::Edited { .. } => {
                 self.on_buffer_edited(buffer, cx);
             }
 
-            language::Event::Saved => {
+            language::BufferEvent::Saved => {
                 self.on_buffer_saved(buffer, cx);
             }
 
@@ -2930,6 +2930,7 @@ impl LspStore {
             })
             .map(|(_, server)| server.server_id())
             .collect::<Vec<_>>();
+
         let mut response_results = server_ids
             .into_iter()
             .map(|server_id| {
@@ -3313,6 +3314,12 @@ impl LspStore {
         }
 
         cx.emit(LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id });
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id,
+            message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
+                Default::default(),
+            ),
+        })
     }
 
     pub fn disk_based_diagnostics_finished(
@@ -3327,6 +3334,12 @@ impl LspStore {
         }
 
         cx.emit(LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id });
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id,
+            message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                Default::default(),
+            ),
+        })
     }
 
     // After saving a buffer using a language server that doesn't provide a disk-based progress token,
@@ -4629,14 +4642,13 @@ impl LspStore {
             return;
         }
 
+        let local = self.as_local().unwrap();
+
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::for_local(self, worktree_handle, cx);
-        let cli_environment = self
-            .as_local()
-            .unwrap()
-            .environment
-            .read(cx)
-            .get_cli_environment();
+        let cli_environment = local.environment.update(cx, |environment, cx| {
+            environment.get_environment(Some(worktree_id), Some(worktree_path.clone()), cx)
+        });
 
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
