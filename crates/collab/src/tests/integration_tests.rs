@@ -2273,7 +2273,7 @@ async fn test_propagate_saves_and_fs_changes(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     let javascript = Arc::new(Language::new(
         LanguageConfig {
@@ -2284,7 +2284,7 @@ async fn test_propagate_saves_and_fs_changes(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     for client in [&client_a, &client_b, &client_c] {
         client.language_registry().add(rust.clone());
@@ -3855,7 +3855,7 @@ async fn test_collaborating_with_diagnostics(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_language_servers = client_a
         .language_registry()
@@ -4458,7 +4458,7 @@ async fn test_prettier_formatting_buffer(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "TypeScript",

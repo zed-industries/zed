@@ -125,7 +125,7 @@ impl EditorLspTestContext {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_queries(LanguageQueries {
             indents: Some(Cow::from(indoc! {r#"
@@ -184,7 +184,7 @@ impl EditorLspTestContext {
                 word_characters,
                 ..Default::default()
             },
-            Some(tree_sitter_typescript::language_typescript()),
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         )
         .with_queries(LanguageQueries {
             brackets: Some(Cow::from(indoc! {r#"

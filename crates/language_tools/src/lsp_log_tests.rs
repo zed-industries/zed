@@ -43,7 +43,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_rust_servers = language_registry.register_fake_lsp(
         "Rust",

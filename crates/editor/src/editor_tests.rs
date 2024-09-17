@@ -2322,7 +2322,7 @@ async fn test_newline_above(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2370,7 +2370,7 @@ async fn test_newline_below(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2524,7 +2524,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut gpui::TestAp
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2585,7 +2585,7 @@ async fn test_tab_with_mixed_whitespace(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
         .unwrap(),
@@ -4311,7 +4311,7 @@ async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -5022,7 +5022,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -5231,7 +5231,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(
             r#"
@@ -5324,7 +5324,7 @@ async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5496,7 +5496,7 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5636,7 +5636,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -5811,7 +5811,7 @@ async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_override_query("(string_literal) @string")
         .unwrap(),
@@ -5916,7 +5916,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -6065,7 +6065,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
             autoclose_before: "}".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -6192,7 +6192,7 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -6262,7 +6262,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let buffer = cx.new_model(|cx| Buffer::local("", cx).with_language(language, cx));
@@ -6937,7 +6937,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             },
             ..LanguageConfig::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
@@ -7272,7 +7272,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -7414,7 +7414,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -8207,7 +8207,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -8328,7 +8328,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -8481,7 +8481,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -8889,7 +8889,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query("")
         .unwrap(),
@@ -9725,7 +9725,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
@@ -9838,7 +9838,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
@@ -10071,7 +10071,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_typescript::language_tsx()),
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         )
         .with_override_query("(jsx_self_closing_element) @element")
         .unwrap(),
@@ -10174,7 +10174,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         settings.defaults.prettier = Some(PrettierSettings {
@@ -13891,7 +13891,7 @@ pub(crate) fn rust_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 

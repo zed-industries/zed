@@ -439,12 +439,12 @@ impl LanguageRegistry {
     /// grammar controls how the source code is parsed.
     pub fn register_native_grammars(
         &self,
-        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, tree_sitter::Language)>,
+        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, impl Into<tree_sitter::Language>)>,
     ) {
         self.state.write().grammars.extend(
             grammars
                 .into_iter()
-                .map(|(name, grammar)| (name.into(), AvailableGrammar::Native(grammar))),
+                .map(|(name, grammar)| (name.into(), AvailableGrammar::Native(grammar.into()))),
         );
     }
 

@@ -1575,7 +1575,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )));
             let fake_servers = language_registry.register_fake_lsp(
                 name,
