@@ -5,7 +5,7 @@ use crate::markdown_elements::{
     ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
+    div, img, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
     HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
     ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
@@ -432,8 +432,8 @@ fn render_markdown_text(
                     .into_any();
                 any_element.push(x);
             }
-            MarkdownParagraph::MarkdownImage(img) => {
-                let (link, source_range, image_source) = match img {
+            MarkdownParagraph::MarkdownImage(image) => {
+                let (link, source_range, image_source) = match image {
                     Image::Web {
                         link,
                         source_range,
@@ -451,7 +451,7 @@ fn render_markdown_text(
                 match link {
                     None => {
                         let element = div()
-                            .child(gpui::img(image_source))
+                            .child(img(image_source))
                             .id(element_id)
                             .into_any();
                         any_element.push(element);
@@ -460,7 +460,7 @@ fn render_markdown_text(
                         let link_click = link.clone();
                         let link_tooltip = link.clone();
                         let element = div()
-                            .child(gpui::img(image_source))
+                            .child(img(image_source))
                             .id(element_id)
                             .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
                             .on_click({
