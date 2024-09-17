@@ -653,22 +653,33 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 
 fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
-    if let Some(full_path) = directory.canonicalize().log_err() {
-        let full_path = full_path.to_string_lossy().to_string();
-        if !full_path.is_empty() {
-            let path_item: IShellItem =
-                unsafe { SHCreateItemFromParsingName(&HSTRING::from(&full_path), None)? };
-            unsafe { dialog.SetFolder(&path_item).log_err() };
+    if !directory.to_string_lossy().is_empty() {
+        if let Some(full_path) = directory.canonicalize().log_err() {
+            let full_path = full_path.to_string_lossy().to_string();
+            if !full_path.is_empty() {
+                let path_item: IShellItem =
+                    unsafe { SHCreateItemFromParsingName(&HSTRING::from(&full_path), None)? };
+                unsafe { dialog.SetFolder(&path_item).log_err() };
+            }
         }
     }
     unsafe {
+        dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {
+            pszName: windows::core::w!("All files"),
+            pszSpec: windows::core::w!("*.*"),
+        }])?;
         if dialog.Show(None).is_err() {
             // User cancelled
             return Ok(None);
         }
     }
     let shell_item = unsafe { dialog.GetResult()? };
-    let file_path_string = unsafe { shell_item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
+    let file_path_string = unsafe {
+        let pwstr = shell_item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let string = pwstr.to_string()?;
+        CoTaskMemFree(Some(pwstr.0 as _));
+        string
+    };
     Ok(Some(PathBuf::from(file_path_string)))
 }
 
