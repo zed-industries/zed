@@ -77,10 +77,10 @@ fn completion_state_from_diff(
                         snapshot.anchor_after(offset),
                         completion_text[i..i + k].into(),
                     ));
-                    offset.add_assign(j);
                 }
                 i += k + 1;
                 j += 1;
+                offset.add_assign(1);
             }
             None => {
                 // there are no more matching completions, so drop the remaining
