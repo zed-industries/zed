@@ -490,7 +490,6 @@ features = [
     "implement",
     "Foundation_Numerics",
     "Storage",
-    "System",
     "System_Threading",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
@@ -521,6 +520,7 @@ features = [
     "Win32_UI_Input_Ime",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ]
 

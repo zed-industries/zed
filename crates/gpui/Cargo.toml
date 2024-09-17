@@ -50,7 +50,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 profiling.workspace = true
-rand = { optional = true, workspace = true}
+rand = { optional = true, workspace = true }
 raw-window-handle = "0.6"
 refineable.workspace = true
 resvg = { version = "0.41.0", default-features = false }
@@ -110,6 +110,7 @@ blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-util.workspace = true
 bytemuck = "1"
+flume = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 as-raw-xcb-connection = "1"
@@ -117,7 +118,6 @@ ashpd.workspace = true
 calloop = "0.13.0"
 calloop-wayland-source = "0.3.0"
 cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c" }
-flume = "0.11"
 wayland-backend = { version = "0.3.3", features = ["client_system", "dlopen"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"
