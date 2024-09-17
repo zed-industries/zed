@@ -5388,7 +5388,7 @@ impl Editor {
             .style(ButtonStyle::Transparent)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
-                editor.toggle_breakpoint_at_anchor(position.clone(), (*arc_kind).clone(), cx);
+                editor.toggle_breakpoint_at_anchor(position, (*arc_kind).clone(), cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
                 let source = editor
