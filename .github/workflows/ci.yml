@@ -111,6 +111,11 @@ jobs:
         with:
           clean: false
 
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Install Linux dependencies
         run: ./script/linux
 
@@ -279,9 +284,6 @@ jobs:
       - name: Install Linux dependencies
         run: ./script/linux
 
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
-
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
@@ -349,9 +351,6 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux
-
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
