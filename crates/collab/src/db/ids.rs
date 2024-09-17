@@ -104,7 +104,7 @@ pub enum ChannelRole {
     /// Admin can read/write and change permissions.
     #[sea_orm(string_value = "admin")]
     Admin,
-    /// Member can read/write, but not change pemissions.
+    /// Member can read/write, but not change permissions.
     #[sea_orm(string_value = "member")]
     #[default]
     Member,
