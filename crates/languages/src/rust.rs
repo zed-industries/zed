@@ -45,7 +45,7 @@ impl LspAdapter for RustLspAdapter {
             })
             .ok()?;
 
-        let (path, env, arguments) = match configured_binary {
+        let (path, arguments) = match configured_binary {
             // If nothing is configured, or path_lookup explicitly enabled,
             // we lookup the binary in the path.
             None
@@ -60,8 +60,7 @@ impl LspAdapter for RustLspAdapter {
                 ..
             }) => {
                 let path = delegate.which(Self::SERVER_NAME.as_ref()).await;
-                let env = delegate.shell_env().await;
-                (path, Some(env), None)
+                (path, None)
             }
             // Otherwise, we use the configured binary.
             Some(BinarySettings {
@@ -72,15 +71,15 @@ impl LspAdapter for RustLspAdapter {
                 if path_lookup.is_some() {
                     log::warn!("Both `path` and `path_lookup` are set, ignoring `path_lookup`");
                 }
-                (Some(path.into()), None, arguments)
+                (Some(path.into()), arguments)
             }
 
-            _ => (None, None, None),
+            _ => (None, None),
         };
 
         path.map(|path| LanguageServerBinary {
             path,
-            env,
+            env: Some(delegate.shell_env().await),
             arguments: arguments
                 .unwrap_or_default()
                 .iter()
@@ -151,7 +150,7 @@ impl LspAdapter for RustLspAdapter {
 
         Ok(LanguageServerBinary {
             path: destination_path,
-            env: None,
+            env: Some(delegate.shell_env().await),
             arguments: Default::default(),
         })
     }
@@ -159,16 +158,16 @@ impl LspAdapter for RustLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir).await
+        get_cached_server_binary(container_dir, Some(delegate)).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir)
+        get_cached_server_binary(container_dir, None)
             .await
             .map(|mut binary| {
                 binary.arguments = vec!["--help".into()];
@@ -679,7 +678,10 @@ fn package_name_from_pkgid(pkgid: &str) -> Option<&str> {
     Some(package_name)
 }
 
-async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+async fn get_cached_server_binary(
+    container_dir: PathBuf,
+    delegate: Option<&dyn LspAdapterDelegate>,
+) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
@@ -689,7 +691,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
         anyhow::Ok(LanguageServerBinary {
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
-            env: None,
+            env: delegate.map(|delegate| delegate.shell_env().await),
             arguments: Default::default(),
         })
     })

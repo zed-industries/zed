@@ -57,7 +57,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
@@ -76,7 +76,7 @@ impl LspAdapter for PythonLspAdapter {
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            env: None,
+            env: Some(delegate.shell_env().await),
             arguments: server_binary_arguments(&server_path),
         })
     }
@@ -84,16 +84,16 @@ impl LspAdapter for PythonLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &*self.node, Some(delegate)).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &*self.node, None).await
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
@@ -191,12 +191,13 @@ impl LspAdapter for PythonLspAdapter {
 async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
+    delegate: Option<&dyn LspAdapterDelegate>,
 ) -> Option<LanguageServerBinary> {
     let server_path = container_dir.join(SERVER_PATH);
     if server_path.exists() {
         Some(LanguageServerBinary {
             path: node.binary_path().await.log_err()?,
-            env: None,
+            env: delegate.map(|delegate| delegate.shell_env().await),
             arguments: server_binary_arguments(&server_path),
         })
     } else {

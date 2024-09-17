@@ -31,34 +31,27 @@ impl super::LspAdapter for CLspAdapter {
             language_server_settings(delegate, Self::SERVER_NAME, cx).and_then(|s| s.binary.clone())
         });
 
-        match configured_binary {
+        let (path, arguments) = match configured_binary {
             Ok(Some(BinarySettings {
                 path: Some(path),
                 arguments,
                 ..
-            })) => Some(LanguageServerBinary {
-                path: path.into(),
-                arguments: arguments
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|arg| arg.into())
-                    .collect(),
-                env: None,
-            }),
+            })) => (Some(path.into()), arguments),
             Ok(Some(BinarySettings {
                 path_lookup: Some(false),
                 ..
-            })) => None,
+            })) => (None, None),
             _ => {
-                let env = delegate.shell_env().await;
                 let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-                Some(LanguageServerBinary {
-                    path,
-                    arguments: vec![],
-                    env: Some(env),
-                })
+                (path, None)
             }
-        }
+        };
+
+        path.map(|path| LanguageServerBinary {
+            path,
+            arguments,
+            env: Some(delegate.shell_env().await),
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -127,7 +120,7 @@ impl super::LspAdapter for CLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
-            env: None,
+            env: Some(delegate.shell_env().await),
             arguments: vec![],
         })
     }
@@ -135,16 +128,16 @@ impl super::LspAdapter for CLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir).await
+        get_cached_server_binary(container_dir, Some(delegate)).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir)
+        get_cached_server_binary(container_dir, None)
             .await
             .map(|mut binary| {
                 binary.arguments = vec!["--help".into()];
@@ -297,7 +290,10 @@ impl super::LspAdapter for CLspAdapter {
     }
 }
 
-async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+async fn get_cached_server_binary(
+    container_dir: PathBuf,
+    delegate: Option<&dyn LspAdapterDelegate>,
+) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_clangd_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
@@ -312,7 +308,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         if clangd_bin.exists() {
             Ok(LanguageServerBinary {
                 path: clangd_bin,
-                env: None,
+                env: delegate.map(|delegate| delegate.shell_env().await),
                 arguments: vec![],
             })
         } else {
