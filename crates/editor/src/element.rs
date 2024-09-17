@@ -5239,7 +5239,7 @@ impl Element for EditorElement {
                         .collect();
 
                     // We want all lines with breakpoint's to have their number's painted
-                    // debugg accent color & we still want to render a grey breakpoint for the gutter
+                    // debug accent color & we still want to render a grey breakpoint for the gutter
                     // indicator so we add that in after creating breakpoint_rows for layout line nums
                     // Otherwise, when a cursor is on a line number it will always be white even
                     // if that line has a breakpoint

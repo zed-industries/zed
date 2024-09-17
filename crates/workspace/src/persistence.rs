@@ -10,7 +10,7 @@ use client::DevServerProjectId;
 use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
-use project::dap_store::SerializedBreakpoint;
+use project::dap_store::{BreakpointKind, SerializedBreakpoint};
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -143,6 +143,7 @@ impl Column for SerializedWindowBounds {
 #[derive(Debug)]
 pub struct Breakpoint {
     pub position: u32,
+    pub kind: BreakpointKind,
 }
 
 /// This struct is used to implement traits on Vec<breakpoint>
@@ -150,14 +151,20 @@ pub struct Breakpoint {
 #[allow(dead_code)]
 struct Breakpoints(Vec<Breakpoint>);
 
-impl sqlez::bindable::StaticColumnCount for Breakpoint {}
+impl sqlez::bindable::StaticColumnCount for Breakpoint {
+    fn column_count() -> usize {
+        1 + BreakpointKind::column_count()
+    }
+}
+
 impl sqlez::bindable::Bind for Breakpoint {
     fn bind(
         &self,
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        statement.bind(&self.position, start_index)
+        let next_index = statement.bind(&self.position, start_index)?;
+        statement.bind(&self.kind, next_index)
     }
 }
 
@@ -168,7 +175,9 @@ impl Column for Breakpoint {
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
 
-        Ok((Breakpoint { position }, start_index + 1))
+        let (kind, next_index) = BreakpointKind::column(statement, start_index + 1)?;
+
+        Ok((Breakpoint { position, kind }, next_index))
     }
 }
 
@@ -186,8 +195,10 @@ impl Column for Breakpoints {
                         .with_context(|| format!("Failed to read BreakPoint at index {index}"))?
                         as u32;
 
-                    breakpoints.push(Breakpoint { position });
-                    index += 1;
+                    let (kind, next_index) = BreakpointKind::column(statement, index + 1)?;
+
+                    breakpoints.push(Breakpoint { position, kind });
+                    index = next_index;
                 }
             }
         }
@@ -270,6 +281,8 @@ define_connection! {
     //      worktree_path: PathBuf, // Path of worktree that this breakpoint belong's too. Used to determine the absolute path of a breakpoint
     //      relative_path: PathBuf, // References the file that the breakpoints belong too
     //      breakpoint_location: Vec<u32>, // A list of the locations of breakpoints
+    //      kind: int, // The kind of breakpoint (standard, log)
+    //      log_message: String, // log message for log breakpoints, otherwise it's Null
     // )
     pub static ref DB: WorkspaceDb<()> =
     &[sql!(
@@ -424,6 +437,8 @@ define_connection! {
                worktree_path BLOB NOT NULL,
                relative_path BLOB NOT NULL,
                breakpoint_location INTEGER NOT NULL,
+               kind INTEGER NOT NULL,
+               log_message TEXT,
                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                ON DELETE CASCADE
                ON UPDATE CASCADE
@@ -509,7 +524,7 @@ impl WorkspaceDb {
 
         let breakpoints: Result<Vec<(PathBuf, PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
-                SELECT worktree_path, relative_path, breakpoint_location
+                SELECT worktree_path, relative_path, breakpoint_location, kind, log_message
                 FROM breakpoints
                 WHERE workspace_id = ?
             })
@@ -530,7 +545,7 @@ impl WorkspaceDb {
                             .push(SerializedBreakpoint {
                                 position: breakpoint.position,
                                 path: Arc::from(file_path.as_path()),
-                                kind: project::dap_store::BreakpointKind::Standard,
+                                kind: breakpoint.kind,
                             });
                     }
 
@@ -708,13 +723,13 @@ impl WorkspaceDb {
                         let relative_path = serialized_breakpoint.path;
 
                         match conn.exec_bound(sql!(
-                            INSERT INTO breakpoints (workspace_id, relative_path, worktree_path, breakpoint_location)
-                            VALUES (?1, ?2, ?3, ?4);))?
+                            INSERT INTO breakpoints (workspace_id, relative_path, worktree_path, breakpoint_location, kind, log_message)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6);))?
                             ((
                             workspace.id,
                             relative_path,
                             worktree_path.clone(),
-                            Breakpoint { position: serialized_breakpoint.position},
+                            Breakpoint { position: serialized_breakpoint.position, kind: serialized_breakpoint.kind},
                         )) {
                             Err(err) => {
                                 log::error!("{err}");

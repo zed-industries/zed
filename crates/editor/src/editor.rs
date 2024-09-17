@@ -5402,7 +5402,7 @@ impl Editor {
                 let second_weak = editor_weak.clone();
 
                 let context_menu = ui::ContextMenu::build(cx, move |menu, _cx| {
-                    let anchor = position.clone();
+                    let anchor = position;
                     menu.on_blur_subscription(Subscription::new(|| {}))
                         .context(focus_handle)
                         .entry("Toggle Breakpoint", None, move |cx| {

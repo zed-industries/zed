@@ -1,3 +1,4 @@
+use crate::ProjectPath;
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
@@ -6,6 +7,10 @@ use dap::SourceBreakpoint;
 use gpui::{EventEmitter, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
 use settings::WorktreeId;
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -19,8 +24,6 @@ use std::{
 use task::DebugAdapterConfig;
 use text::Point;
 use util::ResultExt as _;
-
-use crate::ProjectPath;
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
@@ -104,7 +107,7 @@ impl DapStore {
                 .insert(Breakpoint {
                     active_position: None,
                     cache_position: serialize_breakpoint.position.saturating_sub(1u32),
-                    kind: BreakpointKind::Standard,
+                    kind: serialize_breakpoint.kind,
                 });
         }
     }
@@ -270,6 +273,49 @@ type LogMessage = String;
 pub enum BreakpointKind {
     Standard,
     Log(LogMessage),
+}
+
+impl BreakpointKind {
+    fn to_int(&self) -> i32 {
+        match self {
+            BreakpointKind::Standard => 0,
+            BreakpointKind::Log(_) => 1,
+        }
+    }
+}
+
+impl StaticColumnCount for BreakpointKind {
+    fn column_count() -> usize {
+        2
+    }
+}
+
+impl Bind for BreakpointKind {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        let next_index = statement.bind(&self.to_int(), start_index)?;
+
+        match self {
+            BreakpointKind::Standard => {
+                statement.bind_null(next_index)?;
+                Ok(next_index + 1)
+            }
+            BreakpointKind::Log(message) => statement.bind(message, next_index),
+        }
+    }
+}
+
+impl Column for BreakpointKind {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let kind = statement.column_int(start_index)?;
+        match kind {
+            0 => Ok((BreakpointKind::Standard, start_index + 2)),
+            1 => {
+                let message = statement.column_text(start_index + 1)?.to_string();
+                Ok((BreakpointKind::Log(message), start_index + 2))
+            }
+            _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
