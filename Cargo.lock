@@ -14481,7 +14481,7 @@ dependencies = [
 
 [[package]]
 name = "zed_ocaml"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
