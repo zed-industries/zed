@@ -4107,7 +4107,6 @@ dependencies = [
  "fs",
  "futures 0.3.30",
  "gpui",
- "http_client",
  "indexed_docs",
  "isahc",
  "isahc_http_client",
