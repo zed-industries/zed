@@ -1,5 +1,5 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keys, Keystroke};
+use gpui::{relative, Action, FocusHandle, IntoElement, KeyCodes, Keystroke};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -32,28 +32,32 @@ impl KeyBinding {
 
     fn icon_for_key(&self, keystroke: &Keystroke) -> Option<IconName> {
         match keystroke.key {
-            Keys::Left => Some(IconName::ArrowLeft),
-            Keys::Right => Some(IconName::ArrowRight),
-            Keys::Up => Some(IconName::ArrowUp),
-            Keys::Down => Some(IconName::ArrowDown),
-            Keys::Backspace => Some(IconName::Backspace),
-            Keys::Delete => Some(IconName::Delete),
-            Keys::Enter => Some(IconName::Return),
+            KeyCodes::Left => Some(IconName::ArrowLeft),
+            KeyCodes::Right => Some(IconName::ArrowRight),
+            KeyCodes::Up => Some(IconName::ArrowUp),
+            KeyCodes::Down => Some(IconName::ArrowDown),
+            KeyCodes::Backspace => Some(IconName::Backspace),
+            KeyCodes::Delete => Some(IconName::Delete),
+            KeyCodes::Enter => Some(IconName::Return),
             // VirtualKeyCode::Enter => Some(IconName::Return),
-            Keys::Tab => Some(IconName::Tab),
-            Keys::Space => Some(IconName::Space),
-            Keys::Escape => Some(IconName::Escape),
-            Keys::PageDown => Some(IconName::PageDown),
-            Keys::PageUp => Some(IconName::PageUp),
-            Keys::Shift(_) if self.platform_style == PlatformStyle::Mac => Some(IconName::Shift),
-            Keys::Control(_) if self.platform_style == PlatformStyle::Mac => {
+            KeyCodes::Tab => Some(IconName::Tab),
+            KeyCodes::Space => Some(IconName::Space),
+            KeyCodes::Escape => Some(IconName::Escape),
+            KeyCodes::PageDown => Some(IconName::PageDown),
+            KeyCodes::PageUp => Some(IconName::PageUp),
+            KeyCodes::Shift(_) if self.platform_style == PlatformStyle::Mac => {
+                Some(IconName::Shift)
+            }
+            KeyCodes::Control(_) if self.platform_style == PlatformStyle::Mac => {
                 Some(IconName::Control)
             }
-            Keys::Platform(_) if self.platform_style == PlatformStyle::Mac => {
+            KeyCodes::Platform(_) if self.platform_style == PlatformStyle::Mac => {
                 Some(IconName::Command)
             }
-            Keys::Function if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
-            Keys::Alt(_) if self.platform_style == PlatformStyle::Mac => Some(IconName::Option),
+            KeyCodes::Function if self.platform_style == PlatformStyle::Mac => {
+                Some(IconName::Control)
+            }
+            KeyCodes::Alt(_) if self.platform_style == PlatformStyle::Mac => Some(IconName::Option),
             _ => None,
         }
     }

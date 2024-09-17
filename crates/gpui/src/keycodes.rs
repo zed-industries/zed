@@ -7,7 +7,7 @@ use strum::EnumIter;
 /// https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
 /// https://source.chromium.org/chromium/chromium/src/+/main:ui/events/keycodes/keyboard_codes_win.h;drc=341564182474622e33c964e73a69ea8c1e004eb8;l=12
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash, EnumIter)]
-pub enum Keys {
+pub enum KeyCodes {
     /// Un-recognized key
     #[default]
     Unknown,
@@ -388,7 +388,7 @@ pub enum KeyPosition {
     Right,
 }
 
-impl Keys {
+impl KeyCodes {
     /// TODO:
     pub fn is_printable(&self) -> bool {
         // match key {
@@ -398,42 +398,42 @@ impl Keys {
         //     _ => true,
         // }
         match self {
-            Keys::Backspace
-            | Keys::Delete
-            | Keys::Left
-            | Keys::Up
-            | Keys::Right
-            | Keys::Down
-            | Keys::PageUp
-            | Keys::PageDown
-            | Keys::Insert
-            | Keys::Home
-            | Keys::End
-            | Keys::Escape
-            | Keys::F1
-            | Keys::F2
-            | Keys::F3
-            | Keys::F4
-            | Keys::F5
-            | Keys::F6
-            | Keys::F7
-            | Keys::F8
-            | Keys::F9
-            | Keys::F10
-            | Keys::F11
-            | Keys::F12
-            | Keys::F13
-            | Keys::F14
-            | Keys::F15
-            | Keys::F16
-            | Keys::F17
-            | Keys::F18
-            | Keys::F19
-            | Keys::F20
-            | Keys::F21
-            | Keys::F22
-            | Keys::F23
-            | Keys::F24 => false,
+            KeyCodes::Backspace
+            | KeyCodes::Delete
+            | KeyCodes::Left
+            | KeyCodes::Up
+            | KeyCodes::Right
+            | KeyCodes::Down
+            | KeyCodes::PageUp
+            | KeyCodes::PageDown
+            | KeyCodes::Insert
+            | KeyCodes::Home
+            | KeyCodes::End
+            | KeyCodes::Escape
+            | KeyCodes::F1
+            | KeyCodes::F2
+            | KeyCodes::F3
+            | KeyCodes::F4
+            | KeyCodes::F5
+            | KeyCodes::F6
+            | KeyCodes::F7
+            | KeyCodes::F8
+            | KeyCodes::F9
+            | KeyCodes::F10
+            | KeyCodes::F11
+            | KeyCodes::F12
+            | KeyCodes::F13
+            | KeyCodes::F14
+            | KeyCodes::F15
+            | KeyCodes::F16
+            | KeyCodes::F17
+            | KeyCodes::F18
+            | KeyCodes::F19
+            | KeyCodes::F20
+            | KeyCodes::F21
+            | KeyCodes::F22
+            | KeyCodes::F23
+            | KeyCodes::F24 => false,
             _ => true,
         }
     }
@@ -459,63 +459,63 @@ impl Keys {
             // VirtualKeyCode::Final => "UnImplemented",
             // VirtualKeyCode::Hanja => "UnImplemented",
             // VirtualKeyCode::Kanji => "UnImplemented",
-            "escape" => Keys::Escape,
+            "escape" => KeyCodes::Escape,
             // VirtualKeyCode::Convert => "UnImplemented",
             // VirtualKeyCode::Nonconvert => "UnImplemented",
             // VirtualKeyCode::Accept => "UnImplemented",
             // VirtualKeyCode::ModeChange => "UnImplemented",
-            "space" => Keys::Space, // TODO:
-            "pageup" => Keys::PageUp,
-            "pagedown" => Keys::PageDown,
-            "end" => Keys::End,
-            "home" => Keys::Home,
-            "left" => Keys::Left,
-            "up" => Keys::Up,
-            "right" => Keys::Right,
-            "down" => Keys::Down,
+            "space" => KeyCodes::Space, // TODO:
+            "pageup" => KeyCodes::PageUp,
+            "pagedown" => KeyCodes::PageDown,
+            "end" => KeyCodes::End,
+            "home" => KeyCodes::Home,
+            "left" => KeyCodes::Left,
+            "up" => KeyCodes::Up,
+            "right" => KeyCodes::Right,
+            "down" => KeyCodes::Down,
             // VirtualKeyCode::Select => "UnImplemented",
             // VirtualKeyCode::Print => "UnImplemented",
             // VirtualKeyCode::Execute => "UnImplemented",
             // VirtualKeyCode::PrintScreen => "UnImplemented",
-            "insert" => Keys::Insert,
-            "delete" => Keys::Delete,
+            "insert" => KeyCodes::Insert,
+            "delete" => KeyCodes::Delete,
             // VirtualKeyCode::Help => "UnImplemented",
-            "0" => Keys::Digital0,
-            "1" => Keys::Digital1,
-            "2" => Keys::Digital2,
-            "3" => Keys::Digital3,
-            "4" => Keys::Digital4,
-            "5" => Keys::Digital5,
-            "6" => Keys::Digital6,
-            "7" => Keys::Digital7,
-            "8" => Keys::Digital8,
-            "9" => Keys::Digital9,
-            "a" => Keys::A,
-            "b" => Keys::B,
-            "c" => Keys::C,
-            "d" => Keys::D,
-            "e" => Keys::E,
-            "f" => Keys::F,
-            "g" => Keys::G,
-            "h" => Keys::H,
-            "i" => Keys::I,
-            "j" => Keys::J,
-            "k" => Keys::K,
-            "l" => Keys::L,
-            "m" => Keys::M,
-            "n" => Keys::N,
-            "o" => Keys::O,
-            "p" => Keys::P,
-            "q" => Keys::Q,
-            "r" => Keys::R,
-            "s" => Keys::S,
-            "t" => Keys::T,
-            "u" => Keys::U,
-            "v" => Keys::V,
-            "w" => Keys::W,
-            "x" => Keys::X,
-            "y" => Keys::Y,
-            "z" => Keys::Z,
+            "0" => KeyCodes::Digital0,
+            "1" => KeyCodes::Digital1,
+            "2" => KeyCodes::Digital2,
+            "3" => KeyCodes::Digital3,
+            "4" => KeyCodes::Digital4,
+            "5" => KeyCodes::Digital5,
+            "6" => KeyCodes::Digital6,
+            "7" => KeyCodes::Digital7,
+            "8" => KeyCodes::Digital8,
+            "9" => KeyCodes::Digital9,
+            "a" => KeyCodes::A,
+            "b" => KeyCodes::B,
+            "c" => KeyCodes::C,
+            "d" => KeyCodes::D,
+            "e" => KeyCodes::E,
+            "f" => KeyCodes::F,
+            "g" => KeyCodes::G,
+            "h" => KeyCodes::H,
+            "i" => KeyCodes::I,
+            "j" => KeyCodes::J,
+            "k" => KeyCodes::K,
+            "l" => KeyCodes::L,
+            "m" => KeyCodes::M,
+            "n" => KeyCodes::N,
+            "o" => KeyCodes::O,
+            "p" => KeyCodes::P,
+            "q" => KeyCodes::Q,
+            "r" => KeyCodes::R,
+            "s" => KeyCodes::S,
+            "t" => KeyCodes::T,
+            "u" => KeyCodes::U,
+            "v" => KeyCodes::V,
+            "w" => KeyCodes::W,
+            "x" => KeyCodes::X,
+            "y" => KeyCodes::Y,
+            "z" => KeyCodes::Z,
             "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
             // VirtualKeyCode::App => "UnImplemented", // TODO: Chrome use this as Fn key
             // VirtualKeyCode::Sleep => "UnImplemented",
@@ -535,30 +535,30 @@ impl Keys {
             // VirtualKeyCode::Subtract => "UnImplemented",
             // VirtualKeyCode::Decimal => "UnImplemented",
             // VirtualKeyCode::Divide => "UnImplemented",
-            "f1" => Keys::F1,
-            "f2" => Keys::F2,
-            "f3" => Keys::F3,
-            "f4" => Keys::F4,
-            "f5" => Keys::F5,
-            "f6" => Keys::F6,
-            "f7" => Keys::F7,
-            "f8" => Keys::F8,
-            "f9" => Keys::F9,
-            "f10" => Keys::F10,
-            "f11" => Keys::F11,
-            "f12" => Keys::F12,
-            "f13" => Keys::F13,
-            "f14" => Keys::F14,
-            "f15" => Keys::F15,
-            "f16" => Keys::F16,
-            "f17" => Keys::F17,
-            "f18" => Keys::F18,
-            "f19" => Keys::F19,
-            "f20" => Keys::F20,
-            "f21" => Keys::F21,
-            "f22" => Keys::F22,
-            "f23" => Keys::F23,
-            "f24" => Keys::F24,
+            "f1" => KeyCodes::F1,
+            "f2" => KeyCodes::F2,
+            "f3" => KeyCodes::F3,
+            "f4" => KeyCodes::F4,
+            "f5" => KeyCodes::F5,
+            "f6" => KeyCodes::F6,
+            "f7" => KeyCodes::F7,
+            "f8" => KeyCodes::F8,
+            "f9" => KeyCodes::F9,
+            "f10" => KeyCodes::F10,
+            "f11" => KeyCodes::F11,
+            "f12" => KeyCodes::F12,
+            "f13" => KeyCodes::F13,
+            "f14" => KeyCodes::F14,
+            "f15" => KeyCodes::F15,
+            "f16" => KeyCodes::F16,
+            "f17" => KeyCodes::F17,
+            "f18" => KeyCodes::F18,
+            "f19" => KeyCodes::F19,
+            "f20" => KeyCodes::F20,
+            "f21" => KeyCodes::F21,
+            "f22" => KeyCodes::F22,
+            "f23" => KeyCodes::F23,
+            "f24" => KeyCodes::F24,
             // VirtualKeyCode::NumLock => "UnImplemented",
             // VirtualKeyCode::ScrollLock => "UnImplemented",
             // VirtualKeyCode::LeftShift => "shift", // TODO:
@@ -585,17 +585,17 @@ impl Keys {
             // VirtualKeyCode::LaunchMediaSelect => "UnImplemented",
             // VirtualKeyCode::LaunchApp1 => "UnImplemented",
             // VirtualKeyCode::LaunchApp2 => "UnImplemented",
-            ";" => Keys::Semicolon,
-            "=" => Keys::Plus,
-            "," => Keys::Comma,
-            "-" => Keys::Minus,
-            "." => Keys::Period,
-            "/" => Keys::Slash,
-            "`" => Keys::Tilde,
-            "[" => Keys::LeftBracket,
-            "\\" => Keys::Backslash,
-            "]" => Keys::RightBracket,
-            "'" => Keys::Quote,
+            ";" => KeyCodes::Semicolon,
+            "=" => KeyCodes::Plus,
+            "," => KeyCodes::Comma,
+            "-" => KeyCodes::Minus,
+            "." => KeyCodes::Period,
+            "/" => KeyCodes::Slash,
+            "`" => KeyCodes::Tilde,
+            "[" => KeyCodes::LeftBracket,
+            "\\" => KeyCodes::Backslash,
+            "]" => KeyCodes::RightBracket,
+            "'" => KeyCodes::Quote,
             // VirtualKeyCode::OEM8 => "UnImplemented",
             // VirtualKeyCode::OEM102 => "UnImplemented",
             // VirtualKeyCode::ProcessKey => "UnImplemented",
@@ -608,9 +608,9 @@ impl Keys {
             // VirtualKeyCode::Zoom => "UnImplemented",
             // VirtualKeyCode::PA1 => "UnImplemented",
             // VirtualKeyCode::OEMClear => "UnImplemented",
-            _ => Keys::Unknown,
+            _ => KeyCodes::Unknown,
         };
-        if map_result == Keys::Unknown {
+        if map_result == KeyCodes::Unknown {
             Err(anyhow::anyhow!(
                 "Error parsing keystroke to virtual keycode: {input}"
             ))
@@ -622,174 +622,174 @@ impl Keys {
     /// TODO:
     pub fn to_string(&self) -> String {
         match self {
-            Keys::Unknown => "UnImplemented",
-            Keys::Function => "fn",
-            Keys::Cancel => "cancel",
-            Keys::Backspace => "backspace",
-            Keys::Tab => "tab",
-            Keys::Clear => "UnImplemented",
-            Keys::Enter => "enter",
+            KeyCodes::Unknown => "UnImplemented",
+            KeyCodes::Function => "fn",
+            KeyCodes::Cancel => "cancel",
+            KeyCodes::Backspace => "backspace",
+            KeyCodes::Tab => "tab",
+            KeyCodes::Clear => "UnImplemented",
+            KeyCodes::Enter => "enter",
             // TODO: position
-            Keys::Shift(_) => "shift",
-            Keys::Control(_) => "ctrl",
-            Keys::Alt(_) => "alt",
-            Keys::Pause => "UnImplemented",
-            Keys::Capital => "capslock",
-            Keys::Kana => "UnImplemented",
-            Keys::Hangul => "UnImplemented",
-            Keys::Junja => "UnImplemented",
-            Keys::Final => "UnImplemented",
-            Keys::Hanja => "UnImplemented",
-            Keys::Kanji => "UnImplemented",
-            Keys::Escape => "escape",
-            Keys::Convert => "UnImplemented",
-            Keys::Nonconvert => "UnImplemented",
-            Keys::Accept => "UnImplemented",
-            Keys::ModeChange => "UnImplemented",
-            Keys::Space => "space",
-            Keys::PageUp => "pageup",
-            Keys::PageDown => "pagedown",
-            Keys::End => "end",
-            Keys::Home => "home",
-            Keys::Left => "left",
-            Keys::Up => "up",
-            Keys::Right => "right",
-            Keys::Down => "down",
-            Keys::Select => "UnImplemented",
-            Keys::Print => "UnImplemented",
-            Keys::Execute => "UnImplemented",
-            Keys::PrintScreen => "UnImplemented",
-            Keys::Insert => "insert",
-            Keys::Delete => "delete",
-            Keys::Help => "UnImplemented",
-            Keys::Digital0 => "0",
-            Keys::Digital1 => "1",
-            Keys::Digital2 => "2",
-            Keys::Digital3 => "3",
-            Keys::Digital4 => "4",
-            Keys::Digital5 => "5",
-            Keys::Digital6 => "6",
-            Keys::Digital7 => "7",
-            Keys::Digital8 => "8",
-            Keys::Digital9 => "9",
-            Keys::A => "a",
-            Keys::B => "b",
-            Keys::C => "c",
-            Keys::D => "d",
-            Keys::E => "e",
-            Keys::F => "f",
-            Keys::G => "g",
-            Keys::H => "h",
-            Keys::I => "i",
-            Keys::J => "j",
-            Keys::K => "k",
-            Keys::L => "l",
-            Keys::M => "m",
-            Keys::N => "n",
-            Keys::O => "o",
-            Keys::P => "p",
-            Keys::Q => "q",
-            Keys::R => "r",
-            Keys::S => "s",
-            Keys::T => "t",
-            Keys::U => "u",
-            Keys::V => "v",
-            Keys::W => "w",
-            Keys::X => "x",
-            Keys::Y => "y",
-            Keys::Z => "z",
+            KeyCodes::Shift(_) => "shift",
+            KeyCodes::Control(_) => "ctrl",
+            KeyCodes::Alt(_) => "alt",
+            KeyCodes::Pause => "UnImplemented",
+            KeyCodes::Capital => "capslock",
+            KeyCodes::Kana => "UnImplemented",
+            KeyCodes::Hangul => "UnImplemented",
+            KeyCodes::Junja => "UnImplemented",
+            KeyCodes::Final => "UnImplemented",
+            KeyCodes::Hanja => "UnImplemented",
+            KeyCodes::Kanji => "UnImplemented",
+            KeyCodes::Escape => "escape",
+            KeyCodes::Convert => "UnImplemented",
+            KeyCodes::Nonconvert => "UnImplemented",
+            KeyCodes::Accept => "UnImplemented",
+            KeyCodes::ModeChange => "UnImplemented",
+            KeyCodes::Space => "space",
+            KeyCodes::PageUp => "pageup",
+            KeyCodes::PageDown => "pagedown",
+            KeyCodes::End => "end",
+            KeyCodes::Home => "home",
+            KeyCodes::Left => "left",
+            KeyCodes::Up => "up",
+            KeyCodes::Right => "right",
+            KeyCodes::Down => "down",
+            KeyCodes::Select => "UnImplemented",
+            KeyCodes::Print => "UnImplemented",
+            KeyCodes::Execute => "UnImplemented",
+            KeyCodes::PrintScreen => "UnImplemented",
+            KeyCodes::Insert => "insert",
+            KeyCodes::Delete => "delete",
+            KeyCodes::Help => "UnImplemented",
+            KeyCodes::Digital0 => "0",
+            KeyCodes::Digital1 => "1",
+            KeyCodes::Digital2 => "2",
+            KeyCodes::Digital3 => "3",
+            KeyCodes::Digital4 => "4",
+            KeyCodes::Digital5 => "5",
+            KeyCodes::Digital6 => "6",
+            KeyCodes::Digital7 => "7",
+            KeyCodes::Digital8 => "8",
+            KeyCodes::Digital9 => "9",
+            KeyCodes::A => "a",
+            KeyCodes::B => "b",
+            KeyCodes::C => "c",
+            KeyCodes::D => "d",
+            KeyCodes::E => "e",
+            KeyCodes::F => "f",
+            KeyCodes::G => "g",
+            KeyCodes::H => "h",
+            KeyCodes::I => "i",
+            KeyCodes::J => "j",
+            KeyCodes::K => "k",
+            KeyCodes::L => "l",
+            KeyCodes::M => "m",
+            KeyCodes::N => "n",
+            KeyCodes::O => "o",
+            KeyCodes::P => "p",
+            KeyCodes::Q => "q",
+            KeyCodes::R => "r",
+            KeyCodes::S => "s",
+            KeyCodes::T => "t",
+            KeyCodes::U => "u",
+            KeyCodes::V => "v",
+            KeyCodes::W => "w",
+            KeyCodes::X => "x",
+            KeyCodes::Y => "y",
+            KeyCodes::Z => "z",
             // TODO: handle position
             #[cfg(target_os = "windows")]
-            Keys::Platform(_) => "win",
+            KeyCodes::Platform(_) => "win",
             #[cfg(target_os = "macos")]
-            Keys::Platform(_) => "cmd",
+            KeyCodes::Platform(_) => "cmd",
             #[cfg(target_os = "linux")]
-            Keys::Platform(_) => "super",
-            Keys::App => "UnImplemented", // TODO: Chrome use this as Fn key
-            Keys::Sleep => "UnImplemented",
-            Keys::Numpad0 => "UnImplemented", // TODO: handle numpad key
-            Keys::Numpad1 => "UnImplemented",
-            Keys::Numpad2 => "UnImplemented",
-            Keys::Numpad3 => "UnImplemented",
-            Keys::Numpad4 => "UnImplemented",
-            Keys::Numpad5 => "UnImplemented",
-            Keys::Numpad6 => "UnImplemented",
-            Keys::Numpad7 => "UnImplemented",
-            Keys::Numpad8 => "UnImplemented",
-            Keys::Numpad9 => "UnImplemented",
-            Keys::Multiply => "UnImplemented",
-            Keys::Add => "UnImplemented",
-            Keys::Separator => "UnImplemented",
-            Keys::Subtract => "UnImplemented",
-            Keys::Decimal => "UnImplemented",
-            Keys::Divide => "UnImplemented",
-            Keys::F1 => "f1",
-            Keys::F2 => "f2",
-            Keys::F3 => "f3",
-            Keys::F4 => "f4",
-            Keys::F5 => "f5",
-            Keys::F6 => "f6",
-            Keys::F7 => "f7",
-            Keys::F8 => "f8",
-            Keys::F9 => "f9",
-            Keys::F10 => "f10",
-            Keys::F11 => "f11",
-            Keys::F12 => "f12",
-            Keys::F13 => "f13",
-            Keys::F14 => "f14",
-            Keys::F15 => "f15",
-            Keys::F16 => "f16",
-            Keys::F17 => "f17",
-            Keys::F18 => "f18",
-            Keys::F19 => "f19",
-            Keys::F20 => "f20",
-            Keys::F21 => "f21",
-            Keys::F22 => "f22",
-            Keys::F23 => "f23",
-            Keys::F24 => "f24",
-            Keys::NumLock => "UnImplemented",
-            Keys::ScrollLock => "UnImplemented",
-            Keys::BrowserBack => "UnImplemented",
-            Keys::BrowserForward => "UnImplemented",
-            Keys::BrowserRefresh => "UnImplemented",
-            Keys::BrowserStop => "UnImplemented",
-            Keys::BrowserSearch => "UnImplemented",
-            Keys::BrowserFavorites => "UnImplemented",
-            Keys::BrowserHome => "UnImplemented",
-            Keys::VolumeMute => "UnImplemented",
-            Keys::VolumeDown => "UnImplemented",
-            Keys::VolumeUp => "UnImplemented",
-            Keys::MediaNextTrack => "UnImplemented",
-            Keys::MediaPrevTrack => "UnImplemented",
-            Keys::MediaStop => "UnImplemented",
-            Keys::MediaPlayPause => "UnImplemented",
-            Keys::LaunchMail => "UnImplemented",
-            Keys::LaunchMediaSelect => "UnImplemented",
-            Keys::LaunchApp1 => "UnImplemented",
-            Keys::LaunchApp2 => "UnImplemented",
-            Keys::Semicolon => ";",
-            Keys::Plus => "=",
-            Keys::Comma => ",",
-            Keys::Minus => "-",
-            Keys::Period => ".",
-            Keys::Slash => "/",
-            Keys::Tilde => "`",
-            Keys::LeftBracket => "[",
-            Keys::Backslash => "\\",
-            Keys::RightBracket => "]",
-            Keys::Quote => "'",
-            Keys::OEM8 => "UnImplemented",
-            Keys::OEM102 => "UnImplemented",
-            Keys::ProcessKey => "UnImplemented",
-            Keys::Packet => "UnImplemented",
-            Keys::Attn => "UnImplemented",
-            Keys::CrSel => "UnImplemented",
-            Keys::ExSel => "UnImplemented",
-            Keys::EraseEOF => "UnImplemented",
-            Keys::Play => "UnImplemented",
-            Keys::Zoom => "UnImplemented",
-            Keys::PA1 => "UnImplemented",
-            Keys::OEMClear => "UnImplemented",
+            KeyCodes::Platform(_) => "super",
+            KeyCodes::App => "UnImplemented", // TODO: Chrome use this as Fn key
+            KeyCodes::Sleep => "UnImplemented",
+            KeyCodes::Numpad0 => "UnImplemented", // TODO: handle numpad key
+            KeyCodes::Numpad1 => "UnImplemented",
+            KeyCodes::Numpad2 => "UnImplemented",
+            KeyCodes::Numpad3 => "UnImplemented",
+            KeyCodes::Numpad4 => "UnImplemented",
+            KeyCodes::Numpad5 => "UnImplemented",
+            KeyCodes::Numpad6 => "UnImplemented",
+            KeyCodes::Numpad7 => "UnImplemented",
+            KeyCodes::Numpad8 => "UnImplemented",
+            KeyCodes::Numpad9 => "UnImplemented",
+            KeyCodes::Multiply => "UnImplemented",
+            KeyCodes::Add => "UnImplemented",
+            KeyCodes::Separator => "UnImplemented",
+            KeyCodes::Subtract => "UnImplemented",
+            KeyCodes::Decimal => "UnImplemented",
+            KeyCodes::Divide => "UnImplemented",
+            KeyCodes::F1 => "f1",
+            KeyCodes::F2 => "f2",
+            KeyCodes::F3 => "f3",
+            KeyCodes::F4 => "f4",
+            KeyCodes::F5 => "f5",
+            KeyCodes::F6 => "f6",
+            KeyCodes::F7 => "f7",
+            KeyCodes::F8 => "f8",
+            KeyCodes::F9 => "f9",
+            KeyCodes::F10 => "f10",
+            KeyCodes::F11 => "f11",
+            KeyCodes::F12 => "f12",
+            KeyCodes::F13 => "f13",
+            KeyCodes::F14 => "f14",
+            KeyCodes::F15 => "f15",
+            KeyCodes::F16 => "f16",
+            KeyCodes::F17 => "f17",
+            KeyCodes::F18 => "f18",
+            KeyCodes::F19 => "f19",
+            KeyCodes::F20 => "f20",
+            KeyCodes::F21 => "f21",
+            KeyCodes::F22 => "f22",
+            KeyCodes::F23 => "f23",
+            KeyCodes::F24 => "f24",
+            KeyCodes::NumLock => "UnImplemented",
+            KeyCodes::ScrollLock => "UnImplemented",
+            KeyCodes::BrowserBack => "UnImplemented",
+            KeyCodes::BrowserForward => "UnImplemented",
+            KeyCodes::BrowserRefresh => "UnImplemented",
+            KeyCodes::BrowserStop => "UnImplemented",
+            KeyCodes::BrowserSearch => "UnImplemented",
+            KeyCodes::BrowserFavorites => "UnImplemented",
+            KeyCodes::BrowserHome => "UnImplemented",
+            KeyCodes::VolumeMute => "UnImplemented",
+            KeyCodes::VolumeDown => "UnImplemented",
+            KeyCodes::VolumeUp => "UnImplemented",
+            KeyCodes::MediaNextTrack => "UnImplemented",
+            KeyCodes::MediaPrevTrack => "UnImplemented",
+            KeyCodes::MediaStop => "UnImplemented",
+            KeyCodes::MediaPlayPause => "UnImplemented",
+            KeyCodes::LaunchMail => "UnImplemented",
+            KeyCodes::LaunchMediaSelect => "UnImplemented",
+            KeyCodes::LaunchApp1 => "UnImplemented",
+            KeyCodes::LaunchApp2 => "UnImplemented",
+            KeyCodes::Semicolon => ";",
+            KeyCodes::Plus => "=",
+            KeyCodes::Comma => ",",
+            KeyCodes::Minus => "-",
+            KeyCodes::Period => ".",
+            KeyCodes::Slash => "/",
+            KeyCodes::Tilde => "`",
+            KeyCodes::LeftBracket => "[",
+            KeyCodes::Backslash => "\\",
+            KeyCodes::RightBracket => "]",
+            KeyCodes::Quote => "'",
+            KeyCodes::OEM8 => "UnImplemented",
+            KeyCodes::OEM102 => "UnImplemented",
+            KeyCodes::ProcessKey => "UnImplemented",
+            KeyCodes::Packet => "UnImplemented",
+            KeyCodes::Attn => "UnImplemented",
+            KeyCodes::CrSel => "UnImplemented",
+            KeyCodes::ExSel => "UnImplemented",
+            KeyCodes::EraseEOF => "UnImplemented",
+            KeyCodes::Play => "UnImplemented",
+            KeyCodes::Zoom => "UnImplemented",
+            KeyCodes::PA1 => "UnImplemented",
+            KeyCodes::OEMClear => "UnImplemented",
         }
         .to_string()
     }
@@ -812,19 +812,19 @@ impl Eq for KeyPosition {}
 mod tests {
     use strum::IntoEnumIterator;
 
-    use crate::Keys;
+    use crate::KeyCodes;
 
     #[test]
     fn test_vkcode_parse_failure() {
-        assert!(Keys::from_str("{").is_err());
-        assert!(Keys::from_str("?").is_err());
-        assert!(Keys::from_str(">").is_err());
+        assert!(KeyCodes::from_str("{").is_err());
+        assert!(KeyCodes::from_str("?").is_err());
+        assert!(KeyCodes::from_str(">").is_err());
     }
 
     #[test]
     fn test_vkcode_string() {
-        for key in Keys::iter() {
-            if let Ok(right) = Keys::from_str(&key.to_string()) {
+        for key in KeyCodes::iter() {
+            if let Ok(right) = KeyCodes::from_str(&key.to_string()) {
                 assert_eq!(key, right);
             }
         }
