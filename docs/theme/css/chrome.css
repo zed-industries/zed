@@ -664,12 +664,15 @@ ul#searchresults span.teaser em {
   color: inherit;
   background: inherit;
   font-size: inherit;
+  font-family: inherit;
 }
 .theme-popup .theme:hover {
   background-color: var(--theme-hover);
 }
 
 .theme-selected::before {
+  font-family: Arial, Helvetica, sans-serif;
+  text-align: center;
   display: inline-block;
   content: "✓";
   margin-inline-start: -20px;
