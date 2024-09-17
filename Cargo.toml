@@ -65,6 +65,7 @@ members = [
     "crates/media",
     "crates/menu",
     "crates/multi_buffer",
+    "crates/multi_buffer2",
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
