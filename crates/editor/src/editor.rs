@@ -550,6 +550,7 @@ pub struct Editor {
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
+    backup_completion_task: CompletionId,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
@@ -1895,6 +1896,7 @@ impl Editor {
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
+            backup_completion_task: 0,
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
             next_inlay_id: 0,
@@ -4218,16 +4220,42 @@ impl Editor {
             }),
             trigger_kind,
         };
+        let snapshot = buffer.read(cx).snapshot();
+        let classifier = snapshot.char_classifier_at(&buffer_position);
+        let first_char = options
+            .trigger
+            .as_ref()
+            .and_then(|trigger| trigger.chars().next());
+        let should_cancel_backup = first_char.is_some_and(|char| !classifier.is_word(char));
         let completions = provider.completions(&buffer, buffer_position, completion_context, cx);
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
+        if should_cancel_backup {
+            self.backup_completion_task = id;
+        }
+        dbg!(
+            id,
+            &options.trigger,
+            &should_cancel_backup,
+            self.backup_completion_task
+        );
         let task = cx.spawn(|this, mut cx| {
             async move {
                 this.update(&mut cx, |this, _| {
-                    this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
+                    this.completion_tasks.retain(|(task_id, _)| {
+                        if *task_id >= id || *task_id == this.backup_completion_task {
+                            true
+                        } else {
+                            dbg!("dropping", id);
+                            false
+                        }
+                    });
                 })?;
                 let completions = completions.await.log_err();
+                cx.background_executor()
+                    .timer(Duration::from_millis(1000))
+                    .await;
                 let menu = if let Some(completions) = completions {
                     let mut menu = CompletionsMenu {
                         id,
@@ -4253,13 +4281,24 @@ impl Editor {
                             DebouncedDelay::new(),
                         )),
                     };
-                    menu.filter(query.as_deref(), cx.background_executor().clone())
+                    let completion_query = this.update(&mut cx, |this, cx| {
+                        Self::completion_query(&this.buffer.read(cx).read(cx), position)
+                    })?;
+                    let query = completion_query.or(query);
+                    menu.filter(dbg!(query.as_deref()), cx.background_executor().clone())
                         .await;
+
+                    this.update(&mut cx, |editor, cx| {
+                        dbg!("got here!");
+                        editor.backup_completion_task = editor.next_completion_id.saturating_sub(1);
+                    })?;
 
                     if menu.matches.is_empty() {
                         None
                     } else {
                         this.update(&mut cx, |editor, cx| {
+                            editor.backup_completion_task =
+                                editor.next_completion_id.saturating_sub(1);
                             let completions = menu.completions.clone();
                             let matches = menu.matches.clone();
 
