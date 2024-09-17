@@ -7133,6 +7133,30 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         which::which(command).ok()
     }
 
+    async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
+        if self.fs.is_none() {
+            return Ok(());
+        }
+
+        let working_dir = self.worktree_root_path();
+        let output = smol::process::Command::new(&command.path)
+            .args(command.arguments)
+            .envs(command.env.clone().unwrap_or_default())
+            .current_dir(working_dir)
+            .output()
+            .await?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(anyhow!(
+            "{}, stdout: {:?}, stderr: {:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+
     fn update_status(
         &self,
         server_name: LanguageServerName,

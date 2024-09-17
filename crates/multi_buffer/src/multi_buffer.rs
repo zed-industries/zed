@@ -3790,7 +3790,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    // Returns the locators referenced by the given excerpt ids, sorted by locator.
+    /// Returns the locators referenced by the given excerpt IDs, sorted by locator.
     fn excerpt_locators_for_ids(
         &self,
         ids: impl IntoIterator<Item = ExcerptId>,
@@ -3801,13 +3801,17 @@ impl MultiBufferSnapshot {
 
         while sorted_ids.last() == Some(&ExcerptId::max()) {
             sorted_ids.pop();
-            locators.push(Locator::max());
+            if let Some(mapping) = self.excerpt_ids.last() {
+                locators.push(mapping.locator.clone());
+            }
         }
 
         let mut sorted_ids = sorted_ids.into_iter().dedup().peekable();
         if sorted_ids.peek() == Some(&ExcerptId::min()) {
             sorted_ids.next();
-            locators.push(Locator::min());
+            if let Some(mapping) = self.excerpt_ids.first() {
+                locators.push(mapping.locator.clone());
+            }
         }
 
         let mut cursor = self.excerpt_ids.cursor::<ExcerptId>();
