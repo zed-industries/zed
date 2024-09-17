@@ -4,7 +4,7 @@ pub mod debounced_delay;
 pub mod lsp_command;
 pub mod lsp_ext_command;
 pub mod lsp_store;
-mod prettier_support;
+pub mod prettier_store;
 pub mod project_settings;
 pub mod search;
 mod task_inventory;
@@ -31,7 +31,6 @@ pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
-    stream::FuturesUnordered,
     AsyncWriteExt, FutureExt, StreamExt,
 };
 
@@ -59,8 +58,8 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_path};
-use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{LspSettings, ProjectSettings, SettingsObserver};
+pub use prettier_store::PrettierStore;
+use project_settings::{ProjectSettings, SettingsObserver};
 use remote::SshSession;
 use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
 use search::{SearchInputKind, SearchQuery, SearchResult};
@@ -140,7 +139,6 @@ pub struct Project {
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
     client: Arc<client::Client>,
-    current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     join_project_response_message_id: u32,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
@@ -157,9 +155,6 @@ pub struct Project {
     remotely_created_buffers: Arc<Mutex<RemotelyCreatedBuffers>>,
     terminals: Terminals,
     node: Option<Arc<dyn NodeRuntime>>,
-    default_prettier: DefaultPrettier,
-    prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
-    prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
@@ -634,6 +629,16 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
+            let prettier_store = cx.new_model(|cx| {
+                PrettierStore::new(
+                    node.clone(),
+                    fs.clone(),
+                    languages.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+            });
+
             let settings_observer = cx.new_model(|cx| {
                 SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx)
             });
@@ -643,6 +648,7 @@ impl Project {
                 LspStore::new_local(
                     buffer_store.clone(),
                     worktree_store.clone(),
+                    prettier_store.clone(),
                     environment.clone(),
                     languages.clone(),
                     Some(client.http_client()),
@@ -658,14 +664,10 @@ impl Project {
                 worktree_store,
                 buffer_store,
                 lsp_store,
-                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![
-                    cx.observe_global::<SettingsStore>(Self::on_settings_changed),
-                    cx.on_release(Self::release),
-                ],
+                _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
                 snippets,
                 languages,
@@ -680,9 +682,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
-                default_prettier: DefaultPrettier::default(),
-                prettiers_per_worktree: HashMap::default(),
-                prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
@@ -751,14 +750,10 @@ impl Project {
                 worktree_store,
                 buffer_store,
                 lsp_store,
-                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![
-                    cx.observe_global::<SettingsStore>(Self::on_settings_changed),
-                    cx.on_release(Self::release),
-                ],
+                _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
                 snippets,
                 languages,
@@ -773,9 +768,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
-                default_prettier: DefaultPrettier::default(),
-                prettiers_per_worktree: HashMap::default(),
-                prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
@@ -928,7 +920,6 @@ impl Project {
                 buffer_store: buffer_store.clone(),
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
-                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
@@ -954,9 +945,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: None,
-                default_prettier: DefaultPrettier::default(),
-                prettiers_per_worktree: HashMap::default(),
-                prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
                 dev_server_project_id: response
@@ -1174,112 +1162,6 @@ impl Project {
 
     pub fn worktree_store(&self) -> Model<WorktreeStore> {
         self.worktree_store.clone()
-    }
-
-    fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let mut language_servers_to_start = Vec::new();
-        let mut language_formatters_to_check = Vec::new();
-        for buffer in self.buffer_store.read(cx).buffers() {
-            let buffer = buffer.read(cx);
-            let buffer_file = File::from_dyn(buffer.file());
-            let buffer_language = buffer.language();
-            let settings = language_settings(buffer_language, buffer.file(), cx);
-            if let Some(language) = buffer_language {
-                if settings.enable_language_server {
-                    if let Some(file) = buffer_file {
-                        language_servers_to_start.push((file.worktree.clone(), language.name()));
-                    }
-                }
-                language_formatters_to_check
-                    .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
-            }
-        }
-
-        let mut language_servers_to_stop = Vec::new();
-        let mut language_servers_to_restart = Vec::new();
-        let languages = self.languages.to_vec();
-
-        let new_lsp_settings = ProjectSettings::get_global(cx).lsp.clone();
-        let current_lsp_settings = &self.current_lsp_settings;
-        for (worktree_id, started_lsp_name) in self.lsp_store.read(cx).started_language_servers() {
-            let language = languages.iter().find_map(|l| {
-                let adapter = self
-                    .languages
-                    .lsp_adapters(&l.name())
-                    .iter()
-                    .find(|adapter| adapter.name == started_lsp_name)?
-                    .clone();
-                Some((l, adapter))
-            });
-            if let Some((language, adapter)) = language {
-                let worktree = self.worktree_for_id(worktree_id, cx);
-                let file = worktree.as_ref().and_then(|tree| {
-                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
-                });
-                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
-                    language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
-                } else if let Some(worktree) = worktree {
-                    let server_name = &adapter.name.0;
-                    match (
-                        current_lsp_settings.get(server_name),
-                        new_lsp_settings.get(server_name),
-                    ) {
-                        (None, None) => {}
-                        (Some(_), None) | (None, Some(_)) => {
-                            language_servers_to_restart.push((worktree, language.name()));
-                        }
-                        (Some(current_lsp_settings), Some(new_lsp_settings)) => {
-                            if current_lsp_settings != new_lsp_settings {
-                                language_servers_to_restart.push((worktree, language.name()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        self.current_lsp_settings = new_lsp_settings;
-
-        // Stop all newly-disabled language servers.
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            for (worktree_id, adapter_name) in language_servers_to_stop {
-                lsp_store
-                    .stop_language_server(worktree_id, adapter_name, cx)
-                    .detach();
-            }
-        });
-
-        let mut prettier_plugins_by_worktree = HashMap::default();
-        for (worktree, language_settings) in language_formatters_to_check {
-            if let Some(plugins) =
-                prettier_support::prettier_plugins_for_language(&language_settings)
-            {
-                prettier_plugins_by_worktree
-                    .entry(worktree)
-                    .or_insert_with(HashSet::default)
-                    .extend(plugins.iter().cloned());
-            }
-        }
-        for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(
-                worktree,
-                prettier_plugins.into_iter().map(Arc::from),
-                cx,
-            );
-        }
-
-        // Start all the newly-enabled language servers.
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            for (worktree, language) in language_servers_to_start {
-                lsp_store.start_language_servers(&worktree, language, cx);
-            }
-
-            // Restart all language servers with changed initialization options.
-            for (worktree, language) in language_servers_to_restart {
-                lsp_store.restart_language_servers(worktree, language, cx);
-            }
-        });
-
-        cx.notify();
     }
 
     pub fn buffer_for_id(&self, remote_id: BufferId, cx: &AppContext) -> Option<Model<Buffer>> {
@@ -2160,23 +2042,9 @@ impl Project {
                 buffer,
                 new_language,
             } => {
-                let Some(new_language) = new_language else {
+                let Some(_) = new_language else {
                     cx.emit(Event::LanguageNotFound(buffer.clone()));
                     return;
-                };
-                let buffer_file = buffer.read(cx).file().cloned();
-                let settings =
-                    language_settings(Some(new_language), buffer_file.as_ref(), cx).clone();
-                let buffer_file = File::from_dyn(buffer_file.as_ref());
-                let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-                if let Some(prettier_plugins) =
-                    prettier_support::prettier_plugins_for_language(&settings)
-                {
-                    self.install_default_prettier(
-                        worktree,
-                        prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
-                        cx,
-                    );
                 };
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
@@ -2253,7 +2121,6 @@ impl Project {
                 worktree::Event::UpdatedEntries(changes) => {
                     if is_local {
                         this.update_local_worktree_settings(&worktree, changes, cx);
-                        this.update_prettier_settings(&worktree, changes, cx);
                     }
 
                     cx.emit(Event::WorktreeUpdatedEntries(
@@ -2299,37 +2166,6 @@ impl Project {
             }
             return;
         }
-
-        let mut prettier_instances_to_clean = FuturesUnordered::new();
-        if let Some(prettier_paths) = self.prettiers_per_worktree.remove(&id_to_remove) {
-            for path in prettier_paths.iter().flatten() {
-                if let Some(prettier_instance) = self.prettier_instances.remove(path) {
-                    prettier_instances_to_clean.push(async move {
-                        prettier_instance
-                            .server()
-                            .await
-                            .map(|server| server.server_id())
-                    });
-                }
-            }
-        }
-        cx.spawn(|project, mut cx| async move {
-            while let Some(prettier_server_id) = prettier_instances_to_clean.next().await {
-                if let Some(prettier_server_id) = prettier_server_id {
-                    project
-                        .update(&mut cx, |project, cx| {
-                            project.lsp_store.update(cx, |lsp_store, cx| {
-                                lsp_store.unregister_supplementary_language_server(
-                                    prettier_server_id,
-                                    cx,
-                                );
-                            });
-                        })
-                        .ok();
-                }
-            }
-        })
-        .detach();
 
         self.task_inventory().update(cx, |inventory, _| {
             inventory.remove_worktree_sources(id_to_remove);
@@ -3059,11 +2895,21 @@ impl Project {
                     None
                 }
             }
-            Formatter::Prettier => prettier_support::format_with_prettier(&project, buffer, cx)
-                .await
-                .transpose()
-                .ok()
-                .flatten(),
+            Formatter::Prettier => {
+                let prettier = project.update(cx, |project, cx| {
+                    project
+                        .lsp_store
+                        .read(cx)
+                        .prettier_store()
+                        .unwrap()
+                        .downgrade()
+                })?;
+                prettier_store::format_with_prettier(&prettier, buffer, cx)
+                    .await
+                    .transpose()
+                    .ok()
+                    .flatten()
+            }
             Formatter::External { command, arguments } => {
                 let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
                 Self::format_via_external_command(buffer, buffer_abs_path, command, arguments, cx)

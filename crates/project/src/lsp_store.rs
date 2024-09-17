@@ -3,6 +3,7 @@ use crate::{
     environment::ProjectEnvironment,
     lsp_command::{self, *},
     lsp_ext_command,
+    prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     relativize_path, resolve_path,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -101,6 +102,8 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
+    prettier_store: Model<PrettierStore>,
+    current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     _subscription: gpui::Subscription,
 }
 
@@ -135,6 +138,7 @@ impl RemoteLspStore {}
 
 pub struct SshLspStore {
     upstream_client: AnyProtoClient,
+    current_lsp_settings: HashMap<Arc<str>, LspSettings>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -310,9 +314,32 @@ impl LspStore {
         }
     }
 
+    pub fn swap_current_lsp_settings(
+        &mut self,
+        new_settings: HashMap<Arc<str>, LspSettings>,
+    ) -> Option<HashMap<Arc<str>, LspSettings>> {
+        match &mut self.mode {
+            LspStoreMode::Ssh(SshLspStore {
+                current_lsp_settings,
+                ..
+            })
+            | LspStoreMode::Local(LocalLspStore {
+                current_lsp_settings,
+                ..
+            }) => {
+                let ret = mem::take(current_lsp_settings);
+                *current_lsp_settings = new_settings;
+                Some(ret)
+            }
+            LspStoreMode::Remote(_) => None,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn new_local(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
+        prettier_store: Model<PrettierStore>,
         environment: Model<ProjectEnvironment>,
         languages: Arc<LanguageRegistry>,
         http_client: Option<Arc<dyn HttpClient>>,
@@ -324,6 +351,10 @@ impl LspStore {
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
+        cx.subscribe(&prettier_store, Self::on_prettier_store_event)
+            .detach();
+        cx.observe_global::<SettingsStore>(Self::on_settings_changed)
+            .detach();
 
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
@@ -332,6 +363,8 @@ impl LspStore {
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: Default::default(),
                 language_server_watcher_registrations: Default::default(),
+                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
+                prettier_store,
                 environment,
                 http_client,
                 fs,
@@ -387,9 +420,14 @@ impl LspStore {
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
+        cx.observe_global::<SettingsStore>(Self::on_settings_changed)
+            .detach();
 
         Self {
-            mode: LspStoreMode::Ssh(SshLspStore { upstream_client }),
+            mode: LspStoreMode::Ssh(SshLspStore {
+                upstream_client,
+                current_lsp_settings: Default::default(),
+            }),
             downstream_client: None,
             project_id,
             buffer_store,
@@ -401,6 +439,7 @@ impl LspStore {
             buffer_snapshots: Default::default(),
             next_diagnostic_group_id: Default::default(),
             diagnostic_summaries: Default::default(),
+
             diagnostics: Default::default(),
             active_entry: None,
             _maintain_workspace_config: Self::maintain_workspace_config(cx),
@@ -496,6 +535,36 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeRemoved(_, id) => self.remove_worktree(*id, cx),
             WorktreeStoreEvent::WorktreeOrderChanged => {}
         }
+    }
+
+    fn on_prettier_store_event(
+        &mut self,
+        _: Model<PrettierStore>,
+        event: &PrettierStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            PrettierStoreEvent::LanguageServerRemoved(prettier_server_id) => {
+                self.unregister_supplementary_language_server(*prettier_server_id, cx);
+            }
+            PrettierStoreEvent::LanguageServerAdded {
+                new_server_id,
+                name,
+                prettier_server,
+            } => {
+                self.register_supplementary_language_server(
+                    *new_server_id,
+                    name.clone(),
+                    prettier_server.clone(),
+                    cx,
+                );
+            }
+        }
+    }
+
+    // todo!
+    pub fn prettier_store(&self) -> Option<Model<PrettierStore>> {
+        self.as_local().map(|local| local.prettier_store.clone())
     }
 
     fn on_buffer_event(
@@ -656,11 +725,29 @@ impl LspStore {
         });
 
         let buffer_file = buffer.read(cx).file().cloned();
+        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
-        if let Some(file) = buffer_file {
+        let worktree_id = if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
-            self.start_language_servers(&worktree, new_language.name(), cx)
+            self.start_language_servers(&worktree, new_language.name(), cx);
+
+            Some(worktree.read(cx).id())
+        } else {
+            None
+        };
+
+        if let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings) {
+            let prettier_store = self.as_local().map(|s| s.prettier_store.clone());
+            if let Some(prettier_store) = prettier_store {
+                prettier_store.update(cx, |prettier_store, cx| {
+                    prettier_store.install_default_prettier(
+                        worktree_id,
+                        prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
+                        cx,
+                    )
+                })
+            }
         }
 
         cx.emit(LspStoreEvent::LanguageDetected {
@@ -797,6 +884,95 @@ impl LspStore {
         }
 
         Task::ready(Ok(Default::default()))
+    }
+
+    fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
+        let mut language_servers_to_start = Vec::new();
+        let mut language_formatters_to_check = Vec::new();
+        for buffer in self.buffer_store.read(cx).buffers() {
+            let buffer = buffer.read(cx);
+            let buffer_file = File::from_dyn(buffer.file());
+            let buffer_language = buffer.language();
+            let settings = language_settings(buffer_language, buffer.file(), cx);
+            if let Some(language) = buffer_language {
+                if settings.enable_language_server {
+                    if let Some(file) = buffer_file {
+                        language_servers_to_start.push((file.worktree.clone(), language.name()));
+                    }
+                }
+                language_formatters_to_check
+                    .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
+            }
+        }
+
+        let mut language_servers_to_stop = Vec::new();
+        let mut language_servers_to_restart = Vec::new();
+        let languages = self.languages.to_vec();
+
+        let new_lsp_settings = ProjectSettings::get_global(cx).lsp.clone();
+        let Some(current_lsp_settings) = self.swap_current_lsp_settings(new_lsp_settings.clone())
+        else {
+            return;
+        };
+        for (worktree_id, started_lsp_name) in self.started_language_servers() {
+            let language = languages.iter().find_map(|l| {
+                let adapter = self
+                    .languages
+                    .lsp_adapters(&l.name())
+                    .iter()
+                    .find(|adapter| adapter.name == started_lsp_name)?
+                    .clone();
+                Some((l, adapter))
+            });
+            if let Some((language, adapter)) = language {
+                let worktree = self.worktree_for_id(worktree_id, cx).ok();
+                let file = worktree.as_ref().and_then(|tree| {
+                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
+                });
+                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
+                    language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
+                } else if let Some(worktree) = worktree {
+                    let server_name = &adapter.name.0;
+                    match (
+                        current_lsp_settings.get(server_name),
+                        new_lsp_settings.get(server_name),
+                    ) {
+                        (None, None) => {}
+                        (Some(_), None) | (None, Some(_)) => {
+                            language_servers_to_restart.push((worktree, language.name()));
+                        }
+                        (Some(current_lsp_settings), Some(new_lsp_settings)) => {
+                            if current_lsp_settings != new_lsp_settings {
+                                language_servers_to_restart.push((worktree, language.name()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for (worktree_id, adapter_name) in language_servers_to_stop {
+            self.stop_language_server(worktree_id, adapter_name, cx)
+                .detach();
+        }
+
+        if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
+            prettier_store.update(cx, |prettier_store, cx| {
+                prettier_store.on_settings_changed(language_formatters_to_check, cx)
+            })
+        }
+
+        // Start all the newly-enabled language servers.
+        for (worktree, language) in language_servers_to_start {
+            self.start_language_servers(&worktree, language, cx);
+        }
+
+        // Restart all language servers with changed initialization options.
+        for (worktree, language) in language_servers_to_restart {
+            self.restart_language_servers(worktree, language, cx);
+        }
+
+        cx.notify();
     }
 
     pub async fn execute_code_actions_on_servers(
@@ -2375,7 +2551,7 @@ impl LspStore {
             })
     }
 
-    pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
 
@@ -2405,6 +2581,12 @@ impl LspStore {
                     .remove(&server_id_to_remove);
             }
             cx.emit(LspStoreEvent::LanguageServerRemoved(server_id_to_remove));
+        }
+
+        if let Some(local) = self.as_local() {
+            local.prettier_store.update(cx, |prettier_store, cx| {
+                prettier_store.remove_worktree(id_to_remove, cx);
+            })
         }
     }
 
@@ -6116,6 +6298,10 @@ impl LspStore {
         }
 
         let Some(local) = self.as_local() else { return };
+
+        local.prettier_store.update(cx, |prettier_store, cx| {
+            prettier_store.update_prettier_settings(&worktree_handle, changes, cx)
+        });
 
         let worktree_id = worktree_handle.read(cx).id();
         let mut language_server_ids = self
