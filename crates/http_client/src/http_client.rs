@@ -77,13 +77,16 @@ pub struct HttpClientWithProxy {
 impl HttpClientWithProxy {
     /// Returns a new [`HttpClientWithProxy`] with the given proxy URL.
     pub fn new(client: Arc<dyn HttpClient>, proxy_url: Option<String>) -> Self {
-        let proxy_url = proxy_url
+        let proxy_uri = proxy_url
             .and_then(|proxy| proxy.parse().ok())
             .or_else(read_proxy_from_env);
 
+        Self::new_uri(client, proxy_uri)
+    }
+    pub fn new_uri(client: Arc<dyn HttpClient>, proxy_uri: Option<Uri>) -> Self {
         Self {
             client,
-            proxy: proxy_url,
+            proxy: proxy_uri,
         }
     }
 }
@@ -138,6 +141,19 @@ impl HttpClientWithUrl {
         proxy_url: Option<String>,
     ) -> Self {
         let client = HttpClientWithProxy::new(client, proxy_url);
+
+        Self {
+            base_url: Mutex::new(base_url.into()),
+            client,
+        }
+    }
+
+    pub fn new_uri(
+        client: Arc<dyn HttpClient>,
+        base_url: impl Into<String>,
+        proxy_uri: Option<Uri>,
+    ) -> Self {
+        let client = HttpClientWithProxy::new_uri(client, proxy_uri);
 
         Self {
             base_url: Mutex::new(base_url.into()),

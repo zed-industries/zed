@@ -2395,7 +2395,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "http_client",
- "isahc_http_client",
  "log",
  "once_cell",
  "parking_lot",

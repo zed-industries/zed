@@ -19,8 +19,7 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{actions, AppContext, AsyncAppContext, Global, Model, Task, WeakModel};
-use http_client::{read_proxy_from_env, AsyncBody, HttpClient, HttpClientWithUrl, Uri};
-use isahc_http_client::{Configurable, IsahcHttpClient};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
@@ -528,30 +527,13 @@ impl Client {
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
-        let user_agent = format!(
-            "Zed/{} ({}; {})",
-            AppVersion::global(cx),
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
         let clock = Arc::new(clock::RealSystemClock);
-        let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-        let proxy_url = proxy_str
-            .as_ref()
-            .and_then(|input| {
-                input
-                    .parse::<Uri>()
-                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                    .ok()
-            })
-            .or_else(read_proxy_from_env);
-
-        let http = Arc::new(HttpClientWithUrl::new(
-            IsahcHttpClient::new(proxy_url, Some(user_agent)),
+        let http = Arc::new(HttpClientWithUrl::new_uri(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
-            proxy_str,
+            cx.http_client().proxy().cloned(),
         ));
-        Self::new(clock, http.clone(), cx)
+        Self::new(clock, http, cx)
     }
 
     pub fn id(&self) -> u64 {
