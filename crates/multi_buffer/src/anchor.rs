@@ -19,7 +19,7 @@ impl Anchor {
         Self {
             buffer_id: None,
             excerpt_id: ExcerptId::min(),
-            text_anchor: text::Anchor::MIN,
+            text_anchor: text::Anchor::Start,
         }
     }
 
@@ -27,7 +27,7 @@ impl Anchor {
         Self {
             buffer_id: None,
             excerpt_id: ExcerptId::max(),
-            text_anchor: text::Anchor::MAX,
+            text_anchor: text::Anchor::End,
         }
     }
 
@@ -47,11 +47,15 @@ impl Anchor {
     }
 
     pub fn bias(&self) -> Bias {
-        self.text_anchor.bias
+        match self.text_anchor {
+            text::Anchor::Start => Bias::Left,
+            text::Anchor::End => Bias::Right,
+            text::Anchor::Character { bias, .. } => bias,
+        }
     }
 
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Left {
+        if self.bias() != Bias::Left {
             if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,
@@ -64,7 +68,7 @@ impl Anchor {
     }
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Right {
+        if self.bias() != Bias::Right {
             if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,

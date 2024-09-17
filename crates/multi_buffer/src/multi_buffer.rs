@@ -435,7 +435,7 @@ impl MultiBuffer {
         this.push_excerpts(
             buffer,
             [ExcerptRange {
-                context: text::Anchor::MIN..text::Anchor::MAX,
+                context: text::Anchor::Start..text::Anchor::End,
                 primary: None,
             }],
             cx,
@@ -2998,12 +2998,16 @@ impl MultiBufferSnapshot {
                 // If there's no adjacent excerpt that contains the anchor's position,
                 // then report that the anchor has lost its position.
                 if !kept_position {
+                    let bias = match anchor.text_anchor {
+                        text::Anchor::Start => Bias::Left,
+                        text::Anchor::End => Bias::Right,
+                        text::Anchor::Character { bias, .. } => bias,
+                    };
+
                     anchor = if let Some(excerpt) = next_excerpt {
-                        let mut text_anchor = excerpt
-                            .range
-                            .context
-                            .start
-                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
+                        let mut text_anchor =
+                            excerpt.range.context.start.bias(bias, &excerpt.buffer);
+
                         if text_anchor
                             .cmp(&excerpt.range.context.end, &excerpt.buffer)
                             .is_gt()
@@ -3016,11 +3020,7 @@ impl MultiBufferSnapshot {
                             text_anchor,
                         }
                     } else if let Some(excerpt) = prev_excerpt {
-                        let mut text_anchor = excerpt
-                            .range
-                            .context
-                            .end
-                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
+                        let mut text_anchor = excerpt.range.context.end.bias(bias, &excerpt.buffer);
                         if text_anchor
                             .cmp(&excerpt.range.context.start, &excerpt.buffer)
                             .is_lt()
@@ -3032,7 +3032,7 @@ impl MultiBufferSnapshot {
                             excerpt_id: excerpt.id,
                             text_anchor,
                         }
-                    } else if anchor.text_anchor.bias == Bias::Left {
+                    } else if bias == Bias::Left {
                         Anchor::min()
                     } else {
                         Anchor::max()

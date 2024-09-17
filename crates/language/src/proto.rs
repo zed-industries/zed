@@ -6,7 +6,7 @@ use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
 use serde_json::Value;
-use std::{ops::Range, str::FromStr, sync::Arc};
+use std::{ops::Range, str::FromStr, sync::Arc, u32};
 use text::*;
 
 pub use proto::{BufferState, Operation};
@@ -219,17 +219,41 @@ pub fn serialize_diagnostics<'a>(
         .collect()
 }
 
+const ANCHOR_START_PROTO: proto::Anchor = proto::Anchor {
+    replica_id: 0,
+    timestamp: 0,
+    offset: 0,
+    bias: proto::Bias::Left as i32,
+    buffer_id: None,
+};
+const ANCHOR_END_PROTO: proto::Anchor = proto::Anchor {
+    replica_id: u32::MAX,
+    timestamp: u32::MAX,
+    offset: u64::MAX,
+    bias: proto::Bias::Right as i32,
+    buffer_id: None,
+};
+
 /// Serializes an [`Anchor`] to be sent over RPC.
 pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
-    proto::Anchor {
-        replica_id: anchor.timestamp.replica_id as u32,
-        timestamp: anchor.timestamp.value,
-        offset: anchor.offset as u64,
-        bias: match anchor.bias {
-            Bias::Left => proto::Bias::Left as i32,
-            Bias::Right => proto::Bias::Right as i32,
+    match *anchor {
+        Anchor::Start => ANCHOR_START_PROTO,
+        Anchor::End => ANCHOR_END_PROTO,
+        Anchor::Character {
+            buffer_id,
+            insertion_id,
+            offset,
+            bias,
+        } => proto::Anchor {
+            replica_id: insertion_id.replica_id as u32,
+            timestamp: insertion_id.value,
+            offset: offset as u64,
+            bias: match bias {
+                Bias::Left => proto::Bias::Left as i32,
+                Bias::Right => proto::Bias::Right as i32,
+            },
+            buffer_id: Some(buffer_id.into()),
         },
-        buffer_id: anchor.buffer_id.map(Into::into),
     }
 }
 
@@ -429,23 +453,25 @@ pub fn deserialize_diagnostics(
 
 /// Deserializes an [`Anchor`] from the RPC representation.
 pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
-    let buffer_id = if let Some(id) = anchor.buffer_id {
-        Some(BufferId::new(id).ok()?)
+    if anchor == ANCHOR_START_PROTO {
+        Some(Anchor::Start)
+    } else if anchor == ANCHOR_END_PROTO {
+        Some(Anchor::End)
     } else {
-        None
-    };
-    Some(Anchor {
-        timestamp: clock::Lamport {
-            replica_id: anchor.replica_id as ReplicaId,
-            value: anchor.timestamp,
-        },
-        offset: anchor.offset as usize,
-        bias: match proto::Bias::from_i32(anchor.bias)? {
-            proto::Bias::Left => Bias::Left,
-            proto::Bias::Right => Bias::Right,
-        },
-        buffer_id,
-    })
+        let buffer_id = BufferId::new(anchor.buffer_id?).ok()?;
+        Some(Anchor::Character {
+            insertion_id: clock::Lamport {
+                replica_id: anchor.replica_id as ReplicaId,
+                value: anchor.timestamp,
+            },
+            offset: anchor.offset as usize,
+            bias: match proto::Bias::from_i32(anchor.bias)? {
+                proto::Bias::Left => Bias::Left,
+                proto::Bias::Right => Bias::Right,
+            },
+            buffer_id,
+        })
+    }
 }
 
 /// Returns a `[clock::Lamport`] timestamp for the given [`proto::Operation`].

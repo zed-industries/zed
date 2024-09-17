@@ -292,7 +292,7 @@ impl SyntaxSnapshot {
                 let slice = cursor.slice(
                     &SyntaxLayerPosition {
                         depth: depth + 1,
-                        range: Anchor::MIN..Anchor::MAX,
+                        range: Anchor::Start..Anchor::End,
                         language: None,
                     },
                     Bias::Left,
@@ -448,7 +448,7 @@ impl SyntaxSnapshot {
                 start_point: Point::zero().to_ts_point(),
                 end_point: text.max_point().to_ts_point(),
             }],
-            range: Anchor::MIN..Anchor::MAX,
+            range: Anchor::Start..Anchor::End,
             mode: ParseMode::Single,
         });
 
@@ -463,7 +463,7 @@ impl SyntaxSnapshot {
             } else {
                 SyntaxLayerPosition {
                     depth: max_depth + 1,
-                    range: Anchor::MAX..Anchor::MAX,
+                    range: Anchor::End..Anchor::End,
                     language: None,
                 }
             };
@@ -1601,7 +1601,7 @@ impl ChangeRegionSet {
         self.0.first().map_or(
             ChangeStartPosition {
                 depth: usize::MAX,
-                position: Anchor::MAX,
+                position: Anchor::End,
             },
             |region| ChangeStartPosition {
                 depth: region.depth,
@@ -1655,8 +1655,8 @@ impl Default for SyntaxLayerSummary {
         Self {
             max_depth: 0,
             min_depth: 0,
-            range: Anchor::MAX..Anchor::MIN,
-            last_layer_range: Anchor::MIN..Anchor::MAX,
+            range: Anchor::End..Anchor::Start,
+            last_layer_range: Anchor::Start..Anchor::End,
             last_layer_language: None,
             contains_unknown_injections: false,
         }
@@ -1671,7 +1671,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();
         } else {
-            if self.range == (Anchor::MAX..Anchor::MAX) {
+            if self.range == (Anchor::End..Anchor::End) {
                 self.range.start = other.range.start;
             }
             if other.range.end.cmp(&self.range.end, buffer).is_gt() {
