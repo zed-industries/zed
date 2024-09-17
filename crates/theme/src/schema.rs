@@ -421,7 +421,7 @@ pub struct ThemeColorsContent {
     #[serde(rename = "terminal.foreground")]
     pub terminal_foreground: Option<String>,
 
-    /// Terminal ansi background color.
+    /// Terminal ANSI background color.
     #[serde(rename = "terminal.ansi.background")]
     pub terminal_ansi_background: Option<String>,
 
