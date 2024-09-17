@@ -76,7 +76,7 @@ pub(crate) fn one_dark() -> Theme {
                 icon_accent: blue,
                 status_bar_background: bg,
                 title_bar_background: bg,
-                title_bar_inactive_background: SystemColors::default().transparent,
+                title_bar_inactive_background: bg,
                 toolbar_background: editor,
                 tab_bar_background: bg,
                 tab_inactive_background: bg,
@@ -105,6 +105,7 @@ pub(crate) fn one_dark() -> Theme {
 
                 terminal_background: bg,
                 // todo("Use one colors for terminal")
+                terminal_ansi_background: crate::black().dark().step_12(),
                 terminal_foreground: crate::white().dark().step_12(),
                 terminal_bright_foreground: crate::white().dark().step_11(),
                 terminal_dim_foreground: crate::white().dark().step_10(),

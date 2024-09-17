@@ -35,50 +35,25 @@ pub fn apply_features_and_fallbacks(
     fallbacks: Option<&FontFallbacks>,
 ) -> anyhow::Result<()> {
     unsafe {
-        let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-
+        let mut keys = vec![kCTFontFeatureSettingsAttribute];
+        let mut values = vec![generate_feature_array(features)];
         if let Some(fallbacks) = fallbacks {
-            for user_fallback in fallbacks.fallback_list() {
-                let name = CFString::from(user_fallback.as_str());
-                let fallback_desc =
-                    CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
-                CFArrayAppendValue(fallback_array, fallback_desc as _);
-                CFRelease(fallback_desc as _);
+            if !fallbacks.fallback_list().is_empty() {
+                keys.push(kCTFontCascadeListAttribute);
+                values.push(generate_fallback_array(
+                    fallbacks,
+                    font.native_font().as_concrete_TypeRef(),
+                ));
             }
         }
-
-        {
-            let preferred_languages: CFArray<CFString> =
-                CFArray::wrap_under_create_rule(CFLocaleCopyPreferredLanguages());
-
-            let default_fallbacks = CTFontCopyDefaultCascadeListForLanguages(
-                font.native_font().as_concrete_TypeRef(),
-                preferred_languages.as_concrete_TypeRef(),
-            );
-            let default_fallbacks: CFArray<CTFontDescriptor> =
-                CFArray::wrap_under_create_rule(default_fallbacks);
-
-            default_fallbacks
-                .iter()
-                .filter(|desc| desc.font_path().is_some())
-                .map(|desc| {
-                    CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
-                });
-        }
-
-        let feature_array = generate_feature_array(features);
-        let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
-        let values = [feature_array, fallback_array];
         let attrs = CFDictionaryCreate(
             kCFAllocatorDefault,
             keys.as_ptr() as _,
             values.as_ptr() as _,
-            2,
+            keys.len() as isize,
             &kCFTypeDictionaryKeyCallBacks,
             &kCFTypeDictionaryValueCallBacks,
         );
-        CFRelease(feature_array as *const _ as _);
-        CFRelease(fallback_array as *const _ as _);
         let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
         CFRelease(attrs as _);
         let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
@@ -97,12 +72,11 @@ pub fn apply_features_and_fallbacks(
 
 fn generate_feature_array(features: &FontFeatures) -> CFMutableArrayRef {
     unsafe {
-        let mut feature_array =
-            CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+        let feature_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
         for (tag, value) in features.tag_value_list() {
             let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
             let values = [
-                CFString::new(&tag).as_CFTypeRef(),
+                CFString::new(tag).as_CFTypeRef(),
                 CFNumber::from(*value as i32).as_CFTypeRef(),
             ];
             let dict = CFDictionaryCreate(
@@ -118,6 +92,42 @@ fn generate_feature_array(features: &FontFeatures) -> CFMutableArrayRef {
             CFRelease(dict as _);
         }
         feature_array
+    }
+}
+
+fn generate_fallback_array(fallbacks: &FontFallbacks, font_ref: CTFontRef) -> CFMutableArrayRef {
+    unsafe {
+        let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+        for user_fallback in fallbacks.fallback_list() {
+            let name = CFString::from(user_fallback.as_str());
+            let fallback_desc =
+                CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
+            CFArrayAppendValue(fallback_array, fallback_desc as _);
+            CFRelease(fallback_desc as _);
+        }
+        append_system_fallbacks(fallback_array, font_ref);
+        fallback_array
+    }
+}
+
+fn append_system_fallbacks(fallback_array: CFMutableArrayRef, font_ref: CTFontRef) {
+    unsafe {
+        let preferred_languages: CFArray<CFString> =
+            CFArray::wrap_under_create_rule(CFLocaleCopyPreferredLanguages());
+
+        let default_fallbacks = CTFontCopyDefaultCascadeListForLanguages(
+            font_ref,
+            preferred_languages.as_concrete_TypeRef(),
+        );
+        let default_fallbacks: CFArray<CTFontDescriptor> =
+            CFArray::wrap_under_create_rule(default_fallbacks);
+
+        default_fallbacks
+            .iter()
+            .filter(|desc| desc.font_path().is_some())
+            .map(|desc| {
+                CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
+            });
     }
 }
 

@@ -459,7 +459,7 @@ impl Database {
             .await?;
         }
 
-        let (channel, room) = self.get_channel_room(room_id, &tx).await?;
+        let (channel, room) = self.get_channel_room(room_id, tx).await?;
         let channel = channel.ok_or_else(|| anyhow!("no channel for room"))?;
         Ok(JoinRoom {
             room,
@@ -663,6 +663,12 @@ impl Database {
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
                             git_status: db_entry.git_status.map(|status| status as i32),
+                            // This is only used in the summarization backlog, so if it's None,
+                            // that just means we won't be able to detect when to resummarize
+                            // based on total number of backlogged bytes - instead, we'd go
+                            // on number of files only. That shouldn't be a huge deal in practice.
+                            size: None,
+                            is_fifo: db_entry.is_fifo,
                         });
                     }
                 }
@@ -765,13 +771,13 @@ impl Database {
             })
             .collect::<Vec<_>>();
 
-        return Ok(Some(RejoinedProject {
+        Ok(Some(RejoinedProject {
             id: project_id,
             old_connection_id,
             collaborators,
             worktrees,
             language_servers,
-        }));
+        }))
     }
 
     pub async fn leave_room(
@@ -1107,15 +1113,14 @@ impl Database {
                     .count(tx)
                     .await?
                     > 0;
-            if requires_zed_cla {
-                if contributor::Entity::find()
+            if requires_zed_cla
+                && contributor::Entity::find()
                     .filter(contributor::Column::UserId.eq(user_id))
                     .one(tx)
                     .await?
                     .is_none()
-                {
-                    Err(anyhow!("user has not signed the Zed CLA"))?;
-                }
+            {
+                Err(anyhow!("user has not signed the Zed CLA"))?;
             }
         }
         Ok(())

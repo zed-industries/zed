@@ -17,9 +17,12 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
     // A user with no subscription has no active billing subscriptions.
     {
         let user_id = new_test_user(db, "no-subscription-user@example.com").await;
-        let subscriptions = db.get_active_billing_subscriptions(user_id).await.unwrap();
+        let subscription_count = db
+            .count_active_billing_subscriptions(user_id)
+            .await
+            .unwrap();
 
-        assert_eq!(subscriptions.len(), 0);
+        assert_eq!(subscription_count, 0);
     }
 
     // A user with an active subscription has one active billing subscription.
@@ -29,7 +32,6 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             .create_billing_customer(&CreateBillingCustomerParams {
                 user_id,
                 stripe_customer_id: "cus_active_user".into(),
-                last_stripe_event_id: None,
             })
             .await
             .unwrap();
@@ -39,12 +41,11 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             billing_customer_id: customer.id,
             stripe_subscription_id: "sub_active_user".into(),
             stripe_subscription_status: StripeSubscriptionStatus::Active,
-            last_stripe_event_id: None,
         })
         .await
         .unwrap();
 
-        let subscriptions = db.get_active_billing_subscriptions(user_id).await.unwrap();
+        let subscriptions = db.get_billing_subscriptions(user_id).await.unwrap();
         assert_eq!(subscriptions.len(), 1);
 
         let subscription = &subscriptions[0];
@@ -65,7 +66,6 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             .create_billing_customer(&CreateBillingCustomerParams {
                 user_id,
                 stripe_customer_id: "cus_past_due_user".into(),
-                last_stripe_event_id: None,
             })
             .await
             .unwrap();
@@ -75,12 +75,14 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
             billing_customer_id: customer.id,
             stripe_subscription_id: "sub_past_due_user".into(),
             stripe_subscription_status: StripeSubscriptionStatus::PastDue,
-            last_stripe_event_id: None,
         })
         .await
         .unwrap();
 
-        let subscriptions = db.get_active_billing_subscriptions(user_id).await.unwrap();
-        assert_eq!(subscriptions.len(), 0);
+        let subscription_count = db
+            .count_active_billing_subscriptions(user_id)
+            .await
+            .unwrap();
+        assert_eq!(subscription_count, 0);
     }
 }

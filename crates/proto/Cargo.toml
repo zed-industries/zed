@@ -19,7 +19,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-futures.workspace = true
 prost.workspace = true
 serde.workspace = true
 

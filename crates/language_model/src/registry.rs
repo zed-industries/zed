@@ -7,16 +7,16 @@ use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderState,
 };
-use client::Client;
+use client::{Client, UserStore};
 use collections::BTreeMap;
 use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(user_store: Model<UserStore>, client: Arc<Client>, cx: &mut AppContext) {
     let registry = cx.new_model(|cx| {
         let mut registry = LanguageModelRegistry::default();
-        register_language_model_providers(&mut registry, client, cx);
+        register_language_model_providers(&mut registry, user_store, client, cx);
         registry
     });
     cx.set_global(GlobalLanguageModelRegistry(registry));
@@ -24,6 +24,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 
 fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
+    user_store: Model<UserStore>,
     client: Arc<Client>,
     cx: &mut ModelContext<LanguageModelRegistry>,
 ) {
@@ -48,15 +49,17 @@ fn register_language_model_providers(
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
 
     cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
+        let user_store = user_store.clone();
         let client = client.clone();
         LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {
             if enabled {
-                registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
+                registry.register_provider(
+                    CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
+                    cx,
+                );
             } else {
                 registry.unregister_provider(
-                    &LanguageModelProviderId::from(
-                        crate::provider::cloud::PROVIDER_NAME.to_string(),
-                    ),
+                    LanguageModelProviderId::from(crate::provider::cloud::PROVIDER_ID.to_string()),
                     cx,
                 );
             }
@@ -80,9 +83,14 @@ pub struct ActiveModel {
     model: Option<Arc<dyn LanguageModel>>,
 }
 
-pub struct ActiveModelChanged;
+pub enum Event {
+    ActiveModelChanged,
+    ProviderStateChanged,
+    AddedProvider(LanguageModelProviderId),
+    RemovedProvider(LanguageModelProviderId),
+}
 
-impl EventEmitter<ActiveModelChanged> for LanguageModelRegistry {}
+impl EventEmitter<Event> for LanguageModelRegistry {}
 
 impl LanguageModelRegistry {
     pub fn global(cx: &AppContext) -> Model<Self> {
@@ -95,7 +103,7 @@ impl LanguageModelRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> crate::provider::fake::FakeLanguageModelProvider {
-        let fake_provider = crate::provider::fake::FakeLanguageModelProvider::default();
+        let fake_provider = crate::provider::fake::FakeLanguageModelProvider;
         let registry = cx.new_model(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
@@ -112,42 +120,56 @@ impl LanguageModelRegistry {
         provider: T,
         cx: &mut ModelContext<Self>,
     ) {
-        let name = provider.id();
+        let id = provider.id();
 
-        if let Some(subscription) = provider.subscribe(cx) {
+        let subscription = provider.subscribe(cx, |_, cx| {
+            cx.emit(Event::ProviderStateChanged);
+        });
+        if let Some(subscription) = subscription {
             subscription.detach();
         }
 
-        self.providers.insert(name, Arc::new(provider));
-        cx.notify();
+        self.providers.insert(id.clone(), Arc::new(provider));
+        cx.emit(Event::AddedProvider(id));
     }
 
     pub fn unregister_provider(
         &mut self,
-        name: &LanguageModelProviderId,
+        id: LanguageModelProviderId,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.providers.remove(name).is_some() {
-            cx.notify();
+        if self.providers.remove(&id).is_some() {
+            cx.emit(Event::RemovedProvider(id));
         }
     }
 
-    pub fn providers(&self) -> impl Iterator<Item = &Arc<dyn LanguageModelProvider>> {
-        self.providers.values()
+    pub fn providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
+        let zed_provider_id = LanguageModelProviderId(crate::provider::cloud::PROVIDER_ID.into());
+        let mut providers = Vec::with_capacity(self.providers.len());
+        if let Some(provider) = self.providers.get(&zed_provider_id) {
+            providers.push(provider.clone());
+        }
+        providers.extend(self.providers.values().filter_map(|p| {
+            if p.id() != zed_provider_id {
+                Some(p.clone())
+            } else {
+                None
+            }
+        }));
+        providers
     }
 
-    pub fn available_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    pub fn available_models<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
             .flat_map(|provider| provider.provided_models(cx))
-            .collect()
     }
 
-    pub fn provider(
-        &self,
-        name: &LanguageModelProviderId,
-    ) -> Option<Arc<dyn LanguageModelProvider>> {
-        self.providers.get(name).cloned()
+    pub fn provider(&self, id: &LanguageModelProviderId) -> Option<Arc<dyn LanguageModelProvider>> {
+        self.providers.get(id).cloned()
     }
 
     pub fn select_active_model(
@@ -156,7 +178,7 @@ impl LanguageModelRegistry {
         model_id: &LanguageModelId,
         cx: &mut ModelContext<Self>,
     ) {
-        let Some(provider) = self.provider(&provider) else {
+        let Some(provider) = self.provider(provider) else {
             return;
         };
 
@@ -175,7 +197,7 @@ impl LanguageModelRegistry {
             provider,
             model: None,
         });
-        cx.emit(ActiveModelChanged);
+        cx.emit(Event::ActiveModelChanged);
     }
 
     pub fn set_active_model(
@@ -190,13 +212,13 @@ impl LanguageModelRegistry {
                     provider,
                     model: Some(model),
                 });
-                cx.emit(ActiveModelChanged);
+                cx.emit(Event::ActiveModelChanged);
             } else {
                 log::warn!("Active model's provider not found in registry");
             }
         } else {
             self.active_model = None;
-            cx.emit(ActiveModelChanged);
+            cx.emit(Event::ActiveModelChanged);
         }
     }
 
@@ -219,18 +241,18 @@ mod tests {
         let registry = cx.new_model(|_| LanguageModelRegistry::default());
 
         registry.update(cx, |registry, cx| {
-            registry.register_provider(FakeLanguageModelProvider::default(), cx);
+            registry.register_provider(FakeLanguageModelProvider, cx);
         });
 
-        let providers = registry.read(cx).providers().collect::<Vec<_>>();
+        let providers = registry.read(cx).providers();
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id(), crate::provider::fake::provider_id());
 
         registry.update(cx, |registry, cx| {
-            registry.unregister_provider(&crate::provider::fake::provider_id(), cx);
+            registry.unregister_provider(crate::provider::fake::provider_id(), cx);
         });
 
-        let providers = registry.read(cx).providers().collect::<Vec<_>>();
+        let providers = registry.read(cx).providers();
         assert!(providers.is_empty());
     }
 }

@@ -6,9 +6,8 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
-use settings::Settings;
 use smol::fs;
 use std::{
     any::Any,
@@ -23,8 +22,14 @@ const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
 #[cfg(not(target_os = "windows"))]
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
+#[cfg(not(target_os = "windows"))]
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
+}
+
+#[cfg(target_os = "windows")]
+fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    vec!["-File".into(), server_path.into(), "--stdio".into()]
 }
 
 pub struct TailwindLspAdapter {
@@ -47,14 +52,12 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx
             .update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .lsp
-                    .get(Self::SERVER_NAME)
+                language_server_settings(delegate, Self::SERVER_NAME, cx)
                     .and_then(|s| s.binary.clone())
             })
             .ok()??;
@@ -113,20 +116,7 @@ impl LspAdapter for TailwindLspAdapter {
 
         #[cfg(target_os = "windows")]
         {
-            let mut env_path = vec![self
-                .node
-                .binary_path()
-                .await?
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf()];
-
-            if let Some(existing_path) = std::env::var_os("PATH") {
-                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-                env_path.append(&mut paths);
-            }
-
-            let env_path = std::env::join_paths(env_path)?;
+            let env_path = self.node.node_environment_path().await?;
             let mut env = HashMap::default();
             env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
 
@@ -178,13 +168,11 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let tailwind_user_settings = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
+            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;

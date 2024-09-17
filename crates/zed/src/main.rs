@@ -7,6 +7,8 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
+use assistant::PromptBuilder;
+use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, UserStore};
@@ -18,9 +20,9 @@ use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
-    App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
+    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
+    UpdateGlobal as _, VisualContext,
 };
-use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
 
@@ -42,10 +44,14 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
+use time::UtcOffset;
+use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
+use workspace::{
+    notifications::{simple_message_notification::MessageNotification, NotificationId},
+    AppState, WorkspaceSettings, WorkspaceStore,
+};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
     initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
@@ -161,7 +167,7 @@ fn init_headless(
 }
 
 // init_common is called for both headless and normal mode.
-fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
+fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuilder> {
     SystemAppearance::init(cx);
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     command_palette::init(cx);
@@ -174,10 +180,20 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx,
     );
     supermaven::init(app_state.client.clone(), cx);
-    language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
+    language_model::init(
+        app_state.user_store.clone(),
+        app_state.client.clone(),
+        app_state.fs.clone(),
+        cx,
+    );
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+    let prompt_builder = assistant::init(
+        app_state.fs.clone(),
+        app_state.client.clone(),
+        stdout_is_a_pty(),
+        cx,
+    );
     repl::init(
         app_state.fs.clone(),
         app_state.client.telemetry().clone(),
@@ -191,9 +207,14 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
         ThemeRegistry::global(cx),
         cx,
     );
+    prompt_builder
 }
 
-fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
+fn init_ui(
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) -> Result<()> {
     match cx.try_global::<AppMode>() {
         Some(AppMode::Headless(_)) => {
             return Err(anyhow!(
@@ -284,7 +305,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     watch_file_types(fs.clone(), cx);
 
     cx.set_menus(app_menus());
-    initialize_workspace(app_state.clone(), cx);
+    initialize_workspace(app_state.clone(), prompt_builder, cx);
 
     cx.activate(true);
 
@@ -334,9 +355,19 @@ fn main() {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+
+    #[cfg(target_os = "windows")]
     {
-        use zed::only_instance::*;
+        use zed::windows_only_instance::*;
+        if !check_single_instance() {
+            println!("zed is already running");
+            return;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use zed::mac_only_instance::*;
         if ensure_only_instance() != IsOnlyInstance::Yes {
             println!("zed is already running");
             return;
@@ -369,19 +400,22 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
-    let login_shell_env_loaded = if stdout_is_a_pty() {
-        Task::ready(())
-    } else {
-        app.background_executor().spawn(async {
-            #[cfg(unix)]
-            {
-                load_shell_from_passwd().await.log_err();
-            }
-            load_login_shell_environment().await.log_err();
-        })
+    if !stdout_is_a_pty() {
+        app.background_executor()
+            .spawn(async {
+                #[cfg(unix)]
+                {
+                    load_shell_from_passwd().await.log_err();
+                }
+                load_login_shell_environment().await.log_err();
+            })
+            .detach()
     };
 
-    app.on_open_urls(with_clone!(open_listener, move |urls| open_listener.open_urls(urls)));
+    app.on_open_urls({
+        let open_listener = open_listener.clone();
+        move |urls| open_listener.open_urls(urls)
+    });
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
@@ -411,14 +445,13 @@ fn main() {
         OpenListener::set_global(cx, open_listener.clone());
 
         settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx);
-        handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
 
         client::init_settings(cx);
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
-        let mut languages =
-            LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
+        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(client.http_client());
@@ -459,7 +492,7 @@ fn main() {
 
         auto_update::init(client.http_client(), cx);
         reliability::init(client.http_client(), installation_id, cx);
-        init_common(app_state.clone(), cx);
+        let prompt_builder = init_common(app_state.clone(), cx);
 
         let args = Args::parse();
         let urls: Vec<_> = args
@@ -479,7 +512,7 @@ fn main() {
             .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
         {
             Some(request) => {
-                handle_open_request(request, app_state.clone(), cx);
+                handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
             }
             None => {
                 if let Some(dev_server_token) = args.dev_server_token {
@@ -495,7 +528,7 @@ fn main() {
                     })
                     .detach();
                 } else {
-                    init_ui(app_state.clone(), cx).unwrap();
+                    init_ui(app_state.clone(), prompt_builder.clone(), cx).unwrap();
                     cx.spawn({
                         let app_state = app_state.clone();
                         |mut cx| async move {
@@ -510,11 +543,12 @@ fn main() {
         }
 
         let app_state = app_state.clone();
+        let prompt_builder = prompt_builder.clone();
         cx.spawn(move |cx| async move {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), cx);
+                        handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
                     }
                 })
                 .ok();
@@ -524,15 +558,70 @@ fn main() {
     });
 }
 
-fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut AppContext) {
+fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
+    struct KeymapParseErrorNotification;
+    let id = NotificationId::unique::<KeymapParseErrorNotification>();
+
+    for workspace in workspace::local_workspace_windows(cx) {
+        workspace
+            .update(cx, |workspace, cx| match &error {
+                Some(error) => {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new(format!("Invalid keymap file\n{error}"))
+                                .with_click_message("Open keymap file")
+                                .on_click(|cx| {
+                                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+                None => workspace.dismiss_notification(&id, cx),
+            })
+            .log_err();
+    }
+}
+
+fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+
+    for workspace in workspace::local_workspace_windows(cx) {
+        workspace
+            .update(cx, |workspace, cx| match &error {
+                Some(error) => {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new(format!("Invalid settings file\n{error}"))
+                                .with_click_message("Open settings file")
+                                .on_click(|cx| {
+                                    cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+                None => workspace.dismiss_notification(&id, cx),
+            })
+            .log_err();
+    }
+}
+
+fn handle_open_request(
+    request: OpenRequest,
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) {
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
-        cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
+        cx.spawn(move |cx| handle_cli_connection(connection, app_state, prompt_builder, cx))
             .detach();
         return;
     }
 
-    if let Err(e) = init_ui(app_state.clone(), cx) {
+    if let Err(e) = init_ui(app_state.clone(), prompt_builder, cx) {
         fail_to_open_window(e, cx);
         return;
     };
@@ -633,12 +722,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
     if stdout_is_a_pty() {
         if *client::ZED_DEVELOPMENT_AUTH {
-            client.authenticate_and_connect(true, &cx).await?;
+            client.authenticate_and_connect(true, cx).await?;
         } else if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, &cx).await?;
+            client.authenticate_and_connect(false, cx).await?;
         }
-    } else if client.has_credentials(&cx).await {
-        client.authenticate_and_connect(true, &cx).await?;
+    } else if client.has_credentials(cx).await {
+        client.authenticate_and_connect(true, cx).await?;
     }
     Ok::<_, anyhow::Error>(())
 }
@@ -689,7 +778,7 @@ async fn restore_or_create_workspace(
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
-            workspace::open_new(app_state, cx, |workspace, cx| {
+            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
         })?
@@ -803,7 +892,10 @@ fn init_logger() {
                 let mut config_builder = ConfigBuilder::new();
 
                 config_builder.set_time_format_rfc3339();
-                config_builder.set_time_offset_to_local().log_err();
+                let local_offset = chrono::Local::now().offset().fix().local_minus_utc();
+                if let Ok(offset) = UtcOffset::from_whole_seconds(local_offset) {
+                    config_builder.set_time_offset(offset);
+                }
 
                 #[cfg(target_os = "linux")]
                 {
@@ -974,14 +1066,16 @@ struct Args {
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
+        Ok(path) => Ok(format!(
+            "file://{}",
+            path.to_string_lossy().trim_start_matches(r#"\\?\"#)
+        )),
         Err(error) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
+                || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
-            } else if let Some(_) = parse_zed_link(&arg, cx) {
                 Ok(arg.into())
             } else {
                 Err(anyhow!("error parsing path argument: {}", error))
@@ -1040,7 +1134,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(|cx| ThemeSettings::reload_current_theme(cx))?;
+                cx.update(ThemeSettings::reload_current_theme)?;
             }
             anyhow::Ok(())
         }
@@ -1057,18 +1151,17 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             .await;
 
         while let Some(paths) = events.next().await {
-            for path in paths {
-                if fs.metadata(&path).await.ok().flatten().is_some() {
+            for event in paths {
+                if fs.metadata(&event.path).await.ok().flatten().is_some() {
                     if let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                     {
                         if let Some(()) = theme_registry
-                            .load_user_theme(&path, fs.clone())
+                            .load_user_theme(&event.path, fs.clone())
                             .await
                             .log_err()
                         {
-                            cx.update(|cx| ThemeSettings::reload_current_theme(cx))
-                                .log_err();
+                            cx.update(ThemeSettings::reload_current_theme).log_err();
                         }
                     }
                 }
@@ -1093,8 +1186,10 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     cx.spawn(|_| async move {
         let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while let Some(event) = events.next().await {
-            let has_language_file = event.iter().any(|path| {
-                path.extension()
+            let has_language_file = event.iter().any(|event| {
+                event
+                    .path
+                    .extension()
                     .map(|ext| ext.to_string_lossy().as_ref() == "scm")
                     .unwrap_or(false)
             });

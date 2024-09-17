@@ -120,6 +120,11 @@ fi
 xbps=$(command -v xbps-install || true)
 if [[ -n $xbps ]]; then
   deps=(
+    gettext-devel
+    clang
+    jq
+    elfutils-devel
+    gcc
     alsa-lib-devel
     fontconfig-devel
     libxcb-devel

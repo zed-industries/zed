@@ -244,6 +244,7 @@ impl TestServer {
                                 client_name,
                                 Principal::User(user),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
@@ -262,8 +263,7 @@ impl TestServer {
                 })
             });
 
-        let git_hosting_provider_registry =
-            cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
+        let git_hosting_provider_registry = cx.update(GitHostingProviderRegistry::default_global);
         git_hosting_provider_registry
             .register_hosting_provider(Arc::new(git_hosting_providers::Github));
 
@@ -300,7 +300,7 @@ impl TestServer {
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
-            assistant::context_store::init(&client);
+            assistant::context_store::init(&client.clone().into());
         });
 
         client
@@ -377,6 +377,7 @@ impl TestServer {
                                 "dev-server".to_string(),
                                 Principal::DevServer(dev_server),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
@@ -649,6 +650,10 @@ impl TestServer {
                 live_kit_server: None,
                 live_kit_key: None,
                 live_kit_secret: None,
+                llm_database_url: None,
+                llm_database_max_connections: None,
+                llm_database_migrations_path: None,
+                llm_api_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
@@ -660,6 +665,8 @@ impl TestServer {
                 openai_api_key: None,
                 google_ai_api_key: None,
                 anthropic_api_key: None,
+                anthropic_staff_api_key: None,
+                llm_closed_beta_model_name: None,
                 clickhouse_url: None,
                 clickhouse_user: None,
                 clickhouse_password: None,
@@ -672,6 +679,9 @@ impl TestServer {
                 stripe_api_key: None,
                 stripe_price_id: None,
                 supermaven_admin_api_key: None,
+                runpod_api_key: None,
+                runpod_api_summary_url: None,
+                user_backfiller_github_access_token: None,
             },
         })
     }
@@ -905,6 +915,7 @@ impl TestClient {
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
+                None,
                 cx,
             )
         })

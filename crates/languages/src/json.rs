@@ -117,7 +117,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": KeymapFile::generate_json_schema(&action_names),
+                        "schema": KeymapFile::generate_json_schema(action_names),
                     },
                     {
                         "fileMatch": [

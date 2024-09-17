@@ -120,7 +120,7 @@ impl TitleBar {
                         room.is_speaking(),
                         room.is_muted(),
                         None,
-                        &room,
+                        room,
                         project_id,
                         &current_user,
                         cx,
@@ -151,7 +151,7 @@ impl TitleBar {
                             collaborator.speaking,
                             collaborator.muted,
                             is_following.then_some(player_color.selection),
-                            &room,
+                            room,
                             project_id,
                             &current_user,
                             cx,
@@ -284,7 +284,7 @@ impl TitleBar {
 
         let room = room.read(cx);
         let project = self.project.read(cx);
-        let is_local = project.is_local();
+        let is_local = project.is_local_or_ssh();
         let is_dev_server_project = project.dev_server_project_id().is_some();
         let is_shared = (is_local || is_dev_server_project) && project.is_shared();
         let is_muted = room.is_muted();

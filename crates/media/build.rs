@@ -28,7 +28,7 @@ fn main() {
         .allowlist_var("kCMVideoCodecType_.*")
         .allowlist_var("kCMTime.*")
         .allowlist_var("kCMSampleAttachmentKey_.*")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .layout_tests(false)
         .generate()
         .expect("unable to generate bindings");

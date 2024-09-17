@@ -28,7 +28,7 @@ impl zed::Extension for ElixirExtension {
     ) -> Result<zed::Command> {
         match language_server_id.as_ref() {
             ElixirLs::LANGUAGE_SERVER_ID => {
-                let elixir_ls = self.elixir_ls.get_or_insert_with(|| ElixirLs::new());
+                let elixir_ls = self.elixir_ls.get_or_insert_with(ElixirLs::new);
 
                 Ok(zed::Command {
                     command: elixir_ls.language_server_binary_path(language_server_id, worktree)?,
@@ -37,7 +37,7 @@ impl zed::Extension for ElixirExtension {
                 })
             }
             NextLs::LANGUAGE_SERVER_ID => {
-                let next_ls = self.next_ls.get_or_insert_with(|| NextLs::new());
+                let next_ls = self.next_ls.get_or_insert_with(NextLs::new);
 
                 Ok(zed::Command {
                     command: next_ls.language_server_binary_path(language_server_id, worktree)?,
@@ -46,7 +46,7 @@ impl zed::Extension for ElixirExtension {
                 })
             }
             Lexical::LANGUAGE_SERVER_ID => {
-                let lexical = self.lexical.get_or_insert_with(|| Lexical::new());
+                let lexical = self.lexical.get_or_insert_with(Lexical::new);
                 let lexical_binary =
                     lexical.language_server_binary(language_server_id, worktree)?;
 
@@ -110,13 +110,10 @@ impl zed::Extension for ElixirExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<serde_json::Value>> {
-        match language_server_id.as_ref() {
-            ElixirLs::LANGUAGE_SERVER_ID => {
-                if let Some(elixir_ls) = self.elixir_ls.as_mut() {
-                    return elixir_ls.language_server_workspace_configuration(worktree);
-                }
+        if language_server_id.as_ref() == ElixirLs::LANGUAGE_SERVER_ID {
+            if let Some(elixir_ls) = self.elixir_ls.as_mut() {
+                return elixir_ls.language_server_workspace_configuration(worktree);
             }
-            _ => (),
         }
 
         Ok(None)

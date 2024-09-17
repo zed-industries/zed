@@ -30,7 +30,7 @@ impl Render for DiagnosticIndicator {
             (0, warning_count) => h_flex()
                 .gap_1()
                 .child(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
@@ -52,7 +52,7 @@ impl Render for DiagnosticIndicator {
                 )
                 .child(Label::new(error_count.to_string()).size(LabelSize::Small))
                 .child(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )

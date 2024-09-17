@@ -9,7 +9,6 @@ pub struct Model {
     pub id: BillingCustomerId,
     pub user_id: UserId,
     pub stripe_customer_id: String,
-    pub last_stripe_event_id: Option<String>,
     pub created_at: DateTime,
 }
 
