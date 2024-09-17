@@ -33,27 +33,29 @@ impl Keystroke {
     // TODO:
     // Is the hack above still needed?
     pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
-        if let Some(ime_key) = self
-            .ime_key
-            .as_ref()
-            .filter(|ime_key| ime_key != &&self.key.to_string())
-        {
-            // let ime_modifiers = Modifiers {
-            //     control: self.modifiers.control,
-            //     ..Default::default()
-            // };
+        // if let Some(ime_key) = self
+        //     .ime_key
+        //     .as_ref()
+        //     .filter(|ime_key| ime_key != &&self.key.to_string())
+        // {
+        //     // let ime_modifiers = Modifiers {
+        //     //     control: self.modifiers.control,
+        //     //     ..Default::default()
+        //     // };
 
-            // if &target.key == ime_key && target.modifiers == ime_modifiers {
-            //     return true;
-            // }
+        //     // if &target.key == ime_key && target.modifiers == ime_modifiers {
+        //     //     return true;
+        //     // }
 
-            // Perform char-based matching first
-            if let Some(target_ime) = target.ime_key.as_ref() {
-                if target_ime == ime_key && target.modifiers == self.modifiers {
-                    return true;
-                }
-            }
-        }
+        //     // Perform char-based matching first
+        //     if !self.modifiers.control && !self.modifiers.platform {
+        //         if let Some(target_ime) = target.ime_key.as_ref() {
+        //             if target_ime == ime_key && target.modifiers == self.modifiers {
+        //                 return true;
+        //             }
+        //         }
+        //     }
+        // }
 
         target.modifiers == self.modifiers && target.key == self.key
     }
