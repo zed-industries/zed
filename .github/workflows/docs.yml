@@ -23,7 +23,7 @@ jobs:
       - run: |
           pnpm dlx prettier . --check || {
             echo "To fix, run from the root of the zed repo:"
-            echo "  cd docs && pnpm dlx prettier . --write && cd .." >&2
+            echo "  cd docs && pnpm dlx prettier . --write && cd .."
             false
           }
 
