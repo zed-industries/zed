@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{future::OptionFuture, StreamExt};
 use gpui::AsyncAppContext;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
@@ -43,14 +43,18 @@ impl super::LspAdapter for CLspAdapter {
             })) => (None, None),
             _ => {
                 let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-                (path, None)
+                (Some(path), None)
             }
         };
 
-        path.map(|path| LanguageServerBinary {
-            path,
-            arguments,
+        Some(LanguageServerBinary {
+            path: path?,
             env: Some(delegate.shell_env().await),
+            arguments: arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
         })
     }
 
@@ -308,7 +312,7 @@ async fn get_cached_server_binary(
         if clangd_bin.exists() {
             Ok(LanguageServerBinary {
                 path: clangd_bin,
-                env: delegate.map(|delegate| delegate.shell_env().await),
+                env: OptionFuture::from(delegate.map(|delegate| delegate.shell_env())).await,
                 arguments: vec![],
             })
         } else {

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{future::OptionFuture, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
@@ -85,14 +85,18 @@ impl super::LspAdapter for GoLspAdapter {
             })) => (None, None),
             _ => {
                 let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-                (path, None)
+                (Some(path), None)
             }
         };
 
-        path.map(|path| LanguageServerBinary {
-            path,
-            arguments,
+        Some(LanguageServerBinary {
+            path: path?,
             env: Some(delegate.shell_env().await),
+            arguments: arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
         })
     }
 
@@ -418,7 +422,7 @@ async fn get_cached_server_binary(
             Ok(LanguageServerBinary {
                 path,
                 arguments: server_binary_arguments(),
-                env: delegate.map(|delegate| delegate.shell_env().await),
+                env: OptionFuture::from(delegate.map(|delegate| delegate.shell_env())).await,
             })
         } else {
             Err(anyhow!("no cached binary"))

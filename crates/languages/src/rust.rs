@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
-use futures::{io::BufReader, StreamExt};
+use futures::{future::OptionFuture, io::BufReader, StreamExt};
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
@@ -77,8 +77,8 @@ impl LspAdapter for RustLspAdapter {
             _ => (None, None),
         };
 
-        path.map(|path| LanguageServerBinary {
-            path,
+        Some(LanguageServerBinary {
+            path: path?,
             env: Some(delegate.shell_env().await),
             arguments: arguments
                 .unwrap_or_default()
@@ -691,7 +691,7 @@ async fn get_cached_server_binary(
 
         anyhow::Ok(LanguageServerBinary {
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
-            env: delegate.map(|delegate| delegate.shell_env().await),
+            env: OptionFuture::from(delegate.map(|delegate| delegate.shell_env())).await,
             arguments: Default::default(),
         })
     })

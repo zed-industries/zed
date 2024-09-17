@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::future::OptionFuture;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
@@ -197,7 +198,7 @@ async fn get_cached_server_binary(
     if server_path.exists() {
         Some(LanguageServerBinary {
             path: node.binary_path().await.log_err()?,
-            env: delegate.map(|delegate| delegate.shell_env().await),
+            env: OptionFuture::from(delegate.map(|delegate| delegate.shell_env())).await,
             arguments: server_binary_arguments(&server_path),
         })
     } else {
