@@ -15,6 +15,7 @@
 //! and react to changes in settings.
 
 use collections::{HashMap, HashSet};
+use command_palette_hooks::CommandPaletteFilter;
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
 use log;
 use parking_lot::RwLock;
@@ -24,6 +25,7 @@ use settings::{Settings, SettingsSources, SettingsStore};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::CONTEXT_SERVERS_NAMESPACE;
 use crate::{
     client::{self, Client},
     types,
@@ -148,26 +150,28 @@ impl ContextServerManager {
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         let server_id = config.id.clone();
-        let server_id2 = config.id.clone();
 
         if self.servers.contains_key(&server_id) || self.pending_servers.contains(&server_id) {
             return Task::ready(Ok(()));
         }
 
-        let task = cx.spawn(|this, mut cx| async move {
-            let server = Arc::new(ContextServer::new(config));
-            server.start(&cx).await?;
-            this.update(&mut cx, |this, cx| {
-                this.servers.insert(server_id.clone(), server);
-                this.pending_servers.remove(&server_id);
-                cx.emit(Event::ServerStarted {
-                    server_id: server_id.clone(),
-                });
-            })?;
-            Ok(())
-        });
+        let task = {
+            let server_id = server_id.clone();
+            cx.spawn(|this, mut cx| async move {
+                let server = Arc::new(ContextServer::new(config));
+                server.start(&cx).await?;
+                this.update(&mut cx, |this, cx| {
+                    this.servers.insert(server_id.clone(), server);
+                    this.pending_servers.remove(&server_id);
+                    cx.emit(Event::ServerStarted {
+                        server_id: server_id.clone(),
+                    });
+                })?;
+                Ok(())
+            })
+        };
 
-        self.pending_servers.insert(server_id2);
+        self.pending_servers.insert(server_id);
         task
     }
 
@@ -243,15 +247,20 @@ impl GlobalContextServerManager {
 pub fn init(cx: &mut AppContext) {
     ContextServerSettings::register(cx);
     GlobalContextServerManager::register(cx);
+
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
+    });
+
     cx.observe_global::<SettingsStore>(|cx| {
         let manager = ContextServerManager::global(cx);
         cx.update_model(&manager, |manager, cx| {
             let settings = ContextServerSettings::get_global(cx);
-            let current_servers: HashMap<String, ServerConfig> = manager
+            let current_servers = manager
                 .servers()
                 .into_iter()
                 .map(|server| (server.id.clone(), server.config.clone()))
-                .collect();
+                .collect::<HashMap<_, _>>();
 
             let new_servers = settings
                 .servers
@@ -279,6 +288,15 @@ pub fn init(cx: &mut AppContext) {
             for id in servers_to_remove {
                 manager.remove_server(&id, cx).detach_and_log_err(cx);
             }
+
+            let has_any_context_servers = !manager.servers().is_empty();
+            CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                if has_any_context_servers {
+                    filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
+                } else {
+                    filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
+                }
+            });
         })
     })
     .detach();

@@ -284,6 +284,7 @@ gpui::actions!(
         Redo,
         RedoSelection,
         Rename,
+        Rewrap,
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,

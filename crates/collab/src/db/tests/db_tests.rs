@@ -540,18 +540,18 @@ async fn test_project_count(db: &Arc<Database>) {
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], None)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, None)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], None)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, None)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
     // Projects shared by admins aren't counted.
-    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], None)
+    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], false, None)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);

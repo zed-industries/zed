@@ -476,7 +476,8 @@ impl WaylandClient {
             .as_ref()
             .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
-        let mut cursor = Cursor::new(&conn, &globals, 24);
+        // FIXME: Determine the scaling factor dynamically by the compositor
+        let mut cursor = Cursor::new(&conn, &globals, 24, 2);
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {

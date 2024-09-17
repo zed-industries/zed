@@ -1160,7 +1160,7 @@ fn ruby_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_ruby::language()),
+        Some(tree_sitter_ruby::LANGUAGE.into()),
     )
     .with_highlights_query(
         r#"
@@ -1182,7 +1182,7 @@ fn erb_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_embedded_template::language()),
+        Some(tree_sitter_embedded_template::LANGUAGE.into()),
     )
     .with_highlights_query(
         r#"
@@ -1218,7 +1218,7 @@ fn rust_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )
     .with_highlights_query(
         r#"
@@ -1247,7 +1247,7 @@ fn elixir_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_elixir::language()),
+        Some(tree_sitter_elixir::LANGUAGE.into()),
     )
     .with_highlights_query(
         r#"
@@ -1267,7 +1267,7 @@ fn heex_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_heex::language()),
+        Some(tree_sitter_heex::LANGUAGE.into()),
     )
     .with_injection_query(
         r#"

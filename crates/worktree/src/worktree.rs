@@ -36,7 +36,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::proto::{self, AnyProtoClient};
+use rpc::{proto, AnyProtoClient};
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{smallvec, SmallVec};
@@ -562,6 +562,13 @@ impl Worktree {
 
     pub fn is_remote(&self) -> bool {
         !self.is_local()
+    }
+
+    pub fn settings_location(&self, _: &ModelContext<Self>) -> SettingsLocation<'static> {
+        SettingsLocation {
+            worktree_id: self.id(),
+            path: Path::new(EMPTY_PATH),
+        }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -3220,6 +3227,8 @@ pub struct Entry {
     pub git_status: Option<GitFileStatus>,
     /// Whether this entry is considered to be a `.env` file.
     pub is_private: bool,
+    /// The entry's size on disk, in bytes.
+    pub size: u64,
     pub char_bag: CharBag,
     pub is_fifo: bool,
 }
@@ -3275,6 +3284,7 @@ impl Entry {
             path,
             inode: metadata.inode,
             mtime: Some(metadata.mtime),
+            size: metadata.len,
             canonical_path,
             is_symlink: metadata.is_symlink,
             is_ignored: false,
@@ -5203,6 +5213,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             is_external: entry.is_external,
             git_status: entry.git_status.map(git_status_to_proto),
             is_fifo: entry.is_fifo,
+            size: Some(entry.size),
         }
     }
 }
@@ -5224,6 +5235,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             path,
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
+            size: entry.size.unwrap_or(0),
             canonical_path: None,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,

@@ -78,6 +78,8 @@ pub struct AvailableModel {
     pub max_tokens: usize,
     /// The maximum number of output tokens allowed by the model.
     pub max_output_tokens: Option<u32>,
+    /// The maximum number of completion tokens allowed by the model (o1-* only)
+    pub max_completion_tokens: Option<u32>,
     /// Override this model with a different Anthropic model for tool calls.
     pub tool_override: Option<String>,
     /// Indicates whether this custom model supports caching.
@@ -254,11 +256,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 }),
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
+                    max_completion_tokens: model.max_completion_tokens,
                 }),
                 AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                 }),
             };

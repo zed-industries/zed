@@ -12,6 +12,12 @@ use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
 use std::{fmt, future};
 
+/// Trait for embedding providers. Texts in, vectors out.
+pub trait EmbeddingProvider: Sync + Send {
+    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>>;
+    fn batch_size(&self) -> usize;
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Embedding(Vec<f32>);
 
@@ -66,12 +72,6 @@ impl fmt::Display for Embedding {
         }
         write!(f, "])")
     }
-}
-
-/// Trait for embedding providers. Texts in, vectors out.
-pub trait EmbeddingProvider: Sync + Send {
-    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>>;
-    fn batch_size(&self) -> usize;
 }
 
 #[derive(Debug)]

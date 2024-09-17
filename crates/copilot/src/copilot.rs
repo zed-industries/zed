@@ -691,17 +691,17 @@ impl Copilot {
     fn handle_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running() {
             if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
             {
                 match event {
-                    language::Event::Edited => {
+                    language::BufferEvent::Edited => {
                         drop(registered_buffer.report_changes(&buffer, cx));
                     }
-                    language::Event::Saved => {
+                    language::BufferEvent::Saved => {
                         server
                             .lsp
                             .notify::<lsp::notification::DidSaveTextDocument>(
@@ -713,7 +713,8 @@ impl Copilot {
                                 },
                             )?;
                     }
-                    language::Event::FileHandleChanged | language::Event::LanguageChanged => {
+                    language::BufferEvent::FileHandleChanged
+                    | language::BufferEvent::LanguageChanged => {
                         let new_language_id = id_for_language(buffer.read(cx).language());
                         let new_uri = uri_for_buffer(&buffer, cx);
                         if new_uri != registered_buffer.uri
