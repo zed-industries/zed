@@ -3244,7 +3244,7 @@ impl<'a> WindowContext<'a> {
                 && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.window.pending_modifier.saw_keystroke
             {
-                let key = match self.window.pending_modifier.modifiers {
+                let code = match self.window.pending_modifier.modifiers {
                     modifiers if modifiers.shift => Some(KeyCodes::Shift(KeyPosition::Any)),
                     modifiers if modifiers.control => Some(KeyCodes::Control(KeyPosition::Any)),
                     modifiers if modifiers.alt => Some(KeyCodes::Alt(KeyPosition::Any)),
@@ -3252,9 +3252,10 @@ impl<'a> WindowContext<'a> {
                     modifiers if modifiers.function => Some(KeyCodes::Function),
                     _ => None,
                 };
-                if let Some(key) = key {
+                if let Some(code) = code {
                     keystroke = Some(Keystroke {
-                        key,
+                        key: "Modifiers".to_string(),
+                        code,
                         ime_key: None,
                         modifiers: Modifiers::default(),
                     });

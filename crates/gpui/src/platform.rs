@@ -22,7 +22,7 @@ mod windows;
 use crate::{
     point, Action, AnyWindowHandle, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds,
     DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
-    GPUSpecs, GlyphId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
+    GPUSpecs, GlyphId, ImageSource, KeyCodes, Keymap, LineLayout, Pixels, PlatformInput, Point,
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, SharedString, Size,
     SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
 };
@@ -108,6 +108,11 @@ pub fn guess_compositor() -> &'static str {
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn current_keyboard() -> Rc<dyn PlatformKeyboard> {
+    Rc::new(WindowsKeyboard {})
 }
 
 pub(crate) trait Platform: 'static {
@@ -205,6 +210,12 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, DEFAULT_WINDOW_SIZE)
     }
+}
+
+/// TODO:
+pub trait PlatformKeyboard {
+    /// TODO:
+    fn code_to_key(&self, code: &KeyCodes) -> String;
 }
 
 /// An opaque identifier for a hardware display

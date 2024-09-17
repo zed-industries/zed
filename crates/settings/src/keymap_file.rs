@@ -110,7 +110,14 @@ impl KeymapFile {
                         )
                     })
                     .log_err()
-                    .map(|action| KeyBinding::load(&keystroke, action, context.as_deref()))
+                    .map(|action| {
+                        KeyBinding::load(
+                            &keystroke,
+                            action,
+                            context.as_deref(),
+                            cx.keyboard_manager(),
+                        )
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
 

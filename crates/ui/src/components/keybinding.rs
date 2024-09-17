@@ -31,7 +31,7 @@ impl KeyBinding {
     }
 
     fn icon_for_key(&self, keystroke: &Keystroke) -> Option<IconName> {
-        match keystroke.key {
+        match keystroke.code {
             KeyCodes::Left => Some(IconName::ArrowLeft),
             KeyCodes::Right => Some(IconName::ArrowRight),
             KeyCodes::Up => Some(IconName::ArrowUp),
@@ -85,7 +85,7 @@ impl RenderOnce for KeyBinding {
                     self.key_binding
                         .keystrokes()
                         .iter()
-                        .map(|k| k.key.to_string())
+                        .map(|k| k.code.to_string())
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
@@ -141,7 +141,7 @@ impl RenderOnce for KeyBinding {
                     })
                     .map(|el| match key_icon {
                         Some(icon) => el.child(KeyIcon::new(icon)),
-                        None => el.child(Key::new(keystroke.key.to_string().to_uppercase())),
+                        None => el.child(Key::new(keystroke.code.to_string().to_uppercase())),
                     })
             }))
     }

@@ -202,8 +202,10 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|cx| {
+                // TODO:
                 let secondary_modifier = Keystroke {
-                    key: gpui::KeyCodes::Unknown,
+                    key: "Unimplemented".to_string(),
+                    code: gpui::KeyCodes::Unknown,
                     modifiers: Modifiers::secondary_key(),
                     ime_key: None,
                 };

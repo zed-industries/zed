@@ -1,4 +1,4 @@
-use crate::{Action, KeyBindingContextPredicate, Keystroke};
+use crate::{Action, KeyBindingContextPredicate, Keystroke, PlatformKeyboard};
 use anyhow::Result;
 use smallvec::SmallVec;
 
@@ -21,12 +21,28 @@ impl Clone for KeyBinding {
 
 impl KeyBinding {
     /// Construct a new keybinding from the given data.
-    pub fn new<A: Action>(keystrokes: &str, action: A, context_predicate: Option<&str>) -> Self {
-        Self::load(keystrokes, Box::new(action), context_predicate).unwrap()
+    pub fn new<A: Action>(
+        keystrokes: &str,
+        action: A,
+        context_predicate: Option<&str>,
+        keyboard_manager: &dyn PlatformKeyboard,
+    ) -> Self {
+        Self::load(
+            keystrokes,
+            Box::new(action),
+            context_predicate,
+            keyboard_manager,
+        )
+        .unwrap()
     }
 
     /// Load a keybinding from the given raw data.
-    pub fn load(keystrokes: &str, action: Box<dyn Action>, context: Option<&str>) -> Result<Self> {
+    pub fn load(
+        keystrokes: &str,
+        action: Box<dyn Action>,
+        context: Option<&str>,
+        keyboard_manager: &dyn PlatformKeyboard,
+    ) -> Result<Self> {
         let context = if let Some(context) = context {
             Some(KeyBindingContextPredicate::parse(context)?)
         } else {
@@ -35,7 +51,7 @@ impl KeyBinding {
 
         let keystrokes = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
+            .map(|keystroke| Keystroke::parse(keystroke, keyboard_manager))
             .collect::<Result<_>>()?;
 
         Ok(Self {

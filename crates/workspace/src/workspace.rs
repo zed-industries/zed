@@ -1719,10 +1719,11 @@ impl Workspace {
     }
 
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
+        // TODO:
         let mut keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')
-            .flat_map(|k| Keystroke::parse(k).log_err())
+            .flat_map(|k| Keystroke::parse(k, cx.keyboard_manager()).log_err())
             .collect();
         keystrokes.reverse();
 

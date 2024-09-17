@@ -95,7 +95,7 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
         key.to_string()
     }
 
-    let key = match keystroke.key {
+    let key = match keystroke.code {
         KeyCodes::PageUp => "PageUp",
         KeyCodes::PageDown => "PageDown",
         key => &capitalize(key),

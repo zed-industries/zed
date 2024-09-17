@@ -1001,7 +1001,8 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
 
     Some(Keystroke {
         modifiers,
-        key: vk_code.into(),
+        key: "Unimplemented".to_string(),
+        code: vk_code.into(),
         ime_key: None,
     })
 }
@@ -1017,7 +1018,8 @@ fn parse_keydown_msg_to_platform_input(wparam: WPARAM, lparam: LPARAM) -> Platfo
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke: Keystroke {
                 modifiers,
-                key: vk_code.into(),
+                key: "Unimplemented".to_string(),
+                code: vk_code.into(),
                 ime_key: None,
             },
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -1035,7 +1037,8 @@ fn parse_keydup_msg_to_platform_input(wparam: WPARAM) -> PlatformInput {
         PlatformInput::KeyUp(KeyUpEvent {
             keystroke: Keystroke {
                 modifiers,
-                key: vk_code.into(),
+                key: "Unimplemented".to_string(),
+                code: vk_code.into(),
                 ime_key: None,
             },
         })

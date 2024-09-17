@@ -28,13 +28,14 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    current_keyboard, current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView,
+    AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
+    DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
+    LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformKeyboard, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    Task, TextSystem, View, ViewContext, Window, WindowAppearance, WindowContext, WindowHandle,
+    WindowId,
 };
 
 mod async_context;
@@ -116,6 +117,7 @@ impl App {
 
         Self(AppContext::new(
             current_platform(false),
+            current_keyboard(),
             Arc::new(()),
             http_client::client(None, None),
         ))
@@ -127,6 +129,7 @@ impl App {
     pub fn headless() -> Self {
         Self(AppContext::new(
             current_platform(true),
+            current_keyboard(),
             Arc::new(()),
             http_client::client(None, None),
         ))
@@ -215,6 +218,7 @@ type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 pub struct AppContext {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
+    pub(crate) keyboard_manager: Rc<dyn PlatformKeyboard>,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
@@ -253,6 +257,7 @@ impl AppContext {
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new(
         platform: Rc<dyn Platform>,
+        keyboard_manager: Rc<dyn PlatformKeyboard>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
@@ -270,6 +275,7 @@ impl AppContext {
             app: RefCell::new(AppContext {
                 this: this.clone(),
                 platform: platform.clone(),
+                keyboard_manager,
                 text_system,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -1306,6 +1312,11 @@ impl AppContext {
         self.loading_assets.insert(asset_id, Box::new(task.clone()));
 
         (task, is_first)
+    }
+
+    /// TODO:
+    pub fn keyboard_manager(&self) -> &dyn PlatformKeyboard {
+        self.keyboard_manager.as_ref()
     }
 }
 
