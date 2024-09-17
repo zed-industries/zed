@@ -495,19 +495,15 @@ fn main() {
             session_id,
             cx,
         );
-        // Requires migrating past data ("first open" -> "first app open for release channel") in the db, and reworking any charts that used the prior form
-        if let (Some(IdType::Existing(_)), Some(IdType::Existing(_))) =
-            (&system_id, &installation_id)
-        {
-            telemetry.report_app_event("open".to_string());
-        } else {
-            if let Some(IdType::New(_)) = &system_id {
-                telemetry.report_app_event("first app open ever".to_string());
+        match (&system_id, &installation_id) {
+            (Some(IdType::New(_)), Some(IdType::New(_))) => {
+                telemetry.report_app_event("first app open ever".to_string())
             }
-
-            if let Some(IdType::New(_)) = &installation_id {
-                telemetry.report_app_event("first app open for release channel".to_string());
+            (Some(IdType::Existing(_)), Some(IdType::New(_))) => {
+                telemetry.report_app_event("first app open for release channel".to_string())
             }
+            (Some(_), Some(IdType::Existing(_))) => telemetry.report_app_event("open".to_string()),
+            _ => {}
         }
         let app_session = cx.new_model(|cx| AppSession::new(session, cx));
 
