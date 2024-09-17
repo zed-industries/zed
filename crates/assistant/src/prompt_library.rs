@@ -794,6 +794,7 @@ impl PromptLibrary {
                                         content: vec![body.to_string().into()],
                                         cache: false,
                                     }],
+                                    tools: Vec::new(),
                                     stop: Vec::new(),
                                     temperature: 1.,
                                 },

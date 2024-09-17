@@ -400,6 +400,24 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
+    fn open_with_system(&self, path: &Path) {
+        let Ok(full_path) = path.canonicalize() else {
+            log::error!("unable to parse file full path: {}", path.display());
+            return;
+        };
+        self.background_executor()
+            .spawn(async move {
+                let Some(full_path_str) = full_path.to_str() else {
+                    return;
+                };
+                if full_path_str.is_empty() {
+                    return;
+                };
+                open_target(full_path_str);
+            })
+            .detach();
+    }
+
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.state.borrow_mut().callbacks.quit = Some(callback);
     }

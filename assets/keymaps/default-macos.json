@@ -191,7 +191,8 @@
       "cmd-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
-      "cmd-k l": "assistant::DeployPromptLibrary"
+      "cmd-k l": "assistant::DeployPromptLibrary",
+      "cmd-n": "assistant::NewContext"
     }
   },
   {
@@ -284,6 +285,8 @@
       "cmd-}": "pane::ActivateNextItem",
       "alt-cmd-left": "pane::ActivatePrevItem",
       "alt-cmd-right": "pane::ActivateNextItem",
+      "ctrl-shift-pageup": "pane::SwapItemLeft",
+      "ctrl-shift-pagedown": "pane::SwapItemRight",
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": "pane::CloseInactiveItems",
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
@@ -298,7 +301,8 @@
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
       "alt-cmd-f": "project_search::ToggleFilters",
-      "alt-cmd-x": "search::ToggleRegex"
+      "alt-cmd-x": "search::ToggleRegex",
+      "cmd-k shift-enter": "pane::TogglePinTab"
     }
   },
   // Bindings from VS Code
@@ -528,7 +532,7 @@
     }
   },
   {
-    "context": "OutlinePanel",
+    "context": "OutlinePanel && not_editing",
     "bindings": {
       "escape": "menu::Cancel",
       "left": "outline_panel::CollapseSelectedEntry",
@@ -561,8 +565,8 @@
       "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFileManager",
+      "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
-
       "alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",

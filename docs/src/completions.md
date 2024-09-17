@@ -15,7 +15,7 @@ When there is an appropriate language server available, Zed will by-default prov
 
 You can manually trigger completions with `ctrl-space` or by triggering the `editor::ShowCompletions` action from the command palette.
 
-For more information, see :
+For more information, see:
 
 - [Configuring Supported Languages](./configuring-languages.md)
 - [List of Zed Supported Languages](./languages.md).

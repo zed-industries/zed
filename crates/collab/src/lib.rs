@@ -170,8 +170,8 @@ pub struct Config {
     pub anthropic_api_key: Option<Arc<str>>,
     pub anthropic_staff_api_key: Option<Arc<str>>,
     pub llm_closed_beta_model_name: Option<Arc<str>>,
-    pub qwen2_7b_api_key: Option<Arc<str>>,
-    pub qwen2_7b_api_url: Option<Arc<str>>,
+    pub runpod_api_key: Option<Arc<str>>,
+    pub runpod_api_summary_url: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
@@ -235,8 +235,8 @@ impl Config {
             stripe_api_key: None,
             stripe_price_id: None,
             supermaven_admin_api_key: None,
-            qwen2_7b_api_key: None,
-            qwen2_7b_api_url: None,
+            runpod_api_key: None,
+            runpod_api_summary_url: None,
             user_backfiller_github_access_token: None,
         }
     }
@@ -304,10 +304,7 @@ impl AppState {
             db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            stripe_client: build_stripe_client(&config)
-                .await
-                .map(|client| Arc::new(client))
-                .log_err(),
+            stripe_client: build_stripe_client(&config).await.map(Arc::new).log_err(),
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             clickhouse_client: config

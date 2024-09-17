@@ -61,7 +61,7 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
-                new_journal_entry(&workspace, cx);
+                new_journal_entry(workspace, cx);
             });
         },
     )
@@ -169,7 +169,7 @@ fn journal_dir(path: &str) -> Option<PathBuf> {
         .ok()
         .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"));
 
-    return expanded_journal_dir;
+    expanded_journal_dir
 }
 
 fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {

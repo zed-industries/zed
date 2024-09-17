@@ -24,7 +24,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, View, ViewContext, WeakView,
+    Render, Subscription, View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -166,6 +166,8 @@ pub(crate) struct Vim {
     pub search: SearchState,
 
     editor: WeakView<Editor>,
+
+    _subscriptions: Vec<Subscription>,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -189,36 +191,32 @@ impl Vim {
     pub fn new(cx: &mut ViewContext<Editor>) -> View<Self> {
         let editor = cx.view().clone();
 
-        cx.new_view(|cx: &mut ViewContext<Vim>| {
-            cx.subscribe(&editor, |vim, _, event, cx| {
-                vim.handle_editor_event(event, cx)
-            })
-            .detach();
+        cx.new_view(|cx| Vim {
+            mode: Mode::Normal,
+            last_mode: Mode::Normal,
+            pre_count: None,
+            post_count: None,
+            operator_stack: Vec::new(),
+            replacements: Vec::new(),
 
-            let listener = cx.listener(Vim::observe_keystrokes);
-            cx.observe_keystrokes(listener).detach();
+            marks: HashMap::default(),
+            stored_visual_mode: None,
+            change_list: Vec::new(),
+            change_list_position: None,
+            current_tx: None,
+            current_anchor: None,
+            undo_modes: HashMap::default(),
 
-            Vim {
-                mode: Mode::Normal,
-                last_mode: Mode::Normal,
-                pre_count: None,
-                post_count: None,
-                operator_stack: Vec::new(),
-                replacements: Vec::new(),
+            selected_register: None,
+            search: SearchState::default(),
 
-                marks: HashMap::default(),
-                stored_visual_mode: None,
-                change_list: Vec::new(),
-                change_list_position: None,
-                current_tx: None,
-                current_anchor: None,
-                undo_modes: HashMap::default(),
-
-                selected_register: None,
-                search: SearchState::default(),
-
-                editor: editor.downgrade(),
-            }
+            editor: editor.downgrade(),
+            _subscriptions: vec![
+                cx.observe_keystrokes(Self::observe_keystrokes),
+                cx.subscribe(&editor, |this, _, event, cx| {
+                    this.handle_editor_event(event, cx)
+                }),
+            ],
         })
     }
 
@@ -443,15 +441,14 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if VimSettings::get_global(cx).toggle_relative_line_numbers {
-            if self.mode != self.last_mode {
-                if self.mode == Mode::Insert || self.last_mode == Mode::Insert {
-                    self.update_editor(cx, |vim, editor, cx| {
-                        let is_relative = vim.mode != Mode::Insert;
-                        editor.set_relative_line_number(Some(is_relative), cx)
-                    });
-                }
-            }
+        if VimSettings::get_global(cx).toggle_relative_line_numbers
+            && self.mode != self.last_mode
+            && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
+        {
+            self.update_editor(cx, |vim, editor, cx| {
+                let is_relative = vim.mode != Mode::Insert;
+                editor.set_relative_line_number(Some(is_relative), cx)
+            });
         }
 
         if leave_selections {
@@ -510,10 +507,8 @@ impl Vim {
                             point = movement::left(map, selection.head());
                         }
                         selection.collapse_to(point, selection.goal)
-                    } else if !last_mode.is_visual() && mode.is_visual() {
-                        if selection.is_empty() {
-                            selection.end = movement::right(map, selection.start);
-                        }
+                    } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
+                        selection.end = movement::right(map, selection.start);
                     }
                 });
             })
@@ -526,7 +521,7 @@ impl Vim {
             return global_state.recorded_count;
         }
 
-        let count = if self.post_count == None && self.pre_count == None {
+        let count = if self.post_count.is_none() && self.pre_count.is_none() {
             return None;
         } else {
             Some(self.post_count.take().unwrap_or(1) * self.pre_count.take().unwrap_or(1))
@@ -1046,10 +1041,11 @@ impl Vim {
                 }
             },
             Some(Operator::Jump { line }) => self.jump(text, line, cx),
-            _ => match self.mode {
-                Mode::Replace => self.multi_replace(text, cx),
-                _ => {}
-            },
+            _ => {
+                if self.mode == Mode::Replace {
+                    self.multi_replace(text, cx)
+                }
+            }
         }
     }
 
@@ -1061,6 +1057,7 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
+            editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
         });
         cx.notify()
     }

@@ -72,40 +72,38 @@ fn test_select_language(cx: &mut AppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".into(),
+            name: LanguageName::new("Rust"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Make".into(),
+            name: LanguageName::new("Make"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                 ..Default::default()
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
 
     // matching file extension
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.rs"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Rust".into())
     );
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.mk"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Make".into())
     );
 
@@ -113,8 +111,7 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("src/Makefile"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         Some("Make".into())
     );
 
@@ -122,22 +119,19 @@ fn test_select_language(cx: &mut AppContext) {
     assert_eq!(
         registry
             .language_for_file(&file("zed/cars"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/a.cars"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/sumk"), None, cx)
-            .now_or_never()
-            .and_then(|l| Some(l.ok()?.name())),
+            .map(|l| l.name()),
         None
     );
 }
@@ -158,23 +152,22 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ..Default::default()
     });
 
-    cx.read(|cx| languages.language_for_file(&file("the/script"), None, cx))
-        .await
-        .unwrap_err();
-    cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
-        .await
-        .unwrap_err();
+    assert!(cx
+        .read(|cx| languages.language_for_file(&file("the/script"), None, cx))
+        .is_none());
+    assert!(cx
+        .read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
+        .is_none());
+
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
             &file("the/script"),
             Some(&"#!/bin/env node".into()),
             cx
         ))
-        .await
         .unwrap()
-        .name()
-        .as_ref(),
-        "JavaScript"
+        .name(),
+        "JavaScript".into()
     );
 }
 
@@ -242,19 +235,16 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
 
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "TypeScript");
+    assert_eq!(language.name(), "TypeScript".into());
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "C++");
+    assert_eq!(language.name(), "C++".into());
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
-        .await
         .unwrap();
-    assert_eq!(language.name().as_ref(), "Dockerfile");
+    assert_eq!(language.name(), "Dockerfile".into());
 }
 
 fn file(path: &str) -> Arc<dyn File> {
@@ -285,7 +275,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
         |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
-                Event::Operation(op) => buffer1_ops.lock().push(op),
+                BufferEvent::Operation(op) => buffer1_ops.lock().push(op),
                 event => buffer_1_events.lock().push(event),
             })
             .detach();
@@ -323,15 +313,15 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            Event::Edited,
-            Event::DirtyChanged,
-            Event::Edited,
-            Event::Edited,
+            BufferEvent::Edited,
+            BufferEvent::DirtyChanged,
+            BufferEvent::Edited,
+            BufferEvent::Edited,
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
     );
 
     buffer1.update(cx, |buffer, cx| {
@@ -346,11 +336,11 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged,]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged,]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![Event::Edited, Event::DirtyChanged]
+        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
     );
 }
 
@@ -1681,7 +1671,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
                     auto_indent_using_last_non_empty_line: false,
                     ..Default::default()
                 },
-                Some(tree_sitter_json::language()),
+                Some(tree_sitter_json::LANGUAGE.into()),
             )),
             cx,
         );
@@ -2009,7 +1999,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_typescript::language_tsx()),
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         )
         .with_override_query(
             r#"
@@ -2131,7 +2121,7 @@ fn test_language_scope_at_with_rust(cx: &mut AppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_override_query(
             r#"
@@ -2211,6 +2201,45 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
         let ruby_config = snapshot.language_scope_at(Point::new(3, 12)).unwrap();
         assert_eq!(ruby_config.line_comment_prefixes(), &[Arc::from("# ")]);
         assert_eq!(ruby_config.block_comment_delimiters(), None);
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_at_with_hidden_languages(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.new_model(|cx| {
+        let text = r#"
+            this is an *emphasized* word.
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(markdown_lang()));
+        language_registry.add(Arc::new(markdown_inline_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        for point in [Point::new(0, 4), Point::new(0, 16)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Markdown".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().0.as_ref(), "Markdown");
+        }
 
         buffer
     });
@@ -2382,7 +2411,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                if let Event::Operation(op) = event {
+                if let BufferEvent::Operation(op) = event {
                     network
                         .lock()
                         .broadcast(buffer.replica_id(), vec![proto::serialize_operation(op)]);
@@ -2510,7 +2539,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
                     cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                        if let Event::Operation(op) = event {
+                        if let BufferEvent::Operation(op) = event {
                             network.lock().broadcast(
                                 buffer.replica_id(),
                                 vec![proto::serialize_operation(op)],
@@ -2702,7 +2731,7 @@ fn ruby_lang() -> Language {
             line_comments: vec!["# ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_ruby::language()),
+        Some(tree_sitter_ruby::LANGUAGE.into()),
     )
     .with_indents_query(
         r#"
@@ -2718,7 +2747,7 @@ fn ruby_lang() -> Language {
 fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: "HTML".into(),
+            name: LanguageName::new("HTML"),
             block_comment: Some(("<!--".into(), "-->".into())),
             ..Default::default()
         },
@@ -2753,7 +2782,7 @@ fn erb_lang() -> Language {
             block_comment: Some(("<%#".into(), "%>".into())),
             ..Default::default()
         },
-        Some(tree_sitter_embedded_template::language()),
+        Some(tree_sitter_embedded_template::LANGUAGE.into()),
     )
     .with_injection_query(
         r#"
@@ -2783,7 +2812,7 @@ fn rust_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )
     .with_indents_query(
         r#"
@@ -2841,7 +2870,7 @@ fn json_lang() -> Language {
             },
             ..Default::default()
         },
-        Some(tree_sitter_json::language()),
+        Some(tree_sitter_json::LANGUAGE.into()),
     )
 }
 
@@ -2851,7 +2880,7 @@ fn javascript_lang() -> Language {
             name: "JavaScript".into(),
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     )
     .with_brackets_query(
         r#"
@@ -2865,6 +2894,45 @@ fn javascript_lang() -> Language {
         (object "}" @end) @indent
         "#,
     )
+    .unwrap()
+}
+
+pub fn markdown_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_md::LANGUAGE.into()),
+    )
+    .with_injection_query(
+        r#"
+            (fenced_code_block
+                (info_string
+                    (language) @language)
+                (code_fence_content) @content)
+
+            ((inline) @content
+                (#set! "language" "markdown-inline"))
+        "#,
+    )
+    .unwrap()
+}
+
+pub fn markdown_inline_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown-Inline".into(),
+            hidden: true,
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+    )
+    .with_highlights_query("(emphasis) @emphasis")
     .unwrap()
 }
 

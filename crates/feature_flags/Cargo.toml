@@ -13,3 +13,4 @@ path = "src/feature_flags.rs"
 
 [dependencies]
 gpui.workspace = true
+futures.workspace = true

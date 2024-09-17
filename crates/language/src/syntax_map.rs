@@ -734,19 +734,24 @@ impl SyntaxSnapshot {
         let mut max_depth = 0;
         let mut prev_range: Option<Range<Anchor>> = None;
         for layer in self.layers.iter() {
-            if layer.depth == max_depth {
-                if let Some(prev_range) = prev_range {
-                    match layer.range.start.cmp(&prev_range.start, text) {
-                        Ordering::Less => panic!("layers out of order"),
-                        Ordering::Equal => {
-                            assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
+            match Ord::cmp(&layer.depth, &max_depth) {
+                Ordering::Less => {
+                    panic!("layers out of order")
+                }
+                Ordering::Equal => {
+                    if let Some(prev_range) = prev_range {
+                        match layer.range.start.cmp(&prev_range.start, text) {
+                            Ordering::Less => panic!("layers out of order"),
+                            Ordering::Equal => {
+                                assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
+                            }
+                            Ordering::Greater => {}
                         }
-                        Ordering::Greater => {}
                     }
                 }
-            } else if layer.depth < max_depth {
-                panic!("layers out of order")
+                Ordering::Greater => {}
             }
+
             max_depth = layer.depth;
             prev_range = Some(layer.range.clone());
         }
@@ -782,7 +787,7 @@ impl SyntaxSnapshot {
         SyntaxMapCaptures::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer),
+            self.layers_for_range(range, buffer, true),
             query,
         )
     }
@@ -796,20 +801,22 @@ impl SyntaxSnapshot {
         SyntaxMapMatches::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer),
+            self.layers_for_range(range, buffer, true),
             query,
         )
     }
 
     #[cfg(test)]
     pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer> {
-        self.layers_for_range(0..buffer.len(), buffer).collect()
+        self.layers_for_range(0..buffer.len(), buffer, true)
+            .collect()
     }
 
     pub fn layers_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
         buffer: &'a BufferSnapshot,
+        include_hidden: bool,
     ) -> impl 'a + Iterator<Item = SyntaxLayer> {
         let start_offset = range.start.to_offset(buffer);
         let end_offset = range.end.to_offset(buffer);
@@ -833,13 +840,14 @@ impl SyntaxSnapshot {
                 if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
-
-                    info = Some(SyntaxLayer {
-                        tree,
-                        language,
-                        depth: layer.depth,
-                        offset: (layer_start_offset, layer_start_point),
-                    });
+                    if include_hidden || !language.config.hidden {
+                        info = Some(SyntaxLayer {
+                            tree,
+                            language,
+                            depth: layer.depth,
+                            offset: (layer_start_offset, layer_start_point),
+                        });
+                    }
                 }
                 cursor.next(buffer);
                 if info.is_some() {
@@ -1340,7 +1348,7 @@ pub(crate) fn splice_included_ranges(
     new_ranges: &[tree_sitter::Range],
 ) -> (Vec<tree_sitter::Range>, Range<usize>) {
     let mut removed_ranges = removed_ranges.iter().cloned().peekable();
-    let mut new_ranges = new_ranges.into_iter().cloned().peekable();
+    let mut new_ranges = new_ranges.iter().cloned().peekable();
     let mut ranges_ix = 0;
     let mut changed_portion: Option<Range<usize>> = None;
     loop {
@@ -1706,7 +1714,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
 {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
         if self.change.cmp(cursor_location, buffer).is_le() {
-            return Ordering::Less;
+            Ordering::Less
         } else {
             self.position.cmp(cursor_location, buffer)
         }
@@ -1756,7 +1764,7 @@ impl<'a> Iterator for ByteChunks<'a> {
 
 impl QueryCursorHandle {
     pub fn new() -> Self {
-        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
+        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_default();
         cursor.set_match_limit(64);
         QueryCursorHandle(Some(cursor))
     }

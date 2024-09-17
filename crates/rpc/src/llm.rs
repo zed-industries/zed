@@ -15,7 +15,18 @@ pub enum LanguageModelProvider {
     Zed,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LanguageModel {
+    pub provider: LanguageModelProvider,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListModelsResponse {
+    pub models: Vec<LanguageModel>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PerformCompletionParams {
     pub provider: LanguageModelProvider,
     pub model: String,

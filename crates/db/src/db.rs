@@ -18,7 +18,7 @@ use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::env;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 use util::{maybe, ResultExt};
@@ -79,7 +79,7 @@ pub async fn open_db<M: Migrator + 'static>(
     open_fallback_db().await
 }
 
-async fn open_main_db<M: Migrator>(db_path: &PathBuf) -> Option<ThreadSafeConnection<M>> {
+async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnection<M>> {
     log::info!("Opening main db");
     ThreadSafeConnection::<M>::builder(db_path.to_string_lossy().as_ref(), true)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)

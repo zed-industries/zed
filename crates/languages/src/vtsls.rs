@@ -5,9 +5,8 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::project_settings::{BinarySettings, ProjectSettings};
+use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use serde_json::{json, Value};
-use settings::Settings;
 use std::{
     any::Any,
     ffi::OsString,
@@ -49,7 +48,7 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
-const SERVER_NAME: &'static str = "vtsls";
+const SERVER_NAME: &str = "vtsls";
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -75,10 +74,7 @@ impl LspAdapter for VtslsLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(SERVER_NAME)
-                .and_then(|s| s.binary.clone())
+            language_server_settings(delegate, SERVER_NAME, cx).and_then(|s| s.binary.clone())
         });
 
         match configured_binary {
@@ -220,41 +216,39 @@ impl LspAdapter for VtslsLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(&adapter).await;
-        Ok(Some(json!({
-            "typescript": {
-                "tsdk": tsdk_path,
-                "suggest": {
-                    "completeFunctionCalls": true
+        let tsdk_path = Self::tsdk_path(adapter).await;
+        let config = serde_json::json!({
+            "tsdk": tsdk_path,
+            "suggest": {
+                "completeFunctionCalls": true
+            },
+            "inlayHints": {
+                "parameterNames": {
+                    "enabled": "all",
+                    "suppressWhenArgumentMatchesName": false
                 },
-                "inlayHints": {
-                    "parameterNames": {
-                        "enabled": "all",
-                        "suppressWhenArgumentMatchesName": false,
-                    },
-                    "parameterTypes": {
-                        "enabled": true
-                    },
-                    "variableTypes": {
-                        "enabled": true,
-                        "suppressWhenTypeMatchesName": false,
-                    },
-                    "propertyDeclarationTypes": {
-                        "enabled": true,
-                    },
-                    "functionLikeReturnTypes": {
-                        "enabled": true,
-                    },
-                    "enumMemberValues": {
-                        "enabled": true,
-                    }
+                "parameterTypes": {
+                    "enabled": true
+                },
+                "variableTypes": {
+                    "enabled": true,
+                    "suppressWhenTypeMatchesName": false
+                },
+                "propertyDeclarationTypes": {
+                    "enabled": true
+                },
+                "functionLikeReturnTypes": {
+                    "enabled": true
+                },
+                "enumMemberValues": {
+                    "enabled": true
                 }
-            },
-            "javascript": {
-                "suggest": {
-                    "completeFunctionCalls": true
-                }
-            },
+            }
+        });
+
+        Ok(Some(json!({
+            "typescript": config,
+            "javascript": config,
             "vtsls": {
                 "experimental": {
                     "completion": {
@@ -269,21 +263,28 @@ impl LspAdapter for VtslsLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        adapter: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(SERVER_NAME)
-                .and_then(|s| s.initialization_options.clone())
+            language_server_settings(delegate.as_ref(), SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
         })?;
+
         if let Some(options) = override_options {
             return Ok(options);
         }
-        self.initialization_options(adapter)
-            .await
-            .map(|o| o.unwrap())
+
+        let config = serde_json::json!({
+            "tsserver": {
+                "maxTsServerMemory": 8092
+            },
+        });
+
+        Ok(serde_json::json!({
+            "typescript": config,
+            "javascript": config
+        }))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

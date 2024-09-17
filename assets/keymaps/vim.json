@@ -29,6 +29,8 @@
       "shift-g": "vim::EndOfDocument",
       "{": "vim::StartOfParagraph",
       "}": "vim::EndOfParagraph",
+      "(": "vim::SentenceBackward",
+      ")": "vim::SentenceForward",
       "|": "vim::GoToColumn",
       // Word motions
       "w": "vim::NextWordStart",
@@ -212,7 +214,7 @@
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": ["vim::PushOperator", "Yank"],
-      "shift-y": "vim::YankToEndOfLine",
+      "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",
@@ -325,6 +327,13 @@
     }
   },
   {
+    "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ShowCompletions",
+      "ctrl-n": "editor::ShowCompletions"
+    }
+  },
+  {
     "context": "vim_mode == replace",
     "bindings": {
       "escape": "vim::NormalBefore",
@@ -392,7 +401,9 @@
     "context": "vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine",
-      "s": ["vim::PushOperator", "DeleteSurrounds"]
+      "s": ["vim::PushOperator", "DeleteSurrounds"],
+      "o": "editor::ToggleHunkDiff", // "d o"
+      "p": "editor::RevertSelectedHunks" // "d p"
     }
   },
   {
@@ -482,6 +493,7 @@
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
       "x": "project_panel::RevealInFileManager",
+      "s": "project_panel::OpenWithSystem",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent",
@@ -489,7 +501,7 @@
     }
   },
   {
-    "context": "OutlinePanel",
+    "context": "OutlinePanel && not_editing",
     "bindings": {
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",

@@ -13,11 +13,13 @@ pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
+mod tools;
 mod workflow;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
+use assistant_tool::ToolRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
@@ -25,8 +27,8 @@ use context_servers::ContextServerRegistry;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::Context as _;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{impl_actions, Context as _};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -35,14 +37,15 @@ use language_model::{
 pub(crate) use model_selector::*;
 pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;
-use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
+use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    context_server_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tab_command, terminal_command, workflow_command,
+    auto_command, context_server_command, default_command, diagnostics_command, docs_command,
+    fetch_command, file_command, now_command, project_command, prompt_command, search_command,
+    symbols_command, tab_command, terminal_command, workflow_command,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
@@ -63,9 +66,18 @@ actions!(
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
+        NewContext,
         ToggleModelSelector,
     ]
 );
+
+#[derive(PartialEq, Clone, Deserialize)]
+pub enum InsertDraggedFiles {
+    ProjectPaths(Vec<PathBuf>),
+    ExternalFiles(Vec<PathBuf>),
+}
+
+impl_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 
@@ -198,21 +210,23 @@ pub fn init(
         let client = client.clone();
         async move {
             let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticIndex::new(
+            let semantic_index = SemanticDb::new(
                 paths::embeddings_dir().join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
                 &mut cx,
             )
             .await?;
+
             cx.update(|cx| cx.set_global(semantic_index))
         }
     })
     .detach();
 
-    context_store::init(&client);
+    context_store::init(&client.clone().into());
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
+    assistant_tool::init(cx);
     assistant_panel::init(cx);
     context_servers::init(cx);
 
@@ -227,6 +241,7 @@ pub fn init(
     .map(Arc::new)
     .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
+    register_tools(cx);
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -350,6 +365,7 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
 
 fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
+
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tab_command::TabSlashCommand, true);
@@ -362,11 +378,22 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
-            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
             true,
         );
     }
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+
+    cx.observe_flag::<auto_command::AutoSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
+                slash_command_registry.register_command(auto_command::AutoCommand, true);
+            }
+        }
+    })
+    .detach();
 
     update_slash_commands_from_settings(cx);
     cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
@@ -398,6 +425,11 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
     } else {
         slash_command_registry.unregister_command(project_command::ProjectSlashCommand);
     }
+}
+
+fn register_tools(cx: &mut AppContext) {
+    let tool_registry = ToolRegistry::global(cx);
+    tool_registry.register_tool(tools::now_tool::NowTool);
 }
 
 pub fn humanize_token_count(count: usize) -> String {

@@ -69,3 +69,6 @@
 
 ((raw_text_expr) @content
   (#set! "language" "javascript"))
+
+((raw_text_each) @content
+  (#set! "language" "javascript"))

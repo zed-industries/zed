@@ -2,7 +2,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
 use gpui::Model;
-use language::{char_kind, Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -23,6 +23,13 @@ pub enum SearchResult {
         ranges: Vec<Range<Anchor>>,
     },
     LimitReached,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SearchInputKind {
+    Query,
+    Include,
+    Exclude,
 }
 
 #[derive(Clone, Debug)]
@@ -82,7 +89,7 @@ impl SearchQuery {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
-            .build(&[&query])?;
+            .build([&query])?;
         let inner = SearchInputs {
             query: query.into(),
             files_to_exclude,
@@ -331,13 +338,17 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
-                        let scope = buffer.language_scope_at(range_offset + mat.start());
-                        let kind = |c| char_kind(&scope, c);
+                        let classifier = buffer.char_classifier_at(range_offset + mat.start());
 
-                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(kind);
-                        let start_kind = kind(rope.chars_at(mat.start()).next().unwrap());
-                        let end_kind = kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(kind);
+                        let prev_kind = rope
+                            .reversed_chars_at(mat.start())
+                            .next()
+                            .map(|c| classifier.kind(c));
+                        let start_kind =
+                            classifier.kind(rope.chars_at(mat.start()).next().unwrap());
+                        let end_kind =
+                            classifier.kind(rope.reversed_chars_at(mat.end()).next().unwrap());
+                        let next_kind = rope.chars_at(mat.end()).next().map(|c| classifier.kind(c));
                         if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
                             continue;
                         }
@@ -470,7 +481,8 @@ pub fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
     let globs = glob_set
         .split(',')
         .map(str::trim)
-        .filter_map(|glob_str| (!glob_str.is_empty()).then(|| glob_str.to_owned()))
+        .filter(|&glob_str| (!glob_str.is_empty()))
+        .map(|glob_str| glob_str.to_owned())
         .collect::<Vec<_>>();
     Ok(PathMatcher::new(&globs)?)
 }

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{atomic::Ordering::SeqCst, Arc},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -142,12 +142,6 @@ impl App {
         self
     }
 
-    /// Sets a start time for tracking time to first window draw.
-    pub fn measure_time_to_first_window_draw(self, start: Instant) -> Self {
-        self.0.borrow_mut().time_to_first_window_draw = Some(TimeToFirstWindowDraw::Pending(start));
-        self
-    }
-
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -210,7 +204,8 @@ impl App {
 
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
-type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
+pub(crate) type KeystrokeObserver =
+    Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
@@ -253,7 +248,6 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) time_to_first_window_draw: Option<TimeToFirstWindowDraw>,
 }
 
 impl AppContext {
@@ -307,7 +301,6 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
-                time_to_first_window_draw: None,
             }),
         });
 
@@ -514,7 +507,7 @@ impl AppContext {
                 }
                 Err(e) => {
                     cx.windows.remove(id);
-                    return Err(e);
+                    Err(e)
                 }
             }
         })
@@ -663,6 +656,11 @@ impl AppContext {
     /// Reveals the specified path at the platform level, such as in Finder on macOS.
     pub fn reveal_path(&self, path: &Path) {
         self.platform.reveal_path(path)
+    }
+
+    /// Opens the specified path with the system's default application.
+    pub fn open_with_system(&self, path: &Path) {
+        self.platform.open_with_system(path)
     }
 
     /// Returns whether the user has configured scrollbars to auto-hide at the platform level.
@@ -1053,7 +1051,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
@@ -1063,7 +1061,14 @@ impl AppContext {
             activate();
             subscription
         }
-        inner(&mut self.keystroke_observers, Box::new(f))
+
+        inner(
+            &mut self.keystroke_observers,
+            Box::new(move |event, cx| {
+                f(event, cx);
+                true
+            }),
+        )
     }
 
     /// Register key bindings.
@@ -1310,14 +1315,6 @@ impl AppContext {
 
         (task, is_first)
     }
-
-    /// Returns the time to first window draw, if available.
-    pub fn time_to_first_window_draw(&self) -> Option<Duration> {
-        match self.time_to_first_window_draw {
-            Some(TimeToFirstWindowDraw::Done(duration)) => Some(duration),
-            _ => None,
-        }
-    }
 }
 
 impl Context for AppContext {
@@ -1479,15 +1476,6 @@ impl<G: Global> DerefMut for GlobalLease<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.global.downcast_mut().unwrap()
     }
-}
-
-/// Represents the initialization duration of the application.
-#[derive(Clone, Copy)]
-pub enum TimeToFirstWindowDraw {
-    /// The application is still initializing, and contains the start time.
-    Pending(Instant),
-    /// The application has finished initializing, and contains the total duration.
-    Done(Duration),
 }
 
 /// Contains state associated with an active drag operation, started by dragging an element

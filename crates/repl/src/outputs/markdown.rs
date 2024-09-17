@@ -1,12 +1,13 @@
 use anyhow::Result;
-use gpui::{div, prelude::*, ClipboardItem, Task, ViewContext, WindowContext};
+use gpui::{div, prelude::*, ClipboardItem, Model, Task, ViewContext, WindowContext};
+use language::Buffer;
 use markdown_preview::{
     markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
     markdown_renderer::render_markdown_block,
 };
 use ui::v_flex;
 
-use crate::outputs::SupportsClipboard;
+use crate::outputs::OutputContent;
 
 pub struct MarkdownView {
     raw_text: String,
@@ -41,13 +42,28 @@ impl MarkdownView {
     }
 }
 
-impl SupportsClipboard for MarkdownView {
+impl OutputContent for MarkdownView {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_string(self.raw_text.clone()))
     }
 
     fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
         true
+    }
+
+    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+        true
+    }
+
+    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+        let buffer = cx.new_model(|cx| {
+            // todo!(): Bring in the language registry so we can set the language to markdown
+            let mut buffer = Buffer::local(self.raw_text.clone(), cx)
+                .with_language(language::PLAIN_TEXT.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+        Some(buffer)
     }
 }
 
