@@ -484,7 +484,6 @@ features = [
     "implement",
     "Foundation_Numerics",
     "Storage",
-    "System",
     "System_Threading",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
