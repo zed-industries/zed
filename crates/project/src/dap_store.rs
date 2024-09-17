@@ -222,7 +222,11 @@ impl DapStore {
     ) {
         let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
 
-        if !breakpoint_set.remove(&breakpoint) {
+        if let Some(gotten_breakpoint) = breakpoint_set.take(&breakpoint) {
+            if gotten_breakpoint.kind != breakpoint.kind {
+                breakpoint_set.insert(breakpoint);
+            }
+        } else {
             breakpoint_set.insert(breakpoint);
         }
 
@@ -267,7 +271,7 @@ impl DapStore {
             .detach()
     }
 }
-type LogMessage = String;
+type LogMessage = Arc<str>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum BreakpointKind {
@@ -311,7 +315,7 @@ impl Column for BreakpointKind {
             0 => Ok((BreakpointKind::Standard, start_index + 2)),
             1 => {
                 let message = statement.column_text(start_index + 1)?.to_string();
-                Ok((BreakpointKind::Log(message), start_index + 2))
+                Ok((BreakpointKind::Log(message.into()), start_index + 2))
             }
             _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
         }
@@ -395,7 +399,7 @@ impl Breakpoint {
 
         let log_message = match &self.kind {
             BreakpointKind::Standard => None,
-            BreakpointKind::Log(log_message) => Some(log_message.clone()),
+            BreakpointKind::Log(log_message) => Some(log_message.clone().to_string()),
         };
 
         SourceBreakpoint {
@@ -438,7 +442,7 @@ impl SerializedBreakpoint {
     pub fn to_source_breakpoint(&self) -> SourceBreakpoint {
         let log_message = match &self.kind {
             BreakpointKind::Standard => None,
-            BreakpointKind::Log(message) => Some(message.clone()),
+            BreakpointKind::Log(message) => Some(message.clone().to_string()),
         };
 
         SourceBreakpoint {

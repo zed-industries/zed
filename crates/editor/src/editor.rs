@@ -5375,10 +5375,11 @@ impl Editor {
             Color::Debugger
         };
 
-        let icon = match kind {
+        let icon = match &kind {
             BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
             BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
         };
+        let arc_kind = Arc::new(kind.clone());
 
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
@@ -5387,7 +5388,7 @@ impl Editor {
             .style(ButtonStyle::Transparent)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
-                editor.toggle_breakpoint_at_anchor(position, BreakpointKind::Standard, cx);
+                editor.toggle_breakpoint_at_anchor(position.clone(), (*arc_kind).clone(), cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
                 let source = editor
@@ -5421,7 +5422,7 @@ impl Editor {
                                 editor.update(cx, |this, cx| {
                                     this.toggle_breakpoint_at_anchor(
                                         anchor,
-                                        BreakpointKind::Log("Log breakpoint".to_string()),
+                                        BreakpointKind::Log("Log breakpoint".into()),
                                         cx,
                                     );
                                 })
