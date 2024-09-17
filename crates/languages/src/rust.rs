@@ -61,7 +61,28 @@ impl LspAdapter for RustLspAdapter {
             }) => {
                 let path = delegate.which(Self::SERVER_NAME.as_ref()).await;
                 let env = delegate.shell_env().await;
-                (path, Some(env), None)
+
+                if let Some(path) = path {
+                    // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+                    // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+                    log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+                    match delegate
+                        .try_exec(LanguageServerBinary {
+                            path: path.clone(),
+                            arguments: vec!["--help".into()],
+                            env: Some(env.clone()),
+                        })
+                        .await
+                    {
+                        Ok(()) => (Some(path), Some(env), None),
+                        Err(err) => {
+                            log::error!("failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {:?}", path, err);
+                            (None, None, None)
+                        }
+                    }
+                } else {
+                    (None, None, None)
+                }
             }
             // Otherwise, we use the configured binary.
             Some(BinarySettings {
