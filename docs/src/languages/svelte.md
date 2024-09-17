@@ -5,22 +5,17 @@ Svelte support is available through the [Svelte extension](https://github.com/ze
 - Tree Sitter: [tree-sitter-grammars/tree-sitter-svelte](https://github.com/tree-sitter-grammars/tree-sitter-svelte)
 - Language Server: [sveltejs/language-tools](https://github.com/sveltejs/language-tools)
 
-<!--
-TBD: Rewrite Svelte docs so it doesn't begin with a json block assuming you know what inlayHints are.
--->
-
 ## Extra theme styling configuration
 
 You can modify how certain styles such as directives and modifiers appear in attributes:
 
-```jsonc
-// Your theme's style.syntax
+```json
 "syntax": {
-  // styling for directives (eg: class:foo or on:click) (the `on` or `class` part of the attribute)
+  // Styling for directives (e.g., `class:foo` or `on:click`) (the `on` or `class` part of the attribute).
   "attribute.function": {
     "color": "#ff0000"
   },
-  // styling for modifiers at the end of attributes, eg: `on:click|preventDefault|stopPropagation`
+  // Styling for modifiers at the end of attributes, e.g. `on:<click|preventDefault|stopPropagation>`
   "attribute.special": {
     "color": "#00ff00"
   }
