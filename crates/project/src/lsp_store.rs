@@ -2571,7 +2571,7 @@ impl LspStore {
             if let Some(language) = buffer.language().cloned() {
                 for adapter in self.languages.lsp_adapters(&language.name()) {
                     if let Some(server_id) = ids.get(&(worktree_id, adapter.name.clone())) {
-                        buffer.update_diagnostics(*server_id, Default::default(), cx);
+                        buffer.update_diagnostics(*server_id, DiagnosticSet::new([], buffer), cx);
                     }
                 }
             }
@@ -4967,7 +4967,11 @@ impl LspStore {
                 self.buffer_store.update(cx, |buffer_store, cx| {
                     for buffer in buffer_store.buffers() {
                         buffer.update(cx, |buffer, cx| {
-                            buffer.update_diagnostics(server_id, Default::default(), cx);
+                            buffer.update_diagnostics(
+                                server_id,
+                                DiagnosticSet::new([], buffer),
+                                cx,
+                            );
                         });
                     }
                 });
