@@ -109,5 +109,4 @@ function darkModeToggle() {
       setTheme(e.matches ? "dark" : "light");
     }
   });
-  });
 }
