@@ -860,7 +860,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cli_environment: Shared<Task<Option<HashMap<String, String>>>>,
+        project_environment: Shared<Task<Option<HashMap<String, String>>>>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -881,7 +881,7 @@ impl LanguageRegistry {
         let task = cx.spawn({
             let container_dir = container_dir.clone();
             move |mut cx| async move {
-                let cli_environment = cli_environment.await;
+                let project_environment = project_environment.await;
 
                 let binary_result = adapter
                     .clone()
@@ -892,15 +892,16 @@ impl LanguageRegistry {
 
                 let mut binary = binary_result?;
 
-                // If this Zed project was opened from the CLI and the language server command itself
+                // If we do have a project environment (either by spawning a shell in in the project directory
+                // or by getting it from the CLI) and the language server command itself
                 // doesn't have an environment (which it would have, if it was found in $PATH), then
-                // we pass along the CLI environment that we inherited.
-                if binary.env.is_none() && cli_environment.is_some() {
+                // we use the project environment.
+                if binary.env.is_none() && project_environment.is_some() {
                     log::info!(
-                        "using CLI environment for language server {:?}, id: {server_id}",
+                        "using project environment for language server {:?}, id: {server_id}",
                         adapter.name.0
                     );
-                    binary.env = cli_environment.clone();
+                    binary.env = project_environment.clone();
                 }
 
                 let options = adapter

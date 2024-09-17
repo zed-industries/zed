@@ -4646,7 +4646,7 @@ impl LspStore {
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::for_local(self, worktree_handle, cx);
-        let cli_environment = local.environment.update(cx, |environment, cx| {
+        let project_environment = local.environment.update(cx, |environment, cx| {
             environment.get_environment(Some(worktree_id), Some(worktree_path.clone()), cx)
         });
 
@@ -4656,7 +4656,7 @@ impl LspStore {
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
-            cli_environment,
+            project_environment,
             cx,
         ) {
             Some(pending_server) => pending_server,
