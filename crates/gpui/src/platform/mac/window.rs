@@ -1474,9 +1474,11 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
+    // Currently, it is hardcoded.
     let keystroke = Keystroke {
         modifiers: Default::default(),
         label: "Unknown".to_string(),
+        text: None,
         code: KeyCodes::Period,
         ime_key: None,
     };

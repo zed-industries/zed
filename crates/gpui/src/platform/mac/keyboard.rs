@@ -192,7 +192,7 @@ impl PlatformKeyboard for MacKeyboard {
             "Unknown".to_string()
         } else {
             // map scan code to string
-            key_string_from_keycode(keycode)
+            key_string_from_keycode(keycode, false, false)
         }
     }
 

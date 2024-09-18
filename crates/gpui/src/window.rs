@@ -3256,6 +3256,7 @@ impl<'a> WindowContext<'a> {
                     keystroke = Some(Keystroke {
                         label: "Modifiers".to_string(),
                         code,
+                        text: None,
                         ime_key: None,
                         modifiers: Modifiers::default(),
                     });

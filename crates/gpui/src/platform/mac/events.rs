@@ -353,7 +353,16 @@ unsafe fn parse_keystroke(
     //     }
     // };
     // let key = chars_ignoring_modifiers;
-    let key = key_string_from_keycode(unsafe { native_event.keyCode() });
+    let scan_code = unsafe { native_event.keyCode() };
+    let label = key_string_from_keycode(scan_code, false, false);
+    let text = {
+        let text = key_string_from_keycode(scan_code, shift, alt);
+        if text != label {
+            Some(text)
+        } else {
+            None
+        }
+    };
     let code = keyboard_event_to_virtual_keycodes(native_event).unwrap_or_default();
     let result = Keystroke {
         modifiers: Modifiers {
@@ -363,7 +372,8 @@ unsafe fn parse_keystroke(
             platform: command,
             function,
         },
-        label: key,
+        label,
+        text,
         code,
         ime_key: None,
     };
@@ -393,8 +403,16 @@ unsafe fn parse_keystroke(
 //     }
 // }
 
-pub(crate) fn key_string_from_keycode(code: CGKeyCode) -> String {
+pub(crate) fn key_string_from_keycode(code: CGKeyCode, shift: bool, option: bool) -> String {
     let event = synthesize_keyboard_event(code);
+    let mut flags = CGEventFlags::empty();
+    if shift {
+        flags |= CGEventFlags::CGEventFlagShift;
+    }
+    if option {
+        flags |= CGEventFlags::CGEventFlagAlternate;
+    }
+    event.set_flags(flags);
     unsafe {
         let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
         event.characters().to_str().to_string()
