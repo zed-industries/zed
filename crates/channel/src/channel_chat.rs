@@ -332,7 +332,7 @@ impl ChannelChat {
                 .update(&mut cx, |chat, cx| {
                     if let Some(first_id) = chat.first_loaded_message_id() {
                         if first_id <= message_id {
-                            let mut cursor = chat.messages.cursor::<(ChannelMessageId, Count)>();
+                            let mut cursor = chat.messages.cursor::<(ChannelMessageId, Count)>(&());
                             let message_id = ChannelMessageId::Saved(message_id);
                             cursor.seek(&message_id, Bias::Left, &());
                             return ControlFlow::Break(
@@ -498,7 +498,7 @@ impl ChannelChat {
     }
 
     pub fn message(&self, ix: usize) -> &ChannelMessage {
-        let mut cursor = self.messages.cursor::<Count>();
+        let mut cursor = self.messages.cursor::<Count>(&());
         cursor.seek(&Count(ix), Bias::Right, &());
         cursor.item().unwrap()
     }
@@ -515,13 +515,13 @@ impl ChannelChat {
     }
 
     pub fn messages_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &ChannelMessage> {
-        let mut cursor = self.messages.cursor::<Count>();
+        let mut cursor = self.messages.cursor::<Count>(&());
         cursor.seek(&Count(range.start), Bias::Right, &());
         cursor.take(range.len())
     }
 
     pub fn pending_messages(&self) -> impl Iterator<Item = &ChannelMessage> {
-        let mut cursor = self.messages.cursor::<ChannelMessageId>();
+        let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
         cursor.seek(&ChannelMessageId::Pending(0), Bias::Left, &());
         cursor
     }
@@ -589,11 +589,11 @@ impl ChannelChat {
     fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
         if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
             let nonces = messages
-                .cursor::<()>()
+                .cursor::<()>(&())
                 .map(|m| m.nonce)
                 .collect::<HashSet<_>>();
 
-            let mut old_cursor = self.messages.cursor::<(ChannelMessageId, Count)>();
+            let mut old_cursor = self.messages.cursor::<(ChannelMessageId, Count)>(&());
             let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left, &());
             let start_ix = old_cursor.start().1 .0;
             let removed_messages = old_cursor.slice(&last_message.id, Bias::Right, &());
@@ -646,7 +646,7 @@ impl ChannelChat {
     }
 
     fn message_removed(&mut self, id: u64, cx: &mut ModelContext<Self>) {
-        let mut cursor = self.messages.cursor::<ChannelMessageId>();
+        let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
         let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
         if let Some(item) = cursor.item() {
             if item.id == ChannelMessageId::Saved(id) {
@@ -685,7 +685,7 @@ impl ChannelChat {
         edited_at: Option<OffsetDateTime>,
         cx: &mut ModelContext<Self>,
     ) {
-        let mut cursor = self.messages.cursor::<ChannelMessageId>();
+        let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
         let mut messages = cursor.slice(&id, Bias::Left, &());
         let ix = messages.summary().count;
 
@@ -716,7 +716,7 @@ async fn messages_from_proto(
     cx: &mut AsyncAppContext,
 ) -> Result<SumTree<ChannelMessage>> {
     let messages = ChannelMessage::from_proto_vec(proto_messages, user_store, cx).await?;
-    let mut result = SumTree::new();
+    let mut result = SumTree::default();
     result.extend(messages, &());
     Ok(result)
 }
@@ -825,6 +825,10 @@ impl Default for ChannelMessageId {
 impl sum_tree::Summary for ChannelMessageSummary {
     type Context = ();
 
+    fn zero(_cx: &Self::Context) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.max_id = summary.max_id;
         self.count += summary.count;
@@ -832,6 +836,10 @@ impl sum_tree::Summary for ChannelMessageSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for ChannelMessageId {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
         debug_assert!(summary.max_id > *self);
         *self = summary.max_id;
@@ -839,6 +847,10 @@ impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for ChannelMessageId {
 }
 
 impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
         self.0 += summary.count;
     }
