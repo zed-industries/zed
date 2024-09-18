@@ -268,7 +268,7 @@ blockquote .warning:before {
 .warning {
   margin: auto;
   padding: 1rem 1.25rem;
-  color: var(--fg);
+  color: var(--full-contrast);
   background-color: var(--warning-bg);
   border: 1px solid var(--warning-border);
 }
