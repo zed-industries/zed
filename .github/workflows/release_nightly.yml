@@ -113,6 +113,12 @@ jobs:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
+      - name: Install Linux dependencies
+        run: ./script/linux
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
+
       - name: Set release channel to nightly
         run: |
           set -euo pipefail
