@@ -100,7 +100,7 @@ impl Anchor {
             false
         } else {
             let fragment_id = buffer.fragment_id_for_anchor(self);
-            let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>();
+            let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>(&None);
             fragment_cursor.seek(&Some(fragment_id), Bias::Left, &None);
             fragment_cursor
                 .item()

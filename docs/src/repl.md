@@ -74,7 +74,7 @@ On macOS, your system Python will _not_ work. Either set up [pyenv](https://gith
 
 </div>
 
-To setup your current python to have an available kernel, run:
+To setup your current Python to have an available kernel, run:
 
 ```sh
 pip install ipykernel
@@ -99,7 +99,7 @@ python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 
 ### R (Ark Kernel) {#r-ark}
 
-Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. E.g. for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
+Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. For example, for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
 
 ```sh
 ark --install
@@ -137,9 +137,9 @@ TBD: Improve Julia REPL instructions
 
 ### Scala
 
-- Install Scala with `cs setup` (Coursier): https://www.scala-lang.org/download/
+- [Install Scala](https://www.scala-lang.org/download/) with `cs setup` (Coursier):
   - `brew install coursier/formulas/coursier && cs setup`
-- REPL (Almond) Setup Instructions https://almond.sh/docs/quick-start-install
+- REPL (Almond) [setup instructions](https://almond.sh/docs/quick-start-install):
   - `brew install --cask temurin` (Eclipse foundation official OpenJDK binaries)
   - `brew install coursier/formulas/coursier && cs setup`
   - `coursier launch --use-bootstrap almond -- --install`
@@ -180,4 +180,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
