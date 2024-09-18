@@ -1,8 +1,8 @@
 use crate::{
-    keyboard_layouts::KeyboardLayoutMapping, platform::mac::NSStringExt, point, px, KeyCodes,
-    KeyDownEvent, KeyPosition, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    platform::mac::NSStringExt, point, px, KeyCodes, KeyDownEvent, KeyPosition, KeyUpEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta,
+    ScrollWheelEvent, TouchPhase,
 };
 use cocoa::{
     appkit::{
@@ -109,7 +109,7 @@ impl PlatformInput {
     pub(crate) unsafe fn from_native(
         native_event: id,
         window_height: Option<Pixels>,
-        layout_mapping: &Option<KeyboardLayoutMapping>,
+        // layout_mapping: &Option<KeyboardLayoutMapping>,
     ) -> Option<Self> {
         let event_type = native_event.eventType();
 
@@ -127,11 +127,11 @@ impl PlatformInput {
                 modifiers: read_modifiers(native_event),
             })),
             NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {
-                keystroke: parse_keystroke(native_event, layout_mapping),
+                keystroke: parse_keystroke(native_event),
                 is_held: native_event.isARepeat() == YES,
             })),
             NSEventType::NSKeyUp => Some(Self::KeyUp(KeyUpEvent {
-                keystroke: parse_keystroke(native_event, layout_mapping),
+                keystroke: parse_keystroke(native_event),
             })),
             NSEventType::NSLeftMouseDown
             | NSEventType::NSRightMouseDown
@@ -266,7 +266,7 @@ impl PlatformInput {
 
 unsafe fn parse_keystroke(
     native_event: id,
-    layout_mapping: &Option<KeyboardLayoutMapping>,
+    // layout_mapping: &Option<KeyboardLayoutMapping>,
 ) -> Keystroke {
     use cocoa::appkit::*;
 
@@ -353,8 +353,8 @@ unsafe fn parse_keystroke(
     //     }
     // };
     // let key = chars_ignoring_modifiers;
-    let key = key_string_from_keycode(unsafe { native_event.keyCode() }, command);
-    let code = keyboard_event_to_virtual_keycodes(native_event, layout_mapping).unwrap_or_default();
+    let key = key_string_from_keycode(unsafe { native_event.keyCode() });
+    let code = keyboard_event_to_virtual_keycodes(native_event).unwrap_or_default();
     let result = Keystroke {
         modifiers: Modifiers {
             control,
@@ -393,7 +393,7 @@ unsafe fn parse_keystroke(
 //     }
 // }
 
-pub(crate) fn key_string_from_keycode(code: CGKeyCode, cmd: bool) -> String {
+pub(crate) fn key_string_from_keycode(code: CGKeyCode) -> String {
     let event = synthesize_keyboard_event(code);
     unsafe {
         let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
@@ -404,7 +404,7 @@ pub(crate) fn key_string_from_keycode(code: CGKeyCode, cmd: bool) -> String {
 /// TODO:
 fn keyboard_event_to_virtual_keycodes(
     native_event: id,
-    layout_mapping: &Option<KeyboardLayoutMapping>,
+    // layout_mapping: &Option<KeyboardLayoutMapping>,
 ) -> Option<KeyCodes> {
     // let x = unsafe { native_event.characters().to_str().to_string() };
     // let y = unsafe {

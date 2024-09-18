@@ -1,12 +1,11 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
-    check_current_keyboard_type, keyboard_layouts::KeyboardLayoutMapping,
-    platform::PlatformInputHandler, point, px, retrieve_current_keboard_layout, size,
-    AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
-    KeyCodes, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    check_current_keyboard_type, platform::PlatformInputHandler, point, px,
+    retrieve_current_keboard_layout, size, AnyWindowHandle, Bounds, DisplayLink, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, KeyCodes, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -347,7 +346,7 @@ struct MacWindowState {
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     ime_composing: bool,
-    keyboard_mapping_data: Option<KeyboardLayoutMapping>,
+    // keyboard_mapping_data: Option<KeyboardLayoutMapping>,
 }
 
 impl MacWindowState {
@@ -595,7 +594,7 @@ impl MacWindow {
             let keyboard_layout = retrieve_current_keboard_layout();
             // let keyboard_layout = KeyboardLayout::ABC;
             println!("-> Current layout: {:?}", keyboard_layout);
-            let keyboard_mapping_data = keyboard_layout.layout_data(check_current_keyboard_type());
+            // let keyboard_mapping_data = keyboard_layout.layout_data(check_current_keyboard_type());
 
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
@@ -631,7 +630,7 @@ impl MacWindow {
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
                 ime_composing: false,
-                keyboard_mapping_data,
+                // keyboard_mapping_data,
             })));
 
             (*native_window).set_ivar(
@@ -1249,7 +1248,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         PlatformInput::from_native(
             native_event,
             Some(window_height),
-            &lock.keyboard_mapping_data,
+            // &lock.keyboard_mapping_data,
         )
     };
 
@@ -1354,7 +1353,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         PlatformInput::from_native(
             native_event,
             Some(window_height),
-            &lock.keyboard_mapping_data,
+            // &lock.keyboard_mapping_data,
         )
     };
 
