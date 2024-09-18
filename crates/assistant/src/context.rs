@@ -46,7 +46,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::AssistantKind;
+use telemetry_events::{AssistantKind, AssistantPhase};
 use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -2134,6 +2134,7 @@ impl Context {
                         telemetry.report_assistant_event(
                             Some(this.id.0.clone()),
                             AssistantKind::Panel,
+                            AssistantPhase::Response,
                             model.telemetry_id(),
                             response_latency,
                             error_message,
