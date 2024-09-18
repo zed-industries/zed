@@ -61,7 +61,10 @@ use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_pat
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver};
 use remote::SshSession;
-use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
+use rpc::{
+    proto::{Ack, SSH_PROJECT_ID},
+    AnyProtoClient, ErrorCode,
+};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
@@ -786,7 +789,7 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
             client.add_model_message_handler(Self::handle_update_worktree);
             client.add_model_message_handler(Self::handle_create_buffer_for_peer);
-            client.add_model_message_handler(Self::handle_update_project);
+            client.add_model_request_handler(Self::handle_update_project_request);
             client.add_model_request_handler(BufferStore::handle_update_buffer);
             BufferStore::init(&client);
             LspStore::init(&client);
@@ -4064,6 +4067,15 @@ impl Project {
             }
             Ok(())
         })?
+    }
+
+    async fn handle_update_project_request(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateProject>,
+        cx: AsyncAppContext,
+    ) -> Result<Ack> {
+        Self::handle_update_project(this, envelope, cx).await?;
+        Ok(Ack {})
     }
 
     async fn handle_update_worktree(
