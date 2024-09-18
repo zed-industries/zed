@@ -16,7 +16,7 @@ use futures::{
 };
 use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use lsp::LanguageServerId;
+use lsp::{LanguageServerBinary, LanguageServerId};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use schemars::JsonSchema;
@@ -882,11 +882,28 @@ impl LanguageRegistry {
             let container_dir = container_dir.clone();
             move |mut cx| async move {
                 let project_environment = project_environment.await;
-
-                let binary_result = adapter
-                    .clone()
-                    .get_language_server_command(container_dir, delegate.clone(), &mut cx)
-                    .await;
+                let server_name = adapter.name.clone();
+                let binary_result = if let Some(server_path) = std::env::var(format!(
+                    "ZED_{name}_PATH",
+                    name = server_name
+                        .0
+                        .as_ref()
+                        .replace(|ch: char| !ch.is_ascii_alphanumeric(), "_")
+                        .to_ascii_uppercase()
+                ))
+                .ok()
+                {
+                    Ok(LanguageServerBinary {
+                        path: PathBuf::from(server_path),
+                        arguments: vec![],
+                        env: None,
+                    })
+                } else {
+                    adapter
+                        .clone()
+                        .get_language_server_command(container_dir, delegate.clone(), &mut cx)
+                        .await
+                };
 
                 delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
 
