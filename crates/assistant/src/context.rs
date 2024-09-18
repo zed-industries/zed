@@ -765,7 +765,7 @@ impl Context {
             }
         }
         self.buffer
-            .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx))?;
+            .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx));
         self.flush_ops(cx);
 
         Ok(())
@@ -1008,9 +1008,12 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::BufferEvent::Operation(operation) => cx.emit(ContextEvent::Operation(
-                ContextOperation::BufferOperation(operation.clone()),
-            )),
+            language::BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx.emit(ContextEvent::Operation(ContextOperation::BufferOperation(
+                operation.clone(),
+            ))),
             language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);

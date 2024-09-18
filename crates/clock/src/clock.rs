@@ -2,6 +2,9 @@ mod system_clock;
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering::SeqCst;
+use std::sync::Arc;
 use std::{
     cmp::{self, Ordering},
     fmt, iter,
@@ -21,6 +24,12 @@ pub type Seq = u32;
 pub struct Lamport {
     pub replica_id: ReplicaId,
     pub value: Seq,
+}
+
+/// A shareable version of a [`Lamport`] timestamp.
+pub struct AtomicLamport {
+    pub replica_id: ReplicaId,
+    pub value: AtomicU32,
 }
 
 /// A [vector clock](https://en.wikipedia.org/wiki/Vector_clock).
@@ -193,5 +202,29 @@ impl fmt::Debug for Global {
             write!(f, "{}: {}", timestamp.replica_id, timestamp.value)?;
         }
         write!(f, "}}")
+    }
+}
+
+impl AtomicLamport {
+    pub fn new(replica_id: ReplicaId) -> Arc<Self> {
+        Arc::new(Self {
+            value: AtomicU32::new(1),
+            replica_id,
+        })
+    }
+
+    pub fn tick(&self) -> Lamport {
+        Lamport {
+            replica_id: self.replica_id,
+            value: self.value.fetch_add(1, SeqCst),
+        }
+    }
+
+    pub fn observe(&self, timestamp: Lamport) {
+        self.value
+            .fetch_update(SeqCst, SeqCst, |value| {
+                Some(cmp::max(value, timestamp.value) + 1)
+            })
+            .unwrap();
     }
 }

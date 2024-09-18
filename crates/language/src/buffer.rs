@@ -21,8 +21,8 @@ use async_watch as watch;
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Pixels, Task, TaskLabel,
-    WindowContext,
+    AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
+    Pixels, Task, TaskLabel, WindowContext,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -121,6 +121,7 @@ pub struct Buffer {
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -308,7 +309,10 @@ pub enum Operation {
 pub enum BufferEvent {
     /// The buffer was changed in a way that must be
     /// propagated to its other replicas.
-    Operation(Operation),
+    Operation {
+        operation: Operation,
+        is_local: bool,
+    },
     /// The buffer was edited.
     Edited,
     /// The buffer's `dirty` bit changed.
@@ -759,6 +763,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
+            _subscriptions: Vec::new(),
         }
     }
 
@@ -780,6 +785,38 @@ impl Buffer {
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
         }
+    }
+
+    pub fn branch(&mut self, cx: &mut ModelContext<Self>) -> Model<Self> {
+        let this = cx.handle();
+        cx.new_model(|cx| {
+            let mut branch = Self {
+                diff_base: self.diff_base.clone(),
+                language: self.language.clone(),
+                has_conflict: self.has_conflict,
+                has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
+                _subscriptions: vec![cx.subscribe(&this, |branch: &mut Self, _, event, cx| {
+                    if let BufferEvent::Operation { operation, .. } = event {
+                        branch.apply_ops([operation.clone()], cx);
+                    }
+                })],
+                ..Self::build(
+                    self.text.branch(),
+                    None,
+                    self.file.clone(),
+                    self.capability(),
+                )
+            };
+            if let Some(language_registry) = self.language_registry() {
+                branch.set_language_registry(language_registry);
+            }
+
+            branch
+        })
+    }
+
+    pub fn merge(&self, branch: &Model<Self>, cx: &mut ModelContext<Self>) {
+        todo!()
     }
 
     #[cfg(test)]
@@ -1169,7 +1206,7 @@ impl Buffer {
             lamport_timestamp,
         };
         self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, cx);
-        self.send_operation(op, cx);
+        self.send_operation(op, true, cx);
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -1743,6 +1780,7 @@ impl Buffer {
                 lamport_timestamp,
                 cursor_shape,
             },
+            true,
             cx,
         );
         self.non_text_state_update_count += 1;
@@ -1889,7 +1927,7 @@ impl Buffer {
         }
 
         self.end_transaction(cx);
-        self.send_operation(Operation::Buffer(edit_operation), cx);
+        self.send_operation(Operation::Buffer(edit_operation), true, cx);
         Some(edit_id)
     }
 
@@ -1972,7 +2010,7 @@ impl Buffer {
         &mut self,
         ops: I,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) {
         self.pending_autoindent.take();
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1991,14 +2029,16 @@ impl Buffer {
                 }
             })
             .collect::<Vec<_>>();
-        self.text.apply_ops(buffer_ops)?;
+        for operation in buffer_ops.iter() {
+            self.send_operation(Operation::Buffer(operation.clone()), false, cx);
+        }
+        self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
-        Ok(())
     }
 
     fn flush_deferred_ops(&mut self, cx: &mut ModelContext<Self>) {
@@ -2115,8 +2155,16 @@ impl Buffer {
         }
     }
 
-    fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
-        cx.emit(BufferEvent::Operation(operation));
+    fn send_operation(
+        &mut self,
+        operation: Operation,
+        is_local: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(BufferEvent::Operation {
+            operation,
+            is_local,
+        });
     }
 
     /// Removes the selections for a given peer.
@@ -2131,7 +2179,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         if let Some((transaction_id, operation)) = self.text.undo() {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
@@ -2148,7 +2196,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
         if let Some(operation) = self.text.undo_transaction(transaction_id) {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             true
         } else {
@@ -2168,7 +2216,7 @@ impl Buffer {
         let operations = self.text.undo_to_transaction(transaction_id);
         let undone = !operations.is_empty();
         for operation in operations {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if undone {
             self.did_edit(&old_version, was_dirty, cx)
@@ -2182,7 +2230,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         if let Some((transaction_id, operation)) = self.text.redo() {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
@@ -2202,7 +2250,7 @@ impl Buffer {
         let operations = self.text.redo_to_transaction(transaction_id);
         let redone = !operations.is_empty();
         for operation in operations {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if redone {
             self.did_edit(&old_version, was_dirty, cx)
@@ -2219,6 +2267,7 @@ impl Buffer {
                 triggers,
                 lamport_timestamp: self.completion_triggers_timestamp,
             },
+            true,
             cx,
         );
         cx.notify();
@@ -2298,7 +2347,7 @@ impl Buffer {
         let ops = self.text.randomly_undo_redo(rng);
         if !ops.is_empty() {
             for op in ops {
-                self.send_operation(Operation::Buffer(op), cx);
+                self.send_operation(Operation::Buffer(op), true, cx);
                 self.did_edit(&old_version, was_dirty, cx);
             }
         }

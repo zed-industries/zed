@@ -275,7 +275,10 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
         |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
-                BufferEvent::Operation(op) => buffer1_ops.lock().push(op),
+                BufferEvent::Operation {
+                    operation,
+                    is_local: true,
+                } => buffer1_ops.lock().push(operation),
                 event => buffer_1_events.lock().push(event),
             })
             .detach();
@@ -308,7 +311,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     // Incorporating a set of remote ops emits a single edited event,
     // followed by a dirty changed event.
     buffer2.update(cx, |buffer, cx| {
-        buffer.apply_ops(buffer1_ops.lock().drain(..), cx).unwrap();
+        buffer.apply_ops(buffer1_ops.lock().drain(..), cx);
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
@@ -332,7 +335,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     // Incorporating the remote ops again emits a single edited event,
     // followed by a dirty changed event.
     buffer2.update(cx, |buffer, cx| {
-        buffer.apply_ops(buffer1_ops.lock().drain(..), cx).unwrap();
+        buffer.apply_ops(buffer1_ops.lock().drain(..), cx);
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
@@ -2274,13 +2277,11 @@ fn test_serialization(cx: &mut gpui::AppContext) {
         .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new_model(|cx| {
         let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
-        buffer
-            .apply_ops(
-                ops.into_iter()
-                    .map(|op| proto::deserialize_operation(op).unwrap()),
-                cx,
-            )
-            .unwrap();
+        buffer.apply_ops(
+            ops.into_iter()
+                .map(|op| proto::deserialize_operation(op).unwrap()),
+            cx,
+        );
         buffer
     });
     assert_eq!(buffer2.read(cx).text(), "abcDF");
@@ -2372,6 +2373,90 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+fn test_branch_and_merge(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    let base_buffer = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+
+    // Create a remote replica of the base buffer.
+    let base_buffer_replica = cx.new_model(|cx| {
+        Buffer::from_proto(
+            1,
+            Capability::ReadWrite,
+            base_buffer.read(cx).to_proto(cx),
+            None,
+        )
+        .unwrap()
+    });
+    base_buffer.update(cx, |_buffer, cx| {
+        cx.subscribe(&base_buffer_replica, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+
+    // Create a branch, which initially has the same state as the base buffer.
+    let branch_buffer = base_buffer.update(cx, |buffer, cx| buffer.branch(cx));
+    assert_eq!(branch_buffer.read(cx).text(), base_buffer.read(cx).text());
+
+    // Edits to the branch are not applied to the base.
+    branch_buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            [(Point::new(1, 0)..Point::new(1, 0), "ONE_POINT_FIVE\n")],
+            None,
+            cx,
+        )
+    });
+    assert_eq!(base_buffer.read(cx).text(), "one\ntwo\nthree\n");
+    assert_eq!(
+        branch_buffer.read(cx).text(),
+        "one\nONE_POINT_FIVE\ntwo\nthree\n"
+    );
+
+    // Edits to the base are applied to the branch.
+    base_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
+    });
+    assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\nthree\n");
+    assert_eq!(
+        branch_buffer.read(cx).text(),
+        "ZERO\none\nONE_POINT_FIVE\ntwo\nthree\n"
+    );
+
+    // Edits to any replica of the base are applied to the branch.
+    base_buffer_replica.update(cx, |buffer, cx| {
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), "TWO_POINT_FIVE\n")],
+            None,
+            cx,
+        )
+    });
+    assert_eq!(
+        base_buffer.read(cx).text(),
+        "ZERO\none\ntwo\nTWO_POINT_FIVE\nthree\n"
+    );
+    assert_eq!(
+        branch_buffer.read(cx).text(),
+        "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
+    );
+
+    // Merging applies all changes on the branch to the base.
+    base_buffer.update(cx, |buffer, cx| {
+        buffer.merge(&branch_buffer, cx);
+    });
+    assert_eq!(
+        base_buffer.read(cx).text(),
+        "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
+    );
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let min_peers = env::var("MIN_PEERS")
@@ -2401,20 +2486,23 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer =
                 Buffer::from_proto(i as ReplicaId, Capability::ReadWrite, state, None).unwrap();
-            buffer
-                .apply_ops(
-                    ops.into_iter()
-                        .map(|op| proto::deserialize_operation(op).unwrap()),
-                    cx,
-                )
-                .unwrap();
+            buffer.apply_ops(
+                ops.into_iter()
+                    .map(|op| proto::deserialize_operation(op).unwrap()),
+                cx,
+            );
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                if let BufferEvent::Operation(op) = event {
-                    network
-                        .lock()
-                        .broadcast(buffer.replica_id(), vec![proto::serialize_operation(op)]);
+                if let BufferEvent::Operation {
+                    operation,
+                    is_local: true,
+                } = event
+                {
+                    network.lock().broadcast(
+                        buffer.replica_id(),
+                        vec![proto::serialize_operation(operation)],
+                    );
                 }
             })
             .detach();
@@ -2523,14 +2611,12 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                         None,
                     )
                     .unwrap();
-                    new_buffer
-                        .apply_ops(
-                            old_buffer_ops
-                                .into_iter()
-                                .map(|op| deserialize_operation(op).unwrap()),
-                            cx,
-                        )
-                        .unwrap();
+                    new_buffer.apply_ops(
+                        old_buffer_ops
+                            .into_iter()
+                            .map(|op| deserialize_operation(op).unwrap()),
+                        cx,
+                    );
                     log::info!(
                         "New replica {} text: {:?}",
                         new_buffer.replica_id(),
@@ -2539,10 +2625,14 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
                     cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
-                        if let BufferEvent::Operation(op) = event {
+                        if let BufferEvent::Operation {
+                            operation,
+                            is_local: true,
+                        } = event
+                        {
                             network.lock().broadcast(
                                 buffer.replica_id(),
-                                vec![proto::serialize_operation(op)],
+                                vec![proto::serialize_operation(operation)],
                             );
                         }
                     })
@@ -2570,7 +2660,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                                 ops
                             );
                             new_buffer.update(cx, |new_buffer, cx| {
-                                new_buffer.apply_ops(ops, cx).unwrap();
+                                new_buffer.apply_ops(ops, cx);
                             });
                         }
                     }
@@ -2598,7 +2688,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                         ops.len(),
                         ops
                     );
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx).unwrap());
+                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
                 }
             }
             _ => {}

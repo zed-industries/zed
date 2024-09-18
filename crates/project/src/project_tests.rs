@@ -3288,7 +3288,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         cx.subscribe(&buffer1, {
             let events = events.clone();
             move |_, _, event, _| match event {
-                BufferEvent::Operation(_) => {}
+                BufferEvent::Operation { .. } => {}
                 _ => events.lock().push(event.clone()),
             }
         })
