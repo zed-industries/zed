@@ -355,7 +355,7 @@ kbd {
   font-style: italic;
 }
 
-code.hljs {
+code:not(pre code).hljs {
   color: var(--code-text) !important;
-  background-color: var(--code-bg);
+  background-color: var(--code-bg) !important;
 }
