@@ -39,16 +39,7 @@ jobs:
         run: git clean -df
 
       - name: Check spelling
-        run: |
-          if ! cargo install --list | grep "typos-cli v$TYPOS_CLI_VERSION" > /dev/null; then
-            echo "Installing typos-cli@$TYPOS_CLI_VERSION..."
-            cargo install "typos-cli@$TYPOS_CLI_VERSION"
-          else
-            echo "typos-cli@$TYPOS_CLI_VERSION is already installed."
-          fi
-          typos
-        env:
-          TYPOS_CLI_VERSION: "1.23.3"
+        run: script/check-spelling
 
       - name: Run style checks
         uses: ./.github/actions/check_style
@@ -110,8 +101,7 @@ jobs:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -120,6 +110,14 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: cargo clippy
         run: ./script/clippy
@@ -271,24 +269,20 @@ jobs:
     timeout-minutes: 60
     name: Create a Linux bundle
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2204
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
-      - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -343,7 +337,7 @@ jobs:
     timeout-minutes: 60
     name: Create arm64 Linux bundle
     runs-on:
-      - hosted-linux-arm-1
+      - buildjet-16vcpu-ubuntu-2204-arm
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
@@ -354,26 +348,9 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
-      - name: "Setup jq"
-        uses: dcarbone/install-jq-action@8867ddb4788346d7c22b72ea2e2ffe4d514c7bcb # v2
 
-      - name: Set up Clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-15 clang-15 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
-          echo "/usr/lib/llvm-15/bin" >> $GITHUB_PATH
-
-      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
-        with:
-          mold-version: 2.32.0
-
-      - name: rustup
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
