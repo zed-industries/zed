@@ -1,6 +1,7 @@
 use anyhow::anyhow;
+use collections::FxHashSet;
 use serde::Deserialize;
-use std::fmt::Write;
+use std::{fmt::Write, sync::LazyLock};
 use util::ResultExt;
 
 use crate::{keycodes::KeyCodes, KeyPosition};
@@ -20,6 +21,10 @@ pub struct Keystroke {
     /// on Windows, this is `VirtualKeycodes`. On macOS and Linux, this is `ScanCodes`.
     pub code: KeyCodes,
 
+    /// TODO:
+    /// ~!@#$%^&*()_+{}|:"<>?
+    pub text: Option<String>,
+
     /// TODO: This is the key that use to print.
     /// ime_key is the character inserted by the IME engine when that key was pressed.
     /// e.g. for option-s, ime_key is "ß"
@@ -36,28 +41,16 @@ impl Keystroke {
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
     // TODO:
-    // Is the hack above still needed?
+    // Test above example
     pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
-        if let Some(ime_key) = self
-            .ime_key
-            .as_ref()
-            .filter(|ime_key| ime_key != &&self.label)
-        {
-            let ime_modifiers = Modifiers {
-                control: self.modifiers.control,
-                ..Default::default()
-            };
-
-            if &target.label == ime_key && target.modifiers == ime_modifiers {
-                return true;
-            }
-
-            // Perform char-based matching first
-            if !self.modifiers.control && !self.modifiers.platform {
-                if let Some(target_ime) = target.ime_key.as_ref() {
-                    if target_ime == ime_key && target.modifiers == self.modifiers {
-                        return true;
-                    }
+        // Perform char-based matching first
+        if !self.modifiers.control && !self.modifiers.platform {
+            if let Some((self_text, target_text)) = self.text.as_ref().zip(target.text.as_ref()) {
+                if self_text == target_text
+                    && self.modifiers.control == target.modifiers.control
+                    && self.modifiers.platform == target.modifiers.platform
+                {
+                    return true;
                 }
             }
         }
@@ -76,6 +69,7 @@ impl Keystroke {
         let mut platform = false;
         let mut function = false;
         let mut code = None;
+        let mut text = None;
         let mut ime_key = None;
 
         let mut components = source.split('-').peekable();
@@ -98,6 +92,17 @@ impl Keystroke {
                         } else {
                             return Err(anyhow!("Invalid keystroke `{}`", source));
                         }
+                    } else if SHORTCUT_CHAR_MAP.contains(component) {
+                        if shift {
+                            log::error!(
+                                "Error parsing keystroke `{}`, double shift detected.",
+                                source
+                            );
+                        }
+                        shift = true;
+                        let translated = translate_capital_keystroke(component).unwrap();
+                        code = Some(KeyCodes::from_str(&translated));
+                        text = Some(component.to_string());
                     } else if let Some(translated) = translate_capital_keystroke(component) {
                         if shift {
                             log::error!(
@@ -152,6 +157,7 @@ impl Keystroke {
                 function,
             },
             label,
+            text,
             code,
             ime_key,
         };
@@ -470,6 +476,32 @@ fn translate_capital_keystroke(input: &str) -> Option<String> {
         _ => None,
     }
 }
+
+static SHORTCUT_CHAR_MAP: LazyLock<FxHashSet<&'static str>> = LazyLock::new(|| {
+    let mut set = FxHashSet::default();
+    set.insert("~");
+    set.insert("!");
+    set.insert("@");
+    set.insert("#");
+    set.insert("$");
+    set.insert("%");
+    set.insert("^");
+    set.insert("&");
+    set.insert("*");
+    set.insert("(");
+    set.insert(")");
+    set.insert("_");
+    set.insert("+");
+    set.insert("{");
+    set.insert("}");
+    set.insert("|");
+    set.insert(":");
+    set.insert("\"");
+    set.insert("<");
+    set.insert(">");
+    set.insert("?");
+    set
+});
 
 #[cfg(test)]
 mod tests {
