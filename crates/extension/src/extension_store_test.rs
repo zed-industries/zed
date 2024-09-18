@@ -457,8 +457,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 }
 
-// TODO remove
-#[ignore]
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
@@ -564,10 +562,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                     let mut encoder = GzipEncoder::new(BufReader::new(bytes.as_slice()));
                     encoder.read_to_end(&mut gzipped_bytes).await.unwrap();
                     Ok(Response::new(gzipped_bytes.into()))
-                // } else if uri == WASI_ADAPTER_URL {
-                //     let binary_contents =
-                //         include_bytes!("wasi_snapshot_preview1.reactor.wasm").as_slice();
-                //     Ok(Response::new(binary_contents.into()))
                 } else {
                     Ok(Response::builder().status(404).body("not found".into())?)
                 }
