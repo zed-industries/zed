@@ -1668,7 +1668,7 @@ impl LspAdapter for FakeLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Arc<Path>,
+        _: Option<Arc<Path>>,
         _: Arc<dyn LspAdapterDelegate>,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncAppContext,
