@@ -157,7 +157,7 @@ impl InlineAssistant {
                 if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
                     for assist_id in editor_assists.assist_ids.clone() {
                         let assist = &self.assists[&assist_id];
-                        if let CodegenStatus::Done = &assist.codegen.read(cx).status {
+                        if let CodegenStatus::Done = assist.codegen.read(cx).status(cx) {
                             self.finish_assist(assist_id, false, cx)
                         }
                     }
@@ -232,7 +232,7 @@ impl InlineAssistant {
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
             let codegen = cx.new_model(|cx| {
-                Codegen::new(
+                ParallelCodegen::new(
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     None,
@@ -338,7 +338,7 @@ impl InlineAssistant {
         }
 
         let codegen = cx.new_model(|cx| {
-            Codegen::new(
+            ParallelCodegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
                 initial_transaction_id,
@@ -541,7 +541,7 @@ impl InlineAssistant {
                 let assist_range = assist.range.to_offset(&buffer);
                 if assist_range.contains(&selection.start) && assist_range.contains(&selection.end)
                 {
-                    if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
+                    if matches!(assist.codegen.read(cx).status(cx), CodegenStatus::Pending) {
                         self.dismiss_assist(*assist_id, cx);
                     } else {
                         self.finish_assist(*assist_id, false, cx);
@@ -659,7 +659,7 @@ impl InlineAssistant {
                 for assist_id in editor_assists.assist_ids.clone() {
                     let assist = &self.assists[&assist_id];
                     if matches!(
-                        assist.codegen.read(cx).status,
+                        assist.codegen.read(cx).status(cx),
                         CodegenStatus::Error(_) | CodegenStatus::Done
                     ) {
                         let assist_range = assist.range.to_offset(&snapshot);
@@ -746,7 +746,8 @@ impl InlineAssistant {
             if undo {
                 assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
             } else {
-                self.confirmed_assists.insert(assist_id, assist.codegen);
+                let confirmed_codegen = assist.codegen.read(cx).active_codegen().clone();
+                self.confirmed_assists.insert(assist_id, confirmed_codegen);
             }
         }
 
@@ -980,7 +981,7 @@ impl InlineAssistant {
 
     pub fn assist_status(&self, assist_id: InlineAssistId, cx: &AppContext) -> InlineAssistStatus {
         if let Some(assist) = self.assists.get(&assist_id) {
-            match &assist.codegen.read(cx).status {
+            match assist.codegen.read(cx).status(cx) {
                 CodegenStatus::Idle => InlineAssistStatus::Idle,
                 CodegenStatus::Pending => InlineAssistStatus::Pending,
                 CodegenStatus::Done => InlineAssistStatus::Done,
@@ -1009,16 +1010,16 @@ impl InlineAssistant {
         for assist_id in assist_ids {
             if let Some(assist) = self.assists.get(assist_id) {
                 let codegen = assist.codegen.read(cx);
-                let buffer = codegen.buffer.read(cx).read(cx);
-                foreground_ranges.extend(codegen.last_equal_ranges().iter().cloned());
+                let buffer = codegen.buffer(cx).read(cx).read(cx);
+                foreground_ranges.extend(codegen.last_equal_ranges(cx).iter().cloned());
 
                 let pending_range =
-                    codegen.edit_position.unwrap_or(assist.range.start)..assist.range.end;
+                    codegen.edit_position(cx).unwrap_or(assist.range.start)..assist.range.end;
                 if pending_range.end.to_offset(&buffer) > pending_range.start.to_offset(&buffer) {
                     gutter_pending_ranges.push(pending_range);
                 }
 
-                if let Some(edit_position) = codegen.edit_position {
+                if let Some(edit_position) = codegen.edit_position(cx) {
                     let edited_range = assist.range.start..edit_position;
                     if edited_range.end.to_offset(&buffer) > edited_range.start.to_offset(&buffer) {
                         gutter_transformed_ranges.push(edited_range);
@@ -1026,7 +1027,8 @@ impl InlineAssistant {
                 }
 
                 if assist.decorations.is_some() {
-                    inserted_row_ranges.extend(codegen.diff.inserted_row_ranges.iter().cloned());
+                    inserted_row_ranges
+                        .extend(codegen.diff(cx).inserted_row_ranges.iter().cloned());
                 }
             }
         }
@@ -1097,9 +1099,9 @@ impl InlineAssistant {
         };
 
         let codegen = assist.codegen.read(cx);
-        let old_snapshot = codegen.snapshot.clone();
-        let old_buffer = codegen.old_buffer.clone();
-        let deleted_row_ranges = codegen.diff.deleted_row_ranges.clone();
+        let old_snapshot = codegen.snapshot(cx);
+        let old_buffer = codegen.old_buffer(cx);
+        let deleted_row_ranges = codegen.diff(cx).deleted_row_ranges.clone();
 
         editor.update(cx, |editor, cx| {
             let old_blocks = mem::take(&mut decorations.removed_line_block_ids);
@@ -1357,7 +1359,7 @@ struct PromptEditor {
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
-    codegen: Model<Codegen>,
+    codegen: Model<ParallelCodegen>,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
     pending_token_count: Task<Result<()>>,
@@ -1378,7 +1380,7 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
-        let status = &self.codegen.read(cx).status;
+        let status = self.codegen.read(cx).status(cx);
         let buttons = match status {
             CodegenStatus::Idle => {
                 vec![
@@ -1504,7 +1506,7 @@ impl Render for PromptEditor {
                         ),
                     )
                     .map(|el| {
-                        let CodegenStatus::Error(error) = &self.codegen.read(cx).status else {
+                        let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
                             return el;
                         };
 
@@ -1571,7 +1573,7 @@ impl PromptEditor {
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Model<MultiBuffer>,
-        codegen: Model<Codegen>,
+        codegen: Model<ParallelCodegen>,
         parent_editor: &View<Editor>,
         assistant_panel: Option<&View<AssistantPanel>>,
         workspace: Option<WeakView<Workspace>>,
@@ -1747,8 +1749,8 @@ impl PromptEditor {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
-        match &self.codegen.read(cx).status {
+    fn handle_codegen_changed(&mut self, _: Model<ParallelCodegen>, cx: &mut ViewContext<Self>) {
+        match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle => {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1779,7 +1781,7 @@ impl PromptEditor {
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        match &self.codegen.read(cx).status {
+        match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
             }
@@ -1790,7 +1792,7 @@ impl PromptEditor {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        match &self.codegen.read(cx).status {
+        match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle => {
                 cx.emit(PromptEditorEvent::StartRequested);
             }
@@ -2019,7 +2021,7 @@ struct InlineAssist {
     range: Range<Anchor>,
     editor: WeakView<Editor>,
     decorations: Option<InlineAssistDecorations>,
-    codegen: Model<Codegen>,
+    codegen: Model<ParallelCodegen>,
     _subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
     include_context: bool,
@@ -2036,7 +2038,7 @@ impl InlineAssist {
         prompt_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
-        codegen: Model<Codegen>,
+        codegen: Model<ParallelCodegen>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Self {
@@ -2096,7 +2098,7 @@ impl InlineAssist {
                                 return;
                             };
 
-                            if let CodegenStatus::Error(error) = &codegen.read(cx).status {
+                            if let CodegenStatus::Error(error) = codegen.read(cx).status(cx) {
                                 if assist.decorations.is_none() {
                                     if let Some(workspace) = assist
                                         .workspace
@@ -2173,11 +2175,131 @@ struct InlineAssistDecorations {
     end_block_id: CustomBlockId,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum CodegenEvent {
     Finished,
     Undone,
 }
+
+pub struct ParallelCodegen {
+    alternatives: Vec<Model<Codegen>>,
+    active_alternative: usize,
+    subscriptions: Vec<Subscription>,
+}
+
+impl ParallelCodegen {
+    pub fn new(
+        buffer: Model<MultiBuffer>,
+        range: Range<Anchor>,
+        initial_transaction_id: Option<TransactionId>,
+        telemetry: Option<Arc<Telemetry>>,
+        builder: Arc<PromptBuilder>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let codegen = cx.new_model(|cx| {
+            Codegen::new(
+                buffer.clone(),
+                range.clone(),
+                initial_transaction_id,
+                telemetry.clone(),
+                builder.clone(),
+                cx,
+            )
+        });
+        let mut this = Self {
+            alternatives: vec![codegen],
+            active_alternative: 0,
+            subscriptions: Vec::new(),
+        };
+        this.subscribe_to_alternative(cx);
+        this
+    }
+
+    fn subscribe_to_alternative(&mut self, cx: &mut ModelContext<Self>) {
+        let codegen = self.active_codegen().clone();
+        self.subscriptions.clear();
+        self.subscriptions
+            .push(cx.observe(&codegen, |_, _, cx| cx.notify()));
+        self.subscriptions
+            .push(cx.subscribe(&codegen, |_, _, event, cx| cx.emit(*event)));
+    }
+
+    fn active_codegen(&self) -> &Model<Codegen> {
+        &self.alternatives[self.active_alternative]
+    }
+
+    fn status<'a>(&self, cx: &'a AppContext) -> &'a CodegenStatus {
+        &self.active_codegen().read(cx).status
+    }
+
+    pub fn cycle(&mut self, cx: &mut ModelContext<Self>) {
+        self.active_alternative = (self.active_alternative + 1) % self.alternatives.len();
+        self.subscribe_to_alternative(cx);
+    }
+
+    pub fn start(
+        &mut self,
+        edit_range: Range<Anchor>,
+        user_prompt: String,
+        assistant_panel_context: Option<LanguageModelRequest>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        self.active_codegen().update(cx, |codegen, cx| {
+            codegen.start(edit_range, user_prompt, assistant_panel_context, cx)
+        })
+    }
+
+    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+        self.active_codegen()
+            .update(cx, |codegen, cx| codegen.stop(cx));
+    }
+
+    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+        self.active_codegen()
+            .update(cx, |codegen, cx| codegen.undo(cx))
+    }
+
+    pub fn count_tokens(
+        &self,
+        edit_range: Range<Anchor>,
+        user_prompt: String,
+        assistant_panel_context: Option<LanguageModelRequest>,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<TokenCounts>> {
+        self.active_codegen().read(cx).count_tokens(
+            edit_range,
+            user_prompt,
+            assistant_panel_context,
+            cx,
+        )
+    }
+
+    pub fn buffer(&self, cx: &AppContext) -> Model<MultiBuffer> {
+        self.active_codegen().read(cx).buffer.clone()
+    }
+
+    pub fn old_buffer(&self, cx: &AppContext) -> Model<Buffer> {
+        self.active_codegen().read(cx).old_buffer.clone()
+    }
+
+    pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
+        self.active_codegen().read(cx).snapshot.clone()
+    }
+
+    pub fn edit_position(&self, cx: &AppContext) -> Option<Anchor> {
+        self.active_codegen().read(cx).edit_position
+    }
+
+    fn diff<'a>(&self, cx: &'a AppContext) -> &'a Diff {
+        &self.active_codegen().read(cx).diff
+    }
+
+    pub fn last_equal_ranges<'a>(&self, cx: &'a AppContext) -> &'a [Range<Anchor>] {
+        self.active_codegen().read(cx).last_equal_ranges()
+    }
+}
+
+impl EventEmitter<CodegenEvent> for ParallelCodegen {}
 
 pub struct Codegen {
     buffer: Model<MultiBuffer>,
@@ -2568,7 +2690,7 @@ impl Codegen {
                             Ok(())
                         });
 
-                    while let Some((char_ops, line_diff)) = diff_rx.next().await {
+                    while let Some((char_ops, line_ops)) = diff_rx.next().await {
                         codegen.update(&mut cx, |codegen, cx| {
                             codegen.last_equal_ranges.clear();
 
@@ -2629,7 +2751,7 @@ impl Codegen {
                                 }
                             }
 
-                            codegen.reapply_line_based_diff(edit_range.clone(), line_diff, cx);
+                            codegen.reapply_line_based_diff(edit_range.clone(), line_ops, cx);
 
                             cx.notify();
                         })?;
