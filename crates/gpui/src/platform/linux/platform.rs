@@ -184,7 +184,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
-            while kill -O {pid} 2>/dev/null; do
+            while kill -0 {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
@@ -349,6 +349,19 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn reveal_path(&self, path: &Path) {
         self.reveal_path(path.to_owned());
+    }
+
+    fn open_with_system(&self, path: &Path) {
+        let executor = self.background_executor().clone();
+        let path = path.to_owned();
+        executor
+            .spawn(async move {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(path)
+                    .spawn()
+                    .expect("Failed to open file with xdg-open");
+            })
+            .detach();
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {

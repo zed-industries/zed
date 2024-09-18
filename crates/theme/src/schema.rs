@@ -121,12 +121,8 @@ impl ThemeStyleContent {
                             .background_color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
-                        font_style: style
-                            .font_style
-                            .map(|font_style| FontStyle::from(font_style)),
-                        font_weight: style
-                            .font_weight
-                            .map(|font_weight| FontWeight::from(font_weight)),
+                        font_style: style.font_style.map(FontStyle::from),
+                        font_weight: style.font_weight.map(FontWeight::from),
                         ..Default::default()
                     },
                 )
@@ -424,6 +420,10 @@ pub struct ThemeColorsContent {
     /// Terminal foreground color.
     #[serde(rename = "terminal.foreground")]
     pub terminal_foreground: Option<String>,
+
+    /// Terminal ANSI background color.
+    #[serde(rename = "terminal.ansi.background")]
+    pub terminal_ansi_background: Option<String>,
 
     /// Bright terminal foreground color.
     #[serde(rename = "terminal.bright_foreground")]
@@ -794,6 +794,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             terminal_background: self
                 .terminal_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            terminal_ansi_background: self
+                .terminal_ansi_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             terminal_foreground: self

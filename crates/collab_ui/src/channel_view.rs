@@ -227,7 +227,7 @@ impl ChannelView {
             {
                 self.editor.update(cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
-                        s.replace_cursors_with(|map| vec![item.range.start.to_display_point(&map)])
+                        s.replace_cursors_with(|map| vec![item.range.start.to_display_point(map)])
                     })
                 });
                 return;
@@ -460,8 +460,7 @@ impl Item for ChannelView {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| Item::deactivated(editor, cx))
+        self.editor.update(cx, Item::deactivated)
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, cx: &mut ViewContext<Self>) {

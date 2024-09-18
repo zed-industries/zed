@@ -9,7 +9,7 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 - `/fetch`: Fetches the content of a webpage and inserts it into the context
 - `/file`: Inserts a single file or a directory of files into the context
 - `/now`: Inserts the current date and time into the context
-- `/prompt`: Adds a custom-configured prompt to the context ([see Prompt Library](/docs/assistant/prompting#prompt-library))
+- `/prompt`: Adds a custom-configured prompt to the context ([see Prompt Library](./prompting#prompt-library))
 - `/symbols`: Inserts the current tab's active symbols into the context
 - `/tab`: Inserts the content of the active tab or all open tabs into the context
 - `/terminal`: Inserts a select number of lines of output from the terminal
@@ -25,7 +25,7 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 
 ## `/default`
 
-Read more about `/default` in the [Prompting: Editing the Default Prompt](/assistant/prompting.md#default-prompt) section.
+Read more about `/default` in the [Prompting: Editing the Default Prompt](./prompting.md#default-prompt) section.
 
 Usage: `/default`
 

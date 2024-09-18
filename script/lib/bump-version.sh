@@ -30,7 +30,7 @@ Locally committed and tagged ${package} version ${new_version}
 
 To push this:
 
-    git push origin ${branch_name} ${tag_name}
+    git push origin ${tag_name} ${branch_name}
 
 To undo this:
 

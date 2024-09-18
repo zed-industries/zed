@@ -4,10 +4,11 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::AssetSource;
 use handlebars::{Handlebars, RenderError};
-use language::BufferSnapshot;
+use language::{BufferSnapshot, LanguageName};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use text::LineEnding;
 use util::ResultExt;
 
 #[derive(Serialize)]
@@ -122,7 +123,7 @@ impl PromptBuilder {
                         if params.fs.is_dir(parent_dir).await {
                             let (mut changes, _watcher) = params.fs.watch(parent_dir, Duration::from_secs(1)).await;
                             while let Some(changed_paths) = changes.next().await {
-                                if changed_paths.iter().any(|p| p == &templates_dir) {
+                                if changed_paths.iter().any(|p| &p.path == &templates_dir) {
                                     let mut log_message = format!("Prompt template overrides directory detected at {}", templates_dir.display());
                                     if let Ok(target) = params.fs.read_link(&templates_dir).await {
                                         log_message.push_str(" -> ");
@@ -161,18 +162,18 @@ impl PromptBuilder {
                     let mut combined_changes = futures::stream::select(changes, parent_changes);
 
                     while let Some(changed_paths) = combined_changes.next().await {
-                        if changed_paths.iter().any(|p| p == &templates_dir) {
+                        if changed_paths.iter().any(|p| &p.path == &templates_dir) {
                             if !params.fs.is_dir(&templates_dir).await {
                                 log::info!("Prompt template overrides directory removed. Restoring built-in prompt templates.");
                                 Self::register_built_in_templates(&mut handlebars.lock()).log_err();
                                 break;
                             }
                         }
-                        for changed_path in changed_paths {
-                            if changed_path.starts_with(&templates_dir) && changed_path.extension().map_or(false, |ext| ext == "hbs") {
-                                log::info!("Reloading prompt template override: {}", changed_path.display());
-                                if let Some(content) = params.fs.load(&changed_path).await.log_err() {
-                                    let file_name = changed_path.file_stem().unwrap().to_string_lossy();
+                        for event in changed_paths {
+                            if event.path.starts_with(&templates_dir) && event.path.extension().map_or(false, |ext| ext == "hbs") {
+                                log::info!("Reloading prompt template override: {}", event.path.display());
+                                if let Some(content) = params.fs.load(&event.path).await.log_err() {
+                                    let file_name = event.path.file_stem().unwrap().to_string_lossy();
                                     handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
@@ -191,8 +192,8 @@ impl PromptBuilder {
             if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
                     log::info!("Registering built-in prompt template: {}", id);
-                    handlebars
-                        .register_template_string(id, String::from_utf8_lossy(prompt.as_ref()))?
+                    let prompt = String::from_utf8_lossy(prompt.as_ref());
+                    handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
                 }
             }
         }
@@ -203,11 +204,11 @@ impl PromptBuilder {
     pub fn generate_content_prompt(
         &self,
         user_prompt: String,
-        language_name: Option<&str>,
+        language_name: Option<&LanguageName>,
         buffer: BufferSnapshot,
         range: Range<usize>,
     ) -> Result<String, RenderError> {
-        let content_type = match language_name {
+        let content_type = match language_name.as_ref().map(|l| l.0.as_ref()) {
             None | Some("Markdown" | "Plain Text") => "text",
             Some(_) => "code",
         };
@@ -295,12 +296,5 @@ impl PromptBuilder {
 
     pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("edit_workflow", &())
-    }
-
-    pub fn generate_step_resolution_prompt(
-        &self,
-        context: &StepResolutionContext,
-    ) -> Result<String, RenderError> {
-        self.handlebars.lock().render("step_resolution", context)
     }
 }

@@ -1,7 +1,7 @@
 id = "ruby"
 name = "Ruby"
 description = "Ruby support."
-version = "0.1.0"
+version = "0.2.0"
 schema_version = 1
 authors = ["Vitaly Slobodin <vitaliy.slobodin@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"
@@ -20,7 +20,7 @@ languages = ["Ruby"]
 
 [grammars.ruby]
 repository = "https://github.com/tree-sitter/tree-sitter-ruby"
-commit = "dc2d7d6b50f9975bc3c35bbec0ba11b2617b736b"
+commit = "7dbc1e2d0e2d752577655881f73b4573f3fe85d4"
 
 [grammars.embedded_template]
 repository = "https://github.com/tree-sitter/tree-sitter-embedded-template"

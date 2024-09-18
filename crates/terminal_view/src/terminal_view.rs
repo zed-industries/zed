@@ -25,6 +25,7 @@ use terminal::{
     TerminalSize,
 };
 use terminal_element::{is_blank, TerminalElement};
+use terminal_panel::TerminalPanel;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
@@ -40,6 +41,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
+use zed_actions::InlineAssist;
 
 use std::{
     cmp,
@@ -210,6 +212,13 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
+        let assistant_enabled = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
+            .map_or(false, |terminal_panel| {
+                terminal_panel.read(cx).assistant_enabled()
+            });
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
@@ -218,6 +227,10 @@ impl TerminalView {
                 .action("Paste", Box::new(Paste))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
+                .when(assistant_enabled, |menu| {
+                    menu.separator()
+                        .action("Inline Assist", Box::new(InlineAssist::default()))
+                })
                 .separator()
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
@@ -632,7 +645,7 @@ fn subscribe_for_terminal_events(
                                 &path_like_target.maybe_path,
                                 cx,
                             );
-                            smol::block_on(valid_files_to_open_task).len() > 0
+                            !smol::block_on(valid_files_to_open_task).is_empty()
                         } else {
                             false
                         }
@@ -736,7 +749,10 @@ fn subscribe_for_terminal_events(
             },
             Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
             Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
-            Event::SelectionsChanged => cx.emit(SearchEvent::ActiveMatchChanged),
+            Event::SelectionsChanged => {
+                cx.invalidate_character_coordinates();
+                cx.emit(SearchEvent::ActiveMatchChanged)
+            }
         });
     vec![terminal_subscription, terminal_events_subscription]
 }
@@ -851,7 +867,7 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
     if query == "." {
         return None;
     }
-    let searcher = RegexSearch::new(&query);
+    let searcher = RegexSearch::new(query);
     searcher.ok()
 }
 
@@ -874,6 +890,7 @@ impl TerminalView {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
+        cx.invalidate_character_coordinates();
         cx.notify();
     }
 
@@ -974,7 +991,7 @@ impl Item for TerminalView {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Unknown => (
-                    IconName::ExclamationTriangle,
+                    IconName::Warning,
                     Color::Warning,
                     Some(rerun_button(terminal_task.id.clone())),
                 ),
@@ -991,7 +1008,7 @@ impl Item for TerminalView {
         };
 
         h_flex()
-            .gap_2()
+            .gap_1()
             .group("term-tab-icon")
             .child(
                 h_flex()
@@ -1222,12 +1239,13 @@ impl SearchableItem for TerminalView {
         let searcher = match &*query {
             SearchQuery::Text { .. } => regex_search_for_query(
                 &(SearchQuery::text(
-                    regex_to_literal(&query.as_str()),
+                    regex_to_literal(query.as_str()),
                     query.whole_word(),
                     query.case_sensitive(),
                     query.include_ignored(),
                     query.files_to_include().clone(),
                     query.files_to_exclude().clone(),
+                    None,
                 )
                 .unwrap()),
             ),
@@ -1251,7 +1269,7 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if matches.len() > 0 {
+        let res = if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 if let Some(ix) = matches

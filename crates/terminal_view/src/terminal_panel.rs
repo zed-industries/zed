@@ -33,6 +33,7 @@ use workspace::{
 };
 
 use anyhow::Result;
+use zed_actions::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
@@ -68,7 +69,8 @@ pub struct TerminalPanel {
     _subscriptions: Vec<Subscription>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
-    additional_tab_bar_buttons: Vec<AnyView>,
+    assistant_enabled: bool,
+    assistant_tab_bar_button: Option<AnyView>,
 }
 
 impl TerminalPanel {
@@ -154,23 +156,25 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             _subscriptions: subscriptions,
             enabled,
-            additional_tab_bar_buttons: Vec::new(),
+            assistant_enabled: false,
+            assistant_tab_bar_button: None,
         };
         this.apply_tab_bar_buttons(cx);
         this
     }
 
-    pub fn register_tab_bar_button(
-        &mut self,
-        button: impl Into<AnyView>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.additional_tab_bar_buttons.push(button.into());
+    pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+        self.assistant_enabled = enabled;
+        if enabled {
+            self.assistant_tab_bar_button = Some(cx.new_view(|_| InlineAssistTabBarButton).into());
+        } else {
+            self.assistant_tab_bar_button = None;
+        }
         self.apply_tab_bar_buttons(cx);
     }
 
     fn apply_tab_bar_buttons(&self, cx: &mut ViewContext<Self>) {
-        let additional_buttons = self.additional_tab_bar_buttons.clone();
+        let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
@@ -179,7 +183,7 @@ impl TerminalPanel {
                 let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
                     .gap_2()
-                    .children(additional_buttons.clone())
+                    .children(assistant_tab_bar_button.clone())
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger(
@@ -343,7 +347,7 @@ impl TerminalPanel {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
             pane::Event::RemovedItem { .. } => self.serialize(cx),
-            pane::Event::Remove => cx.emit(PanelEvent::Close),
+            pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
 
@@ -393,7 +397,7 @@ impl TerminalPanel {
 
         #[cfg(not(target_os = "windows"))]
         {
-            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+            spawn_task.command_label = format!("{shell} -i -c '{}'", spawn_task.command_label);
         }
         #[cfg(target_os = "windows")]
         {
@@ -401,14 +405,14 @@ impl TerminalPanel {
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
-                    spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} -C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Cmd => {
-                    spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} /C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Other => {
                     spawn_task.command_label =
-                        format!("{shell} -i -c `{}`", spawn_task.command_label)
+                        format!("{shell} -i -c '{}'", spawn_task.command_label)
                 }
             }
         }
@@ -686,6 +690,10 @@ impl TerminalPanel {
     fn has_no_terminals(&self, cx: &WindowContext) -> bool {
         self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
+
+    pub fn assistant_enabled(&self) -> bool {
+        self.assistant_enabled
+    }
 }
 
 async fn wait_for_terminals_tasks(
@@ -778,9 +786,9 @@ impl Panel for TerminalPanel {
         let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or_else(|| settings.default_width)
+                self.width.unwrap_or(settings.default_width)
             }
-            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
+            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
         }
     }
 
@@ -851,6 +859,19 @@ impl Panel for TerminalPanel {
     }
 }
 
+struct InlineAssistTabBarButton;
+
+impl Render for InlineAssistTabBarButton {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
+            .icon_size(IconSize::Small)
+            .on_click(cx.listener(|_, _, cx| {
+                cx.dispatch_action(InlineAssist::default().boxed_clone());
+            }))
+            .tooltip(move |cx| Tooltip::for_action("Inline Assist", &InlineAssist::default(), cx))
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SerializedTerminalPanel {
     items: Vec<u64>,
@@ -865,9 +886,9 @@ fn retrieve_system_shell() -> Option<String> {
         use anyhow::Context;
         use util::ResultExt;
 
-        return std::env::var("SHELL")
+        std::env::var("SHELL")
             .context("Error finding SHELL in env.")
-            .log_err();
+            .log_err()
     }
     // `alacritty_terminal` uses this as default on Windows. See:
     // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130

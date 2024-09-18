@@ -15,6 +15,7 @@ use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
+use rpc::AnyProtoClient;
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -25,7 +26,7 @@ use std::{
 };
 use util::{ResultExt, TryFutureExt};
 
-pub fn init(client: &Arc<Client>) {
+pub fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ContextStore::handle_advertise_contexts);
     client.add_model_request_handler(ContextStore::handle_open_context);
     client.add_model_request_handler(ContextStore::handle_create_context);
@@ -389,7 +390,7 @@ impl ContextStore {
                     context_proto
                         .operations
                         .into_iter()
-                        .map(|op| ContextOperation::from_proto(op))
+                        .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
@@ -526,7 +527,7 @@ impl ContextStore {
                     context_proto
                         .operations
                         .into_iter()
-                        .map(|op| ContextOperation::from_proto(op))
+                        .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;

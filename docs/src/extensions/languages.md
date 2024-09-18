@@ -123,7 +123,7 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @string.special          | Captures special strings               |
 | @string.special.symbol   | Captures special symbols               |
 | @tag                     | Captures tags                          |
-| @tag.doctype             | Captures doctype                       |
+| @tag.doctype             | Captures doctypes (e.g., in HTML)      |
 | @text.literal            | Captures literal text                  |
 | @title                   | Captures titles                        |
 | @type                    | Captures types                         |
@@ -285,7 +285,9 @@ The `@run` capture specifies where the run button should appear in the editor. O
 | @run    | Captures the script name                               |
 | @script | Also captures the script name (for different purposes) |
 
+<!--
 TBD: `#set! tag`
+-->
 
 ## Language Servers
 

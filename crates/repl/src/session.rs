@@ -1,9 +1,9 @@
 use crate::components::KernelListItem;
+use crate::KernelStatus;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
-use crate::{stdio, KernelStatus};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -60,7 +60,16 @@ impl EditorBlock {
         on_close: CloseBlockFn,
         cx: &mut ViewContext<Session>,
     ) -> anyhow::Result<Self> {
-        let execution_view = cx.new_view(|cx| ExecutionView::new(status, cx));
+        let editor = editor
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("editor is not open"))?;
+        let workspace = editor
+            .read(cx)
+            .workspace()
+            .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+
+        let execution_view =
+            cx.new_view(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();
@@ -93,7 +102,7 @@ impl EditorBlock {
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
             (block_id, invalidation_anchor)
-        })?;
+        });
 
         anyhow::Ok(Self {
             code_range,
@@ -115,7 +124,7 @@ impl EditorBlock {
     ) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_style = stdio::text_style(cx);
+            let text_style = crate::outputs::plain::text_style(cx);
 
             let gutter = cx.gutter_dimensions;
 
@@ -251,7 +260,7 @@ impl Session {
                             let stderr = kernel.process.stderr.take();
 
                             cx.spawn(|_session, mut _cx| async move {
-                                if let None = stderr {
+                                if stderr.is_none() {
                                     return;
                                 }
                                 let reader = BufReader::new(stderr.unwrap());
@@ -266,7 +275,7 @@ impl Session {
                             let stdout = kernel.process.stdout.take();
 
                             cx.spawn(|_session, mut _cx| async move {
-                                if let None = stdout {
+                                if stdout.is_none() {
                                     return;
                                 }
                                 let reader = BufReader::new(stdout.unwrap());
@@ -402,11 +411,8 @@ impl Session {
     }
 
     fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
-        match &mut self.kernel {
-            Kernel::RunningKernel(kernel) => {
-                kernel.request_tx.try_send(message).ok();
-            }
-            _ => {}
+        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
+            kernel.request_tx.try_send(message).ok();
         }
 
         anyhow::Ok(())
@@ -562,7 +568,7 @@ impl Session {
                 cx.notify();
             }
             JupyterMessageContent::KernelInfoReply(reply) => {
-                self.kernel.set_kernel_info(&reply);
+                self.kernel.set_kernel_info(reply);
                 cx.notify();
             }
             JupyterMessageContent::UpdateDisplayData(update) => {
@@ -583,8 +589,7 @@ impl Session {
         }
 
         if let Some(block) = self.blocks.get_mut(parent_message_id) {
-            block.handle_message(&message, cx);
-            return;
+            block.handle_message(message, cx);
         }
     }
 

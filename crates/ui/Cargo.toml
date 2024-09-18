@@ -23,6 +23,7 @@ smallvec.workspace = true
 story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
+ui_macros.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

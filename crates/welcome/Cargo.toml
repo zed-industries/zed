@@ -17,11 +17,11 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
-inline_completion_button.workspace = true
 db.workspace = true
 extensions_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+inline_completion_button.workspace = true
 install_cli.workspace = true
 picker.workspace = true
 project.workspace = true
@@ -33,6 +33,7 @@ ui.workspace = true
 util.workspace = true
 vim.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

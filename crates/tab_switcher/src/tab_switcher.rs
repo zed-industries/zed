@@ -173,16 +173,16 @@ impl TabSwitcherDelegate {
         };
         cx.subscribe(&pane, |tab_switcher, _, event, cx| {
             match event {
-                PaneEvent::AddItem { .. } | PaneEvent::RemovedItem { .. } | PaneEvent::Remove => {
-                    tab_switcher.picker.update(cx, |picker, cx| {
-                        let selected_item_id = picker.delegate.selected_item_id();
-                        picker.delegate.update_matches(cx);
-                        if let Some(item_id) = selected_item_id {
-                            picker.delegate.select_item(item_id, cx);
-                        }
-                        cx.notify();
-                    })
-                }
+                PaneEvent::AddItem { .. }
+                | PaneEvent::RemovedItem { .. }
+                | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
+                    let selected_item_id = picker.delegate.selected_item_id();
+                    picker.delegate.update_matches(cx);
+                    if let Some(item_id) = selected_item_id {
+                        picker.delegate.select_item(item_id, cx);
+                    }
+                    cx.notify();
+                }),
                 _ => {}
             };
         })
@@ -378,6 +378,9 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
+                .when_some(tab_match.item.tab_icon(cx), |el, icon| {
+                    el.start_slot(div().child(icon))
+                })
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)

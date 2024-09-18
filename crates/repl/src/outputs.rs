@@ -1,25 +1,64 @@
-use std::sync::Arc;
+//! # REPL Output Module
+//!
+//! This module provides the core functionality for handling and displaying
+//! various types of output from Jupyter kernels.
+//!
+//! ## Key Components
+//!
+//! - `OutputContent`: An enum that encapsulates different types of output content.
+//! - `ExecutionView`: Manages the display of outputs for a single execution.
+//! - `ExecutionStatus`: Represents the current status of an execution.
+//!
+//! ## Output Types
+//!
+//! The module supports several output types, including:
+//! - Plain text
+//! - Markdown
+//! - Images (PNG and JPEG)
+//! - Tables
+//! - Error messages
+//!
+//! ## Clipboard Support
+//!
+//! Most output types implement the `SupportsClipboard` trait, allowing
+//! users to easily copy output content to the system clipboard.
+//!
+//! ## Rendering
+//!
+//! The module provides rendering capabilities for each output type,
+//! ensuring proper display within the REPL interface.
+//!
+//! ## Jupyter Integration
+//!
+//! This module is designed to work with Jupyter message protocols,
+//! interpreting and displaying various types of Jupyter output.
+
 use std::time::Duration;
 
-use crate::stdio::TerminalOutput;
-use anyhow::Result;
-use base64::prelude::*;
+use editor::{Editor, MultiBuffer};
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, Image,
-    ImageFormat, Render, RenderImage, Task, TextRun, Transformation, View,
+    percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Model, Render, Transformation,
+    View, WeakView,
 };
-use runtimelib::datatable::TableSchema;
-use runtimelib::media::datatable::TabularDataResource;
+use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use serde_json::Value;
-use settings::Settings;
-use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
 
-use markdown_preview::{
-    markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
-    markdown_renderer::render_markdown_block,
-};
+mod image;
+use image::ImageView;
+
+mod markdown;
+use markdown::MarkdownView;
+
+mod table;
+use table::TableView;
+
+pub mod plain;
+use plain::TerminalOutput;
+
+mod user_error;
+use user_error::ErrorView;
+use workspace::Workspace;
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -34,527 +73,218 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
     }
 }
 
-pub(crate) trait SupportsClipboard {
+pub(crate) trait OutputContent {
     fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
-    fn has_clipboard_content(&self, cx: &WindowContext) -> bool;
-}
-
-/// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
-pub struct ImageView {
-    clipboard_image: Arc<Image>,
-    height: u32,
-    width: u32,
-    image: Arc<RenderImage>,
-}
-
-impl ImageView {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
-        let line_height = cx.line_height();
-
-        let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {
-            let height = u8::MAX as f32 * line_height.0;
-            let width = self.width as f32 * height / self.height as f32;
-            (height, width)
-        } else {
-            (self.height as f32, self.width as f32)
-        };
-
-        let image = self.image.clone();
-
-        div()
-            .h(Pixels(height))
-            .w(Pixels(width))
-            .child(img(image))
-            .into_any_element()
-    }
-
-    fn from(base64_encoded_data: &str) -> Result<Self> {
-        let bytes = BASE64_STANDARD.decode(base64_encoded_data)?;
-
-        let format = image::guess_format(&bytes)?;
-        let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
-
-        // Convert from RGBA to BGRA.
-        for pixel in data.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
-        }
-
-        let height = data.height();
-        let width = data.width();
-
-        let gpui_image_data = RenderImage::new(vec![image::Frame::new(data)]);
-
-        let format = match format {
-            image::ImageFormat::Png => ImageFormat::Png,
-            image::ImageFormat::Jpeg => ImageFormat::Jpeg,
-            image::ImageFormat::Gif => ImageFormat::Gif,
-            image::ImageFormat::WebP => ImageFormat::Webp,
-            image::ImageFormat::Tiff => ImageFormat::Tiff,
-            image::ImageFormat::Bmp => ImageFormat::Bmp,
-            _ => {
-                return Err(anyhow::anyhow!("unsupported image format"));
-            }
-        };
-
-        // Convert back to a GPUI image for use with the clipboard
-        let clipboard_image = Arc::new(Image {
-            format,
-            bytes,
-            id: gpui_image_data.id.0 as u64,
-        });
-
-        return Ok(ImageView {
-            clipboard_image,
-            height,
-            width,
-            image: Arc::new(gpui_image_data),
-        });
-    }
-}
-
-impl SupportsClipboard for ImageView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
-        Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
-    }
-
     fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
-        true
+        false
+    }
+    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+        false
+    }
+    fn buffer_content(&mut self, _cx: &mut WindowContext) -> Option<Model<Buffer>> {
+        None
     }
 }
 
-/// TableView renders a static table inline in a buffer.
-/// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.
-pub struct TableView {
-    pub table: TabularDataResource,
-    pub widths: Vec<Pixels>,
-    cached_clipboard_content: ClipboardItem,
-}
-
-fn cell_content(row: &Value, field: &str) -> String {
-    match row.get(&field) {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Number(n)) => n.to_string(),
-        Some(Value::Bool(b)) => b.to_string(),
-        Some(Value::Array(arr)) => format!("{:?}", arr),
-        Some(Value::Object(obj)) => format!("{:?}", obj),
-        Some(Value::Null) | None => String::new(),
-    }
-}
-
-// Declare constant for the padding multiple on the line height
-const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
-
-impl TableView {
-    pub fn new(table: TabularDataResource, cx: &mut WindowContext) -> Self {
-        let mut widths = Vec::with_capacity(table.schema.fields.len());
-
-        let text_system = cx.text_system();
-        let text_style = cx.text_style();
-        let text_font = ThemeSettings::get_global(cx).buffer_font.clone();
-        let font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        let mut runs = [TextRun {
-            len: 0,
-            font: text_font,
-            color: text_style.color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
-
-        for field in table.schema.fields.iter() {
-            runs[0].len = field.name.len();
-            let mut width = text_system
-                .layout_line(&field.name, font_size, &runs)
-                .map(|layout| layout.width)
-                .unwrap_or(px(0.));
-
-            let Some(data) = table.data.as_ref() else {
-                widths.push(width);
-                continue;
-            };
-
-            for row in data {
-                let content = cell_content(&row, &field.name);
-                runs[0].len = content.len();
-                let cell_width = cx
-                    .text_system()
-                    .layout_line(&content, font_size, &runs)
-                    .map(|layout| layout.width)
-                    .unwrap_or(px(0.));
-
-                width = width.max(cell_width)
-            }
-
-            widths.push(width)
-        }
-
-        let cached_clipboard_content = Self::create_clipboard_content(&table);
-
-        Self {
-            table,
-            widths,
-            cached_clipboard_content: ClipboardItem::new_string(cached_clipboard_content),
-        }
-    }
-
-    fn escape_markdown(s: &str) -> String {
-        s.replace('|', "\\|")
-            .replace('*', "\\*")
-            .replace('_', "\\_")
-            .replace('`', "\\`")
-            .replace('[', "\\[")
-            .replace(']', "\\]")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    }
-
-    fn create_clipboard_content(table: &TabularDataResource) -> String {
-        let data = match table.data.as_ref() {
-            Some(data) => data,
-            None => &Vec::new(),
-        };
-        let schema = table.schema.clone();
-
-        let mut markdown = format!(
-            "| {} |\n",
-            table
-                .schema
-                .fields
-                .iter()
-                .map(|field| field.name.clone())
-                .collect::<Vec<_>>()
-                .join(" | ")
-        );
-
-        markdown.push_str("|---");
-        for _ in 1..table.schema.fields.len() {
-            markdown.push_str("|---");
-        }
-        markdown.push_str("|\n");
-
-        let body = data
-            .iter()
-            .map(|record: &Value| {
-                let row_content = schema
-                    .fields
-                    .iter()
-                    .map(|field| Self::escape_markdown(&cell_content(record, &field.name)))
-                    .collect::<Vec<_>>();
-
-                row_content.join(" | ")
-            })
-            .collect::<Vec<String>>();
-
-        for row in body {
-            markdown.push_str(&format!("| {} |\n", row));
-        }
-
-        markdown
-    }
-
-    pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
-        let data = match &self.table.data {
-            Some(data) => data,
-            None => return div().into_any_element(),
-        };
-
-        let mut headings = serde_json::Map::new();
-        for field in &self.table.schema.fields {
-            headings.insert(field.name.clone(), Value::String(field.name.clone()));
-        }
-        let header = self.render_row(&self.table.schema, true, &Value::Object(headings), cx);
-
-        let body = data
-            .iter()
-            .map(|row| self.render_row(&self.table.schema, false, &row, cx));
-
-        v_flex()
-            .id("table")
-            .overflow_x_scroll()
-            .w_full()
-            .child(header)
-            .children(body)
-            .into_any_element()
-    }
-
-    pub fn render_row(
-        &self,
-        schema: &TableSchema,
-        is_header: bool,
-        row: &Value,
-        cx: &ViewContext<ExecutionView>,
-    ) -> AnyElement {
-        let theme = cx.theme();
-
-        let line_height = cx.line_height();
-
-        let row_cells = schema
-            .fields
-            .iter()
-            .zip(self.widths.iter())
-            .map(|(field, width)| {
-                let container = match field.field_type {
-                    runtimelib::datatable::FieldType::String => div(),
-
-                    runtimelib::datatable::FieldType::Number
-                    | runtimelib::datatable::FieldType::Integer
-                    | runtimelib::datatable::FieldType::Date
-                    | runtimelib::datatable::FieldType::Time
-                    | runtimelib::datatable::FieldType::Datetime
-                    | runtimelib::datatable::FieldType::Year
-                    | runtimelib::datatable::FieldType::Duration
-                    | runtimelib::datatable::FieldType::Yearmonth => v_flex().items_end(),
-
-                    _ => div(),
-                };
-
-                let value = cell_content(row, &field.name);
-
-                let mut cell = container
-                    .min_w(*width + px(22.))
-                    .w(*width + px(22.))
-                    .child(value)
-                    .px_2()
-                    .py((TABLE_Y_PADDING_MULTIPLE / 2.0) * line_height)
-                    .border_color(theme.colors().border);
-
-                if is_header {
-                    cell = cell.border_1().bg(theme.colors().border_focused)
-                } else {
-                    cell = cell.border_1()
-                }
-                cell
-            })
-            .collect::<Vec<_>>();
-
-        let mut total_width = px(0.);
-        for width in self.widths.iter() {
-            // Width fudge factor: border + 2 (heading), padding
-            total_width += *width + px(22.);
-        }
-
-        h_flex()
-            .w(total_width)
-            .children(row_cells)
-            .into_any_element()
-    }
-}
-
-impl SupportsClipboard for TableView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
-        Some(self.cached_clipboard_content.clone())
-    }
-
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
-        true
-    }
-}
-
-/// Userspace error from the kernel
-pub struct ErrorView {
-    pub ename: String,
-    pub evalue: String,
-    pub traceback: TerminalOutput,
-}
-
-impl ErrorView {
-    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
-        let theme = cx.theme();
-
-        let padding = cx.line_height() / 2.;
-
-        Some(
-            v_flex()
-                .gap_3()
-                .child(
-                    h_flex()
-                        .font_buffer(cx)
-                        .child(
-                            Label::new(format!("{}: ", self.ename.clone()))
-                                // .size(LabelSize::Large)
-                                .color(Color::Error)
-                                .weight(FontWeight::BOLD),
-                        )
-                        .child(
-                            Label::new(self.evalue.clone())
-                                // .size(LabelSize::Large)
-                                .weight(FontWeight::BOLD),
-                        ),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .px(padding)
-                        .py(padding)
-                        .border_l_1()
-                        .border_color(theme.status().error_border)
-                        .child(self.traceback.render(cx)),
-                )
-                .into_any_element(),
-        )
-    }
-}
-
-pub struct MarkdownView {
-    raw_text: String,
-    contents: Option<ParsedMarkdown>,
-    parsing_markdown_task: Option<Task<Result<()>>>,
-}
-
-impl MarkdownView {
-    pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
-        let task = cx.spawn(|markdown_view, mut cx| {
-            let text = text.clone();
-            let parsed = cx
-                .background_executor()
-                .spawn(async move { parse_markdown(&text, None, None).await });
-
-            async move {
-                let content = parsed.await;
-
-                markdown_view.update(&mut cx, |markdown, cx| {
-                    markdown.parsing_markdown_task.take();
-                    markdown.contents = Some(content);
-                    cx.notify();
-                })
-            }
-        });
-
-        Self {
-            raw_text: text.clone(),
-            contents: None,
-            parsing_markdown_task: Some(task),
-        }
-    }
-}
-
-impl SupportsClipboard for MarkdownView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
-        Some(ClipboardItem::new_string(self.raw_text.clone()))
-    }
-
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
-        true
-    }
-}
-
-impl Render for MarkdownView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Some(parsed) = self.contents.as_ref() else {
-            return div().into_any_element();
-        };
-
-        let mut markdown_render_context =
-            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
-
-        v_flex()
-            .gap_3()
-            .py_4()
-            .children(parsed.children.iter().map(|child| {
-                div().relative().child(
-                    div()
-                        .relative()
-                        .child(render_markdown_block(child, &mut markdown_render_context)),
-                )
-            }))
-            .into_any_element()
-    }
-}
-
-pub struct Output {
-    content: OutputContent,
-    display_id: Option<String>,
-}
-
-impl Output {
-    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
-        Self {
-            content: OutputContent::new(data, cx),
-            display_id,
-        }
-    }
-
-    pub fn from(content: OutputContent) -> Self {
-        Self {
-            content,
-            display_id: None,
-        }
-    }
-}
-
-impl SupportsClipboard for Output {
+impl<V: OutputContent + 'static> OutputContent for View<V> {
     fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
-        match &self.content {
-            OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
-            OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
-            OutputContent::Image(image) => image.clipboard_content(cx),
-            OutputContent::ErrorOutput(error) => error.traceback.clipboard_content(cx),
-            OutputContent::Message(_) => None,
-            OutputContent::Table(table) => table.clipboard_content(cx),
-            OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
-            OutputContent::ClearOutputWaitMarker => None,
-        }
+        self.read(cx).clipboard_content(cx)
     }
 
     fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
-        match &self.content {
-            OutputContent::Plain(terminal) => terminal.has_clipboard_content(cx),
-            OutputContent::Stream(terminal) => terminal.has_clipboard_content(cx),
-            OutputContent::Image(image) => image.has_clipboard_content(cx),
-            OutputContent::ErrorOutput(error) => error.traceback.has_clipboard_content(cx),
-            OutputContent::Message(_) => false,
-            OutputContent::Table(table) => table.has_clipboard_content(cx),
-            OutputContent::Markdown(markdown) => markdown.read(cx).has_clipboard_content(cx),
-            OutputContent::ClearOutputWaitMarker => false,
-        }
+        self.read(cx).has_clipboard_content(cx)
+    }
+
+    fn has_buffer_content(&self, cx: &WindowContext) -> bool {
+        self.read(cx).has_buffer_content(cx)
+    }
+
+    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+        self.update(cx, |item, cx| item.buffer_content(cx))
     }
 }
 
-pub enum OutputContent {
-    Plain(TerminalOutput),
-    Stream(TerminalOutput),
-    Image(ImageView),
+pub enum Output {
+    Plain {
+        content: View<TerminalOutput>,
+        display_id: Option<String>,
+    },
+    Stream {
+        content: View<TerminalOutput>,
+    },
+    Image {
+        content: View<ImageView>,
+        display_id: Option<String>,
+    },
     ErrorOutput(ErrorView),
     Message(String),
-    Table(TableView),
-    Markdown(View<MarkdownView>),
+    Table {
+        content: View<TableView>,
+        display_id: Option<String>,
+    },
+    Markdown {
+        content: View<MarkdownView>,
+        display_id: Option<String>,
+    },
     ClearOutputWaitMarker,
 }
 
-impl OutputContent {
-    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
-        let el = match self {
-            // Note: in typical frontends we would show the execute_result.execution_count
-            // Here we can just handle either
-            Self::Plain(stdio) => Some(stdio.render(cx)),
-            Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
-            Self::Stream(stdio) => Some(stdio.render(cx)),
-            Self::Image(image) => Some(image.render(cx)),
+impl Output {
+    fn render_output_controls<V: OutputContent + 'static>(
+        v: View<V>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<ExecutionView>,
+    ) -> Option<AnyElement> {
+        if !v.has_clipboard_content(cx) && !v.has_buffer_content(cx) {
+            return None;
+        }
+
+        Some(
+            h_flex()
+                .pl_1()
+                .when(v.has_clipboard_content(cx), |el| {
+                    let v = v.clone();
+                    el.child(
+                        IconButton::new(ElementId::Name("copy-output".into()), IconName::Copy)
+                            .style(ButtonStyle::Transparent)
+                            .tooltip(move |cx| Tooltip::text("Copy Output", cx))
+                            .on_click(cx.listener(move |_, _, cx| {
+                                let clipboard_content = v.clipboard_content(cx);
+
+                                if let Some(clipboard_content) = clipboard_content.as_ref() {
+                                    cx.write_to_clipboard(clipboard_content.clone());
+                                }
+                            })),
+                    )
+                })
+                .when(v.has_buffer_content(cx), |el| {
+                    let v = v.clone();
+                    el.child(
+                        IconButton::new(
+                            ElementId::Name("open-in-buffer".into()),
+                            IconName::FileText,
+                        )
+                        .style(ButtonStyle::Transparent)
+                        .tooltip(move |cx| Tooltip::text("Open in Buffer", cx))
+                        .on_click(cx.listener({
+                            let workspace = workspace.clone();
+
+                            move |_, _, cx| {
+                                let buffer_content =
+                                    v.update(cx, |item, cx| item.buffer_content(cx));
+
+                                if let Some(buffer_content) = buffer_content.as_ref() {
+                                    let buffer = buffer_content.clone();
+                                    let editor = Box::new(cx.new_view(|cx| {
+                                        let multibuffer = cx.new_model(|cx| {
+                                            let mut multi_buffer =
+                                                MultiBuffer::singleton(buffer.clone(), cx);
+
+                                            multi_buffer.set_title("REPL Output".to_string(), cx);
+                                            multi_buffer
+                                        });
+
+                                        Editor::for_multibuffer(multibuffer, None, false, cx)
+                                    }));
+                                    workspace
+                                        .update(cx, |workspace, cx| {
+                                            workspace
+                                                .add_item_to_active_pane(editor, None, true, cx);
+                                        })
+                                        .ok();
+                                }
+                            }
+                        })),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render(
+        &self,
+
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<ExecutionView>,
+    ) -> impl IntoElement {
+        let content = match self {
+            Self::Plain { content, .. } => Some(content.clone().into_any_element()),
+            Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
+            Self::Stream { content, .. } => Some(content.clone().into_any_element()),
+            Self::Image { content, .. } => Some(content.clone().into_any_element()),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
-            Self::Table(table) => Some(table.render(cx)),
+            Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(cx),
             Self::ClearOutputWaitMarker => None,
         };
 
-        el
+        h_flex()
+            .w_full()
+            .items_start()
+            .child(div().flex_1().children(content))
+            .children(match self {
+                Self::Plain { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace.clone(), cx)
+                }
+                Self::Markdown { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace.clone(), cx)
+                }
+                Self::Stream { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace.clone(), cx)
+                }
+                Self::Image { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace.clone(), cx)
+                }
+                Self::ErrorOutput(err) => {
+                    Self::render_output_controls(err.traceback.clone(), workspace.clone(), cx)
+                }
+                Self::Message(_) => None,
+                Self::Table { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace.clone(), cx)
+                }
+                Self::ClearOutputWaitMarker => None,
+            })
     }
 
-    pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
+    pub fn display_id(&self) -> Option<String> {
+        match self {
+            Output::Plain { display_id, .. } => display_id.clone(),
+            Output::Stream { .. } => None,
+            Output::Image { display_id, .. } => display_id.clone(),
+            Output::ErrorOutput(_) => None,
+            Output::Message(_) => None,
+            Output::Table { display_id, .. } => display_id.clone(),
+            Output::Markdown { display_id, .. } => display_id.clone(),
+            Output::ClearOutputWaitMarker => None,
+        }
+    }
+
+    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Plain(text)) => Output::Plain {
+                content: cx.new_view(|cx| TerminalOutput::from(text, cx)),
+                display_id,
+            },
             Some(MimeType::Markdown(text)) => {
                 let view = cx.new_view(|cx| MarkdownView::from(text.clone(), cx));
-                OutputContent::Markdown(view)
+                Output::Markdown {
+                    content: view,
+                    display_id,
+                }
             }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
-                Ok(view) => OutputContent::Image(view),
-                Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
+                Ok(view) => Output::Image {
+                    content: cx.new_view(|_| view),
+                    display_id,
+                },
+                Err(error) => Output::Message(format!("Failed to load image: {}", error)),
             },
-            Some(MimeType::DataTable(data)) => {
-                OutputContent::Table(TableView::new(data.clone(), cx))
-            }
+            Some(MimeType::DataTable(data)) => Output::Table {
+                content: cx.new_view(|cx| TableView::new(data, cx)),
+                display_id,
+            },
             // Any other media types are not supported
-            _ => OutputContent::Message("Unsupported media type".to_string()),
+            _ => Output::Message("Unsupported media type".to_string()),
         }
     }
 }
@@ -573,14 +303,24 @@ pub enum ExecutionStatus {
     Restarting,
 }
 
+/// An ExecutionView shows the outputs of an execution.
+/// It can hold zero or more outputs, which the user
+/// sees as "the output" for a single execution.
 pub struct ExecutionView {
+    #[allow(unused)]
+    workspace: WeakView<Workspace>,
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
 }
 
 impl ExecutionView {
-    pub fn new(status: ExecutionStatus, _cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        status: ExecutionStatus,
+        workspace: WeakView<Workspace>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
+            workspace,
             outputs: Default::default(),
             status,
         }
@@ -600,47 +340,26 @@ impl ExecutionView {
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {
-                    Output::from(new_terminal)
+                    new_terminal
                 } else {
                     return;
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let mut terminal = TerminalOutput::new(cx);
-                terminal.append_text(&result.traceback.join("\n"));
+                let terminal =
+                    cx.new_view(|cx| TerminalOutput::from(&result.traceback.join("\n"), cx));
 
-                Output::from(OutputContent::ErrorOutput(ErrorView {
+                Output::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
                     evalue: result.evalue.clone(),
                     traceback: terminal,
-                }))
+                })
             }
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
-                    match payload {
-                        // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
-                        // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
-                        runtimelib::Payload::Page { data, .. } => {
-                            let output = Output::new(data, None, cx);
-                            self.outputs.push(output);
-                        }
-
-                        // There are other payloads that could be handled here, such as updating the input.
-                        // Below are the other payloads that _could_ be handled, but are not required for Zed.
-
-                        // Set next input adds text to the next cell. Not required to support.
-                        // However, this could be implemented by adding text to the buffer.
-                        // Trigger in python using `get_ipython().set_next_input("text")`
-                        //
-                        // runtimelib::Payload::SetNextInput { text, replace } => {},
-
-                        // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
-                        // Python users can trigger this with the `%edit` magic command
-                        // runtimelib::Payload::EditMagic { filename, line_number } => {},
-
-                        // Ask the user if they want to exit the kernel. Not required to support.
-                        // runtimelib::Payload::AskExit { keepkernel } => {},
-                        _ => {}
+                    if let runtimelib::Payload::Page { data, .. } = payload {
+                        let output = Output::new(data, None, cx);
+                        self.outputs.push(output);
                     }
                 }
                 cx.notify();
@@ -654,7 +373,7 @@ impl ExecutionView {
                 }
 
                 // Create a marker to clear the output after we get in a new output
-                Output::from(OutputContent::ClearOutputWaitMarker)
+                Output::ClearOutputWaitMarker
             }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
@@ -673,7 +392,7 @@ impl ExecutionView {
 
         // Check for a clear output marker as the previous output, so we can clear it out
         if let Some(output) = self.outputs.last() {
-            if let OutputContent::ClearOutputWaitMarker = output.content {
+            if let Output::ClearOutputWaitMarker = output {
                 self.outputs.clear();
             }
         }
@@ -692,9 +411,9 @@ impl ExecutionView {
         let mut any = false;
 
         self.outputs.iter_mut().for_each(|output| {
-            if let Some(other_display_id) = output.display_id.as_ref() {
+            if let Some(other_display_id) = output.display_id().as_ref() {
                 if other_display_id == display_id {
-                    output.content = OutputContent::new(data, cx);
+                    *output = Output::new(data, Some(display_id.to_owned()), cx);
                     any = true;
                 }
             }
@@ -705,33 +424,25 @@ impl ExecutionView {
         }
     }
 
-    fn apply_terminal_text(
-        &mut self,
-        text: &str,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<OutputContent> {
+    fn apply_terminal_text(&mut self, text: &str, cx: &mut ViewContext<Self>) -> Option<Output> {
         if let Some(last_output) = self.outputs.last_mut() {
-            match &mut last_output.content {
-                OutputContent::Stream(last_stream) => {
-                    last_stream.append_text(text);
-                    // Don't need to add a new output, we already have a terminal output
+            if let Output::Stream {
+                content: last_stream,
+            } = last_output
+            {
+                // Don't need to add a new output, we already have a terminal output
+                // and can just update the most recent terminal output
+                last_stream.update(cx, |last_stream, cx| {
+                    last_stream.append_text(text, cx);
                     cx.notify();
-                    return None;
-                }
-                // Edge case note: a clear output marker
-                OutputContent::ClearOutputWaitMarker => {
-                    // Edge case note: a clear output marker is handled by the caller
-                    // since we will return a new output at the end here as a new terminal output
-                }
-                // A different output type is "in the way", so we need to create a new output,
-                // which is the same as having no prior output
-                _ => {}
+                });
+                return None;
             }
         }
 
-        let mut new_terminal = TerminalOutput::new(cx);
-        new_terminal.append_text(text);
-        Some(OutputContent::Stream(new_terminal))
+        Some(Output::Stream {
+            content: cx.new_view(|cx| TerminalOutput::from(text, cx)),
+        })
     }
 }
 
@@ -778,7 +489,7 @@ impl Render for ExecutionView {
                 .into_any_element(),
         };
 
-        if self.outputs.len() == 0 {
+        if self.outputs.is_empty() {
             return v_flex()
                 .min_h(cx.line_height())
                 .justify_center()
@@ -788,42 +499,11 @@ impl Render for ExecutionView {
 
         div()
             .w_full()
-            .children(self.outputs.iter().enumerate().map(|(index, output)| {
-                h_flex()
-                    .w_full()
-                    .items_start()
-                    .child(
-                        div().flex_1().child(
-                            output
-                                .content
-                                .render(cx)
-                                .unwrap_or_else(|| div().into_any_element()),
-                        ),
-                    )
-                    .when(output.has_clipboard_content(cx), |el| {
-                        let clipboard_content = output.clipboard_content(cx);
-
-                        el.child(
-                            div().pl_1().child(
-                                IconButton::new(
-                                    ElementId::Name(format!("copy-output-{}", index).into()),
-                                    IconName::Copy,
-                                )
-                                .style(ButtonStyle::Transparent)
-                                .tooltip(move |cx| Tooltip::text("Copy Output", cx))
-                                .on_click(cx.listener(
-                                    move |_, _, cx| {
-                                        if let Some(clipboard_content) = clipboard_content.as_ref()
-                                        {
-                                            cx.write_to_clipboard(clipboard_content.clone());
-                                            // todo!(): let the user know that the content was copied
-                                        }
-                                    },
-                                )),
-                            ),
-                        )
-                    })
-            }))
+            .children(
+                self.outputs
+                    .iter()
+                    .map(|output| output.render(self.workspace.clone(), cx)),
+            )
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],

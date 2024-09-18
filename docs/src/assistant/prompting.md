@@ -52,6 +52,8 @@ More on prompt engineering:
 
 Zed allows you to customize the default prompt used in new context editors. Or to be more precise, it uses a series of prompts that are combined to form the default prompt.
 
+To edit prompts, select "Prompt Library" from the menu icon (three horizontal lines) in the upper right hand corner or using the `cmd-k l` keyboard shortcut.
+
 A default prompt might look something like:
 
 ```plaintext
@@ -75,11 +77,11 @@ You can manually add the default prompt using the `/default` command.
 
 ## Commands in Prompts
 
-[Commands](/assistant/commands.md) can be used in prompts to insert dynamic content or perform actions. For example, if you want to create a prompt where it is important for the model to know the date, you can use the `/now` command to insert the current date.
+[Commands](./commands.md) can be used in prompts to insert dynamic content or perform actions. For example, if you want to create a prompt where it is important for the model to know the date, you can use the `/now` command to insert the current date.
 
 > **Note:** Slash commands in prompts **must** be on their own line.
 
-See the [Commands](/assistant/commands.md) docs for more information on commands, and what slash commands are available.
+See the [Commands](./commands.md) docs for more information on commands, and what slash commands are available.
 
 ### Example:
 

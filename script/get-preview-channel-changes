@@ -1,7 +1,7 @@
 #!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
-const { GITHUB_ACCESS_TOKEN } = process.env;
+let { GITHUB_ACCESS_TOKEN } = process.env;
 const GITHUB_URL = "https://github.com";
 const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
 const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";
@@ -12,6 +12,16 @@ const DIVIDER = "-".repeat(80);
 main();
 
 async function main() {
+  if (!GITHUB_ACCESS_TOKEN) {
+    try {
+      GITHUB_ACCESS_TOKEN = execFileSync("gh", ["auth", "token"]).toString();
+    } catch (error) {
+      console.log(error);
+      console.log("No GITHUB_ACCESS_TOKEN, and no `gh auth token`");
+      process.exit(1);
+    }
+  }
+
   const STAFF_MEMBERS = new Set(
     (
       await (
@@ -44,16 +54,6 @@ async function main() {
 
   // Print the previous release
   console.log(`Changes from ${oldTag} to ${newTag}\n`);
-
-  if (!GITHUB_ACCESS_TOKEN) {
-    try {
-      GITHUB_ACCESS_TOKEN = execFileSync("gh", ["auth", "token"]).toString();
-    } catch (error) {
-      console.log(error);
-      console.log("No GITHUB_ACCESS_TOKEN, and no `gh auth token`");
-      process.exit(1);
-    }
-  }
 
   // Get the PRs merged between those two tags.
   const pullRequestNumbers = getPullRequestNumbers(oldTag, newTag);

@@ -1,0 +1,37 @@
+[package]
+name = "evals"
+description = "Evaluations for Zed's AI features"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "eval"
+path = "src/eval.rs"
+
+[dependencies]
+clap.workspace = true
+anyhow.workspace = true
+client.workspace = true
+clock.workspace = true
+collections.workspace = true
+env_logger.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+git.workspace = true
+gpui.workspace = true
+language.workspace = true
+languages.workspace = true
+http_client.workspace = true
+open_ai.workspace = true
+project.workspace = true
+settings.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+semantic_index.workspace = true
+node_runtime.workspace = true

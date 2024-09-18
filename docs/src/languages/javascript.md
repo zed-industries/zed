@@ -26,6 +26,7 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 }
 ```
 
+<!--
 ## JSX
 
 TBD: Mention JSX
@@ -35,6 +36,7 @@ TBD: Mention JSX
 TBD: Document JSDoc support in Zed.
 
 - Tree Sitter: [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc)
+-->
 
 ## ESLint
 

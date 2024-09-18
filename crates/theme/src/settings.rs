@@ -70,9 +70,9 @@ impl From<String> for UiDensity {
     }
 }
 
-impl Into<String> for UiDensity {
-    fn into(self) -> String {
-        match self {
+impl From<UiDensity> for String {
+    fn from(val: UiDensity) -> Self {
+        match val {
             UiDensity::Compact => "compact".to_string(),
             UiDensity::Default => "default".to_string(),
             UiDensity::Comfortable => "comfortable".to_string(),
@@ -247,6 +247,7 @@ pub struct ThemeSettingsContent {
     pub ui_font_family: Option<String>,
     /// The font fallbacks to use for rendering in the UI.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub ui_font_fallbacks: Option<Vec<String>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
@@ -260,6 +261,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_family: Option<String>,
     /// The font fallbacks to use for rendering in text buffers.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub buffer_font_fallbacks: Option<Vec<String>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
@@ -297,6 +299,10 @@ pub struct ThemeSettingsContent {
 
 fn default_font_features() -> Option<FontFeatures> {
     Some(FontFeatures::default())
+}
+
+fn default_font_fallbacks() -> Option<FontFallbacks> {
+    Some(FontFallbacks::default())
 }
 
 impl ThemeSettingsContent {
@@ -485,13 +491,13 @@ pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
     ui_font
 }
 
-pub fn get_ui_font_size(cx: &WindowContext) -> Pixels {
+pub fn get_ui_font_size(cx: &AppContext) -> Pixels {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
     cx.try_global::<AdjustedUiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
 }
 
-pub fn adjust_ui_font_size(cx: &mut WindowContext, f: fn(&mut Pixels)) {
+pub fn adjust_ui_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
     let mut adjusted_size = cx
         .try_global::<AdjustedUiFontSize>()
@@ -507,7 +513,7 @@ pub fn has_adjusted_ui_font_size(cx: &mut AppContext) -> bool {
     cx.has_global::<AdjustedUiFontSize>()
 }
 
-pub fn reset_ui_font_size(cx: &mut WindowContext) {
+pub fn reset_ui_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedUiFontSize>() {
         cx.remove_global::<AdjustedUiFontSize>();
         cx.refresh();
@@ -603,10 +609,14 @@ impl settings::Settings for ThemeSettings {
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
+            this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
+
             merge(
                 &mut this.buffer_font_size,
                 value.buffer_font_size.map(Into::into),
             );
+            this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
+
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 
             // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.

@@ -138,10 +138,16 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
 
 ```json
 {
+  "languages": {
+    "Ruby": {
+      "language_servers": ["ruby-lsp", "!solargraph", "..."]
+    }
+  },
   "lsp": {
     "ruby-lsp": {
       "initialization_options": {
         "enabledFeatures": {
+          // This disables diagnostics
           "diagnostics": false
         }
       }
@@ -164,10 +170,23 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
 
 ```json
 {
+  "languages": {
+    "Ruby": {
+      // Use ruby-lsp as the primary language server and rubocop as the secondary.
+      "language_servers": ["ruby-lsp", "rubocop", "!solargraph", "..."]
+    }
+  },
   "lsp": {
     "rubocop": {
       "initialization_options": {
         "safeAutocorrect": false
+      }
+    },
+    "ruby-lsp": {
+      "initialization_options": {
+        "enabledFeatures": {
+          "diagnostics": false
+        }
       }
     }
   }
@@ -230,4 +249,60 @@ end
 # ERB file:
 <%= link_to "Hello", "/hello", class: "pl-2 <completion here>" %>
 <a href="/hello" class="pl-2 <completion here>">Hello</a>
+```
+
+## Running tests
+
+To run tests in your Ruby project, you can set up custom tasks in your local `.zed/tasks.json` configuration file. These tasks can be defined to work with different test frameworks like Minitest, RSpec, quickdraw, and tldr. Below are some examples of how to set up these tasks to run your tests from within your editor.
+
+### Minitest
+
+```json
+[
+  {
+    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
+    "command": "bundle exec rails",
+    "args": ["test", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "tags": ["ruby-test"]
+  }
+]
+```
+
+### RSpec
+
+```json
+[
+  {
+    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
+    "command": "bundle exec rspec",
+    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "tags": ["ruby-test"]
+  }
+]
+```
+
+### quickdraw
+
+```json
+[
+  {
+    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
+    "command": "bundle exec qt",
+    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "tags": ["ruby-test"]
+  }
+]
+```
+
+### tldr
+
+```json
+[
+  {
+    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
+    "command": "bundle exec tldr",
+    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "tags": ["ruby-test"]
+  }
+]
 ```
