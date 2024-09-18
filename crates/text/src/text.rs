@@ -492,6 +492,10 @@ struct FragmentTextSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
+    fn zero(_: &Option<clock::Global>) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<clock::Global>) {
         self.visible += summary.text.visible;
         self.deleted += summary.text.deleted;
@@ -654,8 +658,8 @@ impl Buffer {
         normalized: Rope,
     ) -> Buffer {
         let history = History::new(normalized);
-        let mut fragments = SumTree::new();
-        let mut insertions = SumTree::new();
+        let mut fragments = SumTree::new(&None);
+        let mut insertions = SumTree::default();
 
         let mut lamport_clock = clock::Lamport::new(replica_id);
         let mut version = clock::Global::new();
@@ -772,7 +776,7 @@ impl Buffer {
 
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
+        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>(&None);
         let mut new_fragments =
             old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right, &None);
         new_ropes.append(new_fragments.summary().text);
@@ -992,7 +996,7 @@ impl Buffer {
         let mut insertion_offset = 0;
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>();
+        let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>(&cx);
         let mut new_fragments = old_fragments.slice(
             &VersionedFullOffset::Offset(ranges[0].start),
             Bias::Left,
@@ -1185,7 +1189,7 @@ impl Buffer {
 
         // Get all of the fragments corresponding to these insertion slices.
         let mut fragment_ids = Vec::new();
-        let mut insertions_cursor = self.insertions.cursor::<InsertionFragmentKey>();
+        let mut insertions_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
         for insertion_slice in &insertion_slices {
             if insertion_slice.insertion_id != insertions_cursor.start().timestamp
                 || insertion_slice.range.start > insertions_cursor.start().split_offset
@@ -1217,8 +1221,8 @@ impl Buffer {
         self.snapshot.undo_map.insert(undo);
 
         let mut edits = Patch::default();
-        let mut old_fragments = self.fragments.cursor::<(Option<&Locator>, usize)>();
-        let mut new_fragments = SumTree::new();
+        let mut old_fragments = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+        let mut new_fragments = SumTree::new(&None);
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
 
@@ -1455,7 +1459,7 @@ impl Buffer {
         D: TextDimension,
     {
         // get fragment ranges
-        let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
+        let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
         let offset_ranges = self
             .fragment_ids_for_edits(transaction.edit_ids.iter())
             .into_iter()
@@ -1485,7 +1489,7 @@ impl Buffer {
             });
 
         // convert to the desired text dimension.
-        let mut position = D::default();
+        let mut position = D::zero(&());
         let mut rope_cursor = self.visible_text.cursor(0);
         disjoint_ranges.map(move |range| {
             position.add_assign(&rope_cursor.summary(range.start));
@@ -1664,8 +1668,8 @@ impl Buffer {
             );
         }
 
-        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
-        for insertion_fragment in self.snapshot.insertions.cursor::<()>() {
+        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>(&None);
+        for insertion_fragment in self.snapshot.insertions.cursor::<()>(&()) {
             cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left, &None);
             let fragment = cursor.item().unwrap();
             assert_eq!(insertion_fragment.fragment_id, fragment.id);
@@ -1782,7 +1786,7 @@ impl BufferSnapshot {
 
         let mut cursor = self
             .fragments
-            .filter::<_, FragmentTextSummary>(move |summary| {
+            .filter::<_, FragmentTextSummary>(&None, move |summary| {
                 !version.observed_all(&summary.max_version)
             });
         cursor.next(&None);
@@ -2121,10 +2125,10 @@ impl BufferSnapshot {
         A: 'a + IntoIterator<Item = (&'a Anchor, T)>,
     {
         let anchors = anchors.into_iter();
-        let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
-        let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
+        let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
+        let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
         let mut text_cursor = self.visible_text.cursor(0);
-        let mut position = D::default();
+        let mut position = D::zero(&());
 
         anchors.map(move |(anchor, payload)| {
             debug_assert_eq!(
@@ -2134,7 +2138,7 @@ impl BufferSnapshot {
             );
 
             match *anchor {
-                Anchor::Start { .. } => (D::default(), payload),
+                Anchor::Start { .. } => (D::zero(&()), payload),
                 Anchor::End { .. } => (D::from_text_summary(&self.visible_text.summary()), payload),
                 Anchor::Character {
                     insertion_id,
@@ -2201,7 +2205,7 @@ impl BufferSnapshot {
                     timestamp: insertion_id,
                     split_offset: offset,
                 };
-                let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
+                let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
                 insertion_cursor.seek(&anchor_key, bias, &());
                 if let Some(insertion) = insertion_cursor.item() {
                     let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
@@ -2250,7 +2254,7 @@ impl BufferSnapshot {
         } else if bias == Bias::Right && offset == self.len() {
             self.max_anchor()
         } else {
-            let mut fragment_cursor = self.fragments.cursor::<usize>();
+            let mut fragment_cursor = self.fragments.cursor::<usize>(&None);
             fragment_cursor.seek(&offset, bias, &None);
             let fragment = fragment_cursor.item().unwrap();
             let overshoot = offset - *fragment_cursor.start();
@@ -2334,15 +2338,15 @@ impl BufferSnapshot {
         let fragments_cursor = if *since == self.version {
             None
         } else {
-            let mut cursor = self
-                .fragments
-                .filter(move |summary| !since.observed_all(&summary.max_version));
+            let mut cursor = self.fragments.filter(&None, move |summary| {
+                !since.observed_all(&summary.max_version)
+            });
             cursor.next(&None);
             Some(cursor)
         };
         let mut cursor = self
             .fragments
-            .cursor::<(Option<&Locator>, FragmentTextSummary)>();
+            .cursor::<(Option<&Locator>, FragmentTextSummary)>(&None);
 
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
         cursor.seek(&Some(start_fragment_id), Bias::Left, &None);
@@ -2379,8 +2383,8 @@ impl BufferSnapshot {
             fragments_cursor,
             undos: &self.undo_map,
             since,
-            old_end: Default::default(),
-            new_end: Default::default(),
+            old_end: D::zero(&()),
+            new_end: D::zero(&()),
             range: (start_fragment_id, start_fragment_offset)
                 ..(end_fragment_id, end_fragment_offset),
             buffer_id: self.remote_id,
@@ -2391,9 +2395,9 @@ impl BufferSnapshot {
         if *since != self.version {
             let start_fragment_id = self.fragment_id_for_anchor(&range.start);
             let end_fragment_id = self.fragment_id_for_anchor(&range.end);
-            let mut cursor = self
-                .fragments
-                .filter::<_, usize>(move |summary| !since.observed_all(&summary.max_version));
+            let mut cursor = self.fragments.filter::<_, usize>(&None, move |summary| {
+                !since.observed_all(&summary.max_version)
+            });
             cursor.next(&None);
             while let Some(fragment) = cursor.item() {
                 if fragment.id > *end_fragment_id {
@@ -2414,9 +2418,9 @@ impl BufferSnapshot {
 
     pub fn has_edits_since(&self, since: &clock::Global) -> bool {
         if *since != self.version {
-            let mut cursor = self
-                .fragments
-                .filter::<_, usize>(move |summary| !since.observed_all(&summary.max_version));
+            let mut cursor = self.fragments.filter::<_, usize>(&None, move |summary| {
+                !since.observed_all(&summary.max_version)
+            });
             cursor.next(&None);
             while let Some(fragment) = cursor.item() {
                 let was_visible = fragment.was_visible(since, &self.undo_map);
@@ -2653,6 +2657,10 @@ impl sum_tree::Item for Fragment {
 impl sum_tree::Summary for FragmentSummary {
     type Context = Option<clock::Global>;
 
+    fn zero(_cx: &Self::Context) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, other: &Self, _: &Self::Context) {
         self.max_id.assign(&other.max_id);
         self.text.visible += &other.text.visible;
@@ -2713,6 +2721,10 @@ impl InsertionFragment {
 impl sum_tree::Summary for InsertionFragmentKey {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _: &()) {
         *self = *summary;
     }
@@ -2745,18 +2757,30 @@ impl ops::Sub for FullOffset {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
+    fn zero(_: &Option<clock::Global>) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
         *self += summary.text.visible;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FullOffset {
+    fn zero(_: &Option<clock::Global>) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
         self.0 += summary.text.visible + summary.text.deleted;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for Option<&'a Locator> {
+    fn zero(_: &Option<clock::Global>) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<clock::Global>) {
         *self = Some(&summary.max_id);
     }
@@ -2795,6 +2819,10 @@ impl Default for VersionedFullOffset {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedFullOffset {
+    fn zero(_cx: &Option<clock::Global>) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<clock::Global>) {
         if let Self::Offset(offset) = self {
             let version = cx.as_ref().unwrap();

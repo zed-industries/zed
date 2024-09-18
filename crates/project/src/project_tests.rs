@@ -537,7 +537,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             DiagnosticSet::from_sorted_entries(
                 vec![DiagnosticEntry {
                     diagnostic: Default::default(),
-                    range: Anchor::Start..Anchor::End,
+                    range: buffer.min_anchor()..buffer.max_anchor(),
                 }],
                 &buffer.snapshot(),
             ),

@@ -219,26 +219,23 @@ pub fn serialize_diagnostics<'a>(
         .collect()
 }
 
-const ANCHOR_START_PROTO: proto::Anchor = proto::Anchor {
-    replica_id: 0,
-    timestamp: 0,
-    offset: 0,
-    bias: proto::Bias::Left as i32,
-    buffer_id: None,
-};
-const ANCHOR_END_PROTO: proto::Anchor = proto::Anchor {
-    replica_id: u32::MAX,
-    timestamp: u32::MAX,
-    offset: u64::MAX,
-    bias: proto::Bias::Right as i32,
-    buffer_id: None,
-};
-
 /// Serializes an [`Anchor`] to be sent over RPC.
 pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
     match *anchor {
-        Anchor::Start => ANCHOR_START_PROTO,
-        Anchor::End => ANCHOR_END_PROTO,
+        Anchor::Start { buffer_id } => proto::Anchor {
+            replica_id: 0,
+            timestamp: 0,
+            offset: 0,
+            bias: proto::Bias::Left as i32,
+            buffer_id: Some(buffer_id.into()),
+        },
+        Anchor::End { buffer_id } => proto::Anchor {
+            replica_id: u32::MAX,
+            timestamp: u32::MAX,
+            offset: u64::MAX,
+            bias: proto::Bias::Right as i32,
+            buffer_id: Some(buffer_id.into()),
+        },
         Anchor::Character {
             buffer_id,
             insertion_id,
@@ -453,12 +450,20 @@ pub fn deserialize_diagnostics(
 
 /// Deserializes an [`Anchor`] from the RPC representation.
 pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
-    if anchor == ANCHOR_START_PROTO {
-        Some(Anchor::Start)
-    } else if anchor == ANCHOR_END_PROTO {
-        Some(Anchor::End)
+    let buffer_id = BufferId::new(anchor.buffer_id?).ok()?;
+    if anchor.replica_id == 0
+        && anchor.timestamp == 0
+        && anchor.offset == 0
+        && anchor.bias == proto::Bias::Left as i32
+    {
+        Some(Anchor::Start { buffer_id })
+    } else if anchor.replica_id == u32::MAX
+        && anchor.timestamp == u32::MAX
+        && anchor.offset == u64::MAX
+        && anchor.bias == proto::Bias::Right as i32
+    {
+        Some(Anchor::End { buffer_id })
     } else {
-        let buffer_id = BufferId::new(anchor.buffer_id?).ok()?;
         Some(Anchor::Character {
             insertion_id: clock::Lamport {
                 replica_id: anchor.replica_id as ReplicaId,

@@ -10,14 +10,16 @@ mod worktree_index;
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, WeakModel};
 use project::Project;
-use project_index::ProjectIndex;
 use std::{path::PathBuf, sync::Arc};
 use ui::ViewContext;
+use util::ResultExt as _;
 use workspace::Workspace;
 
 pub use embedding::*;
+pub use project_index::{LoadedSearchResult, ProjectIndex, SearchResult, Status};
 pub use project_index_debug_view::ProjectIndexDebugView;
 pub use summary_index::FileSummary;
 
@@ -56,27 +58,7 @@ impl SemanticDb {
 
                     if cx.has_global::<SemanticDb>() {
                         cx.update_global::<SemanticDb, _>(|this, cx| {
-                            let project_index = cx.new_model(|cx| {
-                                ProjectIndex::new(
-                                    project.clone(),
-                                    this.db_connection.clone(),
-                                    this.embedding_provider.clone(),
-                                    cx,
-                                )
-                            });
-
-                            let project_weak = project.downgrade();
-                            this.project_indices
-                                .insert(project_weak.clone(), project_index);
-
-                            cx.on_release(move |_, _, cx| {
-                                if cx.has_global::<SemanticDb>() {
-                                    cx.update_global::<SemanticDb, _>(|this, _| {
-                                        this.project_indices.remove(&project_weak);
-                                    })
-                                }
-                            })
-                            .detach();
+                            this.create_project_index(project, cx);
                         })
                     } else {
                         log::info!("No SemanticDb, skipping project index")
@@ -92,6 +74,50 @@ impl SemanticDb {
             embedding_provider,
             project_indices: HashMap::default(),
         })
+    }
+
+    pub async fn load_results(
+        results: Vec<SearchResult>,
+        fs: &Arc<dyn Fs>,
+        cx: &AsyncAppContext,
+    ) -> Result<Vec<LoadedSearchResult>> {
+        let mut loaded_results = Vec::new();
+        for result in results {
+            let (full_path, file_content) = result.worktree.read_with(cx, |worktree, _cx| {
+                let entry_abs_path = worktree.abs_path().join(&result.path);
+                let mut entry_full_path = PathBuf::from(worktree.root_name());
+                entry_full_path.push(&result.path);
+                let file_content = async {
+                    let entry_abs_path = entry_abs_path;
+                    fs.load(&entry_abs_path).await
+                };
+                (entry_full_path, file_content)
+            })?;
+            if let Some(file_content) = file_content.await.log_err() {
+                let range_start = result.range.start.min(file_content.len());
+                let range_end = result.range.end.min(file_content.len());
+
+                let start_row = file_content[0..range_start].matches('\n').count() as u32;
+                let end_row = file_content[0..range_end].matches('\n').count() as u32;
+                let start_line_byte_offset = file_content[0..range_start]
+                    .rfind('\n')
+                    .map(|pos| pos + 1)
+                    .unwrap_or_default();
+                let end_line_byte_offset = file_content[range_end..]
+                    .find('\n')
+                    .map(|pos| range_end + pos)
+                    .unwrap_or_else(|| file_content.len());
+
+                loaded_results.push(LoadedSearchResult {
+                    path: result.path,
+                    range: start_line_byte_offset..end_line_byte_offset,
+                    full_path,
+                    file_content,
+                    row_range: start_row..=end_row,
+                });
+            }
+        }
+        Ok(loaded_results)
     }
 
     pub fn project_index(
@@ -112,6 +138,36 @@ impl SemanticDb {
                 project_index.remaining_summaries(cx)
             })
         })
+    }
+
+    pub fn create_project_index(
+        &mut self,
+        project: Model<Project>,
+        cx: &mut AppContext,
+    ) -> Model<ProjectIndex> {
+        let project_index = cx.new_model(|cx| {
+            ProjectIndex::new(
+                project.clone(),
+                self.db_connection.clone(),
+                self.embedding_provider.clone(),
+                cx,
+            )
+        });
+
+        let project_weak = project.downgrade();
+        self.project_indices
+            .insert(project_weak.clone(), project_index.clone());
+
+        cx.observe_release(&project, move |_, cx| {
+            if cx.has_global::<SemanticDb>() {
+                cx.update_global::<SemanticDb, _>(|this, _| {
+                    this.project_indices.remove(&project_weak);
+                })
+            }
+        })
+        .detach();
+
+        project_index
     }
 }
 
@@ -230,33 +286,12 @@ mod tests {
 
         let project = Project::test(fs, [project_path], cx).await;
 
-        cx.update(|cx| {
+        let project_index = cx.update(|cx| {
             let language_registry = project.read(cx).languages().clone();
             let node_runtime = project.read(cx).node_runtime().unwrap().clone();
             languages::init(language_registry, node_runtime, cx);
-
-            // Manually create and insert the ProjectIndex
-            let project_index = cx.new_model(|cx| {
-                ProjectIndex::new(
-                    project.clone(),
-                    semantic_index.db_connection.clone(),
-                    semantic_index.embedding_provider.clone(),
-                    cx,
-                )
-            });
-            semantic_index
-                .project_indices
-                .insert(project.downgrade(), project_index);
+            semantic_index.create_project_index(project.clone(), cx)
         });
-
-        let project_index = cx
-            .update(|_cx| {
-                semantic_index
-                    .project_indices
-                    .get(&project.downgrade())
-                    .cloned()
-            })
-            .unwrap();
 
         cx.run_until_parked();
         while cx

@@ -18,13 +18,12 @@ use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
 
-#[derive(Default)]
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
     language_registry: Option<Arc<LanguageRegistry>>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SyntaxSnapshot {
     layers: SumTree<SyntaxLayerEntry>,
     parsed_version: clock::Global,
@@ -212,8 +211,11 @@ struct ByteChunks<'a>(text::Chunks<'a>);
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 impl SyntaxMap {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(text: &BufferSnapshot) -> Self {
+        Self {
+            snapshot: SyntaxSnapshot::new(text),
+            language_registry: None,
+        }
     }
 
     pub fn set_language_registry(&mut self, registry: Arc<LanguageRegistry>) {
@@ -242,12 +244,21 @@ impl SyntaxMap {
         self.snapshot = snapshot;
     }
 
-    pub fn clear(&mut self) {
-        self.snapshot = SyntaxSnapshot::default();
+    pub fn clear(&mut self, text: &BufferSnapshot) {
+        self.snapshot = SyntaxSnapshot::new(text);
     }
 }
 
 impl SyntaxSnapshot {
+    fn new(text: &BufferSnapshot) -> Self {
+        Self {
+            layers: SumTree::new(text),
+            parsed_version: clock::Global::default(),
+            interpolated_version: clock::Global::default(),
+            language_registry_version: 0,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.layers.is_empty()
     }
@@ -262,10 +273,10 @@ impl SyntaxSnapshot {
             return;
         }
 
-        let mut layers = SumTree::new();
+        let mut layers = SumTree::new(text);
         let mut first_edit_ix_for_depth = 0;
         let mut prev_depth = 0;
-        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
+        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>(text);
         cursor.next(text);
 
         'outer: loop {
@@ -292,7 +303,7 @@ impl SyntaxSnapshot {
                 let slice = cursor.slice(
                     &SyntaxLayerPosition {
                         depth: depth + 1,
-                        range: Anchor::Start..Anchor::End,
+                        range: text.min_anchor()..text.max_anchor(),
                         language: None,
                     },
                     Bias::Left,
@@ -388,7 +399,7 @@ impl SyntaxSnapshot {
                 let mut resolved_injection_ranges = Vec::new();
                 let mut cursor = self
                     .layers
-                    .filter::<_, ()>(|summary| summary.contains_unknown_injections);
+                    .filter::<_, ()>(text, |summary| summary.contains_unknown_injections);
                 cursor.next(text);
                 while let Some(layer) = cursor.item() {
                     let SyntaxLayerContent::Pending { language_name } = &layer.content else {
@@ -430,9 +441,9 @@ impl SyntaxSnapshot {
         log::trace!("reparse. invalidated ranges:{:?}", invalidated_ranges);
 
         let max_depth = self.layers.summary().max_depth;
-        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
+        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>(text);
         cursor.next(text);
-        let mut layers = SumTree::new();
+        let mut layers = SumTree::new(text);
 
         let mut changed_regions = ChangeRegionSet::default();
         let mut queue = BinaryHeap::new();
@@ -448,7 +459,7 @@ impl SyntaxSnapshot {
                 start_point: Point::zero().to_ts_point(),
                 end_point: text.max_point().to_ts_point(),
             }],
-            range: Anchor::Start..Anchor::End,
+            range: text.min_anchor()..text.max_anchor(),
             mode: ParseMode::Single,
         });
 
@@ -463,7 +474,7 @@ impl SyntaxSnapshot {
             } else {
                 SyntaxLayerPosition {
                     depth: max_depth + 1,
-                    range: Anchor::End..Anchor::End,
+                    range: text.max_anchor()..text.max_anchor(),
                     language: None,
                 }
             };
@@ -474,7 +485,7 @@ impl SyntaxSnapshot {
 
                 let bounded_position = SyntaxLayerPositionBeforeChange {
                     position: position.clone(),
-                    change: changed_regions.start_position(),
+                    change: changed_regions.start_position(text),
                 };
                 if bounded_position.cmp(cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&bounded_position, Bias::Left, text);
@@ -823,7 +834,7 @@ impl SyntaxSnapshot {
         let start = buffer.anchor_before(start_offset);
         let end = buffer.anchor_after(end_offset);
 
-        let mut cursor = self.layers.filter::<_, ()>(move |summary| {
+        let mut cursor = self.layers.filter::<_, ()>(buffer, move |summary| {
             if summary.max_depth > summary.min_depth {
                 true
             } else {
@@ -1597,11 +1608,11 @@ impl ChangedRegion {
 }
 
 impl ChangeRegionSet {
-    fn start_position(&self) -> ChangeStartPosition {
+    fn start_position(&self, text: &BufferSnapshot) -> ChangeStartPosition {
         self.0.first().map_or(
             ChangeStartPosition {
                 depth: usize::MAX,
-                position: Anchor::End,
+                position: text.max_anchor(),
             },
             |region| ChangeStartPosition {
                 depth: region.depth,
@@ -1650,28 +1661,26 @@ impl ChangeRegionSet {
     }
 }
 
-impl Default for SyntaxLayerSummary {
-    fn default() -> Self {
+impl sum_tree::Summary for SyntaxLayerSummary {
+    type Context = BufferSnapshot;
+
+    fn zero(buffer: &BufferSnapshot) -> Self {
         Self {
             max_depth: 0,
             min_depth: 0,
-            range: Anchor::End..Anchor::Start,
-            last_layer_range: Anchor::Start..Anchor::End,
+            range: buffer.max_anchor()..buffer.min_anchor(),
+            last_layer_range: buffer.min_anchor()..buffer.max_anchor(),
             last_layer_language: None,
             contains_unknown_injections: false,
         }
     }
-}
-
-impl sum_tree::Summary for SyntaxLayerSummary {
-    type Context = BufferSnapshot;
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         if other.max_depth > self.max_depth {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();
         } else {
-            if self.range == (Anchor::End..Anchor::End) {
+            if self.range == (buffer.max_anchor()..buffer.max_anchor()) {
                 self.range.start = other.range.start;
             }
             if other.range.end.cmp(&self.range.end, buffer).is_gt() {

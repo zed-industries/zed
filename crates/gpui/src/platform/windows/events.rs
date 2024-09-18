@@ -177,6 +177,9 @@ fn handle_timer_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
+        for runnable in state_ptr.main_receiver.drain() {
+            runnable.run();
+        }
         handle_paint_msg(handle, state_ptr)
     } else {
         None

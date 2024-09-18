@@ -4001,6 +4001,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "evals"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "client",
+ "clock",
+ "collections",
+ "env_logger",
+ "feature_flags",
+ "fs",
+ "git",
+ "gpui",
+ "http_client",
+ "language",
+ "languages",
+ "node_runtime",
+ "open_ai",
+ "project",
+ "semantic_index",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+]
+
+[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11058,17 +11085,16 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.30.13"
+version = "0.31.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a5b4ddaee55fb2bea2bf0e5000747e5f5c0de765e5a5ff87f4cd106439f4bb3"
+checksum = "355dbe4f8799b304b05e1b0f05fc59b2a18d36645cf169607da45bde2f69a1be"
 dependencies = [
- "cfg-if",
  "core-foundation-sys",
  "libc",
+ "memchr",
  "ntapi",
- "once_cell",
  "rayon",
- "windows 0.52.0",
+ "windows 0.54.0",
 ]
 
 [[package]]
@@ -13418,16 +13444,6 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
-dependencies = [
- "windows-core 0.52.0",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows"
 version = "0.54.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9252e5725dbed82865af151df558e754e4a3c2c30818359eb17465f1346a1b49"
@@ -14531,7 +14547,7 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

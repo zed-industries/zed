@@ -40,13 +40,19 @@ impl sum_tree::Item for DiffHunk<Anchor> {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
 }
 
 impl sum_tree::Summary for DiffHunkSummary {
     type Context = text::BufferSnapshot;
+
+    fn zero(buffer: &Self::Context) -> Self {
+        Self {
+            buffer_range: buffer.min_anchor()..buffer.min_anchor(),
+        }
+    }
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         self.buffer_range.start = self
@@ -63,17 +69,11 @@ pub struct BufferDiff {
     tree: SumTree<DiffHunk<Anchor>>,
 }
 
-impl Default for BufferDiff {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl BufferDiff {
-    pub fn new() -> BufferDiff {
+    pub fn new(buffer: &BufferSnapshot) -> BufferDiff {
         BufferDiff {
             last_buffer_version: None,
-            tree: SumTree::new(),
+            tree: SumTree::new(buffer),
         }
     }
 
@@ -97,11 +97,13 @@ impl BufferDiff {
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
-            !before_start && !after_end
-        });
+        let mut cursor = self
+            .tree
+            .filter::<_, DiffHunkSummary>(buffer, move |summary| {
+                let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+                let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+                !before_start && !after_end
+            });
 
         let anchor_iter = std::iter::from_fn(move || {
             cursor.next(buffer);
@@ -142,11 +144,13 @@ impl BufferDiff {
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
-            !before_start && !after_end
-        });
+        let mut cursor = self
+            .tree
+            .filter::<_, DiffHunkSummary>(buffer, move |summary| {
+                let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+                let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+                !before_start && !after_end
+            });
 
         std::iter::from_fn(move || {
             cursor.prev(buffer);
@@ -171,11 +175,11 @@ impl BufferDiff {
     #[cfg(test)]
     fn clear(&mut self, buffer: &text::BufferSnapshot) {
         self.last_buffer_version = Some(buffer.version().clone());
-        self.tree = SumTree::new();
+        self.tree = SumTree::new(buffer);
     }
 
     pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        let mut tree = SumTree::new();
+        let mut tree = SumTree::new(buffer);
 
         let diff_base_text = diff_base.to_string();
         let buffer_text = buffer.as_rope().to_string();
@@ -351,7 +355,7 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let mut diff = BufferDiff::new();
+        let mut diff = BufferDiff::new(&buffer);
         smol::block_on(diff.update(&diff_base_rope, &buffer));
         assert_hunks(
             diff.hunks(&buffer),
@@ -412,7 +416,7 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let mut diff = BufferDiff::new();
+        let mut diff = BufferDiff::new(&buffer);
         smol::block_on(diff.update(&diff_base_rope, &buffer));
         assert_eq!(diff.hunks(&buffer).count(), 8);
 

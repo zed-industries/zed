@@ -27,6 +27,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/evals",
     "crates/extension",
     "crates/extension_api",
     "crates/extension_cli",
@@ -415,7 +416,7 @@ strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"
 sys-locale = "0.3.1"
-sysinfo = "0.30.7"
+sysinfo = "0.31.0"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.9"
@@ -489,7 +490,6 @@ features = [
     "implement",
     "Foundation_Numerics",
     "Storage",
-    "System",
     "System_Threading",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
@@ -520,6 +520,7 @@ features = [
     "Win32_UI_Input_Ime",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ]
 

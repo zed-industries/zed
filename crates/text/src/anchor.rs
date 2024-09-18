@@ -151,7 +151,7 @@ impl Anchor {
                 if *buffer_id == buffer.remote_id {
                     let fragment_id = buffer.fragment_id_for_anchor(self);
                     let mut fragment_cursor =
-                        buffer.fragments.cursor::<(Option<&Locator>, usize)>();
+                        buffer.fragments.cursor::<(Option<&Locator>, usize)>(&None);
                     fragment_cursor.seek(&Some(fragment_id), Bias::Left, &None);
                     fragment_cursor
                         .item()

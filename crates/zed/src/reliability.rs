@@ -176,7 +176,7 @@ pub fn monitor_main_thread_hangs(
     let background_executor = cx.background_executor();
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
-    // Initialize SIGUSR2 handler to send a backrace to a channel.
+    // Initialize SIGUSR2 handler to send a backtrace to a channel.
     let (backtrace_tx, backtrace_rx) = mpsc::channel();
     static BACKTRACE: Mutex<Vec<backtrace::Frame>> = Mutex::new(Vec::new());
     static BACKTRACE_SENDER: OnceLock<mpsc::Sender<()>> = OnceLock::new();

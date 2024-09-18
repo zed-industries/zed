@@ -26,6 +26,7 @@ in
       nativeBuildInputs = with pkgs; [
         clang
         curl
+        cmake
         perl
         pkg-config
         protobuf

@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{btree_map, BTreeMap, VecDeque};
+use collections::{btree_map, BTreeMap, HashMap, VecDeque};
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
@@ -543,6 +543,7 @@ impl ContextProvider for BasicContextProvider {
         &self,
         _: &TaskVariables,
         location: &Location,
+        _: Option<&HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Result<TaskVariables> {
         let buffer = location.buffer.read(cx);

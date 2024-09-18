@@ -370,6 +370,9 @@ messages!(
     (WhichCommandResponse, Foreground),
     (ShellEnv, Foreground),
     (ShellEnvResponse, Foreground),
+    (TryExec, Foreground),
+    (ReadTextFile, Foreground),
+    (ReadTextFileResponse, Foreground)
 );
 
 request_messages!(
@@ -495,7 +498,9 @@ request_messages!(
     (AddWorktree, AddWorktreeResponse),
     (CreateLanguageServer, Ack),
     (WhichCommand, WhichCommandResponse),
-    (ShellEnv, ShellEnvResponse)
+    (ShellEnv, ShellEnvResponse),
+    (ReadTextFile, ReadTextFileResponse),
+    (TryExec, Ack),
 );
 
 entity_messages!(
@@ -571,7 +576,9 @@ entity_messages!(
     UpdateUserSettings,
     CreateLanguageServer,
     WhichCommand,
-    ShellEnv
+    ShellEnv,
+    TryExec,
+    ReadTextFile
 );
 
 entity_messages!(

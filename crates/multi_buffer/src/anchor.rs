@@ -48,8 +48,8 @@ impl Anchor {
 
     pub fn bias(&self) -> Bias {
         match self.text_anchor {
-            text::Anchor::Start => Bias::Left,
-            text::Anchor::End => Bias::Right,
+            text::Anchor::Start { .. } => Bias::Left,
+            text::Anchor::End { .. } => Bias::Right,
             text::Anchor::Character { bias, .. } => bias,
         }
     }
