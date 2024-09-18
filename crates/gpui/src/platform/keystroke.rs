@@ -64,13 +64,18 @@ impl Keystroke {
         // }
 
         // perform char-based matching first
-        if self.code.to_string() != self.key {
-            if self.key == target.key && self.modifiers == target.modifiers {
-                return true;
-            }
+        // if self.code.to_string() != self.key {
+        if self.key == target.key && self.modifiers == target.modifiers {
+            println!("-> Keystroke match 1, {:#?}, {:#?}", self, target);
+            return true;
         }
+        // }
 
-        target.modifiers == self.modifiers && target.code == self.code
+        let ret = target.modifiers == self.modifiers && target.code == self.code;
+        if ret {
+            println!("-> Keystroke match 2, {:#?}, {:#?}", self, target);
+        }
+        ret
     }
 
     /// TODO:

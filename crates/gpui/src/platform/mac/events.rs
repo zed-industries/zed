@@ -395,11 +395,6 @@ unsafe fn parse_keystroke(
 
 pub(crate) fn key_string_from_keycode(code: CGKeyCode, cmd: bool) -> String {
     let event = synthesize_keyboard_event(code);
-    let mut flags = CGEventFlags::empty();
-    if cmd {
-        flags |= CGEventFlags::CGEventFlagCommand;
-    }
-    event.set_flags(flags);
     unsafe {
         let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
         event.characters().to_str().to_string()
