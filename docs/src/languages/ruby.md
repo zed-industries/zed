@@ -136,7 +136,7 @@ gem install ruby-lsp
 
 Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell Zed to disable it by adding the following to your `settings.json`:
 
-```jsonc
+```json
 {
   "languages": {
     "Ruby": {
