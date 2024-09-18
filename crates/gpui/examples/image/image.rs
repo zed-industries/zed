@@ -69,25 +69,51 @@ struct ImageShowcase {
 impl Render for ImageShowcase {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            .flex()
-            .flex_row()
             .size_full()
+            .flex()
+            .flex_col()
             .justify_center()
             .items_center()
             .gap_8()
             .bg(rgb(0xFFFFFF))
-            .child(ImageContainer::new(
-                "Image loaded from a local file",
-                self.local_resource.clone(),
-            ))
-            .child(ImageContainer::new(
-                "Image loaded from a remote resource",
-                self.remote_resource.clone(),
-            ))
-            .child(ImageContainer::new(
-                "Image loaded from an asset",
-                self.asset_resource.clone(),
-            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_center()
+                    .items_center()
+                    .gap_8()
+                    .child(ImageContainer::new(
+                        "Image loaded from a local file",
+                        self.local_resource.clone(),
+                    ))
+                    .child(ImageContainer::new(
+                        "Image loaded from a remote resource",
+                        self.remote_resource.clone(),
+                    ))
+                    .child(ImageContainer::new(
+                        "Image loaded from an asset",
+                        self.asset_resource.clone(),
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_8()
+                    .child(
+                        div()
+                            .flex_col()
+                            .child("Auto Width")
+                            .child(img("https://picsum.photos/800/400").h(px(180.))),
+                    )
+                    .child(
+                        div()
+                            .flex_col()
+                            .child("Auto Height")
+                            .child(img("https://picsum.photos/480/640").w(px(180.))),
+                    ),
+            )
     }
 }
 
