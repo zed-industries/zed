@@ -1172,7 +1172,6 @@ impl Element for Div {
 
                 if let Some(requested) = requested.as_ref() {
                     if requested.0 == ix {
-                        dbg!("requesting");
                         *state.offset.borrow_mut() =
                             bounds.origin - (child_bounds.origin - point(px(0.), requested.1));
                     }
@@ -1328,13 +1327,11 @@ impl Interactivity {
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
                     let scroll_offset = scroll_handle.0.borrow().offset.clone();
-                    dbg!(&scroll_offset);
                     self.scroll_offset = Some(scroll_offset);
                 } else if self.base_style.overflow.x == Some(Overflow::Scroll)
                     || self.base_style.overflow.y == Some(Overflow::Scroll)
                 {
                     if let Some(element_state) = element_state.as_mut() {
-                        dbg!(element_state.scroll_offset.as_ref().map(|a| a.borrow()));
                         self.scroll_offset = Some(
                             element_state
                                 .scroll_offset
@@ -2552,13 +2549,6 @@ impl ScrollHandle {
     /// As you scroll further down the offset becomes more negative.
     #[track_caller]
     pub fn set_offset(&self, mut position: Point<Pixels>) {
-        if position.x.0 == 0.0 && position.y.0 == 0.0 {
-            eprintln!(
-                "!!!!!!!!!!!, {}",
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
-        dbg!("???set_offset", position);
         let state = self.0.borrow();
         *state.offset.borrow_mut() = position;
     }

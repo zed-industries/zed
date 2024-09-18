@@ -137,13 +137,13 @@ impl gpui::Element for ProjectPanelScrollbar {
             cx.paint_quad(gpui::fill(thumb_bounds, thumb_background));
             let scroll = self.scroll.clone();
             let kind = self.kind;
+            let is_vertical = self.is_vertical();
 
             cx.on_mouse_event({
                 let scroll = self.scroll.clone();
                 let is_dragging = self.scrollbar_drag_state.clone();
                 move |event: &MouseDownEvent, phase, _cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
-                        dbg!("mouse down event");
                         if !thumb_bounds.contains(&event.position) {
                             let scroll = scroll.0.borrow();
                             if let Some(Size {
@@ -165,15 +165,17 @@ impl gpui::Element for ProjectPanelScrollbar {
 
                                 let percentage = percentage.min(1. - thumb_percentage_size);
 
-                                dbg!("??");
                                 scroll
                                     .base_handle
                                     .set_offset(point(px(0.), px(-max_offset * percentage)));
                             }
                         } else {
-                            let thumb_top_offset =
-                                (event.position.y - thumb_bounds.origin.y) / bounds.size.height;
-                            is_dragging.set(Some(thumb_top_offset));
+                            let thumb_offset = if is_vertical {
+                                (event.position.y - thumb_bounds.origin.y) / bounds.size.height
+                            } else {
+                                (event.position.x - thumb_bounds.origin.x) / bounds.size.width
+                            };
+                            is_dragging.set(Some(thumb_offset));
                         }
                     }
                 }
@@ -182,7 +184,6 @@ impl gpui::Element for ProjectPanelScrollbar {
                 let scroll = self.scroll.clone();
                 move |event: &ScrollWheelEvent, phase, cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
-                        dbg!("ScrollWheelEvent");
                         let scroll = scroll.0.borrow_mut();
                         let current_offset = scroll.base_handle.offset();
 
@@ -197,7 +198,6 @@ impl gpui::Element for ProjectPanelScrollbar {
             let kind = self.kind;
             cx.on_mouse_event(move |event: &MouseMoveEvent, _, cx| {
                 if let Some(drag_state) = drag_state.get().filter(|_| event.dragging()) {
-                    dbg!("MouseMoveEvent");
                     let scroll = scroll.0.borrow();
                     if let Some(Size {
                         height: last_height,
@@ -238,7 +238,6 @@ impl gpui::Element for ProjectPanelScrollbar {
             let is_dragging = self.scrollbar_drag_state.clone();
             cx.on_mouse_event(move |_event: &MouseUpEvent, phase, cx| {
                 if phase.bubble() {
-                    dbg!("MouseUpEvent");
                     is_dragging.set(None);
                     cx.notify(view_id);
                 }
