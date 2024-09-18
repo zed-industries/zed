@@ -36,6 +36,9 @@
           "RUST_DEFAULT_PACKAGE_RUN": "zed"
         }
       }
+    },
+    "proto": {
+      "tab_size": 2
     }
   },
   "hard_tabs": false,
