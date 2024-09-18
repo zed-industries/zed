@@ -860,7 +860,7 @@ impl WorkspaceDb {
         pub async fn get_ssh_project(host: String, path: Option<String>, user: Option<String>) -> Result<Option<SerializedSshProject>> {
             SELECT id, host, path, user
             FROM ssh_projects
-            WHERE host = ? AND path = ? AND user = ?
+            WHERE host IS ? AND path IS ? AND user IS ?
             LIMIT 1
         }
     }
