@@ -12,7 +12,9 @@ use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
-use semantic_index::{OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status};
+use semantic_index::{
+    print_outstanding_envs, OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status,
+};
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smol::channel::bounded;
@@ -443,17 +445,23 @@ async fn run_evaluation(
             println!("{}", serde_json::to_string(&query_results).unwrap());
         }
 
-        cx.update(|_| {
-            drop(project);
-            drop(worktree);
-            drop(project_index);
+        eprintln!("update block that drops models >>>");
+        user_store
+            .update(cx, |_, _| {
+                drop(project);
+                drop(worktree);
+                drop(project_index);
+                drop(semantic_index);
 
-            if !semantic_index.db_connection.prepare_for_closing().wait_timeout(Duration::new(3, 0)) {
-                panic!("Timed out waiting for the semantic index to close and release its file descriptors. (We introduced this because previously we were silently leaking file descriptors and later getting 'too many open files' errors from the OS.) This is most likely happening because some number of heed::Env instances were cloned but never dropped, meaning there are still active references to their Arc<...> contents - including the file descriptors.");
-            }
-        })
-        .unwrap();
+                // if !semantic_index.db_connection.prepare_for_closing().wait_timeout(Duration::new(3, 0)) {
+                //     panic!("Timed out waiting for the semantic index to close and release its file descriptors. (We introduced this because previously we were silently leaking file descriptors and later getting 'too many open files' errors from the OS.) This is most likely happening because some number of heed::Env instances were cloned but never dropped, meaning there are still active references to their Arc<...> contents - including the file descriptors.");
+                // }
+            })
+            .unwrap();
+        eprintln!("update block that drops models <<<");
     }
+
+    print_outstanding_envs();
 
     eprint!(
         "Running evals. {}/{} covered. {}/{} overlapped. {}/{} files captured.",

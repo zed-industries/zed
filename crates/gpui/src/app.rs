@@ -769,6 +769,7 @@ impl AppContext {
                 break;
             }
 
+            let len = dropped.len();
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
@@ -776,6 +777,8 @@ impl AppContext {
                     release_callback(entity.as_mut(), self);
                 }
             }
+
+            eprintln!("dropped {} entities", len);
         }
     }
 

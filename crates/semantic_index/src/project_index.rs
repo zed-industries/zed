@@ -71,7 +71,7 @@ pub struct ProjectIndex {
 
 impl Drop for ProjectIndex {
     fn drop(&mut self) {
-        panic!("Dropping project index...");
+        eprintln!("Dropping project index...");
     }
 }
 
