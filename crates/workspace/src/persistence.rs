@@ -778,29 +778,29 @@ impl WorkspaceDb {
         {
             Ok(project)
         } else {
-            self.write(move |conn| {
-                conn.select_row_bound::<(String, String, Option<String>), SerializedSshProject>(
-                    sql!(
-                        INSERT INTO ssh_projects(
-                            host,
-                            path,
-                            user
-                        ) VALUES (?1, ?2, ?3)
-                        RETURNING id, host, path, user
-                    ),
-                )?((host.clone(), path.clone(), user.clone()))
-            })
-            .await?
-            .ok_or_else(|| anyhow!("project not found"))
+            self.insert_ssh_project(host, path, user)
+                .await?
+                .ok_or_else(|| anyhow!("failed to insert ssh project"))
         }
     }
 
     query! {
-        pub async fn get_ssh_project(host: String, path: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+        async fn get_ssh_project(host: String, path: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
             SELECT id, host, path, user
             FROM ssh_projects
             WHERE host IS ? AND path IS ? AND user IS ?
             LIMIT 1
+        }
+    }
+
+    query! {
+        async fn insert_ssh_project(host: String, path: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+            INSERT INTO ssh_projects(
+                host,
+                path,
+                user
+            ) VALUES (?1, ?2, ?3)
+            RETURNING id, host, path, user
         }
     }
 
