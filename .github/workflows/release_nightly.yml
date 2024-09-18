@@ -17,7 +17,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
-      - bundle
+      - test
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -37,7 +37,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
-      - bundle
+      - test
     needs: style
     steps:
       - name: Checkout repo
