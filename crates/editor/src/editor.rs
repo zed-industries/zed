@@ -413,9 +413,14 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
+    let show_background = all_language_settings(None, cx)
+        .language(None)
+        .inlay_hints
+        .show_background;
+
     HighlightStyle {
         color: Some(cx.theme().status().hint),
-        background_color: Some(cx.theme().status().hint_background),
+        background_color: show_background.then(|| cx.theme().status().hint_background),
         ..HighlightStyle::default()
     }
 }
