@@ -406,7 +406,13 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
-        let conn = Connection::connect_to_env().unwrap();
+        let conn = match Connection::connect_to_env() {
+            Ok(c) => c,
+            Err(err) => {
+                log::error!("Failed to connect to Wayland server: {}", err);
+                std::process::exit(1);
+            }
+        };
 
         let (globals, mut event_queue) =
             registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
