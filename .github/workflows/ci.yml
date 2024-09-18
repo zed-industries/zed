@@ -68,7 +68,7 @@ jobs:
       - name: Protobuf checks
         uses: bufbuild/buf-action@v1
         with:
-          version: v1.41.0
+          version: 1.41.0
           input: "crates/proto/proto/"
           against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
