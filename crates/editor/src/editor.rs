@@ -549,9 +549,7 @@ pub struct Editor {
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
-    // invariant: backup_completion_task.is_some() -> latest_completion_task.is_some()
-    backup_completion_task: Option<(CompletionId, Task<Option<()>>)>,
-    latest_completion_task: Option<(CompletionId, Task<Option<()>>)>,
+    completion_tasks: CompletionsTasks,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
@@ -853,6 +851,22 @@ struct RegisteredInlineCompletionProvider {
 enum ContextMenu {
     Completions(CompletionsMenu),
     CodeActions(CodeActionsMenu),
+}
+
+#[derive(Default, Debug)]
+enum CompletionsTasks {
+    Single {
+        id: CompletionId,
+        task: Task<Option<()>>,
+    },
+    WithBackup {
+        latest_id: CompletionId,
+        latest_task: Task<Option<()>>,
+        backup_id: CompletionId,
+        backup_task: Task<Option<()>>,
+    },
+    #[default]
+    None,
 }
 
 impl ContextMenu {
@@ -1893,8 +1907,7 @@ impl Editor {
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
-            latest_completion_task: None,
-            backup_completion_task: None,
+            completion_tasks: CompletionsTasks::None,
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
@@ -4227,7 +4240,7 @@ impl Editor {
             .trigger
             .as_ref()
             .and_then(|trigger| trigger.chars().next());
-        let should_cancel_backup = first_char.is_some_and(|char| !classifier.is_word(char));
+        let should_cancel_previous = first_char.is_some_and(|char| !classifier.is_word(char));
         let completions = provider.completions(&buffer, buffer_position, completion_context, cx);
         let sort_completions = provider.sort_completions();
 
@@ -4235,12 +4248,12 @@ impl Editor {
         dbg!(
             id,
             &options.trigger,
-            &should_cancel_backup,
-            &self.backup_completion_task,
-            &self.latest_completion_task,
+            &should_cancel_previous,
+            &self.completion_tasks,
         );
-        if should_cancel_backup {
-            self.backup_completion_task = None;
+        if should_cancel_previous {
+            self.completion_tasks = CompletionsTasks::None;
+            // maybe even close the menu?
         }
         let task = cx.spawn(|this, mut cx| {
             async move {
@@ -4325,25 +4338,33 @@ impl Editor {
                         _ => return,
                     }
 
-                    let is_latest = if this
-                        .latest_completion_task
-                        .as_ref()
-                        .map_or(false, |(task_id, _)| *task_id == id)
-                    {
-                        // we drop the both tasks
-                        this.backup_completion_task = None;
-                        this.latest_completion_task = None;
-                        true
-                    } else if this
-                        .backup_completion_task
-                        .as_ref()
-                        .map_or(false, |(task_id, _)| *task_id == id)
-                    {
-                        this.backup_completion_task = None;
-                        false
-                    } else {
-                        // the task didn't get cancelled, so we manually return
-                        return;
+                    let is_latest = match std::mem::take(&mut this.completion_tasks) {
+                        CompletionsTasks::Single { id: latest_id, .. }
+                        | CompletionsTasks::WithBackup { latest_id, .. }
+                            if latest_id == id =>
+                        {
+                            // if this is latest completion task, then drop all
+                            this.completion_tasks = CompletionsTasks::None;
+                            true
+                        }
+                        CompletionsTasks::WithBackup {
+                            backup_id,
+                            latest_id,
+                            latest_task,
+                            ..
+                        } if backup_id == id => {
+                            // convert to single task
+                            this.completion_tasks = CompletionsTasks::Single {
+                                id: latest_id,
+                                task: latest_task,
+                            };
+                            false
+                        }
+                        // neither latest nor backup task
+                        _ => {
+                            // the task didn't get cancelled, so we manually return
+                            return;
+                        }
                     };
                     if this.focus_handle.is_focused(cx) && menu.is_some() {
                         let menu = menu.unwrap();
@@ -4366,9 +4387,34 @@ impl Editor {
             }
             .log_err()
         });
-        let prev_task = std::mem::replace(&mut self.latest_completion_task, Some((id, task)));
-        if self.backup_completion_task.is_none() {
-            self.backup_completion_task = prev_task;
+        match std::mem::take(&mut self.completion_tasks) {
+            CompletionsTasks::None => self.completion_tasks = CompletionsTasks::Single { id, task },
+            CompletionsTasks::Single {
+                id: prev_id,
+                task: prev_task,
+            } => {
+                // move prev task to backup
+                self.completion_tasks = CompletionsTasks::WithBackup {
+                    latest_id: id,
+                    latest_task: task,
+                    backup_id: prev_id,
+                    backup_task: prev_task,
+                }
+            }
+            CompletionsTasks::WithBackup {
+                latest_id: prev_latest_id,
+                latest_task: prev_latest_task,
+                backup_id,
+                backup_task,
+            } => {
+                // replace the latest task
+                self.completion_tasks = &CompletionsTasks::WithBackup {
+                    latest_id: id,
+                    latest_task: task,
+                    backup_id,
+                    backup_task,
+                }
+            }
         }
     }
 
@@ -4631,8 +4677,7 @@ impl Editor {
                         return None;
                     }
 
-                    editor.latest_completion_task = None;
-                    editor.backup_completion_task = None;
+                    editor.completion_tasks = CompletionsTasks::None;
                     editor.discard_inline_completion(false, cx);
                     let task_context =
                         tasks
@@ -5240,7 +5285,7 @@ impl Editor {
         let excerpt_id = cursor.excerpt_id;
 
         if self.context_menu.read().is_none()
-            && self.latest_completion_task.is_none()
+            && matches!(self.completion_tasks, CompletionsTasks::None)
             && selection.start == selection.end
         {
             if let Some(provider) = self.inline_completion_provider() {
@@ -5412,8 +5457,7 @@ impl Editor {
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
         cx.notify();
-        self.latest_completion_task = None;
-        self.backup_completion_task = None;
+        self.completion_tasks = CompletionsTasks::None;
         let context_menu = self.context_menu.write().take();
         if context_menu.is_some() {
             self.update_visible_inline_completion(cx);
