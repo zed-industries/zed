@@ -160,29 +160,36 @@ impl Bookmarks {
     ) {
         let project = workspace.project().clone();
         let weak_workspace = cx.view().downgrade();
-        let bookmark_store = project.read(cx).bookmark_store();
-        let bookmarks = match operator_type {
-            OperatorType::Buffer => {
-                if let Some(buffer_id) = workspace
-                    .active_item_as::<Editor>(cx)
-                    .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
-                    .and_then(|buffer| Some(buffer.read(cx).remote_id()))
-                {
-                    bookmark_store.read(cx).get_current_editor(buffer_id, cx)
+        let bookmarks = project.update(cx, |project, cx| {
+            let bookmark_store = project.bookmark_store();
+            match operator_type {
+                OperatorType::Buffer => {
+                    if let Some(buffer_id) = workspace
+                        .active_item_as::<Editor>(cx)
+                        .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+                        .and_then(|buffer| Some(buffer.read(cx).remote_id()))
+                    {
+                        bookmark_store
+                            .update(cx, |store, cx| store.get_current_editor(buffer_id, cx))
+                    } else {
+                        vec![]
+                    }
                 }
-            }
-            OperatorType::Worktree => {
-                if let Some(project_path) = workspace
-                    .active_item(cx)
-                    .and_then(|item| item.project_path(cx))
-                {
-                    bookmark_store
-                        .read(cx)
-                        .get_current_worktree(project_path.worktree_id, cx)
+                OperatorType::Worktree => {
+                    if let Some(project_path) = workspace
+                        .active_item(cx)
+                        .and_then(|item| item.project_path(cx))
+                    {
+                        bookmark_store.update(cx, |store, cx| {
+                            store.get_current_worktree(project_path.worktree_id, cx)
+                        })
+                    } else {
+                        vec![]
+                    }
                 }
+                OperatorType::Workspace => bookmark_store.read(cx).get_all(),
             }
-            OperatorType::Workspace => bookmark_store.read(cx).get_all(),
-        };
+        });
         workspace.toggle_modal(cx, |cx| {
             let delegate = BookmarkDelegate::new(
                 cx.view().downgrade(),
