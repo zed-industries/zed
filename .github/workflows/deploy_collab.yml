@@ -32,7 +32,8 @@ jobs:
   tests:
     name: Run tests
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - self-hosted
+      - test
     needs: style
     steps:
       - name: Checkout repo
@@ -61,7 +62,7 @@ jobs:
       - tests
     runs-on:
       - self-hosted
-      - test
+      - deploy
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -89,7 +90,7 @@ jobs:
       - publish
     runs-on:
       - self-hosted
-      - test
+      - deploy
 
     steps:
       - name: Sign into Kubernetes
