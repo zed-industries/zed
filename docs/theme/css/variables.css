@@ -136,6 +136,10 @@
   --table-header-bg: hsl(220, 13%, 25%, 0.5);
   --table-alternate-bg: hsl(220, 13%, 20%, 0.4);
 
+  --warning-border: hsl(25, 100%, 85%, 0.2);
+  --warning-bg: hsl(42, 100%, 40%, 0.1);
+  --warning-icon: hsl(42, 100%, 80%);
+
   --searchbar-border-color: hsl(220, 13%, 30%);
   --searchbar-bg: hsl(220, 13%, 22%, 0.5);
   --searchbar-fg: hsl(220, 14%, 71%);
