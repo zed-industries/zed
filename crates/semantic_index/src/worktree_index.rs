@@ -1,7 +1,7 @@
+use crate::embedding::EmbeddingProvider;
 use crate::embedding_index::EmbeddingIndex;
 use crate::indexing::IndexingEntrySet;
 use crate::summary_index::SummaryIndex;
-use crate::{embedding::EmbeddingProvider, LMDBEnv};
 use anyhow::Result;
 use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
@@ -28,7 +28,7 @@ pub enum WorktreeIndexHandle {
 
 pub struct WorktreeIndex {
     worktree: Model<Worktree>,
-    db_connection: LMDBEnv,
+    db_connection: heed::Env,
     embedding_index: EmbeddingIndex,
     summary_index: SummaryIndex,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
@@ -39,7 +39,7 @@ pub struct WorktreeIndex {
 impl WorktreeIndex {
     pub fn load(
         worktree: Model<Worktree>,
-        db_connection: LMDBEnv,
+        db_connection: heed::Env,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         status_tx: channel::Sender<()>,
@@ -57,19 +57,17 @@ impl WorktreeIndex {
                 .background_executor()
                 .spawn({
                     let entries_being_indexed = Arc::clone(&entries_being_indexed);
-                    let db_connection = db_connection.clone(); // gets called once, dropped once
+                    let db_connection = db_connection.clone();
                     async move {
-                        let mut txn = db_connection.inner().write_txn()?;
+                        let mut txn = db_connection.write_txn()?;
                         let embedding_index = {
                             let db_name = worktree_abs_path.to_string_lossy();
-                            let db = db_connection
-                                .inner()
-                                .create_database(&mut txn, Some(&db_name))?;
+                            let db = db_connection.create_database(&mut txn, Some(&db_name))?;
 
                             EmbeddingIndex::new(
                                 worktree_for_index,
                                 embedding_fs,
-                                db_connection.clone(), // gets called once, NEVER DROPPED
+                                db_connection.clone(),
                                 db,
                                 language_registry,
                                 embedding_provider,
@@ -83,9 +81,7 @@ impl WorktreeIndex {
                                 // absolute path, so we don't get db key namespace conflicts with
                                 // embeddings, which use the abs path as a key.
                                 format!("digests-{}", worktree_abs_path.to_string_lossy());
-                                db_connection
-                                    .inner()
-                                    .create_database(&mut txn, Some(&db_name))?
+                                db_connection.create_database(&mut txn, Some(&db_name))?
                             };
                             let summary_db = {
                                 let db_name =
@@ -93,14 +89,12 @@ impl WorktreeIndex {
                                 // absolute path, so we don't get db key namespace conflicts with
                                 // embeddings, which use the abs path as a key.
                                 format!("summaries-{}", worktree_abs_path.to_string_lossy());
-                                db_connection
-                                    .inner()
-                                    .create_database(&mut txn, Some(&db_name))?
+                                db_connection.create_database(&mut txn, Some(&db_name))?
                             };
                             SummaryIndex::new(
                                 worktree_for_summary,
                                 summary_fs,
-                                db_connection.clone(), // gets called once, NEVER DROPPED
+                                db_connection.clone(),
                                 file_digest_db,
                                 summary_db,
                                 Arc::clone(&entries_being_indexed),
@@ -128,7 +122,7 @@ impl WorktreeIndex {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         worktree: Model<Worktree>,
-        db_connection: LMDBEnv,
+        db_connection: heed::Env,
         embedding_index: EmbeddingIndex,
         summary_index: SummaryIndex,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
@@ -161,7 +155,7 @@ impl WorktreeIndex {
         &self.worktree
     }
 
-    pub fn db_connection(&self) -> &LMDBEnv {
+    pub fn db_connection(&self) -> &heed::Env {
         &self.db_connection
     }
 
@@ -216,7 +210,6 @@ impl WorktreeIndex {
 
         let txn = self
             .db_connection
-            .inner()
             .read_txn()
             .context("failed to create read transaction")?;
         Ok(self.embedding_index().db().len(&txn)?)

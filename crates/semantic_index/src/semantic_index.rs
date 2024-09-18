@@ -12,7 +12,6 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, WeakModel};
-use heed::EnvClosingEvent;
 use project::Project;
 use std::{path::PathBuf, sync::Arc};
 use ui::ViewContext;
@@ -22,81 +21,11 @@ use workspace::Workspace;
 pub use embedding::*;
 pub use project_index::{LoadedSearchResult, ProjectIndex, SearchResult, Status};
 pub use project_index_debug_view::ProjectIndexDebugView;
-use std::sync::atomic::{AtomicUsize, Ordering};
 pub use summary_index::FileSummary;
-
-static CLONE_COUNT: AtomicUsize = AtomicUsize::new(0);
-static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-use backtrace::Backtrace;
-
-pub struct LMDBEnv {
-    env: heed::Env,
-    backtrace: Arc<Backtrace>,
-}
-
-impl Drop for LMDBEnv {
-    fn drop(&mut self) {
-        let count = DROP_COUNT.fetch_add(1, Ordering::SeqCst);
-        eprintln!("Dropped a db env. Total drops: {}", count + 1);
-        // eprintln!("Backtrace from original clone:");
-        // eprintln!("{:?}", self.backtrace);
-    }
-}
-
-impl Clone for LMDBEnv {
-    fn clone(&self) -> Self {
-        let count = CLONE_COUNT.fetch_add(1, Ordering::SeqCst);
-        eprintln!("Cloned a db env. Total clones: {}", count + 1);
-        let bt = Backtrace::new();
-
-        // eprintln!("Backtrace from clone:");
-        // eprintln!("{:?}", &bt);
-
-        Self {
-            env: self.env.clone(),
-            backtrace: Arc::new(bt),
-        }
-    }
-}
-
-impl LMDBEnv {
-    fn inner(&self) -> &heed::Env {
-        &self.env
-    }
-
-    pub fn prepare_for_closing(self) -> EnvClosingEvent {
-        let count = DROP_COUNT.fetch_add(1, Ordering::SeqCst);
-        eprintln!(
-            "Dropped a db env via prepare_for_closing. Total drops, counting this one: {}",
-            count + 1
-        );
-        // eprintln!("Backtrace from original clone:");
-        // eprintln!("{:?}", self.backtrace);
-
-        let env = std::mem::ManuallyDrop::new(self);
-        unsafe { std::ptr::read(&env.env).prepare_for_closing() }
-    }
-
-    // Constructor method to create a new LMDBEnv
-    pub fn new(env: heed::Env) -> Self {
-        let count = CLONE_COUNT.fetch_add(1, Ordering::SeqCst);
-        eprintln!("Created a db env. Total clones: {}", count + 1);
-        let bt = Backtrace::new();
-
-        // eprintln!("Backtrace from new:");
-        // eprintln!("{:?}", &bt);
-
-        Self {
-            env,
-            backtrace: Arc::new(bt),
-        }
-    }
-}
 
 pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
-    pub db_connection: LMDBEnv,
+    db_connection: heed::Env,
     project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
 }
 
@@ -141,7 +70,7 @@ impl SemanticDb {
         .ok();
 
         Ok(SemanticDb {
-            db_connection: LMDBEnv::new(db_connection), // gets called once, gets dropped once
+            db_connection,
             embedding_provider,
             project_indices: HashMap::default(),
         })
@@ -219,7 +148,7 @@ impl SemanticDb {
         let project_index = cx.new_model(|cx| {
             ProjectIndex::new(
                 project.clone(),
-                self.db_connection.clone(), // gets called once, NEVER DROPPED
+                self.db_connection.clone(),
                 self.embedding_provider.clone(),
                 cx,
             )

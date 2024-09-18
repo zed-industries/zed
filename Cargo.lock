@@ -9866,7 +9866,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
- "backtrace",
  "blake3",
  "client",
  "clock",
