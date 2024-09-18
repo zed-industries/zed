@@ -258,6 +258,19 @@ impl PickerDelegate for RecentProjectsDelegate {
                             dev_server_project.paths.join("")
                         )
                     }
+                    SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                        let mut path = String::new();
+                        if let Some(user) = &ssh_project.user {
+                            path.push_str(user);
+                            path.push('@');
+                        }
+                        path.push_str(&ssh_project.host);
+                        if let Some(ssh_path) = &ssh_project.path {
+                            path.push(':');
+                            path.push_str(ssh_path);
+                        }
+                        path
+                    }
                 };
 
                 StringMatchCandidate::new(id, combined_string)
@@ -364,6 +377,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 };
                                 open_dev_server_project(replace_current_window, dev_server_project.id, project_id, cx)
                         }
+                        SerializedWorkspaceLocation::Ssh(_) => {
+                            println!("TODO: Open SSH project");
+                            Task::ready(Err(anyhow::anyhow!("TODO: Open SSH project")))
+                        }
                     }
                 }
                 })
@@ -416,6 +433,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .filter_map(|i| paths.paths().get(*i).cloned())
                     .collect(),
             ),
+            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(vec![PathBuf::from(
+                format!("{}:{}", ssh_project.host, ssh_project.path.as_deref().unwrap_or_default()),
+            )]),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",

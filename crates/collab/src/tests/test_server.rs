@@ -843,6 +843,7 @@ impl TestClient {
         let project = cx.update(|cx| {
             Project::ssh(
                 ssh,
+                None,
                 self.client().clone(),
                 self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),

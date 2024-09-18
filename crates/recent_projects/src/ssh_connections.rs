@@ -387,40 +387,21 @@ pub async fn open_ssh_project(
                 .read(cx)
                 .prompt
                 .clone();
-            connect_over_ssh(connection_options, ui, cx)
+            connect_over_ssh(connection_options.clone(), ui, cx)
         })?
         .await;
 
     if result.is_err() {
         window.update(cx, |_, cx| cx.remove_window()).ok();
     }
-
     let session = result?;
 
-    let project = cx.update(|cx| {
-        project::Project::ssh(
-            session,
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            cx,
-        )
-    })?;
-
-    for path in paths {
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_worktree(&path.path, true, cx)
-            })?
-            .await?;
-    }
-
-    window.update(cx, |_, cx| {
-        cx.replace_root_view(|cx| Workspace::new(None, project, app_state, cx))
-    })?;
-    window.update(cx, |_, cx| cx.activate_window())?;
+    let paths = paths.into_iter().map(|path| path.path).collect::<Vec<_>>();
+    let _ = cx
+        .update(|cx| {
+            workspace::open_ssh_project(window, connection_options, session, app_state, paths, cx)
+        })?
+        .await?;
 
     Ok(())
 }

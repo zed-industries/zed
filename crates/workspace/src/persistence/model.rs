@@ -20,6 +20,51 @@ use ui::SharedString;
 use util::ResultExt;
 use uuid::Uuid;
 
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
+pub struct SshProjectId(pub u64);
+// TODO: Implement Bind and Column for SshProjectId and DevServerProjectId,
+// so we don't have to return Option<u64>
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SerializedSshProject {
+    pub id: SshProjectId,
+    pub host: String,
+    // TODO: Should this be a Vec?
+    pub path: Option<String>,
+    pub user: Option<String>,
+}
+
+impl StaticColumnCount for SerializedSshProject {}
+impl Bind for &SerializedSshProject {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.id.0, start_index)?;
+        let next_index = statement.bind(&self.host, next_index)?;
+        let next_index = statement.bind(&self.path, next_index)?;
+        statement.bind(&self.user, next_index)
+    }
+}
+
+impl Column for SerializedSshProject {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let id = statement.column_int64(start_index)?;
+        let host = statement.column_text(start_index + 1)?.to_string();
+        let (path, _) = Option::<String>::column(statement, start_index + 2)?;
+        let (user, _) = Option::<String>::column(statement, start_index + 3)?;
+
+        Ok((
+            Self {
+                id: SshProjectId(id as u64),
+                host,
+                path,
+                user,
+            },
+            start_index + 4,
+        ))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SerializedDevServerProject {
     pub id: DevServerProjectId,
@@ -58,7 +103,6 @@ impl Column for LocalPaths {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let path_blob = statement.column_blob(start_index)?;
         let paths: Arc<Vec<PathBuf>> = if path_blob.is_empty() {
-            println!("path blog is empty");
             Default::default()
         } else {
             bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?
@@ -146,6 +190,7 @@ impl Column for SerializedDevServerProject {
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local(LocalPaths, LocalPathsOrder),
+    Ssh(SerializedSshProject),
     DevServer(SerializedDevServerProject),
 }
 

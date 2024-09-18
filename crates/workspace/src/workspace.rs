@@ -49,15 +49,19 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{model::SerializedWorkspace, SerializedWindowBounds, DB};
 pub use persistence::{
     model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
+};
+use persistence::{
+    model::{SerializedSshProject, SerializedWorkspace, SshProjectId},
+    SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
+use remote::{SshConnectionOptions, SshSession};
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -3995,6 +3999,7 @@ impl Workspace {
 
     fn serialize_workspace_internal(&self, cx: &mut WindowContext) -> Task<()> {
         let Some(database_id) = self.database_id() else {
+            eprintln!(">>>>>>>>>>> no database id <<<<<<<<<<,");
             return Task::ready(());
         };
 
@@ -4097,7 +4102,18 @@ impl Workspace {
             }
         }
 
-        let location = if let Some(local_paths) = self.local_paths(cx) {
+        eprintln!("--------------------- saving workspace (database_id: {:?}) ---------------------------", database_id);
+        let location = if let Some(ssh_project_id) = self.project().read(cx).ssh_project_id() {
+            eprintln!("saving ssh project");
+            Some(SerializedWorkspaceLocation::Ssh(SerializedSshProject {
+                // TODO: Fix this
+                id: SshProjectId(ssh_project_id),
+                host: "127.0.0.1".to_string(),
+                path: Some("/Users/thorstenball/work/projs/go-proj".to_string()),
+                user: None,
+            }))
+        } else if let Some(local_paths) = self.local_paths(cx) {
+            println!("we do have local paths");
             if !local_paths.is_empty() {
                 Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
             } else {
@@ -4105,6 +4121,7 @@ impl Workspace {
             }
         } else if let Some(dev_server_project_id) = self.project().read(cx).dev_server_project_id()
         {
+            println!("we have a dev server project id");
             let store = dev_server_projects::Store::global(cx).read(cx);
             maybe!({
                 let project = store.dev_server_project(dev_server_project_id)?;
@@ -4120,6 +4137,8 @@ impl Workspace {
         } else {
             None
         };
+
+        println!("workspace. saving. location: {:?}", location);
 
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
@@ -5473,6 +5492,64 @@ pub fn join_hosted_project(
         })?;
 
         Ok(())
+    })
+}
+
+pub fn open_ssh_project(
+    window: WindowHandle<Workspace>,
+    connection_options: SshConnectionOptions,
+    session: Arc<SshSession>,
+    app_state: Arc<AppState>,
+    paths: Vec<PathBuf>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    // TODO: Find or create an ssh_project in the database, for the given connection_options
+    eprintln!("connection_options: {:?}", connection_options);
+    let ssh_project_id = 12345 as u64;
+
+    let project = project::Project::ssh(
+        session,
+        Some(ssh_project_id),
+        app_state.client.clone(),
+        app_state.node_runtime.clone(),
+        app_state.user_store.clone(),
+        app_state.languages.clone(),
+        app_state.fs.clone(),
+        cx,
+    );
+
+    cx.spawn(|mut cx| async move {
+        for path in paths {
+            project
+                .update(&mut cx, |project, cx| {
+                    eprintln!(
+                        "open_ssh_project. project.is_via_ssh: {:?}",
+                        project.is_via_ssh()
+                    );
+
+                    project.find_or_create_worktree(&path, true, cx)
+                })?
+                .await?;
+        }
+
+        let serialized_workspace: Option<SerializedWorkspace> =
+            persistence::DB.workspace_for_ssh_project(SshProjectId(ssh_project_id));
+
+        let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
+            eprintln!("we do have a serialized workspace for the SSH project");
+            serialized_workspace.id
+        } else {
+            eprintln!("we do NOT have a serialized workspace for the SSH project");
+            persistence::DB.next_id().await?
+        };
+
+        cx.update_window(window.into(), |_, cx| {
+            cx.replace_root_view(|cx| {
+                Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
+            });
+        })?;
+
+        window.update(&mut cx, |_, cx| cx.activate_window())
     })
 }
 

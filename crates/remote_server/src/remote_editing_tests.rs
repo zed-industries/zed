@@ -511,5 +511,5 @@ fn build_project(ssh: Arc<SshSession>, cx: &mut TestAppContext) -> Model<Project
         language::init(cx);
     });
 
-    cx.update(|cx| Project::ssh(ssh, client, node, user_store, languages, fs, cx))
+    cx.update(|cx| Project::ssh(ssh, None, client, node, user_store, languages, fs, cx))
 }

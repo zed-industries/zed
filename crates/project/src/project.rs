@@ -158,6 +158,7 @@ pub struct Project {
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
+    ssh_project_id: Option<u64>,
     search_history: SearchHistory,
     search_included_history: SearchHistory,
     search_excluded_history: SearchHistory,
@@ -685,6 +686,7 @@ impl Project {
                 tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
+                ssh_project_id: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_buffers: Default::default(),
@@ -698,6 +700,7 @@ impl Project {
 
     pub fn ssh(
         ssh: Arc<SshSession>,
+        ssh_project_id: Option<u64>,
         client: Arc<Client>,
         node: Arc<dyn NodeRuntime>,
         user_store: Model<UserStore>,
@@ -771,6 +774,7 @@ impl Project {
                 tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
+                ssh_project_id,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_buffers: Default::default(),
@@ -951,6 +955,7 @@ impl Project {
                     .payload
                     .dev_server_project_id
                     .map(DevServerProjectId),
+                ssh_project_id: None,
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
@@ -1218,6 +1223,10 @@ impl Project {
 
     pub fn dev_server_project_id(&self) -> Option<DevServerProjectId> {
         self.dev_server_project_id
+    }
+
+    pub fn ssh_project_id(&self) -> Option<u64> {
+        self.ssh_project_id
     }
 
     pub fn supports_remote_terminal(&self, cx: &AppContext) -> bool {
