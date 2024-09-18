@@ -14,8 +14,7 @@ jobs:
   style:
     name: Check formatting and Clippy lints
     runs-on:
-      - self-hosted
-      - test
+      - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -32,8 +31,7 @@ jobs:
   tests:
     name: Run tests
     runs-on:
-      - self-hosted
-      - test
+      - buildjet-16vcpu-ubuntu-2204
     needs: style
     steps:
       - name: Checkout repo
@@ -61,8 +59,7 @@ jobs:
       - style
       - tests
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -89,8 +86,7 @@ jobs:
     needs:
       - publish
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2204
 
     steps:
       - name: Sign into Kubernetes
