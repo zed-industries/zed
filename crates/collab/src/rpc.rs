@@ -956,7 +956,6 @@ impl Server {
 
             tracing::info!("connection opened");
 
-
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
             let http_client = match IsahcHttpClient::builder().default_header("User-Agent", user_agent).build() {
                 Ok(http_client) => Arc::new(IsahcHttpClient::from(http_client)),

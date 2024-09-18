@@ -15,8 +15,8 @@ test-support = []
 path = "src/isahc_http_client.rs"
 
 [dependencies]
+anyhow.workspace = true
+futures.workspace = true
 http_client.workspace = true
 isahc.workspace = true
-futures.workspace = true
-anyhow.workspace = true
 util.workspace = true
