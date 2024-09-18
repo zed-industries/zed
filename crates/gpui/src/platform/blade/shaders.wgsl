@@ -488,8 +488,8 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 
     let half_thickness = underline.thickness * 0.5;
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
-    let frequency = M_PI_F * 3.0 * underline.thickness / 8.0;
-    let amplitude = 1.0 / (2.0 * underline.thickness);
+    let frequency = M_PI_F * 3.0 * underline.thickness / 3.0;
+    let amplitude = 1.0 / (4.0 * underline.thickness);
     let sine = sin(st.x * frequency) * amplitude;
     let dSine = cos(st.x * frequency) * amplitude * frequency;
     let distance = (st.y - sine) / sqrt(1.0 + dSine * dSine);
