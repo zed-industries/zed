@@ -4929,7 +4929,7 @@ impl From<(&'static str, u32)> for ElementId {
 
 /// A rectangle to be rendered in the window at the given position and size.
 /// Passed as an argument [`WindowContext::paint_quad`].
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct PaintQuad {
     /// The bounds of the quad within the window.
     pub bounds: Bounds<Pixels>,

@@ -1931,7 +1931,7 @@ impl EditorElement {
         content_origin: gpui::Point<Pixels>,
         cx: &mut WindowContext,
     ) -> SmallVec<[AnyElement; 1]> {
-        let mut line_elements = SmallVec::new();
+        let mut inline_elements = SmallVec::new();
         for (ix, line) in line_layouts.iter_mut().enumerate() {
             let row = start_row + DisplayRow(ix as u32);
             line.prepaint(
@@ -1939,11 +1939,11 @@ impl EditorElement {
                 scroll_pixel_position,
                 row,
                 content_origin,
-                &mut line_elements,
+                &mut inline_elements,
                 cx,
             );
         }
-        line_elements
+        inline_elements
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3478,10 +3478,24 @@ impl EditorElement {
                 whitespace_setting,
                 invisible_display_ranges,
                 cx,
-            )
+            );
+
+            let line_height = layout.position_map.line_height;
+            let line_y = line_height
+                * (row.as_f32() - layout.position_map.scroll_pixel_position.y / line_height);
+
+            cx.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    layout.hitbox.bounds.upper_right()
+                        + point(px(-20.) - self.style.scrollbar_width, line_y),
+                    size(px(20.), line_height - px(1.)),
+                ),
+                background: Hsla::red(),
+                ..Default::default()
+            });
         }
 
-        for line_element in &mut layout.line_elements {
+        for line_element in &mut layout.inline_elements {
             line_element.paint(cx);
         }
     }
@@ -4330,7 +4344,7 @@ pub(crate) struct LineWithInvisibles {
 #[allow(clippy::large_enum_variant)]
 enum LineFragment {
     Text(ShapedLine),
-    Element {
+    InlineElement {
         element: Option<AnyElement>,
         size: Size<Pixels>,
         len: usize,
@@ -4341,7 +4355,7 @@ impl fmt::Debug for LineFragment {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             LineFragment::Text(shaped_line) => f.debug_tuple("Text").field(shaped_line).finish(),
-            LineFragment::Element { size, len, .. } => f
+            LineFragment::InlineElement { size, len, .. } => f
                 .debug_struct("Element")
                 .field("size", size)
                 .field("len", len)
@@ -4426,7 +4440,7 @@ impl LineWithInvisibles {
 
                 width += size.width;
                 len += highlighted_chunk.text.len();
-                fragments.push(LineFragment::Element {
+                fragments.push(LineFragment::InlineElement {
                     element: Some(element),
                     size,
                     len: highlighted_chunk.text.len(),
@@ -4542,7 +4556,7 @@ impl LineWithInvisibles {
                 LineFragment::Text(line) => {
                     fragment_origin.x += line.width;
                 }
-                LineFragment::Element { element, size, .. } => {
+                LineFragment::InlineElement { element, size, .. } => {
                     let mut element = element
                         .take()
                         .expect("you can't prepaint LineWithInvisibles twice");
@@ -4581,7 +4595,7 @@ impl LineWithInvisibles {
                     line.paint(fragment_origin, line_height, cx).log_err();
                     fragment_origin.x += line.width;
                 }
-                LineFragment::Element { size, .. } => {
+                LineFragment::InlineElement { size, .. } => {
                     fragment_origin.x += size.width;
                 }
             }
@@ -4715,7 +4729,7 @@ impl LineWithInvisibles {
                     fragment_start_x += shaped_line.width;
                     fragment_start_index = fragment_end_index;
                 }
-                LineFragment::Element { len, size, .. } => {
+                LineFragment::InlineElement { len, size, .. } => {
                     let fragment_end_index = fragment_start_index + len;
                     if index < fragment_end_index {
                         return fragment_start_x;
@@ -4745,7 +4759,7 @@ impl LineWithInvisibles {
                     fragment_start_x = fragment_end_x;
                     fragment_start_index += shaped_line.len;
                 }
-                LineFragment::Element { len, size, .. } => {
+                LineFragment::InlineElement { len, size, .. } => {
                     let fragment_end_x = fragment_start_x + size.width;
                     if x < fragment_end_x {
                         return Some(fragment_start_index);
@@ -4771,7 +4785,7 @@ impl LineWithInvisibles {
                     }
                     fragment_start_index = fragment_end_index;
                 }
-                LineFragment::Element { len, .. } => {
+                LineFragment::InlineElement { len, .. } => {
                     let fragment_end_index = fragment_start_index + len;
                     if index < fragment_end_index {
                         return None;
@@ -5325,7 +5339,7 @@ impl Element for EditorElement {
                         }
                     });
 
-                    let line_elements = self.prepaint_lines(
+                    let inline_elements = self.prepaint_lines(
                         start_row,
                         &mut line_layouts,
                         line_height,
@@ -5596,7 +5610,7 @@ impl Element for EditorElement {
                         highlighted_ranges,
                         highlighted_gutter_ranges,
                         redacted_ranges,
-                        line_elements,
+                        inline_elements,
                         line_numbers,
                         blamed_display_rows,
                         inline_blame,
@@ -5734,7 +5748,7 @@ pub struct EditorLayout {
     visible_display_row_range: Range<DisplayRow>,
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
-    line_elements: SmallVec<[AnyElement; 1]>,
+    inline_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
