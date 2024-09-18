@@ -412,6 +412,19 @@ impl Default for EditorStyle {
     }
 }
 
+pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
+    let show_background = all_language_settings(None, cx)
+        .language(None)
+        .inlay_hints
+        .show_background;
+
+    HighlightStyle {
+        color: Some(cx.theme().status().hint),
+        background_color: show_background.then(|| cx.theme().status().hint_background),
+        ..HighlightStyle::default()
+    }
+}
+
 type CompletionId = usize;
 
 #[derive(Clone, Debug)]
@@ -10034,9 +10047,8 @@ impl Editor {
                                                 syntax: cx.editor_style.syntax.clone(),
                                                 status: cx.editor_style.status.clone(),
                                                 inlay_hints_style: HighlightStyle {
-                                                    color: Some(cx.theme().status().hint),
                                                     font_weight: Some(FontWeight::BOLD),
-                                                    ..HighlightStyle::default()
+                                                    ..make_inlay_hints_style(cx)
                                                 },
                                                 suggestions_style: HighlightStyle {
                                                     color: Some(cx.theme().status().predictive),
@@ -12992,10 +13004,7 @@ impl Render for Editor {
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                inlay_hints_style: HighlightStyle {
-                    color: Some(cx.theme().status().hint),
-                    ..HighlightStyle::default()
-                },
+                inlay_hints_style: make_inlay_hints_style(cx),
                 suggestions_style: HighlightStyle {
                     color: Some(cx.theme().status().predictive),
                     ..HighlightStyle::default()
