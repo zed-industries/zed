@@ -1276,7 +1276,6 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
-            dbg!("Autoscroll");
             self.scroll_handle.scroll_to_item(index);
             cx.notify();
         }
@@ -2727,7 +2726,7 @@ impl ProjectPanel {
                 .cursor_default()
                 .children(self.width.map(|width| {
                     ProjectPanelScrollbar::horizontal(
-                        percentage as f32..end_offset as f32,
+                        percentage..end_offset,
                         self.scroll_handle.clone(),
                         self.horizontal_scrollbar_drag_thumb_offset.clone(),
                         cx.view().entity_id(),
@@ -2919,6 +2918,8 @@ impl Render for ProjectPanel {
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
+                    // TODO kb: current item highlight and long enough file names both are trimmed from the right side
+                    // and do not update when the project panel is scrolled to the right
                     .with_width_from_item(Some(self.max_width_item_index))
                     .track_scroll(self.scroll_handle.clone()),
                 )

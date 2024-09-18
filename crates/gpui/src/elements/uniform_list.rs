@@ -5,8 +5,8 @@
 //! elements with uniform height.
 
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
-    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    point, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
+    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
     ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
     ViewContext, WindowContext,
 };
@@ -230,7 +230,7 @@ impl Element for UniformList {
                 if self.item_count > 0 {
                     let content_height =
                         item_height * self.item_count + padding.top + padding.bottom;
-                    let is_scrolled_vertically = scroll_offset.y != px(0.);
+                    let is_scrolled_vertically = !scroll_offset.y.is_zero();
                     let min_vertical_scroll_offset = padded_bounds.size.height - content_height;
                     if is_scrolled_vertically && scroll_offset.y < min_vertical_scroll_offset {
                         shared_scroll_offset.borrow_mut().y = min_vertical_scroll_offset;
@@ -239,7 +239,7 @@ impl Element for UniformList {
 
                     let content_width = measurement.width + padding.left + padding.right;
                     let min_horizontal_scroll_offset = padded_bounds.size.width - content_width;
-                    let is_scrolled_horizontally = scroll_offset.x != px(0.);
+                    let is_scrolled_horizontally = !scroll_offset.x.is_zero();
                     if is_scrolled_horizontally && scroll_offset.x < min_horizontal_scroll_offset {
                         shared_scroll_offset.borrow_mut().x = min_horizontal_scroll_offset;
 
@@ -249,7 +249,6 @@ impl Element for UniformList {
                     if let Some(ix) = shared_scroll_to_item {
                         let list_height = padded_bounds.size.height;
                         let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
-                        dbg!(&updated_scroll_offset);
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;

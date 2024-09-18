@@ -187,9 +187,9 @@ impl gpui::Element for ProjectPanelScrollbar {
                         let scroll = scroll.0.borrow_mut();
                         let current_offset = scroll.base_handle.offset();
 
-                        scroll.base_handle.set_offset(
-                            dbg!(current_offset) + dbg!(event.delta.pixel_delta(cx.line_height())),
-                        );
+                        scroll
+                            .base_handle
+                            .set_offset(current_offset + event.delta.pixel_delta(cx.line_height()));
                     }
                 }
             });
