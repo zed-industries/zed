@@ -462,3 +462,52 @@ impl NodeRuntime for FakeNodeRuntime {
         unreachable!("Should not install packages {packages:?}")
     }
 }
+
+// TODO: Remove this when headless binary can  run node
+pub struct DummyNodeRuntime;
+
+impl DummyNodeRuntime {
+    pub fn new() -> Arc<dyn NodeRuntime> {
+        Arc::new(Self)
+    }
+}
+
+#[async_trait::async_trait]
+impl NodeRuntime for DummyNodeRuntime {
+    async fn binary_path(&self) -> anyhow::Result<PathBuf> {
+        anyhow::bail!("Dummy Node Runtime")
+    }
+
+    async fn node_environment_path(&self) -> anyhow::Result<OsString> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn run_npm_subcommand(
+        &self,
+        _: Option<&Path>,
+        _subcommand: &str,
+        _args: &[&str],
+    ) -> anyhow::Result<Output> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn npm_package_latest_version(&self, _name: &str) -> anyhow::Result<String> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn npm_package_installed_version(
+        &self,
+        _local_package_directory: &Path,
+        _name: &str,
+    ) -> Result<Option<String>> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn npm_install_packages(
+        &self,
+        _: &Path,
+        _packages: &[(&str, &str)],
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("Dummy node runtime")
+    }
+}

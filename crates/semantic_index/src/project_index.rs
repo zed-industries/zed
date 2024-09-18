@@ -15,7 +15,14 @@ use log;
 use project::{Project, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use std::{cmp::Ordering, future::Future, num::NonZeroUsize, ops::Range, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    future::Future,
+    num::NonZeroUsize,
+    ops::{Range, RangeInclusive},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::ResultExt;
 
 #[derive(Debug)]
@@ -24,6 +31,14 @@ pub struct SearchResult {
     pub path: Arc<Path>,
     pub range: Range<usize>,
     pub score: f32,
+}
+
+pub struct LoadedSearchResult {
+    pub path: Arc<Path>,
+    pub range: Range<usize>,
+    pub full_path: PathBuf,
+    pub file_content: String,
+    pub row_range: RangeInclusive<u32>,
 }
 
 pub struct WorktreeSearchResult {

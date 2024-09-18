@@ -9,7 +9,7 @@ use context_servers::{
     protocol::PromptInfo,
 };
 use gpui::{Task, WeakView, WindowContext};
-use language::{CodeLabel, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use text::LineEnding;
@@ -96,7 +96,6 @@ impl SlashCommand for ContextServerSlashCommand {
                         replace_previous_arguments: false,
                     })
                     .collect();
-
                 Ok(completions)
             })
         } else {
@@ -107,6 +106,8 @@ impl SlashCommand for ContextServerSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -141,6 +142,7 @@ impl SlashCommand for ContextServerSlashCommand {
                                 .description
                                 .unwrap_or(format!("Result from {}", prompt_name)),
                         ),
+                        metadata: None,
                     }],
                     text: prompt,
                     run_commands_in_text: false,

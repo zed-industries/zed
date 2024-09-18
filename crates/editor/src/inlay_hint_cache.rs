@@ -337,7 +337,7 @@ impl InlayHintCache {
     /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
     /// To reduce inlay hint jumping, attempts to query a visible range of the editor(s) first,
     /// followed by the delayed queries of the same range above and below the visible one.
-    /// This way, concequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
+    /// This way, subsequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
     pub(super) fn spawn_hint_refresh(
         &mut self,
         reason_description: &'static str,

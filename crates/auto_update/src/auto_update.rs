@@ -244,19 +244,22 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
     let auto_updater = AutoUpdater::get(cx)?;
     let release_channel = ReleaseChannel::try_global(cx)?;
 
-    if matches!(
-        release_channel,
-        ReleaseChannel::Stable | ReleaseChannel::Preview
-    ) {
-        let auto_updater = auto_updater.read(cx);
-        let release_channel = release_channel.dev_name();
-        let current_version = auto_updater.current_version;
-        let url = &auto_updater
-            .http_client
-            .build_url(&format!("/releases/{release_channel}/{current_version}"));
-        cx.open_url(url);
+    match release_channel {
+        ReleaseChannel::Stable | ReleaseChannel::Preview => {
+            let auto_updater = auto_updater.read(cx);
+            let current_version = auto_updater.current_version;
+            let release_channel = release_channel.dev_name();
+            let path = format!("/releases/{release_channel}/{current_version}");
+            let url = &auto_updater.http_client.build_url(&path);
+            cx.open_url(url);
+        }
+        ReleaseChannel::Nightly => {
+            cx.open_url("https://github.com/zed-industries/zed/commits/nightly/");
+        }
+        ReleaseChannel::Dev => {
+            cx.open_url("https://github.com/zed-industries/zed/commits/main/");
+        }
     }
-
     None
 }
 

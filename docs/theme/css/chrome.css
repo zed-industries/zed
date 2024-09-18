@@ -3,7 +3,7 @@
 @import "variables.css";
 
 html {
-  background-color: rgb(246, 245, 240);
+  background-color: var(--bg);
   scrollbar-color: var(--scrollbar) var(--bg);
 }
 #searchresults a,
@@ -58,7 +58,7 @@ a > .hljs {
   height: var(--menu-bar-height);
 }
 #menu-bar.bordered {
-  border-block-end-color: var(--table-border-color);
+  border-block-end-color: var(--divider);
 }
 #menu-bar i,
 #menu-bar .icon-button {
@@ -73,7 +73,7 @@ a > .hljs {
   transition: color 0.5s;
 }
 #menu-bar .icon-button:hover {
-  background-color: hsl(219, 93%, 42%, 0.15);
+  background-color: var(--icon-btn-bg-hover);
 }
 
 @media only screen and (max-width: 420px) {
@@ -116,6 +116,7 @@ a > .hljs {
   align-items: center;
   flex: 1;
   overflow: hidden;
+  filter: var(--logo-brightness);
 }
 .js .menu-title {
   cursor: pointer;
@@ -249,9 +250,10 @@ a:hover > .hljs {
 }
 
 pre {
-  background-color: white;
-  border: 1px rgba(8, 76, 207, 0.3) solid;
-  box-shadow: rgba(8, 76, 207, 0.07) 4px 4px 0px 0px;
+  background-color: var(--pre-bg);
+  border: 1px solid;
+  border-color: var(--pre-border);
+  box-shadow: var(--pre-shadow) 4px 4px 0px 0px;
   position: relative;
 }
 pre > .hljs {
@@ -445,7 +447,8 @@ ul#searchresults span.teaser em {
   overscroll-behavior-y: contain;
   background-color: var(--sidebar-bg);
   color: var(--sidebar-fg);
-  border-right: 1px solid hsl(219, 93%, 42%, 0.15);
+  border-right: 1px solid;
+  border-color: var(--divider);
 }
 [dir="rtl"] .sidebar {
   left: unset;
@@ -606,7 +609,7 @@ ul#searchresults span.teaser em {
   margin: 5px 0px;
 }
 .chapter .spacer {
-  background-color: var(--sidebar-spacer);
+  background-color: var(--divider);
 }
 
 @media (-moz-touch-enabled: 1), (pointer: coarse) {
@@ -628,11 +631,11 @@ ul#searchresults span.teaser em {
 
 .theme-popup {
   position: absolute;
-  left: 10px;
-  top: var(--menu-bar-height);
+  left: 32px;
+  top: calc(var(--menu-bar-height) - 12px);
   z-index: 1000;
   border-radius: 4px;
-  font-size: 0.7em;
+  font-size: 1.4rem;
   color: var(--fg);
   background: var(--theme-popup-bg);
   border: 1px solid var(--theme-popup-border);
@@ -654,7 +657,7 @@ ul#searchresults span.teaser em {
   width: 100%;
   border: 0;
   margin: 0;
-  padding: 2px 20px;
+  padding: 2px 24px;
   line-height: 25px;
   white-space: nowrap;
   text-align: start;
@@ -662,32 +665,36 @@ ul#searchresults span.teaser em {
   color: inherit;
   background: inherit;
   font-size: inherit;
+  font-family: inherit;
 }
 .theme-popup .theme:hover {
   background-color: var(--theme-hover);
 }
 
 .theme-selected::before {
+  font-family: Arial, Helvetica, sans-serif;
+  text-align: center;
   display: inline-block;
   content: "✓";
-  margin-inline-start: -14px;
-  width: 14px;
+  margin-inline-start: -20px;
+  width: 20px;
 }
 
 .download-button {
-  background: hsl(220, 60%, 95%);
-  color: hsl(220, 60%, 30%);
+  background: var(--download-btn-bg);
+  color: var(--download-btn-color);
   padding: 4px 8px;
-  border: 1px solid hsla(220, 60%, 40%, 0.2);
+  border: 1px solid;
+  border-color: var(--download-btn-border);
   font-size: 1.4rem;
   border-radius: 4px;
-  box-shadow: hsla(220, 40%, 60%, 0.1) 0px -2px 0px 0px inset;
+  box-shadow: var(--download-btn-shadow) 0px -2px 0px 0px inset;
   transition: 100ms;
   transition-property: box-shadow, border-color, background-color;
 }
 
 .download-button:hover {
-  background: hsl(220, 60%, 93%);
-  border-color: hsla(220, 60%, 50%, 0.2);
+  background: var(--download-btn-bg);
+  border-color: var(--download-btn-border-hover);
   box-shadow: none;
 }
