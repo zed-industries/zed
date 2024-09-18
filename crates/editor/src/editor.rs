@@ -4521,7 +4521,17 @@ impl Editor {
 
     pub fn toggle_bookmark(&mut self, cx: &mut ViewContext<Self>) {
         let cursor_position: Point = self.selections.newest(cx).head();
-        let line_no = cursor_position.row as usize;
+        let bias = if cursor_position.row == 0 {
+            Bias::Right
+        } else {
+            Bias::Left
+        };
+        let bookmark_position = self
+            .snapshot(cx)
+            .display_snapshot
+            .buffer_snapshot
+            .anchor_at(Point::new(cursor_position.row, 0), bias)
+            .text_anchor;
         let content = self.snapshot(cx).line(DisplayRow(cursor_position.row));
         let buffer_id = self
             .snapshot(cx)
@@ -4537,7 +4547,7 @@ impl Editor {
             return;
         };
         project.update(cx, |project, cx| {
-            project.toggle_bookmark(buffer_id, line_no, content, cx);
+            project.toggle_bookmark(buffer_id, bookmark_position, content, cx);
         });
         cx.notify();
     }

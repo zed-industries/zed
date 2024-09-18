@@ -4,9 +4,9 @@ use gpui::{
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use project::{bookmark_store::Bookmark, Project};
+use project::{bookmark_store::Bookmark, Item, Project};
 use std::sync::Arc;
-use text::Point;
+use text::{Point, ToPoint};
 use ui::{prelude::*, HighlightedLabel, ListItem};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -83,58 +83,87 @@ impl Bookmarks {
         operator_type: OperatorType,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let active_item = workspace.active_item(cx);
         let project = workspace.project().clone();
-        let project_path = active_item.as_ref().and_then(|item| item.project_path(cx));
-        if let Some(project_path) = project_path {
-            project.update(cx, |project, _cx| {
-                let bookmarks = project.bookmarks_mut();
-                match operator_type {
-                    OperatorType::Buffer => bookmarks.clear_current_editor(project_path),
-                    OperatorType::Worktree => {
-                        bookmarks.clear_current_worktree(project_path.worktree_id)
+        project.update(cx, |project, cx| {
+            let bookmark_store = project.bookmark_store();
+            if let Some(active_item) = workspace.active_item(cx) {
+                if let Some(buffer) = active_item
+                    .downcast::<Editor>()
+                    .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+                {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    match operator_type {
+                        OperatorType::Buffer => bookmark_store
+                            .update(cx, |store, cx| store.clear_current_editor(buffer_id, cx)),
+                        OperatorType::Worktree => {
+                            if let Some(project_path) = buffer.read(cx).project_path(cx) {
+                                bookmark_store.update(cx, |store, cx| {
+                                    store.clear_current_worktree(project_path.worktree_id, cx)
+                                });
+                            }
+                        }
+                        OperatorType::Workspace => {
+                            bookmark_store.update(cx, |store, _cx| store.clear_all())
+                        }
                     }
-                    OperatorType::Workspace => bookmarks.clear_all(),
+                } else {
+                    match operator_type {
+                        OperatorType::Workspace => {
+                            bookmark_store.update(cx, |store, _cx| store.clear_all())
+                        }
+                        _ => {}
+                    }
                 }
-            })
-        }
+            } else {
+                match operator_type {
+                    OperatorType::Workspace => {
+                        bookmark_store.update(cx, |store, _cx| store.clear_all())
+                    }
+                    _ => {}
+                }
+            }
+        });
     }
 
     fn open_bookmarks(workspace: &mut Workspace, reverse: bool, cx: &mut ViewContext<Workspace>) {
         let project = workspace.project().clone();
-        let bm = project.update(cx, |project, _cx| {
-            if reverse {
-                project.bookmarks_mut().prev().clone()
-            } else {
-                project.bookmarks_mut().next().clone()
-            }
+        let bm = project.update(cx, |project, cx| {
+            let bookmark_store = project.bookmark_store();
+            bookmark_store.update(cx, |store, cx| {
+                if reverse {
+                    store.prev().clone()
+                } else {
+                    store.next().clone()
+                }
+            })
         });
-        let bm = if let Some(bm) = bm {
-            bm
-        } else {
-            return;
-        };
-        let open_task = workspace.open_path_preview(bm.project_path, None, true, false, cx);
-        let row = bm.line_no;
-        cx.spawn(|_, mut cx| async move {
-            let item = open_task.await.log_err()?;
-            if let Some(active_editor) = item.downcast::<Editor>() {
-                active_editor
-                    .downgrade()
-                    .update(&mut cx, |editor, cx| {
-                        let snapshot = editor.snapshot(cx).display_snapshot;
-                        let point = snapshot
-                            .buffer_snapshot
-                            .clip_point(Point::new(row.try_into().unwrap(), 0), Bias::Left);
-                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                            s.select_ranges([point..point])
+
+        if let Some(bm) = bm {
+            let bm = bm.clone();
+            let buffer = bm.buffer.clone();
+            let anchor = bm.anchor.clone();
+            cx.spawn(|workspace, mut cx| async move {
+                let _ = workspace.update(&mut cx, |workspace, cx| {
+                    let active_panel = workspace.active_pane().clone();
+                    let editor = workspace.open_project_item::<Editor>(
+                        active_panel,
+                        bm.buffer,
+                        true,
+                        true,
+                        cx,
+                    );
+                    editor.update(cx, |editor, cx| {
+                        let buffer = buffer.read(cx);
+                        let cursor = language::ToPoint::to_point(&anchor, buffer);
+
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges([cursor..cursor]);
                         });
-                    })
-                    .log_err();
-            }
-            Some(())
-        })
-        .detach()
+                    });
+                });
+            })
+            .detach();
+        }
     }
 
     fn open(
@@ -144,21 +173,43 @@ impl Bookmarks {
     ) {
         let project = workspace.project().clone();
         let weak_workspace = cx.view().downgrade();
-        let active_item = workspace.active_item(cx);
-        let project_path = active_item.as_ref().and_then(|item| item.project_path(cx));
-        let bookmarks = project.read(cx).bookmarks();
-        let bookmarks = if let Some(project_path) = project_path {
-            match operator_type {
-                OperatorType::Buffer => bookmarks.get_current_editor(project_path),
-                OperatorType::Worktree => bookmarks.get_current_worktree(project_path.worktree_id),
-                OperatorType::Workspace => bookmarks.get_all(),
+        let bookmarks = project.update(cx, |project, cx| {
+            let bookmark_store = project.bookmark_store();
+            if let Some(active_item) = workspace.active_item(cx) {
+                if let Some(buffer) = active_item
+                    .downcast::<Editor>()
+                    .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+                {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    match operator_type {
+                        OperatorType::Buffer => bookmark_store
+                            .update(cx, |store, cx| store.get_current_editor(buffer_id, cx)),
+                        OperatorType::Workspace => bookmark_store.read(cx).get_all(),
+                        OperatorType::Worktree => {
+                            if let Some(project_path) = buffer.read(cx).project_path(cx) {
+                                bookmark_store.update(cx, |store, cx| {
+                                    store.get_current_worktree(project_path.worktree_id, cx)
+                                })
+                            } else {
+                                vec![]
+                            }
+                        }
+                    }
+                } else {
+                    match operator_type {
+                        OperatorType::Workspace => bookmark_store.read(cx).get_all(),
+                        _ => vec![],
+                    }
+                }
+            } else {
+                match operator_type {
+                    OperatorType::Workspace => bookmark_store.read(cx).get_all(),
+                    _ => {
+                        vec![]
+                    }
+                }
             }
-        } else {
-            match operator_type {
-                OperatorType::Workspace => bookmarks.get_all(),
-                _ => return,
-            }
-        };
+        });
         workspace.toggle_modal(cx, |cx| {
             let delegate = BookmarkDelegate::new(
                 cx.view().downgrade(),
@@ -258,45 +309,34 @@ impl PickerDelegate for BookmarkDelegate {
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<BookmarkDelegate>>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
-                let open_task = workspace.update(cx, move |workspace, cx| {
-                    let split_or_open =
-                        |workspace: &mut Workspace,
-                         project_path,
-                         cx: &mut ViewContext<Workspace>| {
-                            workspace.open_path_preview(project_path, None, true, true, cx)
-                        };
-                    split_or_open(workspace, m.project_path.clone(), cx)
-                });
-
-                let row = m.line_no;
                 let finder = self.bookmarks.clone();
                 let bm_id = m.id;
-                let project = self.project.clone();
+                let buffer = m.buffer.clone();
 
-                cx.spawn(|_, mut cx| async move {
-                    let item = open_task.await.log_err()?;
-                    if let Some(active_editor) = item.downcast::<Editor>() {
-                        active_editor
-                            .downgrade()
-                            .update(&mut cx, |editor, cx| {
-                                let snapshot = editor.snapshot(cx).display_snapshot;
-                                let point = snapshot
-                                    .buffer_snapshot
-                                    .clip_point(Point::new(row.try_into().unwrap(), 0), Bias::Left);
-                                editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                                    s.select_ranges([point..point])
-                                });
-                            })
-                            .log_err();
-                    }
-                    let _ = project.update(&mut cx, |project, _cx| {
-                        project.bookmarks_mut().update_current_id(bm_id)
+                workspace.update(cx, |workspace, cx| {
+                    let active_panel = workspace.active_pane().clone();
+                    let editor = workspace.open_project_item::<Editor>(
+                        active_panel,
+                        buffer.clone(),
+                        true,
+                        true,
+                        cx,
+                    );
+                    let buffer = buffer.clone();
+                    let anchor = m.anchor;
+                    editor.update(cx, |editor, cx| {
+                        let buffer = buffer.read(cx);
+                        let cursor = language::ToPoint::to_point(&anchor, buffer);
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges([cursor..cursor]);
+                        });
                     });
-                    finder.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok()?;
-
-                    Some(())
+                    let project = workspace.project();
+                    // project.read(cx).bookmark_store().update(cx, |store, cx| {
+                    //     store.update_current_id(bm_id, cx);
+                    // });
+                    finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                 })
-                .detach();
             }
         }
     }
@@ -311,7 +351,7 @@ impl PickerDelegate for BookmarkDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let bookmark_match = self
             .matches
@@ -319,15 +359,18 @@ impl PickerDelegate for BookmarkDelegate {
             .expect("Invalid matches state: no element for index {ix}");
 
         let file_name = bookmark_match
-            .project_path
-            .path
+            .buffer
+            .read(cx)
+            .file()?
+            .file_name(cx)
             .to_string_lossy()
             .to_string();
+
         let annotation = bookmark_match
             .annotation
             .clone()
             .unwrap_or_else(|| "title".to_string());
-        let text = format!("{}(row:{}, col: 0)", file_name, bookmark_match.line_no);
+        let text = format!("{}(row:{}, col: 0)", file_name, 0);
         Some(
             ListItem::new(ix).inset(true).selected(selected).child(
                 v_flex()

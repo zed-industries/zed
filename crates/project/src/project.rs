@@ -168,7 +168,7 @@ pub struct Project {
     buffers_being_formatted: HashSet<BufferId>,
     environment: Model<ProjectEnvironment>,
     settings_observer: Model<SettingsObserver>,
-    bookmark_store: BookmarkStore,
+    bookmark_store: Model<BookmarkStore>,
 }
 
 #[derive(Default)]
@@ -646,6 +646,8 @@ impl Project {
                 SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx)
             });
 
+            let bookmark_store = cx.new_model(|_| BookmarkStore::new());
+
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
@@ -695,7 +697,7 @@ impl Project {
                 buffers_being_formatted: Default::default(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
-                bookmark_store: BookmarkStore::new(),
+                bookmark_store,
             }
         })
     }
@@ -734,6 +736,7 @@ impl Project {
             let settings_observer = cx.new_model(|cx| {
                 SettingsObserver::new_ssh(ssh.clone().into(), worktree_store.clone(), cx)
             });
+            let bookmark_store = cx.new_model(|_| BookmarkStore::new());
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
             let lsp_store = cx.new_model(|cx| {
@@ -782,7 +785,7 @@ impl Project {
                 buffers_being_formatted: Default::default(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
-                bookmark_store: BookmarkStore::new(),
+                bookmark_store,
             };
 
             let client: AnyProtoClient = ssh.clone().into();
@@ -894,6 +897,7 @@ impl Project {
             lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
             lsp_store
         })?;
+        let bookmark_store = cx.new_model(|_| BookmarkStore::new())?;
 
         let settings_observer =
             cx.new_model(|cx| SettingsObserver::new_remote(worktree_store.clone(), cx))?;
@@ -963,7 +967,7 @@ impl Project {
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
-                bookmark_store: BookmarkStore::new(),
+                bookmark_store,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1310,18 +1314,14 @@ impl Project {
         &self.snippets
     }
 
-    pub fn bookmarks(&self) -> &BookmarkStore {
+    pub fn bookmark_store(&self) -> &Model<BookmarkStore> {
         &self.bookmark_store
-    }
-
-    pub fn bookmarks_mut(&mut self) -> &mut BookmarkStore {
-        &mut self.bookmark_store
     }
 
     pub fn toggle_bookmark(
         &mut self,
         buffer_id: BufferId,
-        line_no: usize,
+        anchor: Anchor,
         content: String,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1329,13 +1329,8 @@ impl Project {
             return;
         };
 
-        let project_path = if let Some(project_path) = buffer.read(cx).project_path(cx) {
-            project_path
-        } else {
-            return;
-        };
-
-        self.bookmark_store.toggle(project_path, line_no, Some(content));
+        self.bookmark_store
+            .update(cx, |store, _cx| store.toggle(buffer, anchor, Some(content)));
     }
 
     pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {

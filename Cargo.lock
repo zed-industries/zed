@@ -1771,6 +1771,7 @@ dependencies = [
  "collections",
  "editor",
  "gpui",
+ "language",
  "menu",
  "picker",
  "project",
