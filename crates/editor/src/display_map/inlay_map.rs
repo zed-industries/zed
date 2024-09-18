@@ -97,6 +97,10 @@ struct TransformSummary {
 impl sum_tree::Summary for TransformSummary {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, other: &Self, _: &()) {
         self.input += &other.input;
         self.output += &other.output;
@@ -137,6 +141,10 @@ impl SubAssign for InlayOffset {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.output.len;
     }
@@ -162,18 +170,30 @@ impl Sub for InlayPoint {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.output.lines;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         *self += &summary.input.len;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         *self += &summary.input.lines;
     }
@@ -324,7 +344,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     } else {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
                         highlight_style
-                            .get_or_insert_with(|| Default::default())
+                            .get_or_insert_with(Default::default)
                             .highlight(*style);
                     }
                 } else {
@@ -451,15 +471,14 @@ impl InlayMap {
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
 
-        if buffer_edits.is_empty() {
-            if snapshot.buffer.trailing_excerpt_update_count()
+        if buffer_edits.is_empty()
+            && snapshot.buffer.trailing_excerpt_update_count()
                 != buffer_snapshot.trailing_excerpt_update_count()
-            {
-                buffer_edits.push(Edit {
-                    old: snapshot.buffer.len()..snapshot.buffer.len(),
-                    new: buffer_snapshot.len()..buffer_snapshot.len(),
-                });
-            }
+        {
+            buffer_edits.push(Edit {
+                old: snapshot.buffer.len()..snapshot.buffer.len(),
+                new: buffer_snapshot.len()..buffer_snapshot.len(),
+            });
         }
 
         if buffer_edits.is_empty() {
@@ -476,8 +495,8 @@ impl InlayMap {
             (snapshot.clone(), Vec::new())
         } else {
             let mut inlay_edits = Patch::default();
-            let mut new_transforms = SumTree::new();
-            let mut cursor = snapshot.transforms.cursor::<(usize, InlayOffset)>();
+            let mut new_transforms = SumTree::default();
+            let mut cursor = snapshot.transforms.cursor::<(usize, InlayOffset)>(&());
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
@@ -694,7 +713,7 @@ impl InlaySnapshot {
     pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
         let mut cursor = self
             .transforms
-            .cursor::<(InlayOffset, (InlayPoint, usize))>();
+            .cursor::<(InlayOffset, (InlayPoint, usize))>(&());
         cursor.seek(&offset, Bias::Right, &());
         let overshoot = offset.0 - cursor.start().0 .0;
         match cursor.item() {
@@ -724,7 +743,7 @@ impl InlaySnapshot {
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
         let mut cursor = self
             .transforms
-            .cursor::<(InlayPoint, (InlayOffset, Point))>();
+            .cursor::<(InlayPoint, (InlayOffset, Point))>(&());
         cursor.seek(&point, Bias::Right, &());
         let overshoot = point.0 - cursor.start().0 .0;
         match cursor.item() {
@@ -742,9 +761,8 @@ impl InlaySnapshot {
             None => self.len(),
         }
     }
-
     pub fn to_buffer_point(&self, point: InlayPoint) -> Point {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>();
+        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
         cursor.seek(&point, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -755,9 +773,8 @@ impl InlaySnapshot {
             None => self.buffer.max_point(),
         }
     }
-
     pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
-        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
+        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
         cursor.seek(&offset, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -770,7 +787,7 @@ impl InlaySnapshot {
     }
 
     pub fn to_inlay_offset(&self, offset: usize) -> InlayOffset {
-        let mut cursor = self.transforms.cursor::<(usize, InlayOffset)>();
+        let mut cursor = self.transforms.cursor::<(usize, InlayOffset)>(&());
         cursor.seek(&offset, Bias::Left, &());
         loop {
             match cursor.item() {
@@ -802,9 +819,8 @@ impl InlaySnapshot {
             }
         }
     }
-
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<(Point, InlayPoint)>();
+        let mut cursor = self.transforms.cursor::<(Point, InlayPoint)>(&());
         cursor.seek(&point, Bias::Left, &());
         loop {
             match cursor.item() {
@@ -838,7 +854,7 @@ impl InlaySnapshot {
     }
 
     pub fn clip_point(&self, mut point: InlayPoint, mut bias: Bias) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>();
+        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
         cursor.seek(&point, Bias::Left, &());
         loop {
             match cursor.item() {
@@ -935,7 +951,7 @@ impl InlaySnapshot {
     pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> TextSummary {
         let mut summary = TextSummary::default();
 
-        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
+        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
         cursor.seek(&range.start, Bias::Right, &());
 
         let overshoot = range.start.0 - cursor.start().0 .0;
@@ -983,7 +999,7 @@ impl InlaySnapshot {
     }
 
     pub fn buffer_rows(&self, row: u32) -> InlayBufferRows<'_> {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>();
+        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
@@ -1025,7 +1041,7 @@ impl InlaySnapshot {
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
-        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
+        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
         cursor.seek(&range.start, Bias::Right, &());
 
         let mut highlight_endpoints = Vec::new();

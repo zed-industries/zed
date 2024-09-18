@@ -5,6 +5,7 @@ use derive_more::Deref;
 use futures::future::BoxFuture;
 use futures_lite::FutureExt;
 use isahc::config::{Configurable, RedirectPolicy};
+pub use isahc::http;
 pub use isahc::{
     http::{Method, StatusCode, Uri},
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
@@ -221,8 +222,12 @@ impl HttpClient for HttpClientWithUrl {
 
 pub fn client(user_agent: Option<String>, proxy: Option<Uri>) -> Arc<dyn HttpClient> {
     let mut builder = isahc::HttpClient::builder()
+        // Some requests to Qwen2 models on Runpod can take 32+ seconds,
+        // especially if there's a cold boot involved. We may need to have
+        // those requests use a different http client, because global timeouts
+        // of 50 and 60 seconds, respectively, would be very high!
         .connect_timeout(Duration::from_secs(5))
-        .low_speed_timeout(100, Duration::from_secs(5))
+        .low_speed_timeout(100, Duration::from_secs(30))
         .proxy(proxy.clone());
     if let Some(user_agent) = user_agent {
         builder = builder.default_header("User-Agent", user_agent);

@@ -284,7 +284,7 @@ impl ButtonStyle {
         elevation: Option<Elevation>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        let filled_background = element_bg_from_elevation(elevation, cx).fade_out(0.82);
+        element_bg_from_elevation(elevation, cx).fade_out(0.82);
 
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {

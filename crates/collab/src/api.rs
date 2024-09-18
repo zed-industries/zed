@@ -111,7 +111,7 @@ struct AuthenticatedUserParams {
     github_user_id: i32,
     github_login: String,
     github_email: Option<String>,
-    github_user_created_at: Option<chrono::DateTime<chrono::Utc>>,
+    github_user_created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,7 +137,7 @@ async fn get_authenticated_user(
         )
         .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
-    return Ok(Json(AuthenticatedUserResponse { user, metrics_id }));
+    Ok(Json(AuthenticatedUserResponse { user, metrics_id }))
 }
 
 #[derive(Deserialize, Debug)]

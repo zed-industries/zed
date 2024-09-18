@@ -77,7 +77,7 @@ You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the m
 
 1. Go the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the configuration view (`assistant: show configuration`) and navigate to the Google AI section
-3. Enter your Google AI API key
+3. Enter your Google AI API key and press enter.
 
 The Google AI API key will be saved in your keychain.
 
@@ -85,7 +85,7 @@ Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
 #### Google AI custom models {#google-ai-custom-models}
 
-You can add custom models to the Google AI provider by adding the following to your Zed `settings.json`:
+By default Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models) with the Google AI provider by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -93,8 +93,9 @@ You can add custom models to the Google AI provider by adding the following to y
     "google": {
       "available_models": [
         {
-          "name": "custom-model",
-          "max_tokens": 128000
+          "name": "gemini-1.5-flash-latest",
+          "display_name": "Gemini 1.5 Flash (Latest)",
+          "max_tokens": 1000000
         }
       ]
     }
@@ -108,32 +109,50 @@ Custom models will be listed in the model dropdown in the assistant panel.
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
-You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
-
-1. Download, for example, the `mistral` model with Ollama:
+1. Download one of the [available models](https://ollama.com/models), for example, for `mistral`:
 
    ```sh
    ollama pull mistral
    ```
 
-2. Make sure that the Ollama server is running. You can start it either via running the Ollama app, or launching:
+2. Make sure that the Ollama server is running. You can start it either via running Ollama.app (MacOS) or launching:
 
    ```sh
    ollama serve
    ```
 
 3. In the assistant panel, select one of the Ollama models using the model dropdown.
-4. (Optional) If you want to change the default URL that is used to access the Ollama server, you can do so by adding the following settings:
+
+4. (Optional) Specify a [custom api_url](#custom-endpoint) or [custom `low_speed_timeout_in_seconds`](#provider-timeout) if required.
+
+#### Ollama Context Length {#ollama-context}
+
+Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models. Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box. See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
+
+**Note**: Tokens counts displayed in the assistant panel are only estimates and will differ from the models native tokenizer.
+
+Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
 ```json
 {
   "language_models": {
     "ollama": {
-      "api_url": "http://localhost:11434"
+      "low_speed_timeout_in_seconds": 120,
+      "available_models": [
+        {
+          "provider": "ollama",
+          "name": "mistral:latest",
+          "max_tokens": 32768
+        }
+      ]
     }
   }
 }
 ```
+
+If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
+
+You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc., For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120seconds.
 
 ### OpenAI {#openai}
 
@@ -148,17 +167,23 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### OpenAI Custom Models {#openai-custom-models}
 
-You can add custom models to the OpenAI provider, by adding the following to your Zed `settings.json`:
+The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release or you wish to control the request parameters you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
   "language_models": {
     "openai": {
-      "version": "1",
       "available_models": [
         {
-          "name": "custom-model",
+          "provider": "openai",
+          "name": "gpt-4o-2024-08-06",
           "max_tokens": 128000
+        },
+        {
+          "name": "o1-mini",
+          "display_name": "o1-mini",
+          "max_tokens": 128000,
+          "max_completion_tokens": 20000
         }
       ]
     }
@@ -166,7 +191,7 @@ You can add custom models to the OpenAI provider, by adding the following to you
 }
 ```
 
-Custom models will be listed in the model dropdown in the assistant panel.
+You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the assistant panel.
 
 ### Advanced configuration {#advanced-configuration}
 
@@ -198,7 +223,7 @@ To do so, add the following to your Zed `settings.json`:
 {
   "language_models": {
     "some-provider": {
-      "api_url": "http://localhost:11434/v1"
+      "api_url": "http://localhost:11434"
     }
   }
 }

@@ -1,4 +1,4 @@
-use crate::{Bounds, InputHandler, Pixels, View, ViewContext, WindowContext};
+use crate::{Bounds, InputHandler, Pixels, UTF16Selection, View, ViewContext, WindowContext};
 use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
@@ -13,7 +13,11 @@ pub trait ViewInputHandler: 'static + Sized {
         -> Option<String>;
 
     /// See [`InputHandler::selected_text_range`] for details
-    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<UTF16Selection>;
 
     /// See [`InputHandler::marked_text_range`] for details
     fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
@@ -68,9 +72,14 @@ impl<V: 'static> ElementInputHandler<V> {
 }
 
 impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>> {
-        self.view
-            .update(cx, |view, cx| view.selected_text_range(cx))
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        cx: &mut WindowContext,
+    ) -> Option<UTF16Selection> {
+        self.view.update(cx, |view, cx| {
+            view.selected_text_range(ignore_disabled_input, cx)
+        })
     }
 
     fn marked_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>> {

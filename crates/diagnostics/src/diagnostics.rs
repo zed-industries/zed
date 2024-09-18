@@ -432,7 +432,7 @@ impl ProjectDiagnosticsEditor {
                                 .unwrap();
 
                             prev_excerpt_id = excerpt_id;
-                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                            first_excerpt_id.get_or_insert(prev_excerpt_id);
                             group_state.excerpts.push(excerpt_id);
                             let header_position = (excerpt_id, language::Anchor::MIN);
 
@@ -491,7 +491,7 @@ impl ProjectDiagnosticsEditor {
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group_state)) = to_keep {
                     prev_excerpt_id = *group_state.excerpts.last().unwrap();
-                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                    first_excerpt_id.get_or_insert(prev_excerpt_id);
                     path_state.diagnostic_groups.push(group_state);
                 }
             }
@@ -645,37 +645,42 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        if self.summary.error_count == 0 && self.summary.warning_count == 0 {
-            Label::new("No problems")
-                .color(params.text_color())
-                .into_any_element()
-        } else {
-            h_flex()
-                .gap_1()
-                .when(self.summary.error_count > 0, |then| {
+        h_flex()
+            .gap_1()
+            .when(
+                self.summary.error_count == 0 && self.summary.warning_count == 0,
+                |then| {
                     then.child(
                         h_flex()
                             .gap_1()
-                            .child(Icon::new(IconName::XCircle).color(Color::Error))
-                            .child(
-                                Label::new(self.summary.error_count.to_string())
-                                    .color(params.text_color()),
-                            ),
+                            .child(Icon::new(IconName::Check).color(Color::Success))
+                            .child(Label::new("No problems").color(params.text_color())),
                     )
-                })
-                .when(self.summary.warning_count > 0, |then| {
-                    then.child(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
-                            .child(
-                                Label::new(self.summary.warning_count.to_string())
-                                    .color(params.text_color()),
-                            ),
-                    )
-                })
-                .into_any_element()
-        }
+                },
+            )
+            .when(self.summary.error_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::XCircle).color(Color::Error))
+                        .child(
+                            Label::new(self.summary.error_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .when(self.summary.warning_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Warning).color(Color::Warning))
+                        .child(
+                            Label::new(self.summary.warning_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -776,7 +781,7 @@ impl Item for ProjectDiagnosticsEditor {
     }
 }
 
-const DIAGNOSTIC_HEADER: &'static str = "diagnostic header";
+const DIAGNOSTIC_HEADER: &str = "diagnostic header";
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);
@@ -804,7 +809,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                         icon.path(IconName::XCircle.path())
                                             .text_color(Color::Error.color(cx))
                                     } else {
-                                        icon.path(IconName::ExclamationTriangle.path())
+                                        icon.path(IconName::Warning.path())
                                             .text_color(Color::Warning.color(cx))
                                     }
                                 }),

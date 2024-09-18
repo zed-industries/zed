@@ -41,7 +41,7 @@ impl Vim {
         second_char: char,
         cx: &mut ViewContext<Self>,
     ) {
-        let text = lookup_digraph(first_char, second_char, &cx);
+        let text = lookup_digraph(first_char, second_char, cx);
 
         self.pop_operator(cx);
         if self.editor_input_enabled() {

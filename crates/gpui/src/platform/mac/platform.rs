@@ -540,8 +540,6 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        // Clippy thinks that this evaluates to `()`, for some reason.
-        #[allow(clippy::unit_arg, clippy::clone_on_copy)]
         let renderer_context = self.0.lock().renderer_context.clone();
         Ok(Box::new(MacWindow::open(
             handle,
@@ -718,6 +716,20 @@ impl Platform for MacPlatform {
                 })
                 .detach();
         }
+    }
+
+    fn open_with_system(&self, path: &Path) {
+        let path = path.to_path_buf();
+        self.0
+            .lock()
+            .background_executor
+            .spawn(async move {
+                std::process::Command::new("open")
+                    .arg(path)
+                    .spawn()
+                    .expect("Failed to open file");
+            })
+            .detach();
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {

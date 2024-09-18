@@ -48,6 +48,12 @@ pub struct ModalLayer {
     dismiss_on_focus_lost: bool,
 }
 
+impl Default for ModalLayer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModalLayer {
     pub fn new() -> Self {
         Self {

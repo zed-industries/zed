@@ -1,0 +1,22 @@
+[package]
+name = "assistant_tool"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/assistant_tool.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+derive_more.workspace = true
+gpui.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+workspace.workspace = true

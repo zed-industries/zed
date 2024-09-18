@@ -1,13 +1,13 @@
 use editor::Editor;
 use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView};
-use std::sync::Arc;
+use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::LanguageSelector;
 
 pub struct ActiveBufferLanguage {
-    active_language: Option<Option<Arc<str>>>,
+    active_language: Option<Option<LanguageName>>,
     workspace: WeakView<Workspace>,
     _observe_active_editor: Option<Subscription>,
 }

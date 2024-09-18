@@ -50,7 +50,7 @@ pub fn init_panic_hook(
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
 
         if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
@@ -176,7 +176,7 @@ pub fn monitor_main_thread_hangs(
     let background_executor = cx.background_executor();
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
-    // Initialize SIGUSR2 handler to send a backrace to a channel.
+    // Initialize SIGUSR2 handler to send a backtrace to a channel.
     let (backtrace_tx, backtrace_rx) = mpsc::channel();
     static BACKTRACE: Mutex<Vec<backtrace::Frame>> = Mutex::new(Vec::new());
     static BACKTRACE_SENDER: OnceLock<mpsc::Sender<()>> = OnceLock::new();
@@ -226,7 +226,7 @@ pub fn monitor_main_thread_hangs(
 
     let (mut tx, mut rx) = futures::channel::mpsc::channel(3);
     foreground_executor
-        .spawn(async move { while let Some(_) = rx.next().await {} })
+        .spawn(async move { while (rx.next().await).is_some() {} })
         .detach();
 
     background_executor
@@ -259,7 +259,7 @@ pub fn monitor_main_thread_hangs(
             let os_version = client::telemetry::os_version();
 
             loop {
-                while let Some(_) = backtrace_rx.recv().ok() {
+                while backtrace_rx.recv().is_ok() {
                     if !telemetry_settings.diagnostics {
                         return;
                     }
@@ -440,7 +440,7 @@ async fn upload_previous_panics(
     Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
-static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
+static LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)

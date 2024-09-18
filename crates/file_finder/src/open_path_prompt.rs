@@ -181,7 +181,7 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             let matches = fuzzy::match_strings(
-                &match_candidates.as_slice(),
+                match_candidates.as_slice(),
                 &suffix,
                 false,
                 100,
@@ -236,7 +236,12 @@ impl PickerDelegate for OpenPathDelegate {
         let Some(candidate) = directory_state.match_candidates.get(*m) else {
             return;
         };
-        let result = Path::new(&directory_state.path).join(&candidate.string);
+        let result = Path::new(
+            self.lister
+                .resolve_tilde(&directory_state.path, cx)
+                .as_ref(),
+        )
+        .join(&candidate.string);
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }

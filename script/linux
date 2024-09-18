@@ -25,6 +25,7 @@ if [[ -n $apt ]]; then
     libvulkan1
     libgit2-dev
     make
+    cmake
     clang
     mold
     jq
@@ -44,6 +45,7 @@ if [[ -n $dnf ]]; then
     gcc
     g++
     clang
+    cmake
     mold
     alsa-lib-devel
     fontconfig-devel
@@ -78,6 +80,7 @@ if [[ -n $zyp ]]; then
     gcc-c++
     clang
     make
+    cmake
     alsa-devel
     fontconfig-devel
     wayland-devel
@@ -99,6 +102,7 @@ if [[ -n $pacman ]]; then
   deps=(
     gcc
     clang
+    cmake
     alsa-lib
     fontconfig
     wayland
@@ -120,6 +124,12 @@ fi
 xbps=$(command -v xbps-install || true)
 if [[ -n $xbps ]]; then
   deps=(
+    gettext-devel
+    clang
+    cmake
+    jq
+    elfutils-devel
+    gcc
     alsa-lib-devel
     fontconfig-devel
     libxcb-devel
@@ -143,6 +153,7 @@ if [[ -n $emerge ]]; then
     app-arch/zstd
     dev-libs/openssl
     dev-libs/wayland
+    dev-util/cmake
     media-libs/alsa-lib
     media-libs/fontconfig
     media-libs/vulkan-loader

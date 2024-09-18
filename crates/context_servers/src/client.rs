@@ -235,13 +235,13 @@ impl Client {
             let content = buffer.trim();
 
             if !content.is_empty() {
-                if let Ok(response) = serde_json::from_str::<AnyResponse>(&content) {
+                if let Ok(response) = serde_json::from_str::<AnyResponse>(content) {
                     if let Some(handlers) = response_handlers.lock().as_mut() {
                         if let Some(handler) = handlers.remove(&response.id) {
                             handler(Ok(content.to_string()));
                         }
                     }
-                } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&content) {
+                } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(content) {
                     let mut notification_handlers = notification_handlers.lock();
                     if let Some(handler) =
                         notification_handlers.get_mut(notification.method.as_str())
