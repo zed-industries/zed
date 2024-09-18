@@ -136,12 +136,18 @@ gem install ruby-lsp
 
 Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell Zed to disable it by adding the following to your `settings.json`:
 
-```json
+```jsonc
 {
+  "languages": {
+    "Ruby": {
+      "language_servers": ["ruby-lsp", "!solargraph", "..."]
+    }
+  },
   "lsp": {
     "ruby-lsp": {
       "initialization_options": {
         "enabledFeatures": {
+          // This disables diagnostics
           "diagnostics": false
         }
       }
@@ -164,10 +170,23 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
 
 ```json
 {
+  "languages": {
+    "Ruby": {
+      // Use ruby-lsp as the primary language server and rubocop as the secondary.
+      "language_servers": ["ruby-lsp", "rubocop", "!solargraph", "..."]
+    }
+  },
   "lsp": {
     "rubocop": {
       "initialization_options": {
         "safeAutocorrect": false
+      }
+    },
+    "ruby-lsp": {
+      "initialization_options": {
+        "enabledFeatures": {
+          "diagnostics": false
+        }
       }
     }
   }
