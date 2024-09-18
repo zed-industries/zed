@@ -140,19 +140,19 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
 {
   "languages": {
     "Ruby": {
-      "language_servers": ["ruby-lsp", "!solargraph", "..."],
-    },
+      "language_servers": ["ruby-lsp", "!solargraph", "..."]
+    }
   },
   "lsp": {
     "ruby-lsp": {
       "initialization_options": {
         "enabledFeatures": {
           // This disables diagnostics
-          "diagnostics": false,
-        },
-      },
-    },
-  },
+          "diagnostics": false
+        }
+      }
+    }
+  }
 }
 ```
 
