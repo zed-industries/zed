@@ -52,6 +52,7 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
+    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -173,6 +174,9 @@ members = [
 default-members = ["crates/zed"]
 
 [workspace.dependencies]
+
+
+
 #
 # Workspace member crates
 #
@@ -212,6 +216,7 @@ file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
+isahc_http_client = { path = "crates/isahc_http_client" }
 git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
@@ -394,6 +399,8 @@ runtimelib = { version = "0.15", default-features = false, features = [
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
+rustls = "0.20.3"
+rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }

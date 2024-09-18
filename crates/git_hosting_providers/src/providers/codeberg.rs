@@ -3,9 +3,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
-use http_client::HttpClient;
-use isahc::config::Configurable;
-use isahc::{AsyncBody, Request};
+use http_client::{AsyncBody, HttpClient, Request};
 use serde::Deserialize;
 use url::Url;
 
@@ -51,16 +49,14 @@ impl Codeberg {
         let url =
             format!("https://codeberg.org/api/v1/repos/{repo_owner}/{repo}/git/commits/{commit}");
 
-        let mut request = Request::get(&url)
-            .redirect_policy(isahc::config::RedirectPolicy::Follow)
-            .header("Content-Type", "application/json");
+        let mut request = Request::get(&url).header("Content-Type", "application/json");
 
         if let Ok(codeberg_token) = std::env::var("CODEBERG_TOKEN") {
             request = request.header("Authorization", format!("Bearer {}", codeberg_token));
         }
 
         let mut response = client
-            .send(request.body(AsyncBody::default())?)
+            .send_with_redirect_policy(request.body(AsyncBody::default())?, true)
             .await
             .with_context(|| format!("error fetching Codeberg commit details at {:?}", url))?;
 

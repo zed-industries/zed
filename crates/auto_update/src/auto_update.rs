@@ -9,7 +9,6 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
     SemanticVersion, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use isahc::AsyncBody;
 
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use schemars::JsonSchema;
@@ -20,7 +19,7 @@ use smol::{fs, io::AsyncReadExt};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
-use http_client::{HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::{
