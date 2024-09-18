@@ -1138,7 +1138,7 @@ impl Client {
             match url_scheme {
                 Https => {
                     let (stream, _) =
-                        async_tungstenite::async_std::client_async_tls(request, stream).await?;
+                        async_tungstenite::async_tls::client_async_tls(request, stream).await?;
                     Ok(Connection::new(
                         stream
                             .map_err(|error| anyhow!(error))
