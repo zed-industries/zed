@@ -65,7 +65,7 @@ jobs:
             echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> $GITHUB_ENV
           fi
 
-      - name: Proto buf checks
+      - name: Protobuf checks
         uses: bufbuild/buf-action@v1
         with:
           version: v1.29.0
