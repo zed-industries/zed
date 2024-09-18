@@ -11,6 +11,7 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Model, View, WeakView};
 use project::Project;
+use remote::ssh_session::{SshProject, SshProjectId};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -20,20 +21,23 @@ use ui::SharedString;
 use util::ResultExt;
 use uuid::Uuid;
 
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-pub struct SshProjectId(pub u64);
-// TODO: Implement Bind and Column for SshProjectId and DevServerProjectId,
-// so we don't have to return Option<u64>
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SerializedSshProject {
     pub id: SshProjectId,
     pub host: String,
-    // TODO: Should this be a Vec?
-    pub path: Option<String>,
+    pub path: String,
     pub user: Option<String>,
+}
+
+impl From<&SshProject> for SerializedSshProject {
+    fn from(ssh_project: &SshProject) -> Self {
+        Self {
+            id: ssh_project.id,
+            path: ssh_project.path.to_string_lossy().to_string(),
+            host: ssh_project.connection_options.host.clone(),
+            user: ssh_project.connection_options.username.clone(),
+        }
+    }
 }
 
 impl StaticColumnCount for SerializedSshProject {
@@ -55,7 +59,7 @@ impl Column for SerializedSshProject {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let id = statement.column_int64(start_index)?;
         let host = statement.column_text(start_index + 1)?.to_string();
-        let (path, _) = Option::<String>::column(statement, start_index + 2)?;
+        let path = statement.column_text(start_index + 2)?.to_string();
         let (user, _) = Option::<String>::column(statement, start_index + 3)?;
 
         Ok((

@@ -7,6 +7,7 @@ use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 
+use remote::ssh_session::SshProjectId;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -20,7 +21,7 @@ use crate::WorkspaceId;
 
 use model::{
     GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
-    SerializedSshProject, SerializedWorkspace, SshProjectId,
+    SerializedSshProject, SerializedWorkspace,
 };
 
 use self::model::{
@@ -359,7 +360,7 @@ define_connection! {
         CREATE TABLE ssh_projects (
             id INTEGER PRIMARY KEY,
             host TEXT NOT NULL,
-            path TEXT,
+            path TEXT NOT NULL,
             user TEXT
         );
         ALTER TABLE workspaces ADD COLUMN ssh_project_id INTEGER REFERENCES ssh_projects(id) ON DELETE CASCADE;
@@ -383,8 +384,6 @@ impl WorkspaceDb {
             workspace_id,
             local_paths,
             local_paths_order,
-            dev_server_project_id,
-            ssh_project_id,
             window_bounds,
             display,
             centered_layout,
@@ -394,8 +393,6 @@ impl WorkspaceDb {
             WorkspaceId,
             Option<LocalPaths>,
             Option<LocalPathsOrder>,
-            Option<u64>,
-            Option<u64>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -407,8 +404,6 @@ impl WorkspaceDb {
                     workspace_id,
                     local_paths,
                     local_paths_order,
-                    dev_server_project_id,
-                    ssh_project_id,
                     window_state,
                     window_x,
                     window_y,
@@ -434,28 +429,13 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let location = if let Some(dev_server_project_id) = dev_server_project_id {
-            let dev_server_project: SerializedDevServerProject = self
-                .select_row_bound(sql! {
-                    SELECT id, path, dev_server_name
-                    FROM dev_server_projects
-                    WHERE id = ?
-                })
-                .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
-                .context("No remote project found")
-                .warn_on_err()
-                .flatten()?;
-            SerializedWorkspaceLocation::DevServer(dev_server_project)
-        } else if let Some(local_paths) = local_paths {
-            match local_paths_order {
-                Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
-                None => {
-                    let order = LocalPathsOrder::default_for_paths(&local_paths);
-                    SerializedWorkspaceLocation::Local(local_paths, order)
-                }
+        let local_paths = local_paths?;
+        let location = match local_paths_order {
+            Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
+            None => {
+                let order = LocalPathsOrder::default_for_paths(&local_paths);
+                SerializedWorkspaceLocation::Local(local_paths, order)
             }
-        } else {
-            return None;
         };
 
         Some(SerializedWorkspace {
@@ -482,8 +462,6 @@ impl WorkspaceDb {
         // and we've grabbed the most recent workspace
         let (
             workspace_id,
-            local_paths,
-            local_paths_order,
             dev_server_project_id,
             window_bounds,
             display,
@@ -492,8 +470,6 @@ impl WorkspaceDb {
             window_id,
         ): (
             WorkspaceId,
-            Option<LocalPaths>,
-            Option<LocalPathsOrder>,
             Option<u64>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
@@ -504,8 +480,6 @@ impl WorkspaceDb {
             .select_row_bound(sql! {
                 SELECT
                     workspace_id,
-                    local_paths,
-                    local_paths_order,
                     dev_server_project_id,
                     window_state,
                     window_x,
@@ -532,29 +506,20 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let location = if let Some(dev_server_project_id) = dev_server_project_id {
-            let dev_server_project: SerializedDevServerProject = self
-                .select_row_bound(sql! {
-                    SELECT id, path, dev_server_name
-                    FROM dev_server_projects
-                    WHERE id = ?
-                })
-                .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
-                .context("No remote project found")
-                .warn_on_err()
-                .flatten()?;
-            SerializedWorkspaceLocation::DevServer(dev_server_project)
-        } else if let Some(local_paths) = local_paths {
-            match local_paths_order {
-                Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
-                None => {
-                    let order = LocalPathsOrder::default_for_paths(&local_paths);
-                    SerializedWorkspaceLocation::Local(local_paths, order)
-                }
-            }
-        } else {
-            return None;
-        };
+        let dev_server_project_id = dev_server_project_id?;
+
+        let dev_server_project: SerializedDevServerProject = self
+            .select_row_bound(sql! {
+                SELECT id, path, dev_server_name
+                FROM dev_server_projects
+                WHERE id = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
+            .context("No remote project found")
+            .warn_on_err()
+            .flatten()?;
+
+        let location = SerializedWorkspaceLocation::DevServer(dev_server_project);
 
         Some(SerializedWorkspace {
             id: workspace_id,
@@ -578,17 +543,8 @@ impl WorkspaceDb {
     ) -> Option<SerializedWorkspace> {
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (
-            workspace_id,
-            ssh_project_id,
-            window_bounds,
-            display,
-            centered_layout,
-            docks,
-            window_id,
-        ): (
+        let (workspace_id, window_bounds, display, centered_layout, docks, window_id): (
             WorkspaceId,
-            Option<u64>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -598,7 +554,6 @@ impl WorkspaceDb {
             .select_row_bound(sql! {
                 SELECT
                     workspace_id,
-                    ssh_project_id,
                     window_state,
                     window_x,
                     window_y,
@@ -624,15 +579,9 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let location = if ssh_project_id.is_some() {
-            SerializedWorkspaceLocation::Ssh(ssh_project)
-        } else {
-            return None;
-        };
-
         Some(SerializedWorkspace {
             id: workspace_id,
-            location,
+            location: SerializedWorkspaceLocation::Ssh(ssh_project),
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -820,44 +769,34 @@ impl WorkspaceDb {
     pub(crate) async fn get_or_create_ssh_project(
         &self,
         host: String,
+        path: String,
         user: Option<String>,
-        path: Option<String>,
     ) -> Result<SerializedSshProject> {
-        // TODO: This whole thing should be 5 lines
         if let Some(project) = self
             .get_ssh_project(host.clone(), path.clone(), user.clone())
             .await?
         {
-            println!("found a project: {:?}", project);
             Ok(project)
         } else {
-            println!("did not find a project. inserting one.");
-            let project = self
-                .write({
-                    let host = host.clone();
-                    let user = user.clone();
-                    let path = path.clone();
-
-                    move |conn| {
-                        conn.select_row_bound::<(String, Option<String>, Option<String>), SerializedSshProject>(sql!(
-                            INSERT INTO ssh_projects(
-                                host,
-                                path,
-                                user
-                            ) VALUES (?1, ?2, ?3)
-                            RETURNING id, host, path, user
-                        ))?((host.clone(), path.clone(), user.clone()))
-                    }
-                })
-                .await?;
-
-            println!("created project!");
-            project.ok_or_else(|| anyhow!("project not found"))
+            self.write(move |conn| {
+                conn.select_row_bound::<(String, String, Option<String>), SerializedSshProject>(
+                    sql!(
+                        INSERT INTO ssh_projects(
+                            host,
+                            path,
+                            user
+                        ) VALUES (?1, ?2, ?3)
+                        RETURNING id, host, path, user
+                    ),
+                )?((host.clone(), path.clone(), user.clone()))
+            })
+            .await?
+            .ok_or_else(|| anyhow!("project not found"))
         }
     }
 
     query! {
-        pub async fn get_ssh_project(host: String, path: Option<String>, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+        pub async fn get_ssh_project(host: String, path: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
             SELECT id, host, path, user
             FROM ssh_projects
             WHERE host IS ? AND path IS ? AND user IS ?
@@ -1710,6 +1649,75 @@ mod tests {
         assert_eq!(have[1], LocalPaths::new([dir3.path().to_str().unwrap()]));
         assert_eq!(have[2], LocalPaths::new([dir2.path().to_str().unwrap()]));
         assert_eq!(have[3], LocalPaths::new([dir1.path().to_str().unwrap()]));
+    }
+
+    #[gpui::test]
+    async fn test_get_or_create_ssh_project() {
+        let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project").await);
+
+        let (host, path, user) = (
+            "example.com".to_string(),
+            "/home/user".to_string(),
+            Some("user".to_string()),
+        );
+
+        let project = db
+            .get_or_create_ssh_project(host.clone(), path.clone(), user.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(project.host, host);
+        assert_eq!(project.path, path);
+        assert_eq!(project.user, user);
+
+        // Test that calling the function again with the same parameters returns the same project
+        let same_project = db
+            .get_or_create_ssh_project(host.clone(), path.clone(), user.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(project.id, same_project.id);
+
+        // Test with different parameters
+        let (host2, path2, user2) = (
+            "otherexample.com".to_string(),
+            "/home/otheruser".to_string(),
+            Some("otheruser".to_string()),
+        );
+
+        let different_project = db
+            .get_or_create_ssh_project(host2.clone(), path2.clone(), user2.clone())
+            .await
+            .unwrap();
+
+        assert_ne!(project.id, different_project.id);
+        assert_eq!(different_project.host, host2);
+        assert_eq!(different_project.path, path2);
+        assert_eq!(different_project.user, user2);
+    }
+
+    #[gpui::test]
+    async fn test_get_or_create_ssh_project_with_null_user() {
+        let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project_with_null_user").await);
+
+        let (host, path, user) = ("example.com".to_string(), "/home/user".to_string(), None);
+
+        let project = db
+            .get_or_create_ssh_project(host.clone(), path.clone(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(project.host, host);
+        assert_eq!(project.path, path);
+        assert_eq!(project.user, None);
+
+        // Test that calling the function again with the same parameters returns the same project
+        let same_project = db
+            .get_or_create_ssh_project(host.clone(), path.clone(), user.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(project.id, same_project.id);
     }
 
     #[gpui::test]

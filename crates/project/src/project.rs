@@ -60,7 +60,7 @@ use parking_lot::{Mutex, RwLock};
 use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_path};
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver};
-use remote::SshSession;
+use remote::{ssh_session::SshProject, SshSession};
 use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
@@ -158,7 +158,7 @@ pub struct Project {
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
-    ssh_project_id: Option<u64>,
+    ssh_project: Option<SshProject>,
     search_history: SearchHistory,
     search_included_history: SearchHistory,
     search_excluded_history: SearchHistory,
@@ -686,7 +686,7 @@ impl Project {
                 tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
-                ssh_project_id: None,
+                ssh_project: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_buffers: Default::default(),
@@ -700,7 +700,7 @@ impl Project {
 
     pub fn ssh(
         ssh: Arc<SshSession>,
-        ssh_project_id: Option<u64>,
+        ssh_project: Option<SshProject>,
         client: Arc<Client>,
         node: Arc<dyn NodeRuntime>,
         user_store: Model<UserStore>,
@@ -774,7 +774,7 @@ impl Project {
                 tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
-                ssh_project_id,
+                ssh_project,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_buffers: Default::default(),
@@ -955,7 +955,7 @@ impl Project {
                     .payload
                     .dev_server_project_id
                     .map(DevServerProjectId),
-                ssh_project_id: None,
+                ssh_project: None,
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
@@ -1225,8 +1225,8 @@ impl Project {
         self.dev_server_project_id
     }
 
-    pub fn ssh_project_id(&self) -> Option<u64> {
-        self.ssh_project_id
+    pub fn ssh_project(&self) -> Option<&SshProject> {
+        self.ssh_project.as_ref()
     }
 
     pub fn supports_remote_terminal(&self, cx: &AppContext) -> bool {

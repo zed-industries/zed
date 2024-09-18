@@ -41,7 +41,7 @@ use std::{
     env,
     fs::OpenOptions,
     io::{IsTerminal, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process,
     sync::Arc,
 };
@@ -667,7 +667,11 @@ fn handle_open_request(
         cx.spawn(|mut cx| async move {
             open_ssh_project(
                 connection_info,
-                request.open_paths,
+                request
+                    .open_paths
+                    .into_iter()
+                    .map(|path| PathBuf::from(path.path))
+                    .collect::<Vec<_>>(),
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

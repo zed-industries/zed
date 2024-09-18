@@ -2,6 +2,7 @@ mod dev_servers;
 pub mod disconnected_overlay;
 mod ssh_connections;
 mod ssh_remotes;
+use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
@@ -32,8 +33,8 @@ use ui::{
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    AppState, CloseIntent, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId,
-    WORKSPACE_DB,
+    AppState, CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace,
+    WorkspaceId, WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -265,9 +266,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                             path.push('@');
                         }
                         path.push_str(&ssh_project.host);
-                        if let Some(ssh_path) = &ssh_project.path {
+                        if !ssh_project.path.is_empty() {
                             path.push(':');
-                            path.push_str(ssh_path);
+                            path.push_str(&ssh_project.path);
                         }
                         path
                     }
@@ -377,9 +378,33 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 };
                                 open_dev_server_project(replace_current_window, dev_server_project.id, project_id, cx)
                         }
-                        SerializedWorkspaceLocation::Ssh(_) => {
-                            println!("TODO: Open SSH project");
-                            Task::ready(Err(anyhow::anyhow!("TODO: Open SSH project")))
+                        SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                            let app_state = workspace.app_state().clone();
+
+                            let replace_window = if replace_current_window {
+                                cx.window_handle().downcast::<Workspace>()
+                            } else {
+                                None
+                            };
+
+                            let open_options = OpenOptions {
+                                replace_window,
+                                ..Default::default()
+                            };
+
+                            let connection_options = SshConnectionOptions {
+                                host: ssh_project.host.clone(),
+                                username: ssh_project.user.clone(),
+                                // TODO: Use the port
+                                port: None,
+                                password: None,
+                            };
+
+                            let paths = vec![PathBuf::from(ssh_project.path.clone())];
+
+                            cx.spawn(|_, mut cx| async move {
+                                open_ssh_project(connection_options, paths, app_state, open_options, &mut cx).await
+                            })
                         }
                     }
                 }
@@ -434,7 +459,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .collect(),
             ),
             SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(vec![PathBuf::from(
-                format!("{}:{}", ssh_project.host, ssh_project.path.as_deref().unwrap_or_default()),
+                format!("{}:{}", ssh_project.host, ssh_project.path),
             )]),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
