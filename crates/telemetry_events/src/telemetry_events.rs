@@ -44,16 +44,6 @@ pub enum AssistantKind {
     Panel,
     Inline,
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AssistantPhase {
-    Invoked,
-    Response,
-    Accepted,
-    Rejected,
-}
-
 impl Display for AssistantKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -62,6 +52,31 @@ impl Display for AssistantKind {
             match self {
                 Self::Panel => "panel",
                 Self::Inline => "inline",
+            }
+        )
+    }
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantPhase {
+    #[default]
+    Response,
+    Invoked,
+    Accepted,
+    Rejected,
+}
+
+impl Display for AssistantPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Response => "response",
+                Self::Invoked => "invoked",
+                Self::Accepted => "accepted",
+                Self::Rejected => "rejected",
             }
         )
     }
