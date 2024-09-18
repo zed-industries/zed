@@ -174,9 +174,6 @@ members = [
 default-members = ["crates/zed"]
 
 [workspace.dependencies]
-
-
-
 #
 # Workspace member crates
 #
@@ -216,7 +213,6 @@ file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
-isahc_http_client = { path = "crates/isahc_http_client" }
 git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
@@ -231,6 +227,7 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
+isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }

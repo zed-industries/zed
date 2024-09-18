@@ -827,6 +827,7 @@ impl ExtensionStore {
             let mut extension_manifest =
                 ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
+
             if !this.update(&mut cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
                     btree_map::Entry::Occupied(_) => return false,
@@ -850,6 +851,7 @@ impl ExtensionStore {
                     .ok();
                 }
             });
+
             cx.background_executor()
                 .spawn({
                     let extension_source_path = extension_source_path.clone();
@@ -880,8 +882,10 @@ impl ExtensionStore {
                     bail!("extension {extension_id} is already installed");
                 }
             }
+
             fs.create_symlink(output_path, extension_source_path)
                 .await?;
+
             this.update(&mut cx, |this, cx| this.reload(None, cx))?
                 .await;
             Ok(())
