@@ -91,7 +91,7 @@ impl Bookmarks {
                     if let Some(buffer_id) = workspace
                         .active_item_as::<Editor>(cx)
                         .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
-                        .and_then(|buffer| Some(buffer.read(cx).remote_id()))
+                        .map(|buffer| buffer.read(cx).remote_id())
                     {
                         bookmark_store
                             .update(cx, |store, cx| store.clear_current_editor(buffer_id, cx));
@@ -167,7 +167,7 @@ impl Bookmarks {
                     if let Some(buffer_id) = workspace
                         .active_item_as::<Editor>(cx)
                         .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
-                        .and_then(|buffer| Some(buffer.read(cx).remote_id()))
+                        .map(|buffer| buffer.read(cx).remote_id())
                     {
                         bookmark_store
                             .update(cx, |store, cx| store.get_current_editor(buffer_id, cx))
