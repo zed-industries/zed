@@ -32,6 +32,7 @@ if [[ -n $apt ]]; then
     elfutils
     libsqlite3-dev
   )
+  $maysudo "$apt" update
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
 fi
