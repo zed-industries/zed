@@ -14,10 +14,7 @@ use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, WeakModel};
 use heed::EnvClosingEvent;
 use project::Project;
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{path::PathBuf, sync::Arc};
 use ui::ViewContext;
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -28,58 +25,38 @@ pub use project_index_debug_view::ProjectIndexDebugView;
 use std::sync::atomic::{AtomicUsize, Ordering};
 pub use summary_index::FileSummary;
 
-static BACKTRACE_MAP: Mutex<Vec<(usize, Backtrace)>> = Mutex::new(Vec::new());
-static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+static CLONE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 use backtrace::Backtrace;
 
 pub struct LMDBEnv {
     env: heed::Env,
-    id: usize,
-}
-
-struct MyEnvInner {
-    env: *mut (),
-    path: PathBuf,
-}
-
-impl Clone for LMDBEnv {
-    fn clone(&self) -> Self {
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let bt = Backtrace::new();
-        eprintln!(
-            "creating db {id} - retain count: {}",
-            Arc::strong_count(unsafe {
-                std::mem::transmute::<&heed::Env, &Arc<MyEnvInner>>(&self.env)
-            })
-        );
-        BACKTRACE_MAP.lock().unwrap().push((id, bt));
-        Self {
-            env: self.env.clone(),
-            id,
-        }
-    }
+    backtrace: Arc<Backtrace>,
 }
 
 impl Drop for LMDBEnv {
     fn drop(&mut self) {
-        let mut map = BACKTRACE_MAP.lock().unwrap();
-        let ix = map.binary_search_by_key(&self.id, |e| e.0).unwrap();
-        map.remove(ix);
-        eprintln!(
-            "dropping db {} - retain count: {}",
-            self.id,
-            Arc::strong_count(unsafe {
-                std::mem::transmute::<&heed::Env, &Arc<MyEnvInner>>(&self.env)
-            }) - 1
-        );
-        // eprintln!("dropping db {}", self.id);
+        let count = DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        eprintln!("Dropped a db env. Total drops: {}", count + 1);
+        // eprintln!("Backtrace from original clone:");
+        // eprintln!("{:?}", self.backtrace);
     }
 }
 
-pub fn print_outstanding_envs() {
-    for bt in BACKTRACE_MAP.lock().unwrap().iter() {
-        eprintln!("{:?}\n", bt);
+impl Clone for LMDBEnv {
+    fn clone(&self) -> Self {
+        let count = CLONE_COUNT.fetch_add(1, Ordering::SeqCst);
+        eprintln!("Cloned a db env. Total clones: {}", count + 1);
+        let bt = Backtrace::new();
+
+        // eprintln!("Backtrace from clone:");
+        // eprintln!("{:?}", &bt);
+
+        Self {
+            env: self.env.clone(),
+            backtrace: Arc::new(bt),
+        }
     }
 }
 
@@ -89,33 +66,34 @@ impl LMDBEnv {
     }
 
     pub fn prepare_for_closing(self) -> EnvClosingEvent {
-        let mut map = BACKTRACE_MAP.lock().unwrap();
-        let ix = map.binary_search_by_key(&self.id, |e| e.0).unwrap();
-        map.remove(ix);
+        let count = DROP_COUNT.fetch_add(1, Ordering::SeqCst);
         eprintln!(
-            "dropping db {} - retain count: {}",
-            self.id,
-            Arc::strong_count(unsafe {
-                std::mem::transmute::<&heed::Env, &Arc<MyEnvInner>>(&self.env)
-            }) - 1
+            "Dropped a db env via prepare_for_closing. Total drops, counting this one: {}",
+            count + 1
         );
+        // eprintln!("Backtrace from original clone:");
+        // eprintln!("{:?}", self.backtrace);
 
         let env = std::mem::ManuallyDrop::new(self);
         unsafe { std::ptr::read(&env.env).prepare_for_closing() }
     }
 
+    // Constructor method to create a new LMDBEnv
     pub fn new(env: heed::Env) -> Self {
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+        let count = CLONE_COUNT.fetch_add(1, Ordering::SeqCst);
+        eprintln!("Created a db env. Total clones: {}", count + 1);
         let bt = Backtrace::new();
-        eprintln!(
-            "creating db {id} - retain count: {}",
-            Arc::strong_count(unsafe { std::mem::transmute::<&heed::Env, &Arc<MyEnvInner>>(&env) })
-        );
-        BACKTRACE_MAP.lock().unwrap().push((id, bt));
 
-        Self { env, id }
+        // eprintln!("Backtrace from new:");
+        // eprintln!("{:?}", &bt);
+
+        Self {
+            env,
+            backtrace: Arc::new(bt),
+        }
     }
 }
+
 pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     pub db_connection: LMDBEnv,
@@ -261,13 +239,6 @@ impl SemanticDb {
         .detach();
 
         project_index
-    }
-}
-
-impl Drop for SemanticDb {
-    fn drop(&mut self) {
-        self.db_connection.prepare_for_closing();
-        // eprintln!("dropping semanticDb");
     }
 }
 

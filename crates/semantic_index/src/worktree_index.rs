@@ -222,9 +222,3 @@ impl WorktreeIndex {
         Ok(self.embedding_index().db().len(&txn)?)
     }
 }
-
-impl Drop for WorktreeIndex {
-    fn drop(&mut self) {
-        eprintln!("dropping WorktreeIndex");
-    }
-}
