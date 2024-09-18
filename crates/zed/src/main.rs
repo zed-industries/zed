@@ -495,17 +495,19 @@ fn main() {
             session_id,
             cx,
         );
-        match (&system_id, &installation_id) {
-            (Some(IdType::New(_)), Some(IdType::New(_))) => {
-                telemetry.report_app_event("first open".to_string());
+        if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
+            match (&system_id, &installation_id) {
+                (IdType::New(_), IdType::New(_)) => {
+                    telemetry.report_app_event("first open".to_string());
+                    telemetry.report_app_event("first open for release channel".to_string());
+                }
+                (IdType::Existing(_), IdType::New(_)) => {
+                    telemetry.report_app_event("first open for release channel".to_string());
+                }
+                (_, IdType::Existing(_)) => {
+                    telemetry.report_app_event("open".to_string());
+                }
             }
-            (Some(IdType::Existing(_)), Some(IdType::New(_))) => {
-                telemetry.report_app_event("first open for release channel".to_string());
-            }
-            (Some(_), Some(IdType::Existing(_))) => {
-                telemetry.report_app_event("open".to_string());
-            }
-            _ => {}
         }
         let app_session = cx.new_model(|cx| AppSession::new(session, cx));
 
