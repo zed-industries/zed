@@ -2,6 +2,7 @@ use crate::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
+    LMDBEnv,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
@@ -28,7 +29,7 @@ use worktree::Snapshot;
 
 pub struct EmbeddingIndex {
     worktree: Model<Worktree>,
-    db_connection: heed::Env,
+    db_connection: LMDBEnv,
     db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
@@ -40,7 +41,7 @@ impl EmbeddingIndex {
     pub fn new(
         worktree: Model<Worktree>,
         fs: Arc<dyn Fs>,
-        db_connection: heed::Env,
+        db_connection: LMDBEnv,
         embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
         language_registry: Arc<LanguageRegistry>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -97,11 +98,12 @@ impl EmbeddingIndex {
     fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
-        let db_connection = self.db_connection.clone();
+        let db_connection = self.db_connection.clone(); // gets called once, dropped once
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
+                .inner()
                 .read_txn()
                 .context("failed to create read transaction")?;
             let mut db_entries = db
@@ -356,7 +358,7 @@ impl EmbeddingIndex {
         mut embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> Task<Result<()>> {
-        let db_connection = self.db_connection.clone();
+        let db_connection = self.db_connection.clone(); // gets called once, dropped once
         let db = self.db;
 
         cx.background_executor().spawn(async move {
@@ -365,7 +367,7 @@ impl EmbeddingIndex {
                 futures::select_biased! {
                     deletion_range = deleted_entry_ranges.next() => {
                         if let Some(deletion_range) = deletion_range {
-                            let mut txn = db_connection.write_txn()?;
+                            let mut txn = db_connection.inner().write_txn()?;
                             let start = deletion_range.0.as_ref().map(|start| start.as_str());
                             let end = deletion_range.1.as_ref().map(|end| end.as_str());
                             log::debug!("deleting embeddings in range {:?}", &(start, end));
@@ -375,7 +377,7 @@ impl EmbeddingIndex {
                     },
                     file = embedded_files.next() => {
                         if let Some((file, _)) = file {
-                            let mut txn = db_connection.write_txn()?;
+                            let mut txn = db_connection.inner().write_txn()?;
                             log::debug!("saving embedding for file {:?}", file.path);
                             let key = db_key_for_path(&file.path);
                             db.put(&mut txn, &key, &file)?;
@@ -395,6 +397,7 @@ impl EmbeddingIndex {
         let db = self.db;
         cx.background_executor().spawn(async move {
             let tx = connection
+                .inner()
                 .read_txn()
                 .context("failed to create read transaction")?;
             let result = db
@@ -415,6 +418,7 @@ impl EmbeddingIndex {
         let db = self.db;
         cx.background_executor().spawn(async move {
             let tx = connection
+                .inner()
                 .read_txn()
                 .context("failed to create read transaction")?;
             Ok(db

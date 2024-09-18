@@ -26,7 +26,7 @@ use std::{
 use util::ResultExt;
 use worktree::Snapshot;
 
-use crate::{indexing::IndexingEntrySet, summary_backlog::SummaryBacklog};
+use crate::{indexing::IndexingEntrySet, summary_backlog::SummaryBacklog, LMDBEnv};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FileSummary {
@@ -80,7 +80,7 @@ struct SummarizeFiles {
 pub struct SummaryIndex {
     worktree: Model<Worktree>,
     fs: Arc<dyn Fs>,
-    db_connection: heed::Env,
+    db_connection: LMDBEnv,
     file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>, // Key: file path. Val: BLAKE3 digest of its contents.
     summary_db: heed::Database<SerdeBincode<Blake3Digest>, Str>, // Key: BLAKE3 digest of a file's contents. Val: LLM summary of those contents.
     backlog: Arc<Mutex<SummaryBacklog>>,
@@ -101,7 +101,7 @@ impl SummaryIndex {
     pub fn new(
         worktree: Model<Worktree>,
         fs: Arc<dyn Fs>,
-        db_connection: heed::Env,
+        db_connection: LMDBEnv,
         file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
         summary_db: heed::Database<SerdeBincode<Blake3Digest>, Str>,
         _entry_ids_being_indexed: Arc<IndexingEntrySet>,
@@ -256,7 +256,7 @@ impl SummaryIndex {
         let task = cx.background_executor().spawn(async move {
             while let Some(file) = might_need_summary.next().await {
                 let tx = db_connection
-                    .read_txn()
+                    .inner().read_txn()
                     .context("Failed to create read transaction for checking which hashes are in summary cache")?;
 
                 match db.get(&tx, &file.digest) {
@@ -291,6 +291,7 @@ impl SummaryIndex {
         let backlog = Arc::clone(&self.backlog);
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
+                .inner()
                 .read_txn()
                 .context("failed to create read transaction")?;
 
@@ -368,6 +369,7 @@ impl SummaryIndex {
         let backlog = Arc::clone(&self.backlog);
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
+                .inner()
                 .read_txn()
                 .context("failed to create read transaction")?;
 
@@ -609,7 +611,7 @@ impl SummaryIndex {
         cx.background_executor().spawn(async move {
             let mut summaries = summaries.chunks_timeout(4096, Duration::from_secs(2));
             while let Some(summaries) = summaries.next().await {
-                let mut txn = db_connection.write_txn()?;
+                let mut txn = db_connection.inner().write_txn()?;
                 for file in &summaries {
                     log::debug!(
                         "Saving summary of {:?} - which is {} bytes of summary for content digest {:?}",

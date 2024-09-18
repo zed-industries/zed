@@ -18,6 +18,7 @@ path = "examples/index.rs"
 crate-type = ["bin"]
 
 [dependencies]
+backtrace = "0.3"
 anyhow.workspace = true
 arrayvec.workspace = true
 blake3.workspace = true

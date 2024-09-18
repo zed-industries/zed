@@ -2,6 +2,7 @@ use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
+    LMDBEnv,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
@@ -56,7 +57,7 @@ pub enum Status {
 }
 
 pub struct ProjectIndex {
-    db_connection: heed::Env,
+    db_connection: LMDBEnv,
     project: WeakModel<Project>,
     worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
@@ -68,10 +69,16 @@ pub struct ProjectIndex {
     _subscription: Subscription,
 }
 
+impl Drop for ProjectIndex {
+    fn drop(&mut self) {
+        panic!("Dropping project index...");
+    }
+}
+
 impl ProjectIndex {
     pub fn new(
         project: Model<Project>,
-        db_connection: heed::Env,
+        db_connection: LMDBEnv,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -152,7 +159,7 @@ impl ProjectIndex {
             self.worktree_indices.entry(worktree_id).or_insert_with(|| {
                 let worktree_index = WorktreeIndex::load(
                     worktree.clone(),
-                    self.db_connection.clone(),
+                    self.db_connection.clone(), // called once, NEVER DROPPED
                     self.language_registry.clone(),
                     self.fs.clone(),
                     self.status_tx.clone(),
@@ -247,10 +254,11 @@ impl ProjectIndex {
                 index
                     .read_with(&cx, |index, cx| {
                         let worktree_id = index.worktree().read(cx).id();
-                        let db_connection = index.db_connection().clone();
+                        let db_connection = index.db_connection().clone(); // gets called once, dropped once
                         let db = *index.embedding_index().db();
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
+                                .inner()
                                 .read_txn()
                                 .context("failed to create read transaction")?;
                             let db_entries = db.iter(&txn).context("failed to iterate database")?;
@@ -423,6 +431,7 @@ impl ProjectIndex {
 
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
+                                .inner()
                                 .read_txn()
                                 .context("failed to create db read transaction")?;
                             let db_entries = file_digest_db

@@ -444,10 +444,13 @@ async fn run_evaluation(
         }
 
         cx.update(|_| {
-            drop(semantic_index);
             drop(project);
             drop(worktree);
             drop(project_index);
+
+            if !semantic_index.db_connection.prepare_for_closing().wait_timeout(Duration::new(3, 0)) {
+                panic!("Timed out waiting for the semantic index to close and release its file descriptors. (We introduced this because previously we were silently leaking file descriptors and later getting 'too many open files' errors from the OS.) This is most likely happening because some number of heed::Env instances were cloned but never dropped, meaning there are still active references to their Arc<...> contents - including the file descriptors.");
+            }
         })
         .unwrap();
     }
