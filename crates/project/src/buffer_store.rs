@@ -1190,6 +1190,7 @@ impl BufferStore {
                         self.loading_remote_buffers_by_id.insert(buffer_id, buffer);
                     }
                     Err(error) => {
+                        dbg!(&error);
                         if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
                             for listener in listeners {
                                 listener.send(Err(anyhow!(error.cloned()))).ok();

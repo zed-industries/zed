@@ -31,7 +31,7 @@ pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
-    AsyncWriteExt, FutureExt, StreamExt,
+    AsyncWriteExt, StreamExt,
 };
 
 use git::{blame::Blame, repository::GitRepository};
@@ -786,6 +786,7 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
             client.add_model_message_handler(Self::handle_update_worktree);
             client.add_model_message_handler(Self::handle_create_buffer_for_peer);
+            client.add_model_message_handler(Self::handle_update_project);
             client.add_model_request_handler(BufferStore::handle_update_buffer);
             BufferStore::init(&client);
             LspStore::init(&client);
@@ -2974,7 +2975,7 @@ impl Project {
 
     #[inline(never)]
     fn definition_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -2987,7 +2988,7 @@ impl Project {
         )
     }
     pub fn definition<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -2997,7 +2998,7 @@ impl Project {
     }
 
     fn declaration_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -3011,7 +3012,7 @@ impl Project {
     }
 
     pub fn declaration<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3021,7 +3022,7 @@ impl Project {
     }
 
     fn type_definition_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -3035,7 +3036,7 @@ impl Project {
     }
 
     pub fn type_definition<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3045,7 +3046,7 @@ impl Project {
     }
 
     pub fn implementation<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3060,7 +3061,7 @@ impl Project {
     }
 
     pub fn references<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3075,7 +3076,7 @@ impl Project {
     }
 
     fn document_highlights_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -3089,7 +3090,7 @@ impl Project {
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3498,7 +3499,7 @@ impl Project {
     }
 
     pub fn request_lsp<R: LspCommand>(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
@@ -3508,8 +3509,16 @@ impl Project {
         <R::LspRequest as lsp::request::Request>::Result: Send,
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        dbg!("start");
+        let guard = self.retain_remotely_created_buffers(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.request_lsp(buffer_handle, server, request, cx)
+        });
+        cx.spawn(|_, _| async move {
+            let result = task.await;
+            dbg!("stop");
+            drop(guard);
+            result
         })
     }
 
@@ -4051,7 +4060,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
-                this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
+                dbg!(this.set_worktrees_from_proto(envelope.payload.worktrees, cx))?;
             }
             Ok(())
         })?
@@ -4601,13 +4610,7 @@ impl Project {
     ) -> Result<()> {
         cx.notify();
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.set_worktrees_from_proto(
-                worktrees,
-                self.replica_id(),
-                self.remote_id().ok_or_else(|| anyhow!("invalid project"))?,
-                self.client.clone().into(),
-                cx,
-            )
+            worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
         })
     }
 
