@@ -4742,17 +4742,6 @@ impl LspStore {
             .reorder_language_servers(&language, enabled_lsp_adapters);
     }
 
-    /*
-    ssh client owns the lifecycle of the language servers
-    ssh host actually runs the binaries
-
-    in the future: ssh client will use the local extensions to get the downloads etc.
-        and send them up over the ssh connection (but today) we'll just the static config
-
-        languages::() <-- registers lsp adapters
-        on the ssh host we won't have adapters for the LSPs
-    */
-
     fn start_language_server_on_ssh_host(
         &mut self,
         worktree: &Model<Worktree>,
