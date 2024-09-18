@@ -13,6 +13,7 @@ use smol::{fs, lock::Mutex, process::Command};
 use std::ffi::OsString;
 use std::io;
 use std::process::{Output, Stdio};
+use std::sync::LazyLock;
 use std::{
     env::consts,
     path::{Path, PathBuf},
@@ -115,6 +116,24 @@ pub struct RealNodeRuntime {
     installation_lock: Mutex<()>,
 }
 
+/// Files required:
+/// - [`NODE_PATH`]
+/// - [`NPM_PATH`]
+/// - blank_user_npmrc
+/// - blank_global_npmrc
+pub static ZED_NODE_RUNTIME_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+    std::env::var("ZED_NODE_RUNTIME_PATH")
+        .ok()
+        .map(PathBuf::from)
+});
+
+/// Writable cache path to save npm packages.
+pub static ZED_NODE_RUNTIME_CACHE_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+    std::env::var("ZED_NODE_RUNTIME_CACHE_PATH")
+        .ok()
+        .map(PathBuf::from)
+});
+
 impl RealNodeRuntime {
     pub fn new(http: Arc<dyn HttpClient>) -> Arc<dyn NodeRuntime> {
         Arc::new(RealNodeRuntime {
@@ -126,6 +145,9 @@ impl RealNodeRuntime {
     async fn install_if_needed(&self) -> Result<PathBuf> {
         let _lock = self.installation_lock.lock().await;
         log::info!("Node runtime install_if_needed");
+        if let Some(node_runtime_path) = &*ZED_NODE_RUNTIME_PATH {
+            return Ok(node_runtime_path.to_owned());
+        }
 
         let os = match consts::OS {
             "macos" => "darwin",
@@ -254,11 +276,16 @@ impl NodeRuntime for RealNodeRuntime {
                 return Err(anyhow!("missing npm file"));
             }
 
+            let cache_dir = if let Some(cache_dir) = ZED_NODE_RUNTIME_CACHE_PATH.as_ref() {
+                cache_dir.to_owned()
+            } else {
+                installation_path.join("cache")
+            };
             let mut command = Command::new(node_binary);
             command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), installation_path.join("cache")]);
+            command.args(["--cache".into(), cache_dir]);
             command.args([
                 "--userconfig".into(),
                 installation_path.join("blank_user_npmrc"),
