@@ -1,6 +1,11 @@
-use crate::PlatformKeyboard;
+use std::sync::LazyLock;
 
-use super::events::key_string_from_keycode;
+use crate::{keyboard_layouts::KeyboardLayout, Keystroke, PlatformKeyboard};
+
+use super::{events::key_string_from_keycode, retrieve_current_keboard_layout};
+
+static KEYBOARD_LAYOUT: LazyLock<KeyboardLayout> =
+    LazyLock::new(|| retrieve_current_keboard_layout());
 
 pub(crate) struct MacKeyboard {
     // keyboard:
@@ -191,7 +196,15 @@ impl PlatformKeyboard for MacKeyboard {
         }
     }
 
-    fn us_layout_keycode_to_native_keycode(&self, code: &crate::KeyCodes) -> crate::KeyCodes {
-        *code
+    /// Shortcuts translation happens here.
+    fn to_native_keystroke(&self, key_stroke: &mut Keystroke) {
+        match *KEYBOARD_LAYOUT {
+            KeyboardLayout::ABC => {}
+            KeyboardLayout::Czech => {}
+            KeyboardLayout::CzechQwerty => {}
+            KeyboardLayout::German => {}
+            KeyboardLayout::Russian => {}
+        }
+        key_stroke.key = self.code_to_key(&key_stroke.code);
     }
 }

@@ -155,9 +155,9 @@ impl Keystroke {
             .ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?
             .log_err()
             .unwrap_or_default();
-        let key = keyboard_manager.code_to_key(&code);
+        let key = code.to_string();
 
-        Ok(Keystroke {
+        let mut key_stroke = Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -168,7 +168,12 @@ impl Keystroke {
             key,
             code,
             ime_key,
-        })
+        };
+        println!("========================================");
+        println!("{:#?}", key_stroke);
+        keyboard_manager.to_native_keystroke(&mut key_stroke);
+        println!("{:#?}", key_stroke);
+        Ok(key_stroke)
     }
 
     // TODO: https://github.com/zed-industries/zed/pull/13185

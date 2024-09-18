@@ -222,7 +222,7 @@ pub trait PlatformKeyboard {
     /// TODO:
     fn code_to_key(&self, code: &KeyCodes) -> String;
     /// TODO:
-    fn us_layout_keycode_to_native_keycode(&self, code: &KeyCodes) -> KeyCodes;
+    fn to_native_keystroke(&self, key_stroke: &mut Keystroke);
 }
 
 /// An opaque identifier for a hardware display
