@@ -2211,7 +2211,7 @@ impl ParallelCodegen {
             active_alternative: 0,
             subscriptions: Vec::new(),
         };
-        this.subscribe_to_alternative(cx);
+        this.activate(0, cx);
         this
     }
 
@@ -2233,9 +2233,14 @@ impl ParallelCodegen {
     }
 
     pub fn cycle(&mut self, cx: &mut ModelContext<Self>) {
+        let next_active_ix = (self.active_alternative + 1) % self.alternatives.len();
+        self.activate(next_active_ix, cx);
+    }
+
+    fn activate(&mut self, index: usize, cx: &mut ModelContext<Self>) {
         self.active_codegen()
             .update(cx, |codegen, cx| codegen.set_active(false, cx));
-        self.active_alternative = (self.active_alternative + 1) % self.alternatives.len();
+        self.active_alternative = index;
         self.active_codegen()
             .update(cx, |codegen, cx| codegen.set_active(true, cx));
         self.subscribe_to_alternative(cx);
