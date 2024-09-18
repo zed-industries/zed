@@ -2233,7 +2233,11 @@ impl ParallelCodegen {
     }
 
     pub fn cycle(&mut self, cx: &mut ModelContext<Self>) {
+        self.active_codegen()
+            .update(cx, |codegen, cx| codegen.set_active(false, cx));
         self.active_alternative = (self.active_alternative + 1) % self.alternatives.len();
+        self.active_codegen()
+            .update(cx, |codegen, cx| codegen.set_active(true, cx));
         self.subscribe_to_alternative(cx);
     }
 
@@ -2244,14 +2248,23 @@ impl ParallelCodegen {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.active_codegen().update(cx, |codegen, cx| {
-            codegen.start(edit_range, user_prompt, assistant_panel_context, cx)
-        })
+        for codegen in &self.alternatives {
+            codegen.update(cx, |codegen, cx| {
+                codegen.start(
+                    edit_range.clone(),
+                    user_prompt.clone(),
+                    assistant_panel_context.clone(),
+                    cx,
+                )
+            })?;
+        }
+        Ok(())
     }
 
     pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
-        self.active_codegen()
-            .update(cx, |codegen, cx| codegen.stop(cx));
+        for codegen in &self.alternatives {
+            codegen.update(cx, |codegen, cx| codegen.stop(cx));
+        }
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
@@ -2315,6 +2328,8 @@ pub struct Codegen {
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
+    active: bool,
+    edits: Vec<(Range<Anchor>, String)>,
 }
 
 enum CodegenStatus {
@@ -2383,6 +2398,28 @@ impl Codegen {
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             initial_transaction_id,
             builder,
+            active: false,
+            edits: Vec::new(),
+        }
+    }
+
+    fn set_active(&mut self, active: bool, cx: &mut ModelContext<Self>) {
+        if active != self.active {
+            self.active = active;
+
+            if self.active {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.finalize_last_transaction(cx);
+                    buffer.start_transaction(cx);
+                    buffer.edit(self.edits.iter().cloned(), None, cx);
+                    self.transformation_transaction_id = buffer.end_transaction(cx);
+                });
+            } else if let Some(transaction_id) = self.transformation_transaction_id.take() {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.undo_transaction(transaction_id, cx);
+                    buffer.forget_transaction(transaction_id, cx);
+                });
+            }
         }
     }
 
@@ -2694,64 +2731,39 @@ impl Codegen {
                         codegen.update(&mut cx, |codegen, cx| {
                             codegen.last_equal_ranges.clear();
 
-                            let transaction = codegen.buffer.update(cx, |buffer, cx| {
-                                // Avoid grouping assistant edits with user edits.
-                                buffer.finalize_last_transaction(cx);
+                            let edits = char_ops
+                                .into_iter()
+                                .filter_map(|operation| match operation {
+                                    CharOperation::Insert { text } => {
+                                        let edit_start = snapshot.anchor_after(edit_start);
+                                        Some((edit_start..edit_start, text))
+                                    }
+                                    CharOperation::Delete { bytes } => {
+                                        let edit_end = edit_start + bytes;
+                                        let edit_range = snapshot.anchor_after(edit_start)
+                                            ..snapshot.anchor_before(edit_end);
+                                        edit_start = edit_end;
+                                        Some((edit_range, String::new()))
+                                    }
+                                    CharOperation::Keep { bytes } => {
+                                        let edit_end = edit_start + bytes;
+                                        let edit_range = snapshot.anchor_after(edit_start)
+                                            ..snapshot.anchor_before(edit_end);
+                                        edit_start = edit_end;
+                                        codegen.last_equal_ranges.push(edit_range);
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>();
 
-                                buffer.start_transaction(cx);
-                                buffer.edit(
-                                    char_ops
-                                        .into_iter()
-                                        .filter_map(|operation| match operation {
-                                            CharOperation::Insert { text } => {
-                                                let edit_start = snapshot.anchor_after(edit_start);
-                                                Some((edit_start..edit_start, text))
-                                            }
-                                            CharOperation::Delete { bytes } => {
-                                                let edit_end = edit_start + bytes;
-                                                let edit_range = snapshot.anchor_after(edit_start)
-                                                    ..snapshot.anchor_before(edit_end);
-                                                edit_start = edit_end;
-                                                Some((edit_range, String::new()))
-                                            }
-                                            CharOperation::Keep { bytes } => {
-                                                let edit_end = edit_start + bytes;
-                                                let edit_range = snapshot.anchor_after(edit_start)
-                                                    ..snapshot.anchor_before(edit_end);
-                                                edit_start = edit_end;
-                                                codegen.last_equal_ranges.push(edit_range);
-                                                None
-                                            }
-                                        }),
-                                    None,
-                                    cx,
-                                );
-                                codegen.edit_position = Some(snapshot.anchor_after(edit_start));
-
-                                buffer.end_transaction(cx)
-                            });
-
-                            if let Some(transaction) = transaction {
-                                if let Some(first_transaction) =
-                                    codegen.transformation_transaction_id
-                                {
-                                    // Group all assistant edits into the first transaction.
-                                    codegen.buffer.update(cx, |buffer, cx| {
-                                        buffer.merge_transactions(
-                                            transaction,
-                                            first_transaction,
-                                            cx,
-                                        )
-                                    });
-                                } else {
-                                    codegen.transformation_transaction_id = Some(transaction);
-                                    codegen.buffer.update(cx, |buffer, cx| {
-                                        buffer.finalize_last_transaction(cx)
-                                    });
-                                }
+                            if codegen.active {
+                                codegen.apply_edits(edits, cx);
+                                codegen.reapply_line_based_diff(edit_range.clone(), line_ops, cx);
+                            } else {
+                                codegen.edits.extend(edits);
                             }
 
-                            codegen.reapply_line_based_diff(edit_range.clone(), line_ops, cx);
+                            codegen.edit_position = Some(snapshot.anchor_after(edit_start));
 
                             cx.notify();
                         })?;
@@ -2812,6 +2824,29 @@ impl Codegen {
                 buffer.refresh_preview(cx);
             }
         });
+    }
+
+    fn apply_edits(&mut self, edits: Vec<(Range<Anchor>, String)>, cx: &mut ModelContext<Codegen>) {
+        let transaction = self.buffer.update(cx, |buffer, cx| {
+            // Avoid grouping assistant edits with user edits.
+            buffer.finalize_last_transaction(cx);
+            buffer.start_transaction(cx);
+            buffer.edit(edits, None, cx);
+            buffer.end_transaction(cx)
+        });
+
+        if let Some(transaction) = transaction {
+            if let Some(first_transaction) = self.transformation_transaction_id {
+                // Group all assistant edits into the first transaction.
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.merge_transactions(transaction, first_transaction, cx)
+                });
+            } else {
+                self.transformation_transaction_id = Some(transaction);
+                self.buffer
+                    .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
+            }
+        }
     }
 
     fn reapply_line_based_diff(
