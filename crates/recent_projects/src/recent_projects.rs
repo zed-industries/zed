@@ -173,7 +173,7 @@ pub struct RecentProjectsDelegate {
     create_new_window: bool,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
-    has_any_dev_server_projects: bool,
+    has_any_non_local_projects: bool,
 }
 
 impl RecentProjectsDelegate {
@@ -186,16 +186,16 @@ impl RecentProjectsDelegate {
             create_new_window,
             render_paths,
             reset_selected_match_index: true,
-            has_any_dev_server_projects: false,
+            has_any_non_local_projects: false,
         }
     }
 
     pub fn set_workspaces(&mut self, workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>) {
         self.workspaces = workspaces;
-        self.has_any_dev_server_projects = self
+        self.has_any_non_local_projects = !self
             .workspaces
             .iter()
-            .any(|(_, location)| matches!(location, SerializedWorkspaceLocation::DevServer(_)));
+            .all(|(_, location)| matches!(location, SerializedWorkspaceLocation::Local(_, _)));
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
@@ -260,17 +260,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                     }
                     SerializedWorkspaceLocation::Ssh(ssh_project) => {
-                        let mut path = String::new();
-                        if let Some(user) = &ssh_project.user {
-                            path.push_str(user);
-                            path.push('@');
-                        }
-                        path.push_str(&ssh_project.host);
-                        if !ssh_project.path.is_empty() {
-                            path.push(':');
-                            path.push_str(&ssh_project.path);
-                        }
-                        path
+                        format!(
+                            "{}{}{}",
+                            ssh_project.host,
+                            ssh_project.path,
+                            ssh_project
+                                .user
+                                .as_ref()
+                                .map(|user| user.to_string())
+                                .unwrap_or_default()
+                        )
                     }
                 };
 
@@ -434,7 +433,6 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let (_, location) = self.workspaces.get(hit.candidate_id)?;
 
-        let is_remote = matches!(location, SerializedWorkspaceLocation::DevServer(_));
         let dev_server_status =
             if let SerializedWorkspaceLocation::DevServer(dev_server_project) = location {
                 let store = dev_server_projects::Store::global(cx).read(cx);
@@ -458,9 +456,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .filter_map(|i| paths.paths().get(*i).cloned())
                     .collect(),
             ),
-            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(vec![PathBuf::from(
-                format!("{}:{}", ssh_project.host, ssh_project.path),
-            )]),
+            SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                Arc::new(vec![PathBuf::from(ssh_project.ssh_url())])
+            }
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
@@ -502,29 +500,34 @@ impl PickerDelegate for RecentProjectsDelegate {
                     h_flex()
                         .flex_grow()
                         .gap_3()
-                        .when(self.has_any_dev_server_projects, |this| {
-                            this.child(if is_remote {
-                                // if disabled, Color::Disabled
-                                let indicator_color = match dev_server_status {
-                                    Some(DevServerStatus::Online) => Color::Created,
-                                    Some(DevServerStatus::Offline) => Color::Hidden,
-                                    _ => unreachable!(),
-                                };
-                                IconWithIndicator::new(
-                                    Icon::new(IconName::Server).color(Color::Muted),
-                                    Some(Indicator::dot()),
-                                )
-                                .indicator_color(indicator_color)
-                                .indicator_border_color(if selected {
-                                    Some(cx.theme().colors().element_selected)
-                                } else {
-                                    None
-                                })
-                                .into_any_element()
-                            } else {
-                                Icon::new(IconName::Screen)
+                        .when(self.has_any_non_local_projects, |this| {
+                            this.child(match location {
+                                SerializedWorkspaceLocation::Local(_, _) => {
+                                    Icon::new(IconName::Screen)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                }
+                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Screen)
                                     .color(Color::Muted)
+                                    .into_any_element(),
+                                SerializedWorkspaceLocation::DevServer(_) => {
+                                    let indicator_color = match dev_server_status {
+                                        Some(DevServerStatus::Online) => Color::Created,
+                                        Some(DevServerStatus::Offline) => Color::Hidden,
+                                        _ => unreachable!(),
+                                    };
+                                    IconWithIndicator::new(
+                                        Icon::new(IconName::Server).color(Color::Muted),
+                                        Some(Indicator::dot()),
+                                    )
+                                    .indicator_color(indicator_color)
+                                    .indicator_border_color(if selected {
+                                        Some(cx.theme().colors().element_selected)
+                                    } else {
+                                        None
+                                    })
                                     .into_any_element()
+                                }
                             })
                         })
                         .child({

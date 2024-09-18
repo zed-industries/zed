@@ -29,6 +29,19 @@ pub struct SerializedSshProject {
     pub user: Option<String>,
 }
 
+impl SerializedSshProject {
+    pub fn ssh_url(&self) -> String {
+        let mut result = String::from("ssh://");
+        if let Some(user) = &self.user {
+            result.push_str(user);
+            result.push('@');
+        }
+        result.push_str(&self.host);
+        result.push_str(&self.path);
+        result
+    }
+}
+
 impl From<&SshProject> for SerializedSshProject {
     fn from(ssh_project: &SshProject) -> Self {
         Self {
