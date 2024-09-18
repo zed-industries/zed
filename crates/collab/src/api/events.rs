@@ -701,7 +701,6 @@ impl EditorEventRow {
 
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct InlineCompletionEventRow {
-    system_id: String,
     installation_id: String,
     session_id: Option<String>,
     provider: String,
@@ -746,7 +745,6 @@ impl InlineCompletionEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -775,7 +773,6 @@ pub struct CallEventRow {
     checksum_matched: bool,
 
     // ClientEventBase
-    system_id: String,
     installation_id: String,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -808,7 +805,6 @@ impl CallEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -833,7 +829,6 @@ pub struct AssistantEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: String,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -868,7 +863,6 @@ impl AssistantEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
