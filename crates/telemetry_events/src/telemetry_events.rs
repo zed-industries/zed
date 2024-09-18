@@ -145,6 +145,7 @@ pub struct AssistantEvent {
     pub conversation_id: Option<String>,
     /// The kind of assistant (Panel, Inline)
     pub kind: AssistantKind,
+    #[serde(default)]
     pub phase: AssistantPhase,
     /// Name of the AI model used (gpt-4o, claude-3-5-sonnet, etc)
     pub model: String,
