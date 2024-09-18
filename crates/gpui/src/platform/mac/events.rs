@@ -353,7 +353,7 @@ unsafe fn parse_keystroke(
     //     }
     // };
     // let key = chars_ignoring_modifiers;
-    let key = key_string_from_keycode(unsafe { native_event.keyCode() });
+    let key = key_string_from_keycode(unsafe { native_event.keyCode() }, command);
     let code = keyboard_event_to_virtual_keycodes(native_event, layout_mapping).unwrap_or_default();
     let result = Keystroke {
         modifiers: Modifiers {
@@ -393,8 +393,13 @@ unsafe fn parse_keystroke(
 //     }
 // }
 
-pub(crate) fn key_string_from_keycode(code: CGKeyCode) -> String {
+pub(crate) fn key_string_from_keycode(code: CGKeyCode, cmd: bool) -> String {
     let event = synthesize_keyboard_event(code);
+    let mut flags = CGEventFlags::empty();
+    if cmd {
+        flags |= CGEventFlags::CGEventFlagCommand;
+    }
+    event.set_flags(flags);
     unsafe {
         let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
         event.characters().to_str().to_string()
