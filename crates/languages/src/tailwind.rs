@@ -18,18 +18,13 @@ use std::{
 use util::{maybe, ResultExt};
 
 #[cfg(target_os = "windows")]
-const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
+const SERVER_PATH: &str =
+    "node_modules/@tailwindcss/language-server/bin/tailwindcss-language-server";
 #[cfg(not(target_os = "windows"))]
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
-#[cfg(not(target_os = "windows"))]
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
-}
-
-#[cfg(target_os = "windows")]
-fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec!["-File".into(), server_path.into(), "--stdio".into()]
 }
 
 pub struct TailwindLspAdapter {
@@ -114,26 +109,11 @@ impl LspAdapter for TailwindLspAdapter {
                 .await?;
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            let env_path = self.node.node_environment_path().await?;
-            let mut env = HashMap::default();
-            env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
-
-            Ok(LanguageServerBinary {
-                path: "powershell.exe".into(),
-                env: Some(env),
-                arguments: server_binary_arguments(&server_path),
-            })
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            Ok(LanguageServerBinary {
-                path: self.node.binary_path().await?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
-        }
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            env: None,
+            arguments: server_binary_arguments(&server_path),
+        })
     }
 
     async fn cached_server_binary(
