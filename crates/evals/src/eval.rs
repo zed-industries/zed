@@ -446,6 +446,15 @@ async fn run_evaluation(
 
             println!("{}", serde_json::to_string(&query_results).unwrap());
         }
+
+        user_store
+            .update(cx, |_, _| {
+                drop(semantic_index);
+                drop(project);
+                drop(worktree);
+                drop(project_index);
+            })
+            .unwrap();
     }
 
     eprint!(
