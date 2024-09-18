@@ -6,6 +6,7 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod indent;
 mod insert;
 mod mode_indicator;
 mod motion;
@@ -289,6 +290,7 @@ impl Vim {
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);
+            indent::register(editor, cx);
             object::register(editor, cx);
             visual::register(editor, cx);
             change_list::register(editor, cx);
