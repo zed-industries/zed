@@ -726,9 +726,9 @@ impl InlineAssistant {
                     None,
                     telemetry_events::AssistantKind::Inline,
                     if undo {
-                        telemetry_events::AssistantPhase::Accepted
-                    } else {
                         telemetry_events::AssistantPhase::Rejected
+                    } else {
+                        telemetry_events::AssistantPhase::Accepted
                     },
                     model.telemetry_id(),
                     None,
