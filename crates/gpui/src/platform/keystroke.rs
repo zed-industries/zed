@@ -14,7 +14,7 @@ pub struct Keystroke {
     pub modifiers: Modifiers,
 
     /// TODO:
-    pub key: String,
+    pub label: String,
 
     /// TODO:
     /// on Windows, this is `VirtualKeycodes`. On macOS and Linux, this is `ScanCodes`.
@@ -37,7 +37,6 @@ impl Keystroke {
     /// both possibilities for self against the target.
     // TODO:
     // Is the hack above still needed?
-    #[cfg(not(target_os = "windows"))]
     pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
         // if let Some(ime_key) = self
         //     .ime_key
@@ -63,24 +62,6 @@ impl Keystroke {
         //     }
         // }
 
-        // perform char-based matching first
-        // if self.code.to_string() != self.key {
-        if self.key == target.key && self.modifiers == target.modifiers {
-            println!("-> Keystroke match 1, {:#?}, {:#?}", self, target);
-            return true;
-        }
-        // }
-
-        let ret = target.modifiers == self.modifiers && target.code == self.code;
-        if ret {
-            println!("-> Keystroke match 2, {:#?}, {:#?}", self, target);
-        }
-        ret
-    }
-
-    /// TODO:
-    #[cfg(target_os = "windows")]
-    pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
         target.modifiers == self.modifiers && target.code == self.code
     }
 
@@ -170,7 +151,7 @@ impl Keystroke {
                 platform,
                 function,
             },
-            key,
+            label: key,
             code,
             ime_key,
         };

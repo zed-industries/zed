@@ -1476,7 +1476,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
 
     let keystroke = Keystroke {
         modifiers: Default::default(),
-        key: "Unknown".to_string(),
+        label: "Unknown".to_string(),
         code: KeyCodes::Period,
         ime_key: None,
     };

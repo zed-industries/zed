@@ -363,7 +363,7 @@ unsafe fn parse_keystroke(
             platform: command,
             function,
         },
-        key,
+        label: key,
         code,
         ime_key: None,
     };

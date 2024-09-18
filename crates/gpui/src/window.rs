@@ -3254,7 +3254,7 @@ impl<'a> WindowContext<'a> {
                 };
                 if let Some(code) = code {
                     keystroke = Some(Keystroke {
-                        key: "Modifiers".to_string(),
+                        label: "Modifiers".to_string(),
                         code,
                         ime_key: None,
                         modifiers: Modifiers::default(),

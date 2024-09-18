@@ -205,6 +205,6 @@ impl PlatformKeyboard for MacKeyboard {
             KeyboardLayout::German => {}
             KeyboardLayout::Russian => {}
         }
-        key_stroke.key = self.code_to_key(&key_stroke.code);
+        key_stroke.label = self.code_to_key(&key_stroke.code);
     }
 }

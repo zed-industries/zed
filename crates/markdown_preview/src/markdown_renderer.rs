@@ -204,7 +204,7 @@ fn render_markdown_list_item(
             .tooltip(|cx| {
                 // TODO:
                 let secondary_modifier = Keystroke {
-                    key: "Unimplemented".to_string(),
+                    label: "Unimplemented".to_string(),
                     code: gpui::KeyCodes::Unknown,
                     modifiers: Modifiers::secondary_key(),
                     ime_key: None,
