@@ -97,8 +97,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2204
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
