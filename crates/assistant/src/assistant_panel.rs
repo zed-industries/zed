@@ -12,7 +12,7 @@ use crate::{
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
-    ContextStoreEvent, CopySelection, CycleMessageRole, DeployHistory, DeployPromptLibrary,
+    ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory, DeployPromptLibrary,
     InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
     MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
     PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
@@ -107,7 +107,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
-                .register_action(ContextEditor::copy_selection)
+                .register_action(ContextEditor::copy_code)
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context);
@@ -3229,11 +3229,7 @@ impl ContextEditor {
         }
     }
 
-    fn copy_selection(
-        workspace: &mut Workspace,
-        _: &CopySelection,
-        cx: &mut ViewContext<Workspace>,
-    ) {
+    fn copy_code(workspace: &mut Workspace, _: &CopyCode, cx: &mut ViewContext<Workspace>) {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
