@@ -5070,6 +5070,7 @@ impl Render for ConfigurationView {
         let mut element = v_flex()
             .id("assistant-configuration-view")
             .track_focus(&self.focus_handle)
+            .bg(cx.theme().colors().editor_background)
             .size_full()
             .overflow_y_scroll()
             .child(
