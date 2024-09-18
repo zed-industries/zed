@@ -497,10 +497,10 @@ fn main() {
         );
         match (&system_id, &installation_id) {
             (Some(IdType::New(_)), Some(IdType::New(_))) => {
-                telemetry.report_app_event("first app open ever".to_string());
+                telemetry.report_app_event("first open".to_string());
             }
             (Some(IdType::Existing(_)), Some(IdType::New(_))) => {
-                telemetry.report_app_event("first app open for release channel".to_string());
+                telemetry.report_app_event("first open for release channel".to_string());
             }
             (Some(_), Some(IdType::Existing(_))) => {
                 telemetry.report_app_event("open".to_string());
