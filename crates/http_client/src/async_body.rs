@@ -4,9 +4,9 @@ use futures::{AsyncRead, AsyncReadExt};
 
 /// Based on the implementation of AsyncBody in
 /// https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs
-pub struct AsyncBody(pub(super) Inner);
+pub struct AsyncBody(pub Inner);
 
-pub(super) enum Inner {
+pub enum Inner {
     /// An empty body.
     Empty,
 

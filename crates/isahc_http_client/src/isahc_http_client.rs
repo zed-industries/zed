@@ -55,7 +55,13 @@ impl HttpClient for IsahcHttpClient {
             let extensions = builder.extensions_mut()?;
             mem::swap(extensions, &mut parts.extensions);
 
-            let isahc_body = isahc::AsyncBody::from_reader(body);
+            let isahc_body = match body.0 {
+                http_client::Inner::Empty => isahc::AsyncBody::empty(),
+                http_client::Inner::AsyncReader(reader) => isahc::AsyncBody::from_reader(reader),
+                http_client::Inner::SyncReader(reader) => {
+                    isahc::AsyncBody::from_bytes_static(reader.into_inner())
+                }
+            };
 
             builder
                 .redirect_policy(if follow_redirects {
