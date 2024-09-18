@@ -44,7 +44,7 @@ impl HeadlessProject {
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
-        let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
+        let worktree_store = cx.new_model(|_| WorktreeStore::new(None, true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store =
                 BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
@@ -200,14 +200,8 @@ impl HeadlessProject {
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.add(&worktree, cx);
             });
-            worktree.update(cx, |worktree, cx| {
-                worktree.observe_updates(0, cx, move |update| {
-                    session.send(update).ok();
-                    futures::future::ready(true)
-                });
-                proto::AddWorktreeResponse {
-                    worktree_id: worktree.id().to_proto(),
-                }
+            worktree.update(cx, |worktree, cx| proto::AddWorktreeResponse {
+                worktree_id: worktree.id().to_proto(),
             })
         })
     }

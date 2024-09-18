@@ -620,7 +620,7 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let worktree_store = cx.new_model(|_| WorktreeStore::new(false, fs.clone()));
+            let worktree_store = cx.new_model(|_| WorktreeStore::new(None, false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -714,11 +714,8 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let worktree_store = cx.new_model(|_| {
-                let mut worktree_store = WorktreeStore::new(false, fs.clone());
-                worktree_store.set_upstream_client(ssh.clone().into());
-                worktree_store
-            });
+            let worktree_store =
+                cx.new_model(|_| WorktreeStore::new(Some(ssh.clone().into()), false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -867,8 +864,7 @@ impl Project {
         let role = response.payload.role();
 
         let worktree_store = cx.new_model(|_| {
-            let mut store = WorktreeStore::new(true, fs.clone());
-            store.set_upstream_client(client.clone().into());
+            let mut store = WorktreeStore::new(Some(client.clone().into()), true, fs.clone());
             if let Some(dev_server_project_id) = response.payload.dev_server_project_id {
                 store.set_dev_server_project_id(DevServerProjectId(dev_server_project_id));
             }
@@ -1259,43 +1255,6 @@ impl Project {
         }
     }
 
-    fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
-        cx.notify();
-
-        let ProjectClientState::Shared { remote_id } = self.client_state else {
-            return;
-        };
-        let project_id = remote_id;
-
-        let update_project = self.client.request(proto::UpdateProject {
-            project_id,
-            worktrees: self.worktree_metadata_protos(cx),
-        });
-        cx.spawn(|this, mut cx| async move {
-            update_project.await?;
-            this.update(&mut cx, |this, cx| {
-                let client = this.client.clone();
-                let worktrees = this.worktree_store.read(cx).worktrees().collect::<Vec<_>>();
-
-                for worktree in worktrees {
-                    worktree.update(cx, |worktree, cx| {
-                        let client = client.clone();
-                        worktree.observe_updates(project_id, cx, {
-                            move |update| client.request(update).map(|result| result.is_ok())
-                        });
-
-                        this.lsp_store.update(cx, |lsp_store, _| {
-                            lsp_store.send_diagnostic_summaries(worktree)
-                        })
-                    })?;
-                }
-
-                anyhow::Ok(())
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
     }
@@ -1513,7 +1472,7 @@ impl Project {
             buffer_store.shared(project_id, self.client.clone().into(), cx)
         });
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.set_shared(true, cx);
+            worktree_store.shared(project_id, self.client.clone().into(), cx);
         });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.client.clone().into(), cx)
@@ -1526,7 +1485,6 @@ impl Project {
             remote_id: project_id,
         };
 
-        self.metadata_changed(cx);
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
         cx.notify();
         Ok(())
@@ -1540,7 +1498,11 @@ impl Project {
         self.buffer_store
             .update(cx, |buffer_store, _| buffer_store.forget_shared_buffers());
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-        self.metadata_changed(cx);
+
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.send_project_updates(cx);
+        });
+        cx.notify();
         cx.emit(Event::Reshared);
         Ok(())
     }
@@ -1576,7 +1538,6 @@ impl Project {
 
     pub fn unshare(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         self.unshare_internal(cx)?;
-        self.metadata_changed(cx);
         cx.notify();
         Ok(())
     }
@@ -1598,7 +1559,7 @@ impl Project {
             self.collaborators.clear();
             self.client_subscriptions.clear();
             self.worktree_store.update(cx, |store, cx| {
-                store.set_shared(false, cx);
+                store.unshared(cx);
             });
             self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers();
@@ -2110,6 +2071,7 @@ impl Project {
                 cx.emit(Event::WorktreeRemoved(*id));
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
+            WorktreeStoreEvent::WorktreeUpdateSent(_) => {}
         }
     }
 
@@ -2140,7 +2102,7 @@ impl Project {
             }
         })
         .detach();
-        self.metadata_changed(cx);
+        cx.notify();
     }
 
     fn on_worktree_removed(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
@@ -2171,7 +2133,7 @@ impl Project {
             inventory.remove_worktree_sources(id_to_remove);
         });
 
-        self.metadata_changed(cx);
+        cx.notify();
     }
 
     fn on_buffer_event(
@@ -4637,7 +4599,7 @@ impl Project {
         worktrees: Vec<proto::WorktreeMetadata>,
         cx: &mut ModelContext<Project>,
     ) -> Result<()> {
-        self.metadata_changed(cx);
+        cx.notify();
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.set_worktrees_from_proto(
                 worktrees,

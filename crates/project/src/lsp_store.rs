@@ -534,6 +534,9 @@ impl LspStore {
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => self.remove_worktree(*id, cx),
             WorktreeStoreEvent::WorktreeOrderChanged => {}
+            WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
+                worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
+            }
         }
     }
 
@@ -764,24 +767,22 @@ impl LspStore {
         self.active_entry = active_entry;
     }
 
-    pub(crate) fn send_diagnostic_summaries(
-        &self,
-        worktree: &mut Worktree,
-    ) -> Result<(), anyhow::Error> {
+    pub(crate) fn send_diagnostic_summaries(&self, worktree: &mut Worktree) {
         if let Some(client) = self.downstream_client.clone() {
             if let Some(summaries) = self.diagnostic_summaries.get(&worktree.id()) {
                 for (path, summaries) in summaries {
                     for (&server_id, summary) in summaries {
-                        client.send(proto::UpdateDiagnosticSummary {
-                            project_id: self.project_id,
-                            worktree_id: worktree.id().to_proto(),
-                            summary: Some(summary.to_proto(server_id, path)),
-                        })?;
+                        client
+                            .send(proto::UpdateDiagnosticSummary {
+                                project_id: self.project_id,
+                                worktree_id: worktree.id().to_proto(),
+                                summary: Some(summary.to_proto(server_id, path)),
+                            })
+                            .log_err();
                     }
                 }
             }
         }
-        Ok(())
     }
 
     pub fn request_lsp<R: LspCommand>(
