@@ -29,7 +29,7 @@ fn main() {
         let clock = Arc::new(FakeSystemClock::default());
 
         let http = Arc::new(HttpClientWithUrl::new(
-            IsahcHttpClient::new(None),
+            IsahcHttpClient::new(None, None),
             "http://localhost:11434",
             None,
         ));

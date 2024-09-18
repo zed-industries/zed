@@ -97,13 +97,14 @@ fn main() -> Result<()> {
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
-
+        let client = isahc_http_client::IsahcHttpClient::new(None, None);
+        cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {
                 executor
                     .clone()
                     .spawn(async move {
-                        if let Err(err) = fetch_evaluation_resources(&executor).await {
+                        if let Err(err) = fetch_evaluation_resources(client, &executor).await {
                             eprintln!("Error: {}", err);
                             exit(1);
                         }
@@ -127,10 +128,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-async fn fetch_evaluation_resources(executor: &BackgroundExecutor) -> Result<()> {
-    let http_client = http_client::HttpClientWithProxy::new(None, None);
-    fetch_code_search_net_resources(&http_client).await?;
-    fetch_eval_repos(executor, &http_client).await?;
+async fn fetch_evaluation_resources(
+    http_client: Arc<dyn HttpClient>,
+    executor: &BackgroundExecutor,
+) -> Result<()> {
+    fetch_code_search_net_resources(&*http_client).await?;
+    fetch_eval_repos(executor, &*http_client).await?;
     Ok(())
 }
 
@@ -239,6 +242,7 @@ async fn run_evaluation(
     executor: &BackgroundExecutor,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
+    let mut http_client = None;
     cx.update(|cx| {
         let mut store = SettingsStore::new(cx);
         store
@@ -248,15 +252,15 @@ async fn run_evaluation(
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);
+        http_client = Some(cx.http_client());
         cx.update_flags(false, vec![]);
     })
     .unwrap();
-
+    let http_client = http_client.unwrap();
     let dataset_dir = Path::new(CODESEARCH_NET_DIR);
     let evaluations_path = dataset_dir.join("evaluations.json");
     let repos_dir = Path::new(EVAL_REPOS_DIR);
     let db_path = Path::new(EVAL_DB_PATH);
-    let http_client = http_client::HttpClientWithProxy::new(None, None);
     let api_key = std::env::var("OPENAI_API_KEY").unwrap();
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let fs = Arc::new(RealFs::new(git_hosting_provider_registry, None)) as Arc<dyn Fs>;
@@ -266,8 +270,8 @@ async fn run_evaluation(
             Client::new(
                 clock,
                 Arc::new(http_client::HttpClientWithUrl::new(
+                    http_client.clone(),
                     "https://zed.dev",
-                    None,
                     None,
                 )),
                 cx,

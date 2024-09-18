@@ -4015,6 +4015,7 @@ dependencies = [
  "git",
  "gpui",
  "http_client",
+ "isahc_http_client",
  "language",
  "languages",
  "node_runtime",
