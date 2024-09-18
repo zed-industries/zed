@@ -16,7 +16,8 @@ jobs:
     name: Check formatting and Clippy lints
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - self-hosted
+      - bundle
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -35,7 +36,8 @@ jobs:
     name: Run tests
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - self-hosted
+      - bundle
     needs: style
     steps:
       - name: Checkout repo
@@ -51,7 +53,8 @@ jobs:
     name: Create a macOS bundle
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - self-hosted
+      - bundle
     needs: tests
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
