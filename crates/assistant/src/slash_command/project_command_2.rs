@@ -124,7 +124,9 @@ impl SlashCommand for ProjectSlashCommand {
 struct SearchQueries {
     /// An array of semantic search queries.
     ///
-    /// These will be used
+    /// These queries will be used to search the user's codebase.
+    /// The function can only accept 4 queries, otherwise it will error.
+    /// As such, it's important that you limit the length of the search_queries array to 5 queries or less.
     search_queries: Vec<String>,
 }
 
