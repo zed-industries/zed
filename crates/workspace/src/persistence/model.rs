@@ -36,7 +36,12 @@ pub struct SerializedSshProject {
     pub user: Option<String>,
 }
 
-impl StaticColumnCount for SerializedSshProject {}
+impl StaticColumnCount for SerializedSshProject {
+    fn column_count() -> usize {
+        4
+    }
+}
+
 impl Bind for &SerializedSshProject {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.id.0, start_index)?;

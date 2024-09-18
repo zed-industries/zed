@@ -357,12 +357,12 @@ define_connection! {
     ),
     sql!(
         CREATE TABLE ssh_projects (
-            id INTEGER NOT NULL UNIQUE,
+            id INTEGER PRIMARY KEY,
             host TEXT NOT NULL,
             path TEXT,
             user TEXT
         );
-        ALTER TABLE workspaces ADD COLUMN ssh_project_id INTEGER;
+        ALTER TABLE workspaces ADD COLUMN ssh_project_id INTEGER REFERENCES ssh_projects(id) ON DELETE CASCADE;
     ),
     ];
 }
@@ -434,19 +434,7 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let location = if let Some(ssh_project_id) = ssh_project_id {
-            let ssh_project: SerializedSshProject = self
-                .select_row_bound(sql! {
-                    SELECT id, host, path, user
-                    FROM ssh_projects
-                    WHERE id = ?
-                })
-                .and_then(|mut prepared_statement| (prepared_statement)(ssh_project_id))
-                .context("No remote project found")
-                .warn_on_err()
-                .flatten()?;
-            SerializedWorkspaceLocation::Ssh(ssh_project)
-        } else if let Some(dev_server_project_id) = dev_server_project_id {
+        let location = if let Some(dev_server_project_id) = dev_server_project_id {
             let dev_server_project: SerializedDevServerProject = self
                 .select_row_bound(sql! {
                     SELECT id, path, dev_server_name
@@ -586,7 +574,7 @@ impl WorkspaceDb {
 
     pub(crate) fn workspace_for_ssh_project(
         &self,
-        ssh_project_id: SshProjectId,
+        ssh_project: SerializedSshProject,
     ) -> Option<SerializedWorkspace> {
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
@@ -631,23 +619,12 @@ impl WorkspaceDb {
                 FROM workspaces
                 WHERE ssh_project_id = ?
             })
-            .and_then(|mut prepared_statement| (prepared_statement)(ssh_project_id.0))
+            .and_then(|mut prepared_statement| (prepared_statement)(ssh_project.id.0))
             .context("No workspaces found")
             .warn_on_err()
             .flatten()?;
 
-        // TODO: Don't we have this code somewhere else?
-        let location = if let Some(ssh_project_id) = ssh_project_id {
-            let ssh_project: SerializedSshProject = self
-                .select_row_bound(sql! {
-                    SELECT id, host, path, user
-                    FROM ssh_projects
-                    WHERE id = ?
-                })
-                .and_then(|mut prepared_statement| (prepared_statement)(ssh_project_id))
-                .context("No remote project found")
-                .warn_on_err()
-                .flatten()?;
+        let location = if ssh_project_id.is_some() {
             SerializedWorkspaceLocation::Ssh(ssh_project)
         } else {
             return None;
@@ -790,20 +767,6 @@ impl WorkspaceDb {
                         ))?((ssh_project.id.0, workspace.id))
                         .context("clearing out old locations")?;
 
-                        conn.exec_bound(sql!(
-                            INSERT INTO ssh_projects(
-                                id,
-                                host,
-                                path,
-                                user
-                            ) VALUES (?1, ?2, ?3, ?4)
-                            ON CONFLICT DO
-                            UPDATE SET
-                                host = ?2,
-                                path = ?3,
-                                user = ?4
-                        ))?(&ssh_project)?;
-
                         // Upsert
                         conn.exec_bound(sql!(
                             INSERT INTO workspaces(
@@ -852,6 +815,54 @@ impl WorkspaceDb {
             .log_err();
         })
         .await;
+    }
+
+    pub(crate) async fn get_or_create_ssh_project(
+        &self,
+        host: String,
+        user: Option<String>,
+        path: Option<String>,
+    ) -> Result<SerializedSshProject> {
+        // TODO: This whole thing should be 5 lines
+        if let Some(project) = self
+            .get_ssh_project(host.clone(), path.clone(), user.clone())
+            .await?
+        {
+            println!("found a project: {:?}", project);
+            Ok(project)
+        } else {
+            println!("did not find a project. inserting one.");
+            let project = self
+                .write({
+                    let host = host.clone();
+                    let user = user.clone();
+                    let path = path.clone();
+
+                    move |conn| {
+                        conn.select_row_bound::<(String, Option<String>, Option<String>), SerializedSshProject>(sql!(
+                            INSERT INTO ssh_projects(
+                                host,
+                                path,
+                                user
+                            ) VALUES (?1, ?2, ?3)
+                            RETURNING id, host, path, user
+                        ))?((host.clone(), path.clone(), user.clone()))
+                    }
+                })
+                .await?;
+
+            println!("created project!");
+            project.ok_or_else(|| anyhow!("project not found"))
+        }
+    }
+
+    query! {
+        pub async fn get_ssh_project(host: String, path: Option<String>, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+            SELECT id, host, path, user
+            FROM ssh_projects
+            WHERE host = ? AND path = ? AND user = ?
+            LIMIT 1
+        }
     }
 
     query! {

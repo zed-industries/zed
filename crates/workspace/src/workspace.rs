@@ -5503,22 +5503,32 @@ pub fn open_ssh_project(
     paths: Vec<PathBuf>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
-    // TODO: Find or create an ssh_project in the database, for the given connection_options
-    eprintln!("connection_options: {:?}", connection_options);
-    let ssh_project_id = 12345 as u64;
-
-    let project = project::Project::ssh(
-        session,
-        Some(ssh_project_id),
-        app_state.client.clone(),
-        app_state.node_runtime.clone(),
-        app_state.user_store.clone(),
-        app_state.languages.clone(),
-        app_state.fs.clone(),
-        cx,
+    eprintln!(
+        "open_ssh_project. connection_options: {:?}",
+        connection_options
     );
 
     cx.spawn(|mut cx| async move {
+        // TODO: Handle multiple paths
+        let path = paths.iter().next().map(|p| p.to_string_lossy().to_string());
+
+        let ssh_project = persistence::DB
+            .get_or_create_ssh_project(connection_options.host, connection_options.username, path)
+            .await?;
+
+        let project = cx.update(|cx| {
+            project::Project::ssh(
+                session,
+                Some(ssh_project.id.0),
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            )
+        })?;
+
         for path in paths {
             project
                 .update(&mut cx, |project, cx| {
@@ -5533,7 +5543,7 @@ pub fn open_ssh_project(
         }
 
         let serialized_workspace: Option<SerializedWorkspace> =
-            persistence::DB.workspace_for_ssh_project(SshProjectId(ssh_project_id));
+            persistence::DB.workspace_for_ssh_project(ssh_project);
 
         let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
             eprintln!("we do have a serialized workspace for the SSH project");
