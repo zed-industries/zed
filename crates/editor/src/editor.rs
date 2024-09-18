@@ -4959,12 +4959,10 @@ impl Editor {
                                 continue;
                             }
 
-                            let range = Anchor {
-                                buffer_id,
+                            let range = Anchor::Text {
                                 excerpt_id,
                                 text_anchor: start,
-                            }..Anchor {
-                                buffer_id,
+                            }..Anchor::Text {
                                 excerpt_id,
                                 text_anchor: end,
                             };
@@ -8889,7 +8887,7 @@ impl Editor {
                     .spawn({
                         let snapshot = display_snapshot.clone();
                         async move {
-                            Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
+                            Self::fetch_runnable_ranges(&snapshot, Anchor::Start..Anchor::End)
                         }
                     })
                     .await;

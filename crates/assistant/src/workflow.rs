@@ -138,7 +138,7 @@ impl WorkflowSuggestion {
             }
             Self::CreateFile { description } => {
                 initial_prompt = description.clone();
-                suggestion_range = editor::Anchor::min()..editor::Anchor::min();
+                suggestion_range = Anchor::Start..Anchor::Start;
             }
             Self::InsertBefore {
                 position,

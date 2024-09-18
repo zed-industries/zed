@@ -48,8 +48,8 @@ impl SelectionsCollection {
             pending: Some(PendingSelection {
                 selection: Selection {
                     id: 0,
-                    start: Anchor::min(),
-                    end: Anchor::min(),
+                    start: Anchor::Start,
+                    end: Anchor::Start,
                     reversed: false,
                     goal: SelectionGoal::None,
                 },

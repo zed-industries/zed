@@ -784,7 +784,7 @@ fn editor_with_deleted_text(
         editor.set_read_only(true);
         editor.set_show_inline_completions(Some(false), cx);
         editor.highlight_rows::<DiffRowHighlight>(
-            Anchor::min()..=Anchor::max(),
+            Anchor::Start..=Anchor::End,
             Some(deleted_color),
             false,
             cx,

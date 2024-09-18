@@ -960,8 +960,8 @@ impl MultiBuffer {
         let snapshot = self.read(cx);
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
         for selection in selections {
-            let start_locator = snapshot.excerpt_locator_for_id(selection.start.excerpt_id);
-            let end_locator = snapshot.excerpt_locator_for_id(selection.end.excerpt_id);
+            let start_locator = snapshot.excerpt_locator_for_id(selection.start.excerpt_id());
+            let end_locator = snapshot.excerpt_locator_for_id(selection.end.excerpt_id());
 
             cursor.seek(&Some(start_locator), Bias::Left, &());
             while let Some(excerpt) = cursor.item() {
@@ -3029,9 +3029,9 @@ impl MultiBufferSnapshot {
                             text_anchor,
                         }
                     } else if bias == Bias::Left {
-                        Anchor::min()
+                        Anchor::Start
                     } else {
-                        Anchor::max()
+                        Anchor::End
                     };
                 }
 
@@ -3081,9 +3081,9 @@ impl MultiBufferSnapshot {
                 text_anchor,
             }
         } else if offset == 0 && bias == Bias::Left {
-            Anchor::min()
+            Anchor::Start
         } else {
-            Anchor::max()
+            Anchor::End
         }
     }
 

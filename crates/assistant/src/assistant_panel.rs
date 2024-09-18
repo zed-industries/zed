@@ -2790,7 +2790,7 @@ impl ContextEditor {
                 let multibuffer = editor.buffer().read(cx).snapshot(cx);
                 let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
                 let anchor = if group.context_range.start.to_offset(buffer) == 0 {
-                    Anchor::min()
+                    Anchor::Start
                 } else {
                     multibuffer
                         .anchor_in_excerpt(excerpt_id, group.context_range.start)

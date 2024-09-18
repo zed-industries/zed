@@ -1141,7 +1141,7 @@ impl InlineAssistant {
                     editor.set_read_only(true);
                     editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
-                        Anchor::min()..=Anchor::max(),
+                        Anchor::Start..=Anchor::End,
                         Some(cx.theme().status().deleted_background),
                         false,
                         cx,

@@ -949,7 +949,7 @@ impl EditorElement {
         // Remote cursors
         if let Some(collaboration_hub) = &editor.collaboration_hub {
             for remote_selection in snapshot.remote_selections_in_range(
-                &(Anchor::min()..Anchor::max()),
+                &(Anchor::Start..Anchor::End),
                 collaboration_hub.deref(),
                 cx,
             ) {
@@ -5086,14 +5086,14 @@ impl Element for EditorElement {
                         .collect::<Vec<_>>();
 
                     let start_anchor = if start_row == Default::default() {
-                        Anchor::min()
+                        Anchor::Start
                     } else {
                         snapshot.buffer_snapshot.anchor_before(
                             DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left),
                         )
                     };
                     let end_anchor = if end_row > max_row {
-                        Anchor::max()
+                        Anchor::End
                     } else {
                         snapshot.buffer_snapshot.anchor_before(
                             DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right),

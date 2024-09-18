@@ -297,7 +297,7 @@ fn assert_remote_selections(
     cx: &mut ViewContext<Editor>,
 ) {
     let snapshot = editor.snapshot(cx);
-    let range = Anchor::min()..Anchor::max();
+    let range = Anchor::Start..Anchor::End;
     let remote_selections = snapshot
         .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
         .map(|s| {

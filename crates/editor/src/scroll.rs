@@ -40,13 +40,13 @@ impl ScrollAnchor {
     fn new() -> Self {
         Self {
             offset: gpui::Point::default(),
-            anchor: Anchor::min(),
+            anchor: Anchor::Start,
         }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {
         let mut scroll_position = self.offset;
-        if self.anchor == Anchor::min() {
+        if self.anchor == Anchor::Start {
             scroll_position.y = 0.;
         } else {
             let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
@@ -194,7 +194,7 @@ impl ScrollManager {
         let (new_anchor, top_row) = if scroll_position.y <= 0. {
             (
                 ScrollAnchor {
-                    anchor: Anchor::min(),
+                    anchor: Anchor::Start,
                     offset: scroll_position.max(&gpui::Point::default()),
                 },
                 0,

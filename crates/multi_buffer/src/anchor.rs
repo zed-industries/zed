@@ -5,79 +5,105 @@ use std::{
     ops::{Range, Sub},
 };
 use sum_tree::Bias;
-use text::BufferId;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
-pub struct Anchor {
-    pub buffer_id: Option<BufferId>,
-    pub excerpt_id: ExcerptId,
-    pub text_anchor: text::Anchor,
+pub enum Anchor {
+    Start,
+    End,
+    Text {
+        excerpt_id: ExcerptId,
+        text_anchor: text::Anchor,
+    },
 }
 
 impl Anchor {
-    pub fn min() -> Self {
-        Self {
-            buffer_id: None,
-            excerpt_id: ExcerptId::min(),
-            text_anchor: text::Anchor::Start,
-        }
-    }
-
-    pub fn max() -> Self {
-        Self {
-            buffer_id: None,
-            excerpt_id: ExcerptId::max(),
-            text_anchor: text::Anchor::End,
+    pub fn excerpt_id(&self) -> ExcerptId {
+        match self {
+            Anchor::Start => ExcerptId::min(),
+            Anchor::End => ExcerptId::max(),
+            Anchor::Text { excerpt_id, .. } => *excerpt_id,
         }
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
-        if excerpt_id_cmp.is_eq() {
-            if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
-                Ordering::Equal
-            } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
-            } else {
-                Ordering::Equal
+        match (self, other) {
+            (Anchor::Start, Anchor::Start) | (Anchor::End, Anchor::End) => Ordering::Equal,
+            (_, Anchor::Start) | (Anchor::End, _) => Ordering::Greater,
+            (Anchor::Start, _) | (_, Anchor::End) => Ordering::Less,
+            (
+                Anchor::Text {
+                    excerpt_id: id1,
+                    text_anchor: anchor1,
+                },
+                Anchor::Text {
+                    excerpt_id: id2,
+                    text_anchor: anchor2,
+                },
+            ) => {
+                let excerpt_id_cmp = id1.cmp(id2, snapshot);
+                if excerpt_id_cmp.is_eq() {
+                    if let Some(excerpt) = snapshot.excerpt(*id1) {
+                        anchor1.cmp(anchor2, &excerpt.buffer)
+                    } else {
+                        Ordering::Equal
+                    }
+                } else {
+                    excerpt_id_cmp
+                }
             }
-        } else {
-            excerpt_id_cmp
         }
     }
 
     pub fn bias(&self) -> Bias {
-        match self.text_anchor {
-            text::Anchor::Start { .. } => Bias::Left,
-            text::Anchor::End { .. } => Bias::Right,
-            text::Anchor::Character { bias, .. } => bias,
+        match self {
+            Anchor::Start => Bias::Left,
+            Anchor::End => Bias::Right,
+            Anchor::Text { text_anchor, .. } => match text_anchor {
+                text::Anchor::Start { .. } => Bias::Left,
+                text::Anchor::End { .. } => Bias::Right,
+                text::Anchor::Character { bias, .. } => *bias,
+            },
         }
     }
 
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.bias() != Bias::Left {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
-                };
+        match self {
+            Anchor::Start => *self,
+            Anchor::End => snapshot.anchor_before(snapshot.len()),
+            Anchor::Text {
+                excerpt_id,
+                text_anchor,
+            } => {
+                if let Some(excerpt) = snapshot.excerpt(*excerpt_id) {
+                    Anchor::Text {
+                        excerpt_id: *excerpt_id,
+                        text_anchor: text_anchor.bias_left(&excerpt.buffer),
+                    }
+                } else {
+                    *self
+                }
             }
         }
-        *self
     }
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.bias() != Bias::Right {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
-                };
+        match self {
+            Anchor::Start => snapshot.anchor_after(0),
+            Anchor::End => *self,
+            Anchor::Text {
+                excerpt_id,
+                text_anchor,
+            } => {
+                if let Some(excerpt) = snapshot.excerpt(*excerpt_id) {
+                    Anchor::Text {
+                        excerpt_id: *excerpt_id,
+                        text_anchor: text_anchor.bias_right(&excerpt.buffer),
+                    }
+                } else {
+                    *self
+                }
             }
         }
-        *self
     }
 
     pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D
@@ -88,15 +114,18 @@ impl Anchor {
     }
 
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
-        if *self == Anchor::min() || *self == Anchor::max() {
-            true
-        } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-            excerpt.contains(self)
-                && (self.text_anchor == excerpt.range.context.start
-                    || self.text_anchor == excerpt.range.context.end
-                    || self.text_anchor.is_valid(&excerpt.buffer))
-        } else {
-            false
+        match self {
+            Self::Start | Anchor::End => true,
+            Anchor::Text {
+                excerpt_id,
+                text_anchor,
+            } => {
+                if let Some(excerpt) = snapshot.excerpt(*excerpt_id) {
+                    excerpt.contains(self) && text_anchor.is_valid(&excerpt.buffer)
+                } else {
+                    false
+                }
+            }
         }
     }
 }
