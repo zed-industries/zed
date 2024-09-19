@@ -869,12 +869,10 @@ impl LanguageRegistry {
             adapter.name.0
         );
 
-        let download_dir = &self
-                    .language_server_download_dir
-            .clone()
-            .ok_or_else(|| anyhow!("language server download directory has not been assigned before starting server"))
-            .log_err()?;
-        let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
+        let container_dir: Option<Arc<Path>> = self
+            .language_server_download_dir
+            .as_ref()
+            .map(|dir| Arc::from(dir.join(adapter.name.0.as_ref())));
         let root_path = root_path.clone();
         let this = Arc::downgrade(self);
 
@@ -969,7 +967,7 @@ impl LanguageRegistry {
         Some(PendingLanguageServer {
             server_id,
             task,
-            container_dir: Some(container_dir),
+            container_dir,
         })
     }
 

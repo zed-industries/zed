@@ -24,6 +24,7 @@ feature_flags.workspace = true
 fs.workspace = true
 git.workspace = true
 gpui.workspace = true
+isahc_http_client.workspace = true
 language.workspace = true
 languages.workspace = true
 http_client.workspace = true

@@ -25,7 +25,7 @@ pub use summary_index::FileSummary;
 
 pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
-    db_connection: heed::Env,
+    db_connection: Option<heed::Env>,
     project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
 }
 
@@ -70,7 +70,7 @@ impl SemanticDb {
         .ok();
 
         Ok(SemanticDb {
-            db_connection,
+            db_connection: Some(db_connection),
             embedding_provider,
             project_indices: HashMap::default(),
         })
@@ -148,7 +148,7 @@ impl SemanticDb {
         let project_index = cx.new_model(|cx| {
             ProjectIndex::new(
                 project.clone(),
-                self.db_connection.clone(),
+                self.db_connection.clone().unwrap(),
                 self.embedding_provider.clone(),
                 cx,
             )
@@ -168,6 +168,12 @@ impl SemanticDb {
         .detach();
 
         project_index
+    }
+}
+
+impl Drop for SemanticDb {
+    fn drop(&mut self) {
+        self.db_connection.take().unwrap().prepare_for_closing();
     }
 }
 

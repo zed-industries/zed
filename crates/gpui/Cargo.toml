@@ -11,13 +11,13 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
-default = []
+default = ["http_client"]
 test-support = [
     "backtrace",
     "collections/test-support",
     "rand",
     "util/test-support",
-    "http_client/test-support",
+    "http_client?/test-support",
 ]
 runtime_shaders = []
 macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
@@ -40,7 +40,7 @@ derive_more.workspace = true
 etagere = "0.2"
 futures.workspace = true
 gpui_macros.workspace = true
-http_client.workspace = true
+http_client = { optional = true, workspace = true }
 image = "0.25.1"
 itertools.workspace = true
 linkme = "0.3"
