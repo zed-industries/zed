@@ -488,7 +488,7 @@ impl WorktreeStore {
         };
 
         // collab has bad concurrency guarantees, so we send requests in serial.
-        let update_project = if downstream_client.goes_via_collab() {
+        let update_project = if downstream_client.is_via_collab() {
             Some(downstream_client.request(update))
         } else {
             downstream_client.send(update).log_err();
@@ -509,7 +509,7 @@ impl WorktreeStore {
                             move |update| {
                                 let client = client.clone();
                                 async move {
-                                    if client.goes_via_collab() {
+                                    if client.is_via_collab() {
                                         client.request(update).map(|result| result.is_ok()).await
                                     } else {
                                         client.send(update).is_ok()

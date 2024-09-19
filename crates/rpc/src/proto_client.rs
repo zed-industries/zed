@@ -141,7 +141,7 @@ impl AnyProtoClient {
         Self(client)
     }
 
-    pub fn goes_via_collab(&self) -> bool {
+    pub fn is_via_collab(&self) -> bool {
         self.0.is_via_collab()
     }
 
