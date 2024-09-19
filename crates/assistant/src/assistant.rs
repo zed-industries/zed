@@ -69,6 +69,8 @@ actions!(
         ConfirmCommand,
         NewContext,
         ToggleModelSelector,
+        CycleNextInlineAssist,
+        CyclePreviousInlineAssist
     ]
 );
 
@@ -359,8 +361,19 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
     let settings = AssistantSettings::get_global(cx);
     let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
     let model_id = LanguageModelId::from(settings.default_model.model.clone());
+    let inline_alternatives = settings
+        .inline_alternatives
+        .iter()
+        .map(|alternative| {
+            (
+                LanguageModelProviderId::from(alternative.provider.clone()),
+                LanguageModelId::from(alternative.model.clone()),
+            )
+        })
+        .collect::<Vec<_>>();
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
         registry.select_active_model(&provider_name, &model_id, cx);
+        registry.select_inline_alternative_models(inline_alternatives, cx);
     });
 }
 

@@ -1106,6 +1106,26 @@ impl MultiBuffer {
         }
     }
 
+    pub fn forget_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, _| {
+                buffer.forget_transaction(transaction_id);
+            });
+        } else if let Some(transaction) = self.history.forget(transaction_id) {
+            for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
+                if let Some(state) = self.buffers.borrow_mut().get_mut(&buffer_id) {
+                    state.buffer.update(cx, |buffer, _| {
+                        buffer.forget_transaction(buffer_transaction_id);
+                    });
+                }
+            }
+        }
+    }
+
     pub fn stream_excerpts_with_context_lines(
         &mut self,
         buffer: Model<Buffer>,
