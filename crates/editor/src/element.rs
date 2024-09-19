@@ -1012,8 +1012,20 @@ impl EditorElement {
                         block_width = em_width;
                     }
                     let block_text = if let CursorShape::Block = selection.cursor_shape {
-                        snapshot.display_chars_at(cursor_position).next().and_then(
-                            |(character, _)| {
+                        snapshot
+                            .display_chars_at(cursor_position)
+                            .next()
+                            .or_else(|| {
+                                if cursor_column == 0 {
+                                    snapshot
+                                        .placeholder_text()
+                                        .and_then(|s| s.chars().next())
+                                        .map(|c| (c, cursor_position))
+                                } else {
+                                    None
+                                }
+                            })
+                            .and_then(|(character, _)| {
                                 let text = if character == '\n' {
                                     SharedString::from(" ")
                                 } else {
@@ -1042,8 +1054,7 @@ impl EditorElement {
                                         }],
                                     )
                                     .log_err()
-                            },
-                        )
+                            })
                     } else {
                         None
                     };
