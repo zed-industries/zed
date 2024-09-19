@@ -1084,13 +1084,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 context
                     .index_converter
                     .advance_to_utf16_ix(context.utf16_index);
-                let is_emoji = {
-                    if color_font {
-                        is_color_glyph(font_face, id, color_font)
-                    } else {
-                        color_font
-                    }
-                };
+                let is_emoji = color_font && is_color_glyph(font_face, id, color_font);
                 glyphs.push(ShapedGlyph {
                     id,
                     position: point(px(context.width), px(0.0)),
