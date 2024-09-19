@@ -412,6 +412,19 @@ impl Default for EditorStyle {
     }
 }
 
+pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
+    let show_background = all_language_settings(None, cx)
+        .language(None)
+        .inlay_hints
+        .show_background;
+
+    HighlightStyle {
+        color: Some(cx.theme().status().hint),
+        background_color: show_background.then(|| cx.theme().status().hint_background),
+        ..HighlightStyle::default()
+    }
+}
+
 type CompletionId = usize;
 
 #[derive(Clone, Debug)]
@@ -6736,22 +6749,22 @@ impl Editor {
 
             let mut line_prefix = indent_size.chars().collect::<String>();
 
-            if selection.is_empty() {
-                if let Some(comment_prefix) =
-                    buffer
-                        .language_scope_at(selection.head())
-                        .and_then(|language| {
-                            language
-                                .line_comment_prefixes()
-                                .iter()
-                                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                                .cloned()
-                        })
-                {
-                    line_prefix.push_str(&comment_prefix);
-                    should_rewrap = true;
-                }
+            if let Some(comment_prefix) =
+                buffer
+                    .language_scope_at(selection.head())
+                    .and_then(|language| {
+                        language
+                            .line_comment_prefixes()
+                            .iter()
+                            .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                            .cloned()
+                    })
+            {
+                line_prefix.push_str(&comment_prefix);
+                should_rewrap = true;
+            }
 
+            if selection.is_empty() {
                 'expand_upwards: while start_row > 0 {
                     let prev_row = start_row - 1;
                     if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
@@ -10034,9 +10047,8 @@ impl Editor {
                                                 syntax: cx.editor_style.syntax.clone(),
                                                 status: cx.editor_style.status.clone(),
                                                 inlay_hints_style: HighlightStyle {
-                                                    color: Some(cx.theme().status().hint),
                                                     font_weight: Some(FontWeight::BOLD),
-                                                    ..HighlightStyle::default()
+                                                    ..make_inlay_hints_style(cx)
                                                 },
                                                 suggestions_style: HighlightStyle {
                                                     color: Some(cx.theme().status().predictive),
@@ -12992,10 +13004,7 @@ impl Render for Editor {
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                inlay_hints_style: HighlightStyle {
-                    color: Some(cx.theme().status().hint),
-                    ..HighlightStyle::default()
-                },
+                inlay_hints_style: make_inlay_hints_style(cx),
                 suggestions_style: HighlightStyle {
                     color: Some(cx.theme().status().predictive),
                     ..HighlightStyle::default()

@@ -13,10 +13,12 @@ use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use indexed_docs::IndexedDocsRegistry;
+use isahc_http_client::IsahcHttpClient;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
 use project::{Project, DEFAULT_COMPLETION_CONTEXT};
+use release_channel::AppVersion;
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
 use snippet_provider::SnippetRegistry;
@@ -270,6 +272,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            http_client.clone(),
             None,
             node_runtime.clone(),
             language_registry.clone(),
@@ -397,6 +400,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            http_client.clone(),
             None,
             node_runtime.clone(),
             language_registry.clone(),
@@ -502,7 +506,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         http_request_count: 0,
     }));
 
-    let http_client = FakeHttpClient::create({
+    let extension_client = FakeHttpClient::create({
         let language_server_version = language_server_version.clone();
         move |request| {
             let language_server_version = language_server_version.clone();
@@ -564,13 +568,23 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             }
         }
     });
+    let user_agent = cx.update(|cx| {
+        format!(
+            "Zed/{} ({}; {})",
+            AppVersion::global(cx),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    });
+    let builder_client = IsahcHttpClient::new(None, Some(user_agent));
 
     let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
             fs.clone(),
-            http_client.clone(),
+            extension_client.clone(),
+            builder_client,
             None,
             node_runtime,
             language_registry.clone(),

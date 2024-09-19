@@ -519,7 +519,6 @@ impl ContextProvider for GoContextProvider {
                 command: "go".into(),
                 args: vec![
                     "test".into(),
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-run".into(),
                     format!("^{}\\$", VariableName::Symbol.template_value(),),
                 ],
@@ -530,7 +529,7 @@ impl ContextProvider for GoContextProvider {
             TaskTemplate {
                 label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
                 command: "go".into(),
-                args: vec!["test".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
+                args: vec!["test".into()],
                 cwd: package_cwd.clone(),
                 ..TaskTemplate::default()
             },
@@ -572,7 +571,6 @@ impl ContextProvider for GoContextProvider {
                 command: "go".into(),
                 args: vec![
                     "test".into(),
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-benchmem".into(),
                     "-run=^$".into(),
                     "-bench".into(),

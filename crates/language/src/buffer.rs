@@ -722,7 +722,9 @@ impl Buffer {
         capability: Capability,
     ) -> Self {
         let saved_mtime = file.as_ref().and_then(|file| file.mtime());
-
+        let snapshot = buffer.snapshot();
+        let git_diff = git::diff::BufferDiff::new(&snapshot);
+        let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
         Self {
             saved_mtime,
             saved_version: buffer.version(),
@@ -739,10 +741,10 @@ impl Buffer {
                 })
                 .map(Rope::from),
             diff_base_version: 0,
-            git_diff: git::diff::BufferDiff::new(),
+            git_diff,
             file,
             capability,
-            syntax_map: Mutex::new(SyntaxMap::new()),
+            syntax_map,
             parsing_in_background: false,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
@@ -809,7 +811,7 @@ impl Buffer {
     /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
         self.non_text_state_update_count += 1;
-        self.syntax_map.lock().clear();
+        self.syntax_map.lock().clear(&self.text);
         self.language = language;
         self.reparse(cx);
         cx.emit(BufferEvent::LanguageChanged);
