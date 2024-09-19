@@ -91,7 +91,7 @@ pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    language_settings::{self, all_language_settings, InlayHintSettings},
+    language_settings::{all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
@@ -414,7 +414,7 @@ impl Default for EditorStyle {
 
 pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
     let show_background = all_language_settings(None, cx)
-        .language(None)
+        .language(None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -531,7 +531,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
-    soft_wrap_mode_override: Option<language_settings::SoftWrap>,
+    soft_wrap_mode_override: Option<settings::SoftWrap>,
     project: Option<Model<Project>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
@@ -1804,8 +1804,8 @@ impl Editor {
 
         let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
-        let soft_wrap_mode_override = matches!(mode, EditorMode::SingleLine { .. })
-            .then(|| language_settings::SoftWrap::PreferLine);
+        let soft_wrap_mode_override =
+            matches!(mode, EditorMode::SingleLine { .. }).then(|| settings::SoftWrap::PreferLine);
 
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
@@ -10784,23 +10784,17 @@ impl Editor {
         let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
-            language_settings::SoftWrap::None => SoftWrap::None,
-            language_settings::SoftWrap::PreferLine => SoftWrap::PreferLine,
-            language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
-            language_settings::SoftWrap::PreferredLineLength => {
+            settings::SoftWrap::None => SoftWrap::None,
+            settings::SoftWrap::PreferLine => SoftWrap::PreferLine,
+            settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            settings::SoftWrap::PreferredLineLength => {
                 SoftWrap::Column(settings.preferred_line_length)
             }
-            language_settings::SoftWrap::Bounded => {
-                SoftWrap::Bounded(settings.preferred_line_length)
-            }
+            settings::SoftWrap::Bounded => SoftWrap::Bounded(settings.preferred_line_length),
         }
     }
 
-    pub fn set_soft_wrap_mode(
-        &mut self,
-        mode: language_settings::SoftWrap,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn set_soft_wrap_mode(&mut self, mode: settings::SoftWrap, cx: &mut ViewContext<Self>) {
         self.soft_wrap_mode_override = Some(mode);
         cx.notify();
     }
@@ -10833,9 +10827,9 @@ impl Editor {
             self.soft_wrap_mode_override.take();
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
-                SoftWrap::None | SoftWrap::PreferLine => language_settings::SoftWrap::EditorWidth,
+                SoftWrap::None | SoftWrap::PreferLine => settings::SoftWrap::EditorWidth,
                 SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => {
-                    language_settings::SoftWrap::PreferLine
+                    settings::SoftWrap::PreferLine
                 }
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
@@ -12679,7 +12673,11 @@ fn inlay_hint_settings(
     let language = snapshot.language_at(location);
     let settings = all_language_settings(file, cx);
     settings
-        .language(language.map(|l| l.name()).as_ref())
+        .language(
+            file.and_then(|file| Some((file.worktree_id(cx), file.abs_path_in_worktree(cx).ok()?))),
+            language.map(|l| l.name()).as_ref(),
+            cx,
+        )
         .inlay_hints
 }
 

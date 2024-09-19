@@ -59,6 +59,7 @@ use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
     any::Any,
+    borrow::Cow,
     cmp::Ordering,
     convert::TryInto,
     ffi::OsStr,
@@ -725,7 +726,8 @@ impl LspStore {
         });
 
         let buffer_file = buffer.read(cx).file().cloned();
-        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+        let settings =
+            language_settings(Some(&new_language), buffer_file.as_ref(), cx).into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -900,8 +902,10 @@ impl LspStore {
                         language_servers_to_start.push((file.worktree.clone(), language.name()));
                     }
                 }
-                language_formatters_to_check
-                    .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
+                language_formatters_to_check.push((
+                    buffer_file.map(|f| f.worktree_id(cx)),
+                    settings.into_owned(),
+                ));
             }
         }
 
@@ -1247,9 +1251,14 @@ impl LspStore {
             .filter(|_| {
                 maybe!({
                     let language_name = buffer.read(cx).language_at(position)?.name();
+                    let abs_path_in_a_worktree = buffer.read(cx).file().and_then(|file| {
+                        let worktree_id = file.worktree_id(cx);
+                        let abs_path = file.abs_path_in_worktree(cx).ok()?;
+                        Some((worktree_id, abs_path))
+                    });
                     Some(
                         AllLanguageSettings::get_global(cx)
-                            .language(Some(&language_name))
+                            .language(abs_path_in_a_worktree, Some(&language_name), cx)
                             .linked_edits,
                     )
                 }) == Some(true)
@@ -1348,7 +1357,7 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         let options = buffer.update(cx, |buffer, cx| {
-            lsp_command::lsp_formatting_options(language_settings(
+            lsp_command::lsp_formatting_options(&language_settings(
                 buffer.language_at(position).as_ref(),
                 buffer.file(),
                 cx,
@@ -4677,9 +4686,17 @@ impl LspStore {
         worktree: &'a Model<Worktree>,
         language: &LanguageName,
         cx: &'a mut ModelContext<Self>,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         let root_file = worktree.update(cx, |tree, cx| tree.root_file(cx));
-        all_language_settings(root_file.map(|f| f as _).as_ref(), cx).language(Some(language))
+        let abs_path_in_worktree = root_file.as_ref().and_then(|f| {
+            let worktree = worktree.read(cx);
+            Some((worktree.id(), f.abs_path_in_worktree(cx).ok()?))
+        });
+        all_language_settings(root_file.map(|f| f as _).as_ref(), cx).language(
+            abs_path_in_worktree,
+            Some(language),
+            cx,
+        )
     }
 
     pub fn start_language_servers(

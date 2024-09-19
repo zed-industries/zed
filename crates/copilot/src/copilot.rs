@@ -1235,7 +1235,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
+        fn file_name(&self, _: &AppContext) -> &std::ffi::OsStr {
+            unimplemented!()
+        }
+
+        fn abs_path_in_worktree(&self, _: &AppContext) -> Result<PathBuf> {
             unimplemented!()
         }
 

@@ -62,7 +62,7 @@ impl Render for InlineCompletionButton {
                 let status = copilot.read(cx).status();
 
                 let enabled = self.editor_enabled.unwrap_or_else(|| {
-                    all_language_settings.inline_completions_enabled(None, None)
+                    all_language_settings.inline_completions_enabled(None, None, cx)
                 });
 
                 let icon = match status {
@@ -292,7 +292,7 @@ impl InlineCompletionButton {
             );
         }
 
-        let globally_enabled = settings.inline_completions_enabled(None, None);
+        let globally_enabled = settings.inline_completions_enabled(None, None, cx);
         menu.entry(
             if globally_enabled {
                 "Hide Inline Completions for All Files"
@@ -337,10 +337,8 @@ impl InlineCompletionButton {
             let file = file.as_ref();
             Some(
                 file.map(|file| !file.is_private()).unwrap_or(true)
-                    && all_language_settings(file, cx).inline_completions_enabled(
-                        language,
-                        file.map(|file| file.path().as_ref()),
-                    ),
+                    && all_language_settings(file, cx)
+                        .inline_completions_enabled(language, file, cx),
             )
         };
         self.language = language.cloned();
@@ -442,7 +440,7 @@ async fn configure_disabled_globs(
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(None, None);
+        all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_inline_completions = Some(!show_inline_completions)
     });
@@ -466,7 +464,7 @@ fn toggle_inline_completions_for_language(
     cx: &mut AppContext,
 ) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None);
+        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())

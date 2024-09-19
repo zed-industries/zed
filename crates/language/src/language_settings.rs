@@ -16,8 +16,16 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
-use std::{num::NonZeroU32, path::Path, sync::Arc};
+use settings::{
+    add_references_to_properties, EditorConfigContent, Settings, SettingsLocation, SettingsSources,
+    SettingsStore, SoftWrap, WorktreeId,
+};
+use std::{
+    borrow::Cow,
+    num::NonZeroU32,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::serde::default_true;
 
 /// Initializes the language settings.
@@ -30,9 +38,13 @@ pub fn language_settings<'a>(
     language: Option<&Arc<Language>>,
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
-) -> &'a LanguageSettings {
+) -> Cow<'a, LanguageSettings> {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_ref())
+    all_language_settings(file, cx).language(
+        file.and_then(|file| Some((file.worktree_id(cx), file.abs_path_in_worktree(cx).ok()?))),
+        language_name.as_ref(),
+        cx,
+    )
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -363,22 +375,6 @@ pub struct FeaturesContent {
     pub copilot: Option<bool>,
     /// Determines which inline completion provider to use.
     pub inline_completion_provider: Option<InlineCompletionProvider>,
-}
-
-/// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SoftWrap {
-    /// Do not soft wrap.
-    None,
-    /// Prefer a single line generally, unless an overly long line is encountered.
-    PreferLine,
-    /// Soft wrap lines that exceed the editor width
-    EditorWidth,
-    /// Soft wrap lines at the preferred line length
-    PreferredLineLength,
-    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
-    Bounded,
 }
 
 /// Controls the behavior of formatting files when they are saved.
@@ -799,13 +795,32 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
-        if let Some(name) = language_name {
-            if let Some(overrides) = self.languages.get(name) {
-                return overrides;
-            }
+    pub fn language<'a>(
+        &'a self,
+        // TODO kb wrong API, store the previous file in the `AllLanguageSettings` instead of requiring it here
+        abs_path_in_worktree: Option<(WorktreeId, PathBuf)>,
+        language_name: Option<&LanguageName>,
+        cx: &'a AppContext,
+    ) -> Cow<'a, LanguageSettings> {
+        let settings = language_name
+            .and_then(|name| self.languages.get(name))
+            .unwrap_or(&self.defaults);
+
+        let editorconfig_settings =
+            abs_path_in_worktree.and_then(|(worktree_id, file_abs_path)| {
+                cx.global::<SettingsStore>().editorconfig_settings(
+                    worktree_id,
+                    language_name.map(|name| name.0.to_string()),
+                    &file_abs_path,
+                )
+            });
+        if let Some(content) = editorconfig_settings {
+            let mut settings = settings.clone();
+            merge_with_editorconfig(&mut settings, &content);
+            Cow::Owned(settings)
+        } else {
+            Cow::Borrowed(settings)
         }
-        &self.defaults
     }
 
     /// Returns whether inline completions are enabled for the given path.
@@ -821,16 +836,21 @@ impl AllLanguageSettings {
     pub fn inline_completions_enabled(
         &self,
         language: Option<&Arc<Language>>,
-        path: Option<&Path>,
+        file: Option<&Arc<dyn File>>,
+        cx: &AppContext,
     ) -> bool {
-        if let Some(path) = path {
+        if let Some(path) = file.map(|f| f.path()) {
             if !self.inline_completions_enabled_for_path(path) {
                 return false;
             }
         }
 
-        self.language(language.map(|l| l.name()).as_ref())
-            .show_inline_completions
+        self.language(
+            file.and_then(|file| Some((file.worktree_id(cx), file.abs_path_in_worktree(cx).ok()?))),
+            language.map(|l| l.name()).as_ref(),
+            cx,
+        )
+        .show_inline_completions
     }
 }
 
@@ -1089,6 +1109,28 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.inlay_hints, src.inlay_hints);
 }
 
+fn merge_with_editorconfig(settings: &mut LanguageSettings, content: &EditorConfigContent) {
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+    merge(&mut settings.tab_size, content.tab_size);
+    merge(&mut settings.hard_tabs, content.hard_tabs);
+    merge(
+        &mut settings.remove_trailing_whitespace_on_save,
+        content.remove_trailing_whitespace_on_save,
+    );
+    merge(
+        &mut settings.ensure_final_newline_on_save,
+        content.ensure_final_newline_on_save,
+    );
+    merge(
+        &mut settings.preferred_line_length,
+        content.preferred_line_length,
+    );
+    merge(&mut settings.soft_wrap, content.soft_wrap);
+}
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.

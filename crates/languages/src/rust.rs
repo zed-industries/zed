@@ -480,11 +480,12 @@ impl ContextProvider for RustContextProvider {
         cx: &AppContext,
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
-        let package_to_run = all_language_settings(file.as_ref(), cx)
-            .language(Some(&"Rust".into()))
-            .tasks
-            .variables
-            .get(DEFAULT_RUN_NAME_STR);
+        let language_settings = all_language_settings(file.as_ref(), cx).language(
+            file.and_then(|file| Some((file.worktree_id(cx), file.abs_path_in_worktree(cx).ok()?))),
+            Some(&"Rust".into()),
+            cx,
+        );
+        let package_to_run = language_settings.tasks.variables.get(DEFAULT_RUN_NAME_STR);
         let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run.clone()]
         } else {

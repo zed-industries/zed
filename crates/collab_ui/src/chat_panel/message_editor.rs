@@ -9,12 +9,11 @@ use gpui::{
     Render, Task, TextStyle, View, ViewContext, WeakView,
 };
 use language::{
-    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
-    LanguageServerId, ToOffset,
+    Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, LanguageServerId, ToOffset,
 };
 use parking_lot::RwLock;
 use project::{search::SearchQuery, Completion};
-use settings::Settings;
+use settings::{Settings, SoftWrap};
 use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, TextSize};

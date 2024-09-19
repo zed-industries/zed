@@ -18,11 +18,13 @@ test-support = ["gpui/test-support", "fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+ec4rs.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
 paths.workspace = true
+parking_lot.workspace = true
 release_channel.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true

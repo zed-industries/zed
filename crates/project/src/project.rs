@@ -110,6 +110,8 @@ const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
+const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
+
 pub trait Item {
     fn try_open(
         project: &Model<Project>,
@@ -2575,7 +2577,7 @@ impl Project {
                 })?;
 
             let settings = buffer.update(&mut cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx).clone()
+                language_settings(buffer.language(), buffer.file(), cx).into_owned()
             })?;
 
             let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
@@ -3809,6 +3811,16 @@ impl Project {
                         );
                     }
                 })
+            } else if path.ends_with(EDITORCONFIG_FILE_NAME) {
+                let settings_store = cx.global_mut::<SettingsStore>();
+                if let Some(directory_abs_path) = abs_path.parent() {
+                    let directory_abs_path = directory_abs_path.to_owned();
+                    if removed {
+                        settings_store.unregister_editorconfig_directory(&directory_abs_path);
+                    } else {
+                        settings_store.register_editorconfig_directory(directory_abs_path);
+                    }
+                }
             }
         }
     }

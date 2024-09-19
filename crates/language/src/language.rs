@@ -20,7 +20,6 @@ mod task_context;
 pub mod buffer_tests;
 pub mod markdown;
 
-use crate::language_settings::SoftWrap;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
@@ -39,7 +38,7 @@ use schemars::{
 };
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use settings::WorktreeId;
+use settings::{SoftWrap, WorktreeId};
 use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
 use std::{

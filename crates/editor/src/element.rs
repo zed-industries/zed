@@ -6329,7 +6329,6 @@ mod tests {
         Editor, MultiBuffer,
     };
     use gpui::{TestAppContext, VisualTestContext};
-    use language::language_settings;
     use log::info;
     use std::num::NonZeroU32;
     use ui::Context;
@@ -6730,7 +6729,7 @@ mod tests {
                 s.defaults.tab_size = NonZeroU32::new(tab_size);
                 s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
                 s.defaults.preferred_line_length = Some(editor_width as u32);
-                s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+                s.defaults.soft_wrap = Some(settings::SoftWrap::PreferredLineLength);
             });
 
             let actual_invisibles = collect_invisibles_from_new_editor(
@@ -6785,7 +6784,7 @@ mod tests {
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, cx| {
-                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+                editor.set_soft_wrap_mode(settings::SoftWrap::EditorWidth, cx);
                 editor.set_wrap_width(Some(editor_width), cx);
             })
             .unwrap();

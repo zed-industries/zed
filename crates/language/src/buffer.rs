@@ -35,6 +35,7 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
@@ -357,6 +358,10 @@ pub trait File: Send + Sync {
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &AppContext) -> PathBuf;
+
+    /// Returns the full path to this file, resolved in its worktree.
+    /// This may be a non-existing path if the file is not local.
+    fn abs_path_in_worktree(&self, cx: &AppContext) -> Result<PathBuf>;
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
@@ -2658,7 +2663,7 @@ impl BufferSnapshot {
         &self,
         position: D,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 
@@ -4176,6 +4181,10 @@ impl File for TestFile {
 
     fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
+    }
+
+    fn abs_path_in_worktree(&self, _: &AppContext) -> Result<PathBuf> {
+        unimplemented!()
     }
 
     fn worktree_id(&self, _: &AppContext) -> WorktreeId {

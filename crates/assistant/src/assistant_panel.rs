@@ -44,9 +44,7 @@ use gpui::{
     Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
-use language::{
-    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
-};
+use language::{Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset};
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
@@ -58,7 +56,7 @@ use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings};
+use settings::{update_settings_file, Settings, SoftWrap};
 use smol::stream::StreamExt;
 use std::{
     borrow::Cow,

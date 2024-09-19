@@ -1,12 +1,12 @@
 use gpui::{px, size, Context, UpdateGlobal};
 use indoc::indoc;
-use settings::SettingsStore;
+use settings::{SettingsStore, SoftWrap};
 use std::{
     ops::{Deref, DerefMut},
     panic, thread,
 };
 
-use language::language_settings::{AllLanguageSettings, SoftWrap};
+use language::language_settings::AllLanguageSettings;
 use util::test::marked_text_offsets;
 
 use super::{neovim_connection::NeovimConnection, VimTestContext};
