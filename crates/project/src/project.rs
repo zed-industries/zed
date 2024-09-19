@@ -698,6 +698,7 @@ impl Project {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn ssh(
         ssh: Arc<SshSession>,
         ssh_project: Option<SshProject>,
