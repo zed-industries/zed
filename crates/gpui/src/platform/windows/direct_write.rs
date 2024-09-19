@@ -1063,7 +1063,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             // This `cast()` action here should never fail since we are running on Win10+, and
             // `IDWriteFontFace3` requires Win10
             let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
-            let Some((font_identifier, font_struct, is_emoji)) =
+            let Some((font_identifier, font_struct, color_font)) =
                 get_font_identifier_and_font_struct(font_face, &self.locale)
             else {
                 return Ok(());
@@ -1084,6 +1084,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 context
                     .index_converter
                     .advance_to_utf16_ix(context.utf16_index);
+                let is_emoji = color_font
+                    && is_color_glyph(font_face, id, &context.text_system.components.factory);
                 glyphs.push(ShapedGlyph {
                     id,
                     position: point(px(context.width), px(0.0)),
@@ -1444,6 +1446,44 @@ fn get_render_target_property(
         usage: D2D1_RENDER_TARGET_USAGE_NONE,
         minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
     }
+}
+
+// One would think that with newer DirectWrite method: IDWriteFontFace4::GetGlyphImageFormats
+// but that doesn't seem to work for some glyphs, say ❤
+fn is_color_glyph(
+    font_face: &IDWriteFontFace3,
+    glyph_id: GlyphId,
+    factory: &IDWriteFactory5,
+) -> bool {
+    let glyph_run = DWRITE_GLYPH_RUN {
+        fontFace: unsafe { std::mem::transmute_copy(font_face) },
+        fontEmSize: 14.0,
+        glyphCount: 1,
+        glyphIndices: &(glyph_id.0 as u16),
+        glyphAdvances: &0.0,
+        glyphOffsets: &DWRITE_GLYPH_OFFSET {
+            advanceOffset: 0.0,
+            ascenderOffset: 0.0,
+        },
+        isSideways: BOOL(0),
+        bidiLevel: 0,
+    };
+    unsafe {
+        factory.TranslateColorGlyphRun(
+            D2D_POINT_2F::default(),
+            &glyph_run as _,
+            None,
+            DWRITE_GLYPH_IMAGE_FORMATS_COLR
+                | DWRITE_GLYPH_IMAGE_FORMATS_SVG
+                | DWRITE_GLYPH_IMAGE_FORMATS_PNG
+                | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
+                | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+            DWRITE_MEASURING_MODE_NATURAL,
+            None,
+            0,
+        )
+    }
+    .is_ok()
 }
 
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
