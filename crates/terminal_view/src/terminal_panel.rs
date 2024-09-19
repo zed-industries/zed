@@ -16,12 +16,12 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId};
 use terminal::{
-    terminal_settings::{TerminalDockPosition, TerminalSettings},
+    terminal_settings::{RightSideButtons, TerminalDockPosition, TerminalSettings},
     Terminal,
 };
 use ui::{
-    h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu, Selectable,
-    Tooltip,
+    h_flex, ButtonCommon, Clickable, ContextMenu, Div, IconButton, IconSize, PopoverMenu,
+    Selectable, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -177,43 +177,82 @@ impl TerminalPanel {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
+                let require_focus_for_buttons =
+                    TerminalSettings::get_global(cx).require_focus_for_buttons;
+                if require_focus_for_buttons
+                    && !pane.has_focus(cx)
+                    && !pane.context_menu_focused(cx)
+                {
                     return (None, None);
                 }
-                let focus_handle = pane.focus_handle(cx);
-                let right_children = h_flex()
-                    .gap_2()
-                    .children(assistant_tab_bar_button.clone())
-                    .child(
-                        PopoverMenu::new("terminal-tab-bar-popover-menu")
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(|cx| Tooltip::text("New...", cx)),
-                            )
-                            .anchor(AnchorCorner::TopRight)
-                            .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |cx| {
-                                let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.context(focus_handle.clone())
-                                        .action(
-                                            "New Terminal",
-                                            workspace::NewTerminal.boxed_clone(),
-                                        )
-                                        // We want the focus to go back to terminal panel once task modal is dismissed,
-                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                        // context menu will be gone the moment we spawn the modal.
-                                        .action(
-                                            "Spawn task",
-                                            tasks_ui::Spawn::modal().boxed_clone(),
-                                        )
-                                });
 
-                                Some(menu)
-                            }),
-                    )
-                    .child({
+                let mut right_children = h_flex().gap_2();
+
+                let setting = TerminalSettings::get_global(cx);
+
+                let inline = |right_children: Div| match setting.inline_assist_button {
+                    true => right_children.children(assistant_tab_bar_button.clone()),
+                    false => right_children,
+                };
+
+                let new = |right_children: Div| match setting.spawn_task_option_button {
+                    true => {
+                        let focus_handle = pane.focus_handle(cx);
+                        right_children.child(
+                            PopoverMenu::new("terminal-tab-bar-popover-menu")
+                                .trigger(
+                                    IconButton::new("plus", IconName::Plus)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(|cx| Tooltip::text("New...", cx)),
+                                )
+                                .anchor(AnchorCorner::TopRight)
+                                .with_handle(pane.new_item_context_menu_handle.clone())
+                                .menu(move |cx| {
+                                    let focus_handle = focus_handle.clone();
+                                    let menu = ContextMenu::build(cx, |menu, _| {
+                                        menu.context(focus_handle.clone())
+                                            .action(
+                                                "New Terminal",
+                                                workspace::NewTerminal.boxed_clone(),
+                                            )
+                                            // We want the focus to go back to terminal panel once task modal is dismissed,
+                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                            // context menu will be gone the moment we spawn the modal.
+                                            .action(
+                                                "Spawn task",
+                                                tasks_ui::Spawn::modal().boxed_clone(),
+                                            )
+                                    });
+
+                                    Some(menu)
+                                }),
+                        )
+                    }
+                    false => right_children.child({
+                        IconButton::new("plus", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.window_context()
+                                    .dispatch_action(workspace::NewTerminal.boxed_clone());
+                            }))
+                            .tooltip(|cx| Tooltip::text("New Terminal", cx))
+                    }),
+                };
+
+                let minimize = |right_children: Div| match setting.minimize_button {
+                    true => right_children.child({
+                        IconButton::new("minimize", IconName::GenericMinimize)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.window_context()
+                                    .dispatch_action(workspace::ToggleBottomDock.boxed_clone());
+                            }))
+                    }),
+                    false => right_children,
+                };
+
+                let maximize = |right_children: Div| match setting.maximize_button {
+                    true => right_children.child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
@@ -229,9 +268,20 @@ impl TerminalPanel {
                                     cx,
                                 )
                             })
-                    })
-                    .into_any_element()
-                    .into();
+                    }),
+                    false => right_children,
+                };
+
+                for item in setting.arrange_buttons() {
+                    right_children = match item {
+                        RightSideButtons::InlineAssist => inline(right_children),
+                        RightSideButtons::New => new(right_children),
+                        RightSideButtons::Minimize => minimize(right_children),
+                        RightSideButtons::Maximize => maximize(right_children),
+                    };
+                }
+
+                let right_children = right_children.into_any_element().into();
                 (None, right_children)
             });
         });
