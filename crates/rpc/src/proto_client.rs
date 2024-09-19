@@ -28,7 +28,7 @@ pub trait ProtoClient: Send + Sync {
 
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
 
-    fn goes_via_collab(&self) -> bool;
+    fn is_via_collab(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -142,7 +142,7 @@ impl AnyProtoClient {
     }
 
     pub fn goes_via_collab(&self) -> bool {
-        self.0.goes_via_collab()
+        self.0.is_via_collab()
     }
 
     pub fn request<T: RequestMessage>(

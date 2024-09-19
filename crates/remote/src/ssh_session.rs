@@ -471,7 +471,7 @@ impl ProtoClient for SshSession {
         &self.state
     }
 
-    fn goes_via_collab(&self) -> bool {
+    fn is_via_collab(&self) -> bool {
         false
     }
 }
