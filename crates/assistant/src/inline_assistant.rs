@@ -25,9 +25,9 @@ use futures::{
     SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    anchored, deferred, point, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle,
-    UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    anchored, deferred, point, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle,
+    FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
+    TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -1376,8 +1376,15 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
-        let status = self.codegen.read(cx).status(cx);
-        let buttons = match status {
+        let codegen = self.codegen.read(cx);
+
+        let mut buttons = Vec::new();
+        if codegen.alternative_count(cx) > 1 {
+            buttons.push(self.render_cycle_controls(cx));
+        }
+
+        let status = codegen.status(cx);
+        buttons.extend(match status {
             CodegenStatus::Idle => {
                 vec![
                     IconButton::new("cancel", IconName::Close)
@@ -1386,14 +1393,16 @@ impl Render for PromptEditor {
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
-                        ),
+                        )
+                        .into_any_element(),
                     IconButton::new("start", IconName::SparkleAlt)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
-                        ),
+                        )
+                        .into_any_element(),
                 ]
             }
             CodegenStatus::Pending => {
@@ -1404,7 +1413,8 @@ impl Render for PromptEditor {
                         .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
-                        ),
+                        )
+                        .into_any_element(),
                     IconButton::new("stop", IconName::Stop)
                         .icon_color(Color::Error)
                         .shape(IconButtonShape::Square)
@@ -1416,9 +1426,8 @@ impl Render for PromptEditor {
                                 cx,
                             )
                         })
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)),
-                        ),
+                        .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
+                        .into_any_element(),
                 ]
             }
             CodegenStatus::Error(_) | CodegenStatus::Done => {
@@ -1429,7 +1438,8 @@ impl Render for PromptEditor {
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
-                        ),
+                        )
+                        .into_any_element(),
                     if self.edited_since_done || matches!(status, CodegenStatus::Error(_)) {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
@@ -1445,6 +1455,7 @@ impl Render for PromptEditor {
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::StartRequested);
                             }))
+                            .into_any_element()
                     } else {
                         IconButton::new("confirm", IconName::Check)
                             .icon_color(Color::Info)
@@ -1453,10 +1464,11 @@ impl Render for PromptEditor {
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::ConfirmRequested);
                             }))
+                            .into_any_element()
                     },
                 ]
             }
-        };
+        });
 
         h_flex()
             .key_context("PromptEditor")
@@ -1469,8 +1481,8 @@ impl Render for PromptEditor {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::move_down))
-            .on_action(cx.listener(Self::cycle_prev))
-            .on_action(cx.listener(Self::cycle_next))
+            .capture_action(cx.listener(Self::cycle_prev))
+            .capture_action(cx.listener(Self::cycle_next))
             .child(
                 h_flex()
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
@@ -1861,6 +1873,69 @@ impl PromptEditor {
             .update(cx, |codegen, cx| codegen.cycle_next(cx));
     }
 
+    fn render_cycle_controls(&self, cx: &ViewContext<Self>) -> AnyElement {
+        let codegen = self.codegen.read(cx);
+        let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
+
+        h_flex()
+            .child(
+                IconButton::new("previous", IconName::ChevronLeft)
+                    .icon_color(Color::Muted)
+                    .disabled(disabled)
+                    .shape(IconButtonShape::Square)
+                    .tooltip({
+                        let focus_handle = self.editor.focus_handle(cx);
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Previous Alternative",
+                                &CyclePreviousInlineAssist,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.codegen
+                            .update(cx, |codegen, cx| codegen.cycle_prev(cx))
+                    })),
+            )
+            .child(
+                Label::new(format!(
+                    "{}/{}",
+                    codegen.active_alternative + 1,
+                    codegen.alternative_count(cx)
+                ))
+                .size(LabelSize::Small)
+                .color(if disabled {
+                    Color::Disabled
+                } else {
+                    Color::Muted
+                }),
+            )
+            .child(
+                IconButton::new("next", IconName::ChevronRight)
+                    .icon_color(Color::Muted)
+                    .disabled(disabled)
+                    .shape(IconButtonShape::Square)
+                    .tooltip({
+                        let focus_handle = self.editor.focus_handle(cx);
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Next Alternative",
+                                &CycleNextInlineAssist,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.codegen
+                            .update(cx, |codegen, cx| codegen.cycle_next(cx))
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_counts = self.token_counts?;
@@ -2245,6 +2320,13 @@ impl Codegen {
 
     fn status<'a>(&self, cx: &'a AppContext) -> &'a CodegenStatus {
         &self.active_alternative().read(cx).status
+    }
+
+    fn alternative_count(&self, cx: &AppContext) -> usize {
+        LanguageModelRegistry::read_global(cx)
+            .inline_alternative_models()
+            .len()
+            + 1
     }
 
     pub fn cycle_prev(&mut self, cx: &mut ModelContext<Self>) {

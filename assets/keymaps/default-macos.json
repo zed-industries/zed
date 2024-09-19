@@ -529,8 +529,8 @@
   {
     "context": "PromptEditor",
     "bindings": {
-      "ctrl-alt-cmd-p": "assistant::CyclePreviousInlineAssist",
-      "ctrl-alt-cmd-n": "assistant::CycleNextInlineAssist"
+      "ctrl-[": "assistant::CyclePreviousInlineAssist",
+      "ctrl-]": "assistant::CycleNextInlineAssist"
     }
   },
   {
