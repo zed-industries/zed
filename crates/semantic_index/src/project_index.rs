@@ -34,11 +34,11 @@ pub struct SearchResult {
     pub query_index: usize,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct LoadedSearchResult {
     pub path: Arc<Path>,
-    pub range: Range<usize>,
     pub full_path: PathBuf,
-    pub file_content: String,
+    pub excerpt_content: String,
     pub row_range: RangeInclusive<u32>,
     pub query_index: usize,
 }

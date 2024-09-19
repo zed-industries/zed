@@ -7,7 +7,7 @@ use anyhow::Result;
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
-use language::{CodeLabel, LineEnding, LspAdapterDelegate};
+use language::{CodeLabel, LspAdapterDelegate};
 use semantic_index::{LoadedSearchResult, SemanticDb};
 use std::{
     fmt::Write,
@@ -144,9 +144,8 @@ pub fn add_search_result_section(
 ) {
     let LoadedSearchResult {
         path,
-        range,
         full_path,
-        file_content,
+        excerpt_content,
         row_range,
         ..
     } = loaded_result;
@@ -156,10 +155,11 @@ pub fn add_search_result_section(
         Some(row_range.clone()),
     ));
 
-    let mut excerpt = file_content[range.clone()].to_string();
-    LineEnding::normalize(&mut excerpt);
-    text.push_str(&excerpt);
-    writeln!(text, "\n```\n").unwrap();
+    text.push_str(&excerpt_content);
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    writeln!(text, "```\n").unwrap();
     let section_end_ix = text.len() - 1;
     sections.push(build_entry_output_section(
         section_start_ix..section_end_ix,
