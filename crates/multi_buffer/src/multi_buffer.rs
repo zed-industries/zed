@@ -959,7 +959,25 @@ impl MultiBuffer {
             Default::default();
         let snapshot = self.read(cx);
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
-        for selection in selections {
+        for mut selection in selections {
+            if selection.start == Anchor::Start {
+                if let Some(first_excerpt) = snapshot.excerpts.first() {
+                    selection.start = Anchor::Text {
+                        excerpt_id: first_excerpt.id,
+                        text_anchor: first_excerpt.range.context.start,
+                    };
+                }
+            }
+
+            if selection.end == Anchor::End {
+                if let Some(last_excerpt) = snapshot.excerpts.last() {
+                    selection.end = Anchor::Text {
+                        excerpt_id: last_excerpt.id,
+                        text_anchor: last_excerpt.range.context.end,
+                    };
+                }
+            }
+
             let start_locator = snapshot.excerpt_locator_for_id(selection.start.excerpt_id());
             let end_locator = snapshot.excerpt_locator_for_id(selection.end.excerpt_id());
 
@@ -971,11 +989,15 @@ impl MultiBuffer {
 
                 let mut start = excerpt.range.context.start;
                 let mut end = excerpt.range.context.end;
-                if excerpt.id == selection.start.excerpt_id {
-                    start = selection.start.text_anchor;
+                if excerpt.id == selection.start.excerpt_id() {
+                    if let Anchor::Text { text_anchor, .. } = selection.start {
+                        start = text_anchor;
+                    }
                 }
-                if excerpt.id == selection.end.excerpt_id {
-                    end = selection.end.text_anchor;
+                if excerpt.id == selection.end.excerpt_id() {
+                    if let Anchor::Text { text_anchor, .. } = selection.end {
+                        end = text_anchor;
+                    }
                 }
                 selections_by_buffer
                     .entry(excerpt.buffer_id)
@@ -1145,13 +1167,11 @@ impl MultiBuffer {
                 for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
                 {
                     for range in ranges.by_ref().take(range_count) {
-                        let start = Anchor {
-                            buffer_id: Some(buffer_id),
+                        let start = Anchor::Text {
                             excerpt_id,
                             text_anchor: range.start,
                         };
-                        let end = Anchor {
-                            buffer_id: Some(buffer_id),
+                        let end = Anchor::Text {
                             excerpt_id,
                             text_anchor: range.end,
                         };
@@ -1200,13 +1220,11 @@ impl MultiBuffer {
         let mut ranges = ranges.into_iter();
         for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.into_iter()) {
             anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
-                let start = Anchor {
-                    buffer_id: Some(buffer_id),
+                let start = Anchor::Text {
                     excerpt_id,
                     text_anchor: buffer_snapshot.anchor_after(range.start),
                 };
-                let end = Anchor {
-                    buffer_id: Some(buffer_id),
+                let end = Anchor::Text {
                     excerpt_id,
                     text_anchor: buffer_snapshot.anchor_after(range.end),
                 };
@@ -1631,14 +1649,15 @@ impl MultiBuffer {
         let mut error = None;
         let mut futures = Vec::new();
         for anchor in anchors {
-            if let Some(buffer_id) = anchor.buffer_id {
-                if let Some(buffer) = borrow.get(&buffer_id) {
+            if let Anchor::Text { text_anchor, .. } = anchor {
+                if let Some(buffer) = borrow.get(&text_anchor.buffer_id()) {
                     buffer.buffer.update(cx, |buffer, _| {
-                        futures.push(buffer.wait_for_anchors([anchor.text_anchor]))
+                        futures.push(buffer.wait_for_anchors([text_anchor]))
                     });
                 } else {
                     error = Some(anyhow!(
-                        "buffer {buffer_id} is not part of this multi-buffer"
+                        "buffer {:?} is not part of this multi-buffer",
+                        text_anchor.buffer_id()
                     ));
                     break;
                 }
@@ -1661,14 +1680,43 @@ impl MultiBuffer {
         cx: &AppContext,
     ) -> Option<(Model<Buffer>, language::Anchor)> {
         let snapshot = self.read(cx);
-        let anchor = snapshot.anchor_before(position);
-        let buffer = self
-            .buffers
-            .borrow()
-            .get(&anchor.buffer_id?)?
-            .buffer
-            .clone();
-        Some((buffer, anchor.text_anchor))
+        match snapshot.anchor_before(position) {
+            Anchor::Start => {
+                if let Some(first_excerpt) = snapshot.excerpts.first() {
+                    let buffer = self
+                        .buffers
+                        .borrow()
+                        .get(&first_excerpt.buffer_id)?
+                        .buffer
+                        .clone();
+                    Some((buffer, first_excerpt.range.context.start))
+                } else {
+                    None
+                }
+            }
+            Anchor::End => {
+                if let Some(last_excerpt) = snapshot.excerpts.last() {
+                    let buffer = self
+                        .buffers
+                        .borrow()
+                        .get(&last_excerpt.buffer_id)?
+                        .buffer
+                        .clone();
+                    Some((buffer, last_excerpt.range.context.end))
+                } else {
+                    None
+                }
+            }
+            Anchor::Text { text_anchor, .. } => {
+                let buffer = self
+                    .buffers
+                    .borrow()
+                    .get(&text_anchor.buffer_id())?
+                    .buffer
+                    .clone();
+                Some((buffer, text_anchor))
+            }
+        }
     }
 
     fn on_buffer_event(
@@ -2858,7 +2906,7 @@ impl MultiBufferSnapshot {
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
-        let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
+        let locator = self.excerpt_locator_for_id(anchor.excerpt_id());
 
         cursor.seek(locator, Bias::Left, &());
         if cursor.item().is_none() {
@@ -2867,7 +2915,7 @@ impl MultiBufferSnapshot {
 
         let mut position = D::from_text_summary(&cursor.start().text);
         if let Some(excerpt) = cursor.item() {
-            if excerpt.id == anchor.excerpt_id {
+            if excerpt.id == anchor.excerpt_id() {
                 let excerpt_buffer_start =
                     excerpt.range.context.start.summary::<D>(&excerpt.buffer);
                 let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
