@@ -5,12 +5,14 @@ use std::{fmt::Display, sync::Arc, time::Duration};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EventRequestBody {
+    /// Identifier unique to each system Zed is installed on
+    pub system_id: Option<String>,
     /// Identifier unique to each Zed installation (differs for stable, preview, dev)
     pub installation_id: Option<String>,
     /// Identifier unique to each logged in Zed user (randomly generated on first sign in)
-    pub metrics_id: Option<String>,
     /// Identifier unique to each Zed session (differs for each time you open Zed)
     pub session_id: Option<String>,
+    pub metrics_id: Option<String>,
     /// True for Zed staff, otherwise false
     pub is_staff: Option<bool>,
     /// Zed version number
@@ -34,6 +36,7 @@ pub struct EventWrapper {
     pub signed_in: bool,
     /// Duration between this event's timestamp and the timestamp of the first event in the current batch
     pub milliseconds_since_first_event: i64,
+    /// The event itself
     #[serde(flatten)]
     pub event: Event,
 }
@@ -245,8 +248,11 @@ pub struct Panic {
     pub architecture: String,
     /// The time the panic occurred (UNIX millisecond timestamp)
     pub panicked_on: i64,
+    /// Identifier unique to each system Zed is installed on
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_id: Option<String>,
     /// Identifier unique to each Zed installation (differs for stable, preview, dev)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub installation_id: Option<String>,
     /// Identifier unique to each Zed session (differs for each time you open Zed)
     pub session_id: String,

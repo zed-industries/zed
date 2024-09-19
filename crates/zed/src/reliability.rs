@@ -28,8 +28,9 @@ use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
-    installation_id: Option<String>,
     app_version: SemanticVersion,
+    system_id: Option<String>,
+    installation_id: Option<String>,
     session_id: String,
 ) {
     let is_pty = stdout_is_a_pty();
@@ -102,6 +103,7 @@ pub fn init_panic_hook(
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
+            system_id: system_id.clone(),
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),
         };

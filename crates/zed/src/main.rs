@@ -13,7 +13,7 @@ use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
 use fs::{Fs, RealFs};
@@ -334,19 +334,17 @@ fn main() {
         .with_assets(Assets)
         .with_http_client(IsahcHttpClient::new(None, None));
 
-    let (installation_id, existing_installation_id_found) = app
-        .background_executor()
-        .block(installation_id())
-        .ok()
-        .unzip();
-
+    let system_id = app.background_executor().block(system_id()).ok();
+    let installation_id = app.background_executor().block(installation_id()).ok();
+    let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
-
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+
     reliability::init_panic_hook(
-        installation_id.clone(),
         app_version,
-        session.id().to_owned(),
+        system_id.as_ref().map(|id| id.to_string()),
+        installation_id.as_ref().map(|id| id.to_string()),
+        session_id.clone(),
     );
 
     let (open_listener, mut open_rx) = OpenListener::new();
@@ -491,14 +489,26 @@ fn main() {
         client::init(&client, cx);
         language::init(cx);
         let telemetry = client.telemetry();
-        telemetry.start(installation_id.clone(), session.id().to_owned(), cx);
-        telemetry.report_app_event(
-            match existing_installation_id_found {
-                Some(false) => "first open",
-                _ => "open",
-            }
-            .to_string(),
+        telemetry.start(
+            system_id.as_ref().map(|id| id.to_string()),
+            installation_id.as_ref().map(|id| id.to_string()),
+            session_id,
+            cx,
         );
+        if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
+            match (&system_id, &installation_id) {
+                (IdType::New(_), IdType::New(_)) => {
+                    telemetry.report_app_event("first open".to_string());
+                    telemetry.report_app_event("first open for release channel".to_string());
+                }
+                (IdType::Existing(_), IdType::New(_)) => {
+                    telemetry.report_app_event("first open for release channel".to_string());
+                }
+                (_, IdType::Existing(_)) => {
+                    telemetry.report_app_event("open".to_string());
+                }
+            }
+        }
         let app_session = cx.new_model(|cx| AppSession::new(session, cx));
 
         let app_state = Arc::new(AppState {
@@ -514,7 +524,11 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
-        reliability::init(client.http_client(), installation_id, cx);
+        reliability::init(
+            client.http_client(),
+            installation_id.clone().map(|id| id.to_string()),
+            cx,
+        );
         let prompt_builder = init_common(app_state.clone(), cx);
 
         let args = Args::parse();
@@ -755,7 +769,23 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
     Ok::<_, anyhow::Error>(())
 }
 
-async fn installation_id() -> Result<(String, bool)> {
+async fn system_id() -> Result<IdType> {
+    let key_name = "system_id".to_string();
+
+    if let Ok(Some(system_id)) = GLOBAL_KEY_VALUE_STORE.read_kvp(&key_name) {
+        return Ok(IdType::Existing(system_id));
+    }
+
+    let system_id = Uuid::new_v4().to_string();
+
+    GLOBAL_KEY_VALUE_STORE
+        .write_kvp(key_name, system_id.clone())
+        .await?;
+
+    Ok(IdType::New(system_id))
+}
+
+async fn installation_id() -> Result<IdType> {
     let legacy_key_name = "device_id".to_string();
     let key_name = "installation_id".to_string();
 
@@ -765,11 +795,11 @@ async fn installation_id() -> Result<(String, bool)> {
             .write_kvp(key_name, installation_id.clone())
             .await?;
         KEY_VALUE_STORE.delete_kvp(legacy_key_name).await?;
-        return Ok((installation_id, true));
+        return Ok(IdType::Existing(installation_id));
     }
 
     if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&key_name) {
-        return Ok((installation_id, true));
+        return Ok(IdType::Existing(installation_id));
     }
 
     let installation_id = Uuid::new_v4().to_string();
@@ -778,7 +808,7 @@ async fn installation_id() -> Result<(String, bool)> {
         .write_kvp(key_name, installation_id.clone())
         .await?;
 
-    Ok((installation_id, false))
+    Ok(IdType::New(installation_id))
 }
 
 async fn restore_or_create_workspace(
@@ -1085,6 +1115,20 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+enum IdType {
+    New(String),
+    Existing(String),
+}
+
+impl ToString for IdType {
+    fn to_string(&self) -> String {
+        match self {
+            IdType::New(id) | IdType::Existing(id) => id.clone(),
+        }
+    }
 }
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
