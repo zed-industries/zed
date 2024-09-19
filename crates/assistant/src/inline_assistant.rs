@@ -951,12 +951,7 @@ impl InlineAssistant {
         assist
             .codegen
             .update(cx, |codegen, cx| {
-                codegen.start(
-                    assist.range.clone(),
-                    user_prompt,
-                    assistant_panel_context,
-                    cx,
-                )
+                codegen.start(user_prompt, assistant_panel_context, cx)
             })
             .log_err();
 
@@ -2171,12 +2166,9 @@ impl InlineAssist {
             return future::ready(Err(anyhow!("no user prompt"))).boxed();
         };
         let assistant_panel_context = self.assistant_panel_context(cx);
-        self.codegen.read(cx).count_tokens(
-            self.range.clone(),
-            user_prompt,
-            assistant_panel_context,
-            cx,
-        )
+        self.codegen
+            .read(cx)
+            .count_tokens(user_prompt, assistant_panel_context, cx)
     }
 }
 
@@ -2217,7 +2209,6 @@ impl Codegen {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
-                initial_transaction_id,
                 telemetry.clone(),
                 builder.clone(),
                 cx,
@@ -2275,11 +2266,11 @@ impl Codegen {
         self.active_codegen()
             .update(cx, |codegen, cx| codegen.set_active(true, cx));
         self.subscribe_to_alternative(cx);
+        cx.notify();
     }
 
     pub fn start(
         &mut self,
-        edit_range: Range<Anchor>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &mut ModelContext<Self>,
@@ -2288,13 +2279,17 @@ impl Codegen {
             .inline_alternative_models()
             .to_vec();
 
+        for alternative in &self.alternatives {
+            alternative.update(cx, |alternative, cx| alternative.undo(cx));
+        }
+        self.activate(0, cx);
         self.alternatives.truncate(1);
+
         for _ in 0..alternative_models.len() {
             self.alternatives.push(cx.new_model(|cx| {
                 CodegenAlternative::new(
                     self.buffer.clone(),
                     self.range.clone(),
-                    self.initial_transaction_id,
                     self.telemetry.clone(),
                     self.builder.clone(),
                     cx,
@@ -2312,7 +2307,6 @@ impl Codegen {
         {
             alternative.update(cx, |alternative, cx| {
                 alternative.start(
-                    edit_range.clone(),
                     user_prompt.clone(),
                     assistant_panel_context.clone(),
                     model.clone(),
@@ -2332,22 +2326,25 @@ impl Codegen {
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
         self.active_codegen()
-            .update(cx, |codegen, cx| codegen.undo(cx))
+            .update(cx, |codegen, cx| codegen.undo(cx));
+
+        self.buffer.update(cx, |buffer, cx| {
+            if let Some(transaction_id) = self.initial_transaction_id.take() {
+                buffer.undo_transaction(transaction_id, cx);
+                buffer.refresh_preview(cx);
+            }
+        });
     }
 
     pub fn count_tokens(
         &self,
-        edit_range: Range<Anchor>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
-        self.active_codegen().read(cx).count_tokens(
-            edit_range,
-            user_prompt,
-            assistant_panel_context,
-            cx,
-        )
+        self.active_codegen()
+            .read(cx)
+            .count_tokens(user_prompt, assistant_panel_context, cx)
     }
 
     pub fn buffer(&self, cx: &AppContext) -> Model<MultiBuffer> {
@@ -2382,8 +2379,8 @@ pub struct CodegenAlternative {
     old_buffer: Model<Buffer>,
     snapshot: MultiBufferSnapshot,
     edit_position: Option<Anchor>,
+    range: Range<Anchor>,
     last_equal_ranges: Vec<Range<Anchor>>,
-    initial_transaction_id: Option<TransactionId>,
     transformation_transaction_id: Option<TransactionId>,
     status: CodegenStatus,
     generation: Task<()>,
@@ -2393,6 +2390,7 @@ pub struct CodegenAlternative {
     builder: Arc<PromptBuilder>,
     active: bool,
     edits: Vec<(Range<Anchor>, String)>,
+    line_operations: Vec<LineOperation>,
 }
 
 enum CodegenStatus {
@@ -2420,7 +2418,6 @@ impl CodegenAlternative {
     pub fn new(
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
-        initial_transaction_id: Option<TransactionId>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
@@ -2459,10 +2456,11 @@ impl CodegenAlternative {
             diff: Diff::default(),
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
-            initial_transaction_id,
             builder,
             active: false,
             edits: Vec::new(),
+            line_operations: Vec::new(),
+            range,
         }
     }
 
@@ -2471,12 +2469,14 @@ impl CodegenAlternative {
             self.active = active;
 
             if self.active {
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.finalize_last_transaction(cx);
-                    buffer.start_transaction(cx);
-                    buffer.edit(self.edits.iter().cloned(), None, cx);
-                    self.transformation_transaction_id = buffer.end_transaction(cx);
-                });
+                let edits = self.edits.clone();
+                self.apply_edits(edits, cx);
+                if matches!(self.status, CodegenStatus::Pending) {
+                    let line_operations = self.line_operations.clone();
+                    self.reapply_line_based_diff(line_operations, cx);
+                } else {
+                    self.reapply_batch_diff(cx).detach();
+                }
             } else if let Some(transaction_id) = self.transformation_transaction_id.take() {
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.undo_transaction(transaction_id, cx);
@@ -2507,14 +2507,12 @@ impl CodegenAlternative {
 
     pub fn count_tokens(
         &self,
-        edit_range: Range<Anchor>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
         if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-            let request =
-                self.build_request(user_prompt, assistant_panel_context.clone(), edit_range, cx);
+            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {
                     let total_count = model.count_tokens(request.clone(), cx);
@@ -2539,7 +2537,6 @@ impl CodegenAlternative {
 
     pub fn start(
         &mut self,
-        edit_range: Range<Anchor>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         model: Arc<dyn LanguageModel>,
@@ -2551,24 +2548,20 @@ impl CodegenAlternative {
             });
         }
 
-        self.edit_position = Some(edit_range.start.bias_right(&self.snapshot));
+        self.edit_position = Some(self.range.start.bias_right(&self.snapshot));
 
         let telemetry_id = model.telemetry_id();
-        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> = if user_prompt
-            .trim()
-            .to_lowercase()
-            == "delete"
-        {
-            async { Ok(stream::empty().boxed()) }.boxed_local()
-        } else {
-            let request =
-                self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx)?;
+        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
+            if user_prompt.trim().to_lowercase() == "delete" {
+                async { Ok(stream::empty().boxed()) }.boxed_local()
+            } else {
+                let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
 
-            let chunks =
-                cx.spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
-            async move { Ok(chunks.await?.boxed()) }.boxed_local()
-        };
-        self.handle_stream(telemetry_id, edit_range, chunks, cx);
+                let chunks = cx
+                    .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
+                async move { Ok(chunks.await?.boxed()) }.boxed_local()
+            };
+        self.handle_stream(telemetry_id, chunks, cx);
         Ok(())
     }
 
@@ -2576,11 +2569,10 @@ impl CodegenAlternative {
         &self,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
-        edit_range: Range<Anchor>,
         cx: &AppContext,
     ) -> Result<LanguageModelRequest> {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let language = buffer.language_at(edit_range.start);
+        let language = buffer.language_at(self.range.start);
         let language_name = if let Some(language) = language.as_ref() {
             if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
                 None
@@ -2592,8 +2584,8 @@ impl CodegenAlternative {
         };
 
         let language_name = language_name.as_ref();
-        let start = buffer.point_to_buffer_offset(edit_range.start);
-        let end = buffer.point_to_buffer_offset(edit_range.end);
+        let start = buffer.point_to_buffer_offset(self.range.start);
+        let end = buffer.point_to_buffer_offset(self.range.end);
         let (buffer, range) = if let Some((start, end)) = start.zip(end) {
             let (start_buffer, start_buffer_offset) = start;
             let (end_buffer, end_buffer_offset) = end;
@@ -2633,16 +2625,15 @@ impl CodegenAlternative {
     pub fn handle_stream(
         &mut self,
         model_telemetry_id: String,
-        edit_range: Range<Anchor>,
         stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
-            .text_for_range(edit_range.start..edit_range.end)
+            .text_for_range(self.range.start..self.range.end)
             .collect::<Rope>();
 
-        let selection_start = edit_range.start.to_point(&snapshot);
+        let selection_start = self.range.start.to_point(&snapshot);
 
         // Start with the indentation of the first line in the selection
         let mut suggested_line_indent = snapshot
@@ -2653,7 +2644,7 @@ impl CodegenAlternative {
 
         // If the first line in the selection does not have indentation, check the following lines
         if suggested_line_indent.len == 0 && suggested_line_indent.kind == IndentKind::Space {
-            for row in selection_start.row..=edit_range.end.to_point(&snapshot).row {
+            for row in selection_start.row..=self.range.end.to_point(&snapshot).row {
                 let line_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
                 // Prefer tabs if a line in the selection uses tabs as indentation
                 if line_indent.kind == IndentKind::Tab {
@@ -2666,7 +2657,7 @@ impl CodegenAlternative {
         let telemetry = self.telemetry.clone();
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
-        let mut edit_start = edit_range.start.to_offset(&snapshot);
+        let mut edit_start = self.range.start.to_offset(&snapshot);
         self.generation = cx.spawn(|codegen, mut cx| {
             async move {
                 let chunks = stream.await;
@@ -2818,9 +2809,10 @@ impl CodegenAlternative {
 
                             if codegen.active {
                                 codegen.apply_edits(edits.iter().cloned(), cx);
-                                codegen.reapply_line_based_diff(edit_range.clone(), line_ops, cx);
+                                codegen.reapply_line_based_diff(line_ops.iter().cloned(), cx);
                             }
                             codegen.edits.extend(edits);
+                            codegen.line_operations = line_ops;
                             codegen.edit_position = Some(snapshot.anchor_after(edit_start));
 
                             cx.notify();
@@ -2830,9 +2822,8 @@ impl CodegenAlternative {
                     // Streaming stopped and we have the new text in the buffer, and a line-based diff applied for the whole new buffer.
                     // That diff is not what a regular diff is and might look unexpected, ergo apply a regular diff.
                     // It's fine to apply even if the rest of the line diffing fails, as no more hunks are coming through `diff_rx`.
-                    let batch_diff_task = codegen.update(&mut cx, |codegen, cx| {
-                        codegen.reapply_batch_diff(edit_range.clone(), cx)
-                    })?;
+                    let batch_diff_task =
+                        codegen.update(&mut cx, |codegen, cx| codegen.reapply_batch_diff(cx))?;
                     let (line_based_stream_diff, ()) =
                         join!(line_based_stream_diff, batch_diff_task);
                     line_based_stream_diff?;
@@ -2876,11 +2867,6 @@ impl CodegenAlternative {
                 buffer.undo_transaction(transaction_id, cx);
                 buffer.refresh_preview(cx);
             }
-
-            if let Some(transaction_id) = self.initial_transaction_id.take() {
-                buffer.undo_transaction(transaction_id, cx);
-                buffer.refresh_preview(cx);
-            }
         });
     }
 
@@ -2913,14 +2899,13 @@ impl CodegenAlternative {
 
     fn reapply_line_based_diff(
         &mut self,
-        edit_range: Range<Anchor>,
-        line_operations: Vec<LineOperation>,
+        line_operations: impl IntoIterator<Item = LineOperation>,
         cx: &mut ModelContext<Self>,
     ) {
         let old_snapshot = self.snapshot.clone();
-        let old_range = edit_range.to_point(&old_snapshot);
+        let old_range = self.range.to_point(&old_snapshot);
         let new_snapshot = self.buffer.read(cx).snapshot(cx);
-        let new_range = edit_range.to_point(&new_snapshot);
+        let new_range = self.range.to_point(&new_snapshot);
 
         let mut old_row = old_range.start.row;
         let mut new_row = new_range.start.row;
@@ -2971,15 +2956,11 @@ impl CodegenAlternative {
         }
     }
 
-    fn reapply_batch_diff(
-        &mut self,
-        edit_range: Range<Anchor>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<()> {
+    fn reapply_batch_diff(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
         let old_snapshot = self.snapshot.clone();
-        let old_range = edit_range.to_point(&old_snapshot);
+        let old_range = self.range.to_point(&old_snapshot);
         let new_snapshot = self.buffer.read(cx).snapshot(cx);
-        let new_range = edit_range.to_point(&new_snapshot);
+        let new_range = self.range.to_point(&new_snapshot);
 
         cx.spawn(|codegen, mut cx| async move {
             let (deleted_row_ranges, inserted_row_ranges) = cx
@@ -3263,21 +3244,13 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(
-                buffer.clone(),
-                range.clone(),
-                None,
-                None,
-                prompt_builder,
-                cx,
-            )
+            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
-                range,
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3335,21 +3308,13 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(
-                buffer.clone(),
-                range.clone(),
-                None,
-                None,
-                prompt_builder,
-                cx,
-            )
+            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
-                range.clone(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3410,21 +3375,13 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(
-                buffer.clone(),
-                range.clone(),
-                None,
-                None,
-                prompt_builder,
-                cx,
-            )
+            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
-                range.clone(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3484,21 +3441,13 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(
-                buffer.clone(),
-                range.clone(),
-                None,
-                None,
-                prompt_builder,
-                cx,
-            )
+            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
-                range.clone(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
