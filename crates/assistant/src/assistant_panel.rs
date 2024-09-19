@@ -4296,7 +4296,7 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
         // If we're at the end of the node, go to the next one.
         // Example: if you have a fenced-code-block, and you're on the start of the line
         // right after the closing ```, you want to skip the fenced-code-block and
-        // go to the enxt sibling.
+        // go to the next sibling.
         if cursor.node().end_byte() == offset {
             cursor.goto_next_sibling();
         }
