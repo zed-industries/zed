@@ -90,10 +90,9 @@ impl PromptBuilder {
     ///   and application context.
     /// * `handlebars` - An `Arc<Mutex<Handlebars>>` for registering and updating templates.
     fn watch_fs_for_template_overrides(
-        mut params: PromptLoadingParams,
+        params: PromptLoadingParams,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
-        params.repo_path = None;
         let templates_dir = paths::prompt_overrides_dir(params.repo_path.as_deref());
         params.cx.background_executor()
             .spawn(async move {
