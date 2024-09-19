@@ -370,6 +370,8 @@ async fn run_evaluation(
         )
         .await
         {
+            eprintln!("{repo} eval failed with error: {:?}", err);
+
             failures.push((repo, err));
         }
     }
@@ -427,14 +429,47 @@ async fn run_eval_project(
     wait_for_indexing_complete(&project_index, cx, Some(Duration::from_secs(120))).await;
 
     for query in evaluation_project.queries {
-        let results = cx
-            .update(|cx| {
-                let project_index = project_index.read(cx);
-                project_index.search(query.query.clone(), SEARCH_RESULT_LIMIT, cx)
-            })?
-            .await?;
+        let results = {
+            // Retry search up to 3 times in case of timeout, network failure, etc.
+            let mut retries_remaining = 3;
+            let mut result;
 
-        let results = SemanticDb::load_results(results, &fs.clone(), &cx).await?;
+            loop {
+                match cx.update(|cx| {
+                    let project_index = project_index.read(cx);
+                    project_index.search(query.query.clone(), SEARCH_RESULT_LIMIT, cx)
+                }) {
+                    Ok(task) => match task.await {
+                        Ok(answer) => {
+                            result = Ok(answer);
+                            break;
+                        }
+                        Err(err) => {
+                            result = Err(err);
+                        }
+                    },
+                    Err(err) => {
+                        result = Err(err);
+                    }
+                }
+
+                if retries_remaining > 0 {
+                    eprintln!(
+                        "Retrying search after it failed on query {:?} with {:?}",
+                        query, result
+                    );
+                    retries_remaining -= 1;
+                } else {
+                    eprintln!(
+                        "Ran out of retries; giving up on search which failed on query {:?} with {:?}",
+                        query, result
+                    );
+                    break;
+                }
+            }
+
+            SemanticDb::load_results(result?, &fs.clone(), &cx).await?
+        };
 
         let mut project_covered_result_count = 0;
         let mut project_overlapped_result_count = 0;
