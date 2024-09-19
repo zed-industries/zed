@@ -3156,12 +3156,7 @@ impl ContextEditor {
             return;
         };
 
-        let Some((text, _)) = Self::get_selection_or_code_block(&context_editor_view, cx) else {
-            return;
-        };
-
-        // If nothing is selected, don't delete the current selection; instead, be a no-op.
-        if !text.is_empty() {
+        if let Some((text, _)) = Self::get_selection_or_code_block(&context_editor_view, cx) {
             active_editor_view.update(cx, |editor, cx| {
                 editor.insert(&text, cx);
                 editor.focus(cx);
@@ -3170,36 +3165,33 @@ impl ContextEditor {
     }
 
     fn copy_code(workspace: &mut Workspace, _: &CopyCode, cx: &mut ViewContext<Workspace>) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return;
-        };
-        let Some(context_editor_view) = panel.read(cx).active_context_editor(cx) else {
-            return;
-        };
-
-        let Some((text, is_code_block)) =
+        let result = maybe!({
+            let panel = workspace.panel::<AssistantPanel>(cx)?;
+            let context_editor_view = panel.read(cx).active_context_editor(cx)?;
             Self::get_selection_or_code_block(&context_editor_view, cx)
-        else {
+        });
+        let Some((text, is_code_block)) = result else {
             return;
         };
 
-        if !text.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
-            struct CopyToClipboardToast;
-            let what = if is_code_block {
-                "Code block"
-            } else {
-                "Selection"
-            };
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<CopyToClipboardToast>(),
-                    format!("{} copied to clipboard.", what),
-                )
-                .autohide(),
-                cx,
-            );
-        }
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+
+        struct CopyToClipboardToast;
+        workspace.show_toast(
+            Toast::new(
+                NotificationId::unique::<CopyToClipboardToast>(),
+                format!(
+                    "{} copied to clipboard.",
+                    if is_code_block {
+                        "Code block"
+                    } else {
+                        "Selection"
+                    }
+                ),
+            )
+            .autohide(),
+            cx,
+        );
     }
 
     fn insert_dragged_files(
@@ -4299,6 +4291,10 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
         // go to the next sibling.
         if cursor.node().end_byte() == offset {
             cursor.goto_next_sibling();
+        }
+
+        if cursor.node().start_byte() > offset {
+            break;
         }
 
         // We found the fenced code block.
@@ -5630,8 +5626,11 @@ mod tests {
                 ```
                 this is plain text code block
                 ```
-                line 15
-                line 16
+
+                ```go
+                func another() {}
+                ```
+                line 19
             "#
             .unindent();
             let mut buffer = Buffer::local(text, cx);
@@ -5644,6 +5643,7 @@ mod tests {
             Point::new(3, 0)..Point::new(4, 0),
             Point::new(9, 0)..Point::new(10, 0),
             Point::new(13, 0)..Point::new(14, 0),
+            Point::new(17, 0)..Point::new(18, 0),
         ]
         .into_iter()
         .map(|range| snapshot.point_to_offset(range.start)..snapshot.point_to_offset(range.end))
@@ -5666,7 +5666,10 @@ mod tests {
             (13, Some(code_blocks[2].clone())),
             (14, Some(code_blocks[2].clone())),
             (15, None),
-            (16, None),
+            (16, Some(code_blocks[3].clone())),
+            (17, Some(code_blocks[3].clone())),
+            (18, Some(code_blocks[3].clone())),
+            (19, None),
         ];
 
         for (row, expected) in expected_results {
