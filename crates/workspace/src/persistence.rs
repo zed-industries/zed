@@ -1658,7 +1658,7 @@ mod tests {
 
         let (host, port, path, user) = (
             "example.com".to_string(),
-            Some(22 as u16),
+            Some(22_u16),
             "/home/user".to_string(),
             Some("user".to_string()),
         );
@@ -1740,13 +1740,13 @@ mod tests {
             ),
             (
                 "anotherexample.com".to_string(),
-                Some(123 as u16),
+                Some(123_u16),
                 "/home/user2".to_string(),
                 Some("user2".to_string()),
             ),
             (
                 "yetanother.com".to_string(),
-                Some(345 as u16),
+                Some(345_u16),
                 "/home/user3".to_string(),
                 None,
             ),
@@ -1754,7 +1754,7 @@ mod tests {
 
         for (host, port, path, user) in projects.iter() {
             let project = db
-                .get_or_create_ssh_project(host.clone(), port.clone(), path.clone(), user.clone())
+                .get_or_create_ssh_project(host.clone(), *port, path.clone(), user.clone())
                 .await
                 .unwrap();
 
