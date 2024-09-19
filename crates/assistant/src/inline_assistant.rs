@@ -746,8 +746,9 @@ impl InlineAssistant {
             if undo {
                 assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
             } else {
-                let confirmed_codegen = assist.codegen.read(cx).active_codegen().clone();
-                self.confirmed_assists.insert(assist_id, confirmed_codegen);
+                let confirmed_alternative = assist.codegen.read(cx).active_alternative().clone();
+                self.confirmed_assists
+                    .insert(assist_id, confirmed_alternative);
             }
         }
 
@@ -2230,7 +2231,7 @@ impl Codegen {
     }
 
     fn subscribe_to_alternative(&mut self, cx: &mut ModelContext<Self>) {
-        let codegen = self.active_codegen().clone();
+        let codegen = self.active_alternative().clone();
         self.subscriptions.clear();
         self.subscriptions
             .push(cx.observe(&codegen, |_, _, cx| cx.notify()));
@@ -2238,12 +2239,12 @@ impl Codegen {
             .push(cx.subscribe(&codegen, |_, _, event, cx| cx.emit(*event)));
     }
 
-    fn active_codegen(&self) -> &Model<CodegenAlternative> {
+    fn active_alternative(&self) -> &Model<CodegenAlternative> {
         &self.alternatives[self.active_alternative]
     }
 
     fn status<'a>(&self, cx: &'a AppContext) -> &'a CodegenStatus {
-        &self.active_codegen().read(cx).status
+        &self.active_alternative().read(cx).status
     }
 
     pub fn cycle_prev(&mut self, cx: &mut ModelContext<Self>) {
@@ -2261,10 +2262,10 @@ impl Codegen {
     }
 
     fn activate(&mut self, index: usize, cx: &mut ModelContext<Self>) {
-        self.active_codegen()
+        self.active_alternative()
             .update(cx, |codegen, cx| codegen.set_active(false, cx));
         self.active_alternative = index;
-        self.active_codegen()
+        self.active_alternative()
             .update(cx, |codegen, cx| codegen.set_active(true, cx));
         self.subscribe_to_alternative(cx);
         cx.notify();
@@ -2280,9 +2281,8 @@ impl Codegen {
             .inline_alternative_models()
             .to_vec();
 
-        for alternative in &self.alternatives {
-            alternative.update(cx, |alternative, cx| alternative.undo(cx));
-        }
+        self.active_alternative()
+            .update(cx, |alternative, cx| alternative.undo(cx));
         self.activate(0, cx);
         self.alternatives.truncate(1);
 
@@ -2326,7 +2326,7 @@ impl Codegen {
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        self.active_codegen()
+        self.active_alternative()
             .update(cx, |codegen, cx| codegen.undo(cx));
 
         self.buffer.update(cx, |buffer, cx| {
@@ -2343,33 +2343,33 @@ impl Codegen {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
-        self.active_codegen()
+        self.active_alternative()
             .read(cx)
             .count_tokens(user_prompt, assistant_panel_context, cx)
     }
 
     pub fn buffer(&self, cx: &AppContext) -> Model<MultiBuffer> {
-        self.active_codegen().read(cx).buffer.clone()
+        self.active_alternative().read(cx).buffer.clone()
     }
 
     pub fn old_buffer(&self, cx: &AppContext) -> Model<Buffer> {
-        self.active_codegen().read(cx).old_buffer.clone()
+        self.active_alternative().read(cx).old_buffer.clone()
     }
 
     pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
-        self.active_codegen().read(cx).snapshot.clone()
+        self.active_alternative().read(cx).snapshot.clone()
     }
 
     pub fn edit_position(&self, cx: &AppContext) -> Option<Anchor> {
-        self.active_codegen().read(cx).edit_position
+        self.active_alternative().read(cx).edit_position
     }
 
     fn diff<'a>(&self, cx: &'a AppContext) -> &'a Diff {
-        &self.active_codegen().read(cx).diff
+        &self.active_alternative().read(cx).diff
     }
 
     pub fn last_equal_ranges<'a>(&self, cx: &'a AppContext) -> &'a [Range<Anchor>] {
-        self.active_codegen().read(cx).last_equal_ranges()
+        self.active_alternative().read(cx).last_equal_ranges()
     }
 }
 
