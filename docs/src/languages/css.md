@@ -1,6 +1,6 @@
-# CSS
+# CSS / PostCSS
 
-CSS support is available natively in Zed.
+CSS and PostCSS support is available natively in Zed.
 
 - Tree Sitter: [tree-sitter/tree-sitter-css](https://github.com/tree-sitter/tree-sitter-css)
 - Language Servers:
