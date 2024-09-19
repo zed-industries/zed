@@ -4,12 +4,19 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::AssetSource;
 use handlebars::{Handlebars, RenderError};
-use language::{BufferSnapshot, LanguageName};
+use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::LineEnding;
 use util::ResultExt;
+
+#[derive(Serialize)]
+pub struct ContentPromptDiagnosticContext {
+    pub line_number: usize,
+    pub error_message: String,
+    pub code_content: String,
+}
 
 #[derive(Serialize)]
 pub struct ContentPromptContext {
@@ -20,6 +27,7 @@ pub struct ContentPromptContext {
     pub document_content: String,
     pub user_prompt: String,
     pub rewrite_section: Option<String>,
+    pub diagnostic_errors: Vec<ContentPromptDiagnosticContext>,
 }
 
 #[derive(Serialize)]
@@ -261,6 +269,17 @@ impl PromptBuilder {
         } else {
             None
         };
+        let diagnostics = buffer.diagnostics_in_range::<_, Point>(range, false);
+        let diagnostic_errors: Vec<ContentPromptDiagnosticContext> = diagnostics
+            .map(|entry| {
+                let start = entry.range.start;
+                ContentPromptDiagnosticContext {
+                    line_number: (start.row + 1) as usize,
+                    error_message: entry.diagnostic.message.clone(),
+                    code_content: buffer.text_for_range(entry.range.clone()).collect(),
+                }
+            })
+            .collect();
 
         let context = ContentPromptContext {
             content_type: content_type.to_string(),
@@ -270,8 +289,8 @@ impl PromptBuilder {
             document_content,
             user_prompt,
             rewrite_section,
+            diagnostic_errors,
         };
-
         self.handlebars.lock().render("content_prompt", &context)
     }
 

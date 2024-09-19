@@ -575,8 +575,13 @@ Each option controls displaying of a particular toolbar element. If all elements
 The following settings can be overridden for specific language servers:
 
 - `initialization_options`
+- `settings`
 
-To override settings for a language, add an entry for that language server's name to the `lsp` value. Example:
+To override configuration for a language server, add an entry for that language server's name to the `lsp` value.
+
+Some options are passed via `initialization_options` to the language server. These are for options which must be specified at language server startup and when changed will require restarting the language server.
+
+For example to pass the `check` option to `rust-analyzer`, use the following configuration:
 
 ```json
 "lsp": {
@@ -584,6 +589,20 @@ To override settings for a language, add an entry for that language server's nam
     "initialization_options": {
       "check": {
         "command": "clippy" // rust-analyzer.check.command (default: "check")
+      }
+    }
+  }
+}
+```
+
+While other options may be changed at a runtime and should be placed under `settings`:
+
+```json
+"lsp": {
+  "yaml-language-server": {
+    "settings": {
+      "yaml": {
+        "keyOrdering": true // Enforces alphabetical ordering of keys in maps
       }
     }
   }

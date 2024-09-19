@@ -247,7 +247,8 @@ impl SshSession {
                                     let line_ix = start_ix + ix;
                                     let content = &stderr_buffer[start_ix..line_ix];
                                     start_ix = line_ix + 1;
-                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
+                                    if let Ok(mut record) = serde_json::from_slice::<LogRecord>(content) {
+                                        record.message = format!("(remote) {}", record.message);
                                         record.log(log::logger())
                                     } else {
                                         eprintln!("(remote) {}", String::from_utf8_lossy(content));
@@ -468,6 +469,10 @@ impl ProtoClient for SshSession {
 
     fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
         &self.state
+    }
+
+    fn goes_via_collab(&self) -> bool {
+        false
     }
 }
 

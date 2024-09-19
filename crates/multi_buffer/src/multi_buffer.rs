@@ -5019,13 +5019,11 @@ mod tests {
                 .background_executor()
                 .block(host_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
-            buffer
-                .apply_ops(
-                    ops.into_iter()
-                        .map(|op| language::proto::deserialize_operation(op).unwrap()),
-                    cx,
-                )
-                .unwrap();
+            buffer.apply_ops(
+                ops.into_iter()
+                    .map(|op| language::proto::deserialize_operation(op).unwrap()),
+                cx,
+            );
             buffer
         });
         let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));
