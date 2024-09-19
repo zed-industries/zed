@@ -307,6 +307,11 @@ impl WorktreeStore {
     }
 
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
+        let worktree_id = worktree.read(cx).id();
+        if self.worktrees().any(|w| w.read(cx).id() == worktree_id) {
+            return;
+        };
+
         let push_strong_handle = self.retain_worktrees || worktree.read(cx).is_visible();
         let handle = if push_strong_handle {
             WorktreeHandle::Strong(worktree.clone())
@@ -329,10 +334,8 @@ impl WorktreeStore {
         cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
         self.send_project_updates(cx);
 
-        dbg!("added worktree");
         let handle_id = worktree.entity_id();
         cx.observe_release(worktree, move |this, worktree, cx| {
-            dbg!("dropped worktree");
             cx.emit(WorktreeStoreEvent::WorktreeRemoved(
                 handle_id,
                 worktree.id(),
@@ -383,16 +386,21 @@ impl WorktreeStore {
         let client = self
             .upstream_client
             .clone()
-            .ok_or_else(|| dbg!(anyhow!("invalid project")))?;
+            .ok_or_else(|| anyhow!("invalid project"))?;
 
         for worktree in worktrees {
             if let Some(old_worktree) =
                 old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
             {
-                dbg!("pushing from proto");
-                self.worktrees.push(WorktreeHandle::Strong(old_worktree));
+                let push_strong_handle =
+                    self.retain_worktrees || old_worktree.read(cx).is_visible();
+                let handle = if push_strong_handle {
+                    WorktreeHandle::Strong(old_worktree.clone())
+                } else {
+                    WorktreeHandle::Weak(old_worktree.downgrade())
+                };
+                self.worktrees.push(handle);
             } else {
-                dbg!("adding from proto");
                 self.add(
                     &Worktree::remote(self.remote_id, replica_id, worktree, client.clone(), cx),
                     cx,
@@ -463,7 +471,6 @@ impl WorktreeStore {
     }
 
     pub fn send_project_updates(&mut self, cx: &mut ModelContext<Self>) {
-        dbg!("send_project_updates");
         let Some(downstream_client) = self.downstream_client.clone() else {
             return;
         };
@@ -482,19 +489,16 @@ impl WorktreeStore {
             None
         };
         cx.spawn(|this, mut cx| async move {
-            dbg!("awaiting...");
             if let Some(update_project) = update_project {
                 update_project.await?;
             }
 
             this.update(&mut cx, |this, cx| {
                 let worktrees = this.worktrees().collect::<Vec<_>>();
-                dbg!(worktrees.len());
 
                 for worktree in worktrees {
                     worktree.update(cx, |worktree, cx| {
                         let client = downstream_client.clone();
-                        dbg!("observe_updates");
                         worktree.observe_updates(project_id, cx, {
                             move |update| {
                                 let client = client.clone();
@@ -538,7 +542,6 @@ impl WorktreeStore {
         downsteam_client: AnyProtoClient,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("SHARED");
         self.retain_worktrees = true;
         self.remote_id = remote_id;
         self.downstream_client = Some(downsteam_client);
@@ -559,7 +562,6 @@ impl WorktreeStore {
 
     pub fn unshared(&mut self, cx: &mut ModelContext<Self>) {
         self.retain_worktrees = false;
-        dbg!("UNSHARED");
         self.downstream_client.take();
 
         // When not shared, only retain the visible worktrees

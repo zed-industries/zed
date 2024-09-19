@@ -3517,14 +3517,12 @@ impl Project {
         <R::LspRequest as lsp::request::Request>::Result: Send,
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
-        dbg!("start");
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.request_lsp(buffer_handle, server, request, cx)
         });
         cx.spawn(|_, _| async move {
             let result = task.await;
-            dbg!("stop");
             drop(guard);
             result
         })
@@ -4620,9 +4618,10 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Result<()> {
         cx.notify();
-        self.worktree_store.update(cx, |worktree_store, cx| {
+        let result = self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
-        })
+        });
+        result
     }
 
     fn set_collaborators_from_proto(
