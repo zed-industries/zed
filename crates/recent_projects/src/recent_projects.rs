@@ -261,8 +261,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                     }
                     SerializedWorkspaceLocation::Ssh(ssh_project) => {
                         format!(
-                            "{}{}{}",
+                            "{}{}{}{}",
                             ssh_project.host,
+                            ssh_project
+                                .port
+                                .as_ref()
+                                .map(|port| port.to_string())
+                                .unwrap_or_default(),
                             ssh_project.path,
                             ssh_project
                                 .user
