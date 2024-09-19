@@ -319,6 +319,10 @@ pub async fn post_panic(
     };
     let backtrace_with_summary = panic.payload + "\n" + &backtrace;
 
+    if !report_to_slack(&panic) {
+        return Ok(());
+    }
+
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
         let payload = slack::WebhookBody::new(|w| {
             w.add_section(|s| s.text(slack::Text::markdown("Panic request".to_string())))
@@ -355,6 +359,23 @@ pub async fn post_panic(
     }
 
     Ok(())
+}
+
+fn report_to_slack(panic: &Panic) -> bool {
+    if panic.os_name == "Linux" {
+        if panic.message.contains("ERROR_SURFACE_LOST_KHR") {
+            return false;
+        }
+
+        if panic
+            .message
+            .contains("GPU has crashed, and no debug information is available")
+        {
+            return false;
+        }
+    }
+
+    true
 }
 
 pub async fn post_events(
