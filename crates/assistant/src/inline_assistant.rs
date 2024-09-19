@@ -2762,12 +2762,10 @@ impl Codegen {
                                 .collect::<Vec<_>>();
 
                             if codegen.active {
-                                codegen.apply_edits(edits, cx);
+                                codegen.apply_edits(edits.iter().cloned(), cx);
                                 codegen.reapply_line_based_diff(edit_range.clone(), line_ops, cx);
-                            } else {
-                                codegen.edits.extend(edits);
                             }
-
+                            codegen.edits.extend(edits);
                             codegen.edit_position = Some(snapshot.anchor_after(edit_start));
 
                             cx.notify();
@@ -2831,7 +2829,11 @@ impl Codegen {
         });
     }
 
-    fn apply_edits(&mut self, edits: Vec<(Range<Anchor>, String)>, cx: &mut ModelContext<Codegen>) {
+    fn apply_edits(
+        &mut self,
+        edits: impl IntoIterator<Item = (Range<Anchor>, String)>,
+        cx: &mut ModelContext<Codegen>,
+    ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
             // Avoid grouping assistant edits with user edits.
             buffer.finalize_last_transaction(cx);
