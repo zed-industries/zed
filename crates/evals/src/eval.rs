@@ -400,6 +400,7 @@ async fn run_evaluation(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_eval_project(
     evaluation_project: EvaluationProject,
     user_store: &Model<UserStore>,
@@ -598,7 +599,7 @@ async fn fetch_eval_repos(
     let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
     let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).unwrap();
 
-    eprint!("Fetching evaluation repositories...");
+    eprintln!("Fetching evaluation repositories...");
 
     executor
         .scoped(move |scope| {
