@@ -394,8 +394,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             let connection_options = SshConnectionOptions {
                                 host: ssh_project.host.clone(),
                                 username: ssh_project.user.clone(),
-                                // TODO: Use the port
-                                port: None,
+                                port: ssh_project.port,
                                 password: None,
                             };
 

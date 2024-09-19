@@ -5499,6 +5499,7 @@ pub fn open_ssh_project(
         let serialized_ssh_project = persistence::DB
             .get_or_create_ssh_project(
                 connection_options.host.clone(),
+                connection_options.port.clone(),
                 path.to_string_lossy().to_string(),
                 connection_options.username.clone(),
             )

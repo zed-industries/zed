@@ -25,6 +25,7 @@ use uuid::Uuid;
 pub struct SerializedSshProject {
     pub id: SshProjectId,
     pub host: String,
+    pub port: Option<u16>,
     pub path: String,
     pub user: Option<String>,
 }
@@ -37,6 +38,10 @@ impl SerializedSshProject {
             result.push('@');
         }
         result.push_str(&self.host);
+        if let Some(port) = &self.port {
+            result.push(':');
+            result.push_str(&port.to_string());
+        }
         result.push_str(&self.path);
         result
     }
@@ -46,8 +51,9 @@ impl From<&SshProject> for SerializedSshProject {
     fn from(ssh_project: &SshProject) -> Self {
         Self {
             id: ssh_project.id,
-            path: ssh_project.path.to_string_lossy().to_string(),
             host: ssh_project.connection_options.host.clone(),
+            port: ssh_project.connection_options.port.clone(),
+            path: ssh_project.path.to_string_lossy().to_string(),
             user: ssh_project.connection_options.username.clone(),
         }
     }
@@ -55,7 +61,7 @@ impl From<&SshProject> for SerializedSshProject {
 
 impl StaticColumnCount for SerializedSshProject {
     fn column_count() -> usize {
-        4
+        5
     }
 }
 
@@ -63,6 +69,7 @@ impl Bind for &SerializedSshProject {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.id.0, start_index)?;
         let next_index = statement.bind(&self.host, next_index)?;
+        let next_index = statement.bind(&self.port, next_index)?;
         let next_index = statement.bind(&self.path, next_index)?;
         statement.bind(&self.user, next_index)
     }
@@ -72,17 +79,19 @@ impl Column for SerializedSshProject {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let id = statement.column_int64(start_index)?;
         let host = statement.column_text(start_index + 1)?.to_string();
-        let path = statement.column_text(start_index + 2)?.to_string();
-        let (user, _) = Option::<String>::column(statement, start_index + 3)?;
+        let (port, _) = Option::<u16>::column(statement, start_index + 2)?;
+        let path = statement.column_text(start_index + 3)?.to_string();
+        let (user, _) = Option::<String>::column(statement, start_index + 4)?;
 
         Ok((
             Self {
                 id: SshProjectId(id as u64),
                 host,
+                port,
                 path,
                 user,
             },
-            start_index + 4,
+            start_index + 5,
         ))
     }
 }
