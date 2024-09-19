@@ -1326,8 +1326,7 @@ impl Interactivity {
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
-                    let scroll_offset = scroll_handle.0.borrow().offset.clone();
-                    self.scroll_offset = Some(scroll_offset);
+                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
                 } else if self.base_style.overflow.x == Some(Overflow::Scroll)
                     || self.base_style.overflow.y == Some(Overflow::Scroll)
                 {

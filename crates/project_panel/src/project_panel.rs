@@ -2668,10 +2668,11 @@ impl ProjectPanel {
             })?
             .width
             .0;
-        let current_offset = scroll_handle.base_handle.offset().x.0.min(0.).abs();
-        let mut percentage = current_offset / longest_item_width;
+        let current_offset = dbg!(scroll_handle.base_handle.offset()).x.0.min(0.).abs();
+        let mut percentage = dbg!(current_offset) / dbg!(longest_item_width);
         let end_offset =
             (current_offset + scroll_handle.base_handle.bounds().size.width.0) / longest_item_width;
+        dbg!(percentage, end_offset);
         // Uniform scroll handle might briefly report an offset greater than the length of a list;
         // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
         let overshoot = (end_offset - 1.).clamp(0., 1.);
@@ -2687,6 +2688,7 @@ impl ProjectPanel {
             return None;
         }
         let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT, 1.);
+        dbg!(end_offset);
         Some(
             div()
                 .occlude()
@@ -2918,12 +2920,11 @@ impl Render for ProjectPanel {
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
-                    // TODO kb: current item highlight and long enough file names both are trimmed from the right side
-                    // and do not update when the project panel is scrolled to the right
-                    .with_width_from_item(Some(self.max_width_item_index))
+                    .with_width_from_item(Some(dbg!(self.max_width_item_index)))
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(items_count, cx))
+                // .when(!show_editor, then)
                 .children(self.render_horizontal_scrollbar(cx))
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(

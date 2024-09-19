@@ -132,6 +132,7 @@ impl gpui::Element for ProjectPanelScrollbar {
                 );
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right)
             };
+            dbg!(&self.thumb);
             let thumb_percentage_size = self.thumb.end - self.thumb.start;
 
             cx.paint_quad(gpui::fill(thumb_bounds, thumb_background));
@@ -207,14 +208,17 @@ impl gpui::Element for ProjectPanelScrollbar {
                         match kind {
                             ScrollbarKind::Horizontal { .. } => {
                                 let max_offset = last_width;
+                                dbg!(max_offset);
                                 let percentage = (event.position.x - bounds.origin.x)
                                     / bounds.size.width
                                     - drag_state;
+                                dbg!(percentage, thumb_percentage_size);
 
                                 let percentage = percentage.min(1. - thumb_percentage_size);
+                                dbg!(percentage);
                                 scroll
                                     .base_handle
-                                    .set_offset(point(-max_offset * percentage, px(0.)));
+                                    .set_offset(dbg!(point(-max_offset * percentage, px(0.))));
                             }
                             ScrollbarKind::Vertical { item_count } => {
                                 let max_offset = item_count as f32 * last_height;
