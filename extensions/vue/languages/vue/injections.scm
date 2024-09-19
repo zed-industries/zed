@@ -81,10 +81,3 @@
     (#not-any-of? @_attr_name "lang")
     (#set! language "css")
 )
-
-
-; ;
-; ; TODO: support less/sass/scss
-; (style_element
-;   (raw_text) @content
-;   (#set! "language" "css"))
