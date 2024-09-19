@@ -346,6 +346,7 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
         register_action(view, cx, Editor::open_excerpts_in_split);
+        register_action(view, cx, Editor::open_staged_changes_editor);
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_tab_bar);
         register_action(view, cx, Editor::toggle_line_numbers);

@@ -67,6 +67,7 @@ pub struct MultiBuffer {
     subscriptions: Topic,
     /// If true, the multi-buffer only contains a single [`Buffer`] and a single [`Excerpt`]
     singleton: bool,
+    // TODO: Remove `replica_id`?
     replica_id: ReplicaId,
     history: History,
     title: Option<String>,

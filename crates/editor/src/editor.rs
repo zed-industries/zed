@@ -38,6 +38,7 @@ mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod staged_changes_editor;
 pub mod tasks;
 
 #[cfg(test)]
@@ -99,6 +100,7 @@ use language::{
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use similar::{ChangeTag, TextDiff};
+use staged_changes_editor::{StagedChangeBuffer, StagedChangesEditor};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -11859,6 +11861,49 @@ impl Editor {
 
     pub fn searchable(&self) -> bool {
         self.searchable
+    }
+
+    fn open_staged_changes_editor(
+        &mut self,
+        _: &OpenStagedChangesEditor,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(workspace) = self.workspace() else {
+            cx.propagate();
+            return;
+        };
+
+        let buffer = self.buffer.read(cx);
+        let mut new_selections_by_buffer = HashMap::default();
+        for selection in self.selections.all::<usize>(cx) {
+            for (buffer, mut range, _) in
+                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            {
+                if selection.reversed {
+                    mem::swap(&mut range.start, &mut range.end);
+                }
+                new_selections_by_buffer
+                    .entry(buffer)
+                    .or_insert(Vec::new())
+                    .push(range)
+            }
+        }
+
+        let staged_change_buffers = new_selections_by_buffer
+            .into_iter()
+            .map(|(buffer, ranges)| StagedChangeBuffer { buffer, ranges })
+            .collect::<Vec<_>>();
+        let staged_changes_editor = cx.new_view(|cx| {
+            StagedChangesEditor::new(&staged_change_buffers, self.project.clone(), cx)
+        });
+
+        cx.window_context().defer(move |cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.add_item(Box::new(staged_changes_editor), true, true, None, cx);
+                });
+            });
+        });
     }
 
     fn open_excerpts_in_split(&mut self, _: &OpenExcerptsSplit, cx: &mut ViewContext<Self>) {
