@@ -1,0 +1,23 @@
+name: Bump collab-staging Tag
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  update-collab-staging-tag:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Update collab-staging tag
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -f collab-staging
+          git push origin collab-staging --force
