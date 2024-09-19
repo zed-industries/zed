@@ -94,9 +94,11 @@ editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+languages = { workspace = true, features = ["test-support"] }
 log.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json_lenient.workspace = true
 text = { workspace = true, features = ["test-support"] }
+tree-sitter-md.workspace = true
 unindent.workspace = true
