@@ -203,7 +203,7 @@ impl HeadlessProject {
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.add(&worktree, cx);
             });
-            worktree.update(cx, |worktree, cx| proto::AddWorktreeResponse {
+            worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
             })
         })

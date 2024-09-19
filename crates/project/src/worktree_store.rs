@@ -206,6 +206,13 @@ impl WorktreeStore {
                     path: abs_path.clone(),
                 })
                 .await?;
+
+            if let Some(existing_worktree) = this.read_with(&cx, |this, cx| {
+                this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
+            })? {
+                return Ok(existing_worktree);
+            }
+
             let worktree = cx.update(|cx| {
                 Worktree::remote(
                     0,
