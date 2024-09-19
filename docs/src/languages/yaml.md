@@ -64,7 +64,7 @@ You can disable the automatic detection and retrieval of schemas from the JSON S
 
 Yaml-language-server supports [custom tags](https://github.com/redhat-developer/yaml-language-server#adding-custom-tags) which can be used to inject custom application functionality at runtime into your yaml files.
 
-For example Amazon CloudFormation YAML use a number of custom tags, to support these you can add the following to your settings.json:
+For example Amazon CloudFormation YAML uses a number of custom tags, to support these you can add the following to your settings.json:
 
 ```json
   "lsp": {
