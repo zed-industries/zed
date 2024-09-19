@@ -51,6 +51,7 @@ workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
+isahc_http_client.workspace = true
 env_logger.workspace = true
 client = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }

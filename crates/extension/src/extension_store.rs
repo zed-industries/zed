@@ -190,6 +190,7 @@ pub fn init(
             None,
             fs,
             client.http_client().clone(),
+            client.http_client().clone(),
             Some(client.telemetry().clone()),
             node_runtime,
             language_registry,
@@ -225,6 +226,7 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
@@ -244,12 +246,7 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(
-                // Construct a real HTTP client for the extension builder, as we
-                // don't want to use a fake one in the tests.
-                ::http_client::client(None, http_client.proxy().cloned()),
-                build_dir,
-            )),
+            builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),

@@ -174,6 +174,18 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
+        if let Some(telemetry) = self.telemetry.as_ref() {
+            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                telemetry.report_assistant_event(
+                    None,
+                    telemetry_events::AssistantKind::Inline,
+                    telemetry_events::AssistantPhase::Invoked,
+                    model.telemetry_id(),
+                    None,
+                    None,
+                );
+            }
+        }
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
 
         let mut selections = Vec::<Selection<Point>>::new();
@@ -708,6 +720,22 @@ impl InlineAssistant {
     }
 
     pub fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
+        if let Some(telemetry) = self.telemetry.as_ref() {
+            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                telemetry.report_assistant_event(
+                    None,
+                    telemetry_events::AssistantKind::Inline,
+                    if undo {
+                        telemetry_events::AssistantPhase::Rejected
+                    } else {
+                        telemetry_events::AssistantPhase::Accepted
+                    },
+                    model.telemetry_id(),
+                    None,
+                    None,
+                );
+            }
+        }
         if let Some(assist) = self.assists.get(&assist_id) {
             let assist_group_id = assist.group_id;
             if self.assist_groups[&assist_group_id].linked {
@@ -2558,6 +2586,7 @@ impl Codegen {
                                 telemetry.report_assistant_event(
                                     None,
                                     telemetry_events::AssistantKind::Inline,
+                                    telemetry_events::AssistantPhase::Response,
                                     model_telemetry_id,
                                     response_latency,
                                     error_message,

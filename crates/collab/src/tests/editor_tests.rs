@@ -1524,6 +1524,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
+                    show_background: false,
                 })
             });
         });
@@ -1538,6 +1539,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
+                    show_background: false,
                 })
             });
         });
@@ -1786,6 +1788,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                     show_type_hints: false,
                     show_parameter_hints: false,
                     show_other_hints: false,
+                    show_background: false,
                 })
             });
         });
@@ -1800,6 +1803,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                     show_type_hints: true,
                     show_parameter_hints: true,
                     show_other_hints: true,
+                    show_background: false,
                 })
             });
         });

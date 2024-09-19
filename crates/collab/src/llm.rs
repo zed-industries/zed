@@ -22,7 +22,7 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-use http_client::IsahcHttpClient;
+use isahc_http_client::IsahcHttpClient;
 use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -72,6 +72,7 @@ impl LlmState {
         let http_client = IsahcHttpClient::builder()
             .default_header("User-Agent", user_agent)
             .build()
+            .map(IsahcHttpClient::from)
             .context("failed to construct http client")?;
 
         let this = Self {
