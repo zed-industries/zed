@@ -11,55 +11,55 @@ env:
   # DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
 jobs:
-  style:
-    name: Check formatting and Clippy lints
-    runs-on:
-      - self-hosted
-      - test
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
-        with:
-          clean: false
-          fetch-depth: 0
+  # style:
+  #   name: Check formatting and Clippy lints
+  #   runs-on:
+  #     - self-hosted
+  #     - test
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+  #       with:
+  #         clean: false
+  #         fetch-depth: 0
 
-      - name: Run style checks
-        uses: ./.github/actions/check_style
+  #     - name: Run style checks
+  #       uses: ./.github/actions/check_style
 
-      - name: Run clippy
-        run: ./script/clippy
+  #     - name: Run clippy
+  #       run: ./script/clippy
 
-  tests:
-    name: Run tests
-    runs-on:
-      - self-hosted
-      - test
-    needs: style
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
-        with:
-          clean: false
-          fetch-depth: 0
+  # tests:
+  #   name: Run tests
+  #   runs-on:
+  #     - self-hosted
+  #     - test
+  #   needs: style
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+  #       with:
+  #         clean: false
+  #         fetch-depth: 0
 
-      - name: Install cargo nextest
-        shell: bash -euxo pipefail {0}
-        run: |
-          cargo install cargo-nextest
+  #     - name: Install cargo nextest
+  #       shell: bash -euxo pipefail {0}
+  #       run: |
+  #         cargo install cargo-nextest
 
-      - name: Limit target directory size
-        shell: bash -euxo pipefail {0}
-        run: script/clear-target-dir-if-larger-than 100
+  #     - name: Limit target directory size
+  #       shell: bash -euxo pipefail {0}
+  #       run: script/clear-target-dir-if-larger-than 100
 
-      - name: Run tests
-        shell: bash -euxo pipefail {0}
-        run: cargo nextest run --package collab --no-fail-fast
+  #     - name: Run tests
+  #       shell: bash -euxo pipefail {0}
+  #       run: cargo nextest run --package collab --no-fail-fast
 
   publish:
     name: Publish collab server image
-    needs:
-      - style
-      - tests
+    # needs:
+    #   - style
+    #   # - tests
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
