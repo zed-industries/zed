@@ -1448,18 +1448,16 @@ fn get_render_target_property(
 }
 
 fn is_color_glyph(font_face: &IDWriteFontFace3, glyph_id: GlyphId, color_font: bool) -> bool {
-    unsafe {
-        let Ok(face) = font_face.cast::<IDWriteFontFace4>() else {
-            return color_font;
-        };
-        let Some(format) = face
-            .GetGlyphImageFormats(glyph_id.0 as u16, 0, u32::MAX)
+    let Ok(face) = font_face.cast::<IDWriteFontFace4>() else {
+        return color_font;
+    };
+    let Some(format) = (unsafe {
+        face.GetGlyphImageFormats(glyph_id.0 as u16, 0, u32::MAX)
             .log_err()
-        else {
-            return color_font;
-        };
-        format != DWRITE_GLYPH_IMAGE_FORMATS_NONE
-    }
+    }) else {
+        return color_font;
+    };
+    format != DWRITE_GLYPH_IMAGE_FORMATS_NONE
 }
 
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
