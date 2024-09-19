@@ -1,0 +1,22 @@
+[package]
+name = "isahc_http_client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[lib]
+path = "src/isahc_http_client.rs"
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+http_client.workspace = true
+isahc.workspace = true
+util.workspace = true

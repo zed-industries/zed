@@ -741,6 +741,14 @@ pub struct InlayHintSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub show_other_hints: bool,
+    /// Whether to show a background for inlay hints.
+    ///
+    /// If set to `true`, the background will use the `hint.background` color
+    /// from the current theme.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub show_background: bool,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.

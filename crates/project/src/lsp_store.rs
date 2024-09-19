@@ -26,7 +26,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, PromptLevel,
     Task, WeakModel,
 };
-use http_client::{AsyncBody, Error, HttpClient, Request, Response, Uri};
+use http_client::{AsyncBody, HttpClient, Request, Response, Uri};
 use language::{
     language_settings::{
         all_language_settings, language_settings, AllLanguageSettings, LanguageSettings,
@@ -4742,17 +4742,6 @@ impl LspStore {
             .reorder_language_servers(&language, enabled_lsp_adapters);
     }
 
-    /*
-    ssh client owns the lifecycle of the language servers
-    ssh host actually runs the binaries
-
-    in the future: ssh client will use the local extensions to get the downloads etc.
-        and send them up over the ssh connection (but today) we'll just the static config
-
-        languages::() <-- registers lsp adapters
-        on the ssh host we won't have adapters for the LSPs
-    */
-
     fn start_language_server_on_ssh_host(
         &mut self,
         worktree: &Model<Worktree>,
@@ -7350,7 +7339,7 @@ impl HttpClient for BlockedHttpClient {
     fn send(
         &self,
         _req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
         Box::pin(async {
             Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -7362,6 +7351,14 @@ impl HttpClient for BlockedHttpClient {
 
     fn proxy(&self) -> Option<&Uri> {
         None
+    }
+
+    fn send_with_redirect_policy(
+        &self,
+        req: Request<AsyncBody>,
+        _: bool,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+        self.send(req)
     }
 }
 

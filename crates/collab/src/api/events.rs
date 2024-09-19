@@ -834,6 +834,7 @@ pub struct AssistantEventRow {
     // AssistantEventRow
     conversation_id: String,
     kind: String,
+    phase: String,
     model: String,
     response_latency_in_ms: Option<i64>,
     error_message: Option<String>,
@@ -866,6 +867,7 @@ impl AssistantEventRow {
             time: time.timestamp_millis(),
             conversation_id: event.conversation_id.unwrap_or_default(),
             kind: event.kind.to_string(),
+            phase: event.phase.to_string(),
             model: event.model,
             response_latency_in_ms: event
                 .response_latency

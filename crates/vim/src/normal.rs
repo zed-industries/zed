@@ -2,7 +2,6 @@ mod case;
 mod change;
 mod delete;
 mod increment;
-mod indent;
 pub(crate) mod mark;
 mod paste;
 pub(crate) mod repeat;
@@ -16,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
+    indent::IndentDirection,
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mode, Operator},
@@ -33,8 +33,6 @@ use gpui::{actions, ViewContext};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
-
-use self::indent::IndentDirection;
 
 actions!(
     vim,
@@ -56,8 +54,6 @@ actions!(
         ConvertToUpperCase,
         ConvertToLowerCase,
         JoinLines,
-        Indent,
-        Outdent,
         ToggleComments,
         Undo,
         Redo,
@@ -129,41 +125,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             })
         });
         if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, false, cx)
-        }
-    });
-
-    Vim::action(editor, cx, |vim, _: &Indent, cx| {
-        vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
-        vim.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                let mut original_positions = save_selection_starts(editor, cx);
-                for _ in 0..count {
-                    editor.indent(&Default::default(), cx);
-                }
-                restore_selection_cursors(editor, cx, &mut original_positions);
-            });
-        });
-        if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, false, cx)
-        }
-    });
-
-    Vim::action(editor, cx, |vim, _: &Outdent, cx| {
-        vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
-        vim.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                let mut original_positions = save_selection_starts(editor, cx);
-                for _ in 0..count {
-                    editor.outdent(&Default::default(), cx);
-                }
-                restore_selection_cursors(editor, cx, &mut original_positions);
-            });
-        });
-        if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, false, cx)
+            vim.switch_mode(Mode::Normal, true, cx)
         }
     });
 
@@ -428,15 +390,16 @@ impl Vim {
 
     fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.record_current_action(cx);
-        self.update_editor(cx, |_, editor, cx| {
+        self.store_visual_marks(cx);
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let mut original_positions = save_selection_starts(editor, cx);
+                let mut original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), cx);
-                restore_selection_cursors(editor, cx, &mut original_positions);
+                vim.restore_selection_cursors(editor, cx, &mut original_positions);
             });
         });
         if self.mode.is_visual() {
-            self.switch_mode(Mode::Normal, false, cx)
+            self.switch_mode(Mode::Normal, true, cx)
         }
     }
 
@@ -480,33 +443,38 @@ impl Vim {
         });
         self.pop_operator(cx);
     }
-}
 
-fn save_selection_starts(editor: &Editor, cx: &mut ViewContext<Editor>) -> HashMap<usize, Anchor> {
-    let (map, selections) = editor.selections.all_display(cx);
-    selections
-        .iter()
-        .map(|selection| {
-            (
-                selection.id,
-                map.display_point_to_anchor(selection.start, Bias::Right),
-            )
-        })
-        .collect::<HashMap<_, _>>()
-}
+    pub fn save_selection_starts(
+        &self,
+        editor: &Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> HashMap<usize, Anchor> {
+        let (map, selections) = editor.selections.all_display(cx);
+        selections
+            .iter()
+            .map(|selection| {
+                (
+                    selection.id,
+                    map.display_point_to_anchor(selection.start, Bias::Right),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    }
 
-fn restore_selection_cursors(
-    editor: &mut Editor,
-    cx: &mut ViewContext<Editor>,
-    positions: &mut HashMap<usize, Anchor>,
-) {
-    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-        s.move_with(|map, selection| {
-            if let Some(anchor) = positions.remove(&selection.id) {
-                selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
-            }
+    pub fn restore_selection_cursors(
+        &self,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+        positions: &mut HashMap<usize, Anchor>,
+    ) {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_with(|map, selection| {
+                if let Some(anchor) = positions.remove(&selection.id) {
+                    selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+                }
+            });
         });
-    });
+    }
 }
 #[cfg(test)]
 mod test {

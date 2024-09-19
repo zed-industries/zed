@@ -11,7 +11,7 @@ use assistant::PromptBuilder;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, Client, DevServerToken, UserStore};
+use client::{parse_zed_link, Client, DevServerToken, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -23,6 +23,8 @@ use gpui::{
     Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
     UpdateGlobal as _, VisualContext,
 };
+use http_client::{read_proxy_from_env, Uri};
+use isahc_http_client::IsahcHttpClient;
 use language::LanguageRegistry;
 use log::LevelFilter;
 
@@ -327,7 +329,10 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new().with_assets(Assets);
+
+    let app = App::new()
+        .with_assets(Assets)
+        .with_http_client(IsahcHttpClient::new(None, None));
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -436,6 +441,26 @@ fn main() {
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
+        settings::init(cx);
+        client::init_settings(cx);
+        let user_agent = format!(
+            "Zed/{} ({}; {})",
+            AppVersion::global(cx),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
+        let proxy_url = proxy_str
+            .as_ref()
+            .and_then(|input| {
+                input
+                    .parse::<Uri>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env);
+        let http = IsahcHttpClient::new(proxy_url, Some(user_agent));
+        cx.set_http_client(http);
 
         <dyn Fs>::set_global(fs.clone(), cx);
 
@@ -444,11 +469,9 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
-        settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
         handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
 
-        client::init_settings(cx);
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());

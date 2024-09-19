@@ -318,6 +318,10 @@
     "show_parameter_hints": true,
     // Corresponds to null/None LSP hint type value.
     "show_other_hints": true,
+    // Whether to show a background for inlay hints.
+    //
+    // If set to `true`, the background will use the `hint.background` color from the current theme.
+    "show_background": false,
     // Time to wait after editing the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "edit_debounce_ms": 700,

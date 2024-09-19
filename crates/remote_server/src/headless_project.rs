@@ -42,11 +42,7 @@ impl HeadlessProject {
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
-        languages
-            .set_language_server_download_dir(PathBuf::from("/Users/conrad/what-could-go-wrong"));
-
-        let languages = Arc::new(languages);
+        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
