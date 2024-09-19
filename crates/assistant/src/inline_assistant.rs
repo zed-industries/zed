@@ -1458,6 +1458,7 @@ impl Render for PromptEditor {
         };
 
         h_flex()
+            .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
             .border_y_1()
             .border_color(cx.theme().status().info_border)

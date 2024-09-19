@@ -527,6 +527,13 @@
     }
   },
   {
+    "context": "PromptEditor",
+    "bindings": {
+      "ctrl-alt-cmd-p": "assistant::CyclePreviousInlineAssist",
+      "ctrl-alt-cmd-n": "assistant::CycleNextInlineAssist"
+    }
+  },
+  {
     "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "cmd-enter": "project_search::SearchInNew"
