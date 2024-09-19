@@ -345,7 +345,10 @@ impl Asset for ImageAsset {
             let bytes = match source.clone() {
                 UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
                 UriOrPath::Uri(uri) => {
-                    let mut response = client.get(uri.as_ref(), ().into(), true).await?;
+                    let mut response = client
+                        .get(uri.as_ref(), ().into(), true)
+                        .await
+                        .map_err(|e| ImageCacheError::Client(Arc::new(e)))?;
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
@@ -429,7 +432,7 @@ impl Asset for ImageAsset {
 pub enum ImageCacheError {
     /// An error that occurred while fetching an image from a remote source.
     #[error("http error: {0}")]
-    Client(#[from] http_client::Error),
+    Client(#[from] Arc<anyhow::Error>),
     /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),

@@ -115,6 +115,7 @@ jobs:
         uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-provider: "buildjet"
 
       - name: Install Linux dependencies
         run: ./script/linux
@@ -143,6 +144,7 @@ jobs:
         uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-provider: "github"
 
       - name: cargo clippy
         # Windows can't run shell scripts, so we need to use `cargo xtask`.

@@ -8,7 +8,6 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
 jobs:
   style:
@@ -63,8 +62,10 @@ jobs:
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
-      - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
       - name: Sign into DigitalOcean docker registry
         run: doctl registry login
@@ -91,6 +92,16 @@ jobs:
       - buildjet-16vcpu-ubuntu-2204
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          clean: false
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
       - name: Sign into Kubernetes
         run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
 

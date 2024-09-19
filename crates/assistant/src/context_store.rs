@@ -223,7 +223,7 @@ impl ContextStore {
             if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                 let operation_proto = envelope.payload.operation.context("invalid operation")?;
                 let operation = ContextOperation::from_proto(operation_proto)?;
-                context.update(cx, |context, cx| context.apply_ops([operation], cx))?;
+                context.update(cx, |context, cx| context.apply_ops([operation], cx));
             }
             Ok(())
         })?
@@ -394,7 +394,7 @@ impl ContextStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context
@@ -531,7 +531,7 @@ impl ContextStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context

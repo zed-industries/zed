@@ -33,6 +33,11 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
+pub struct SshProjectId(pub u64);
+
 #[derive(Clone)]
 pub struct SshSocket {
     connection_options: SshConnectionOptions,

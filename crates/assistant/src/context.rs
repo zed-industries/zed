@@ -46,7 +46,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::AssistantKind;
+use telemetry_events::{AssistantKind, AssistantPhase};
 use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -683,7 +683,7 @@ impl Context {
             buffer.set_text(saved_context.text.as_str(), cx)
         });
         let operations = saved_context.into_ops(&this.buffer, cx);
-        this.apply_ops(operations, cx).unwrap();
+        this.apply_ops(operations, cx);
         this
     }
 
@@ -756,7 +756,7 @@ impl Context {
         &mut self,
         ops: impl IntoIterator<Item = ContextOperation>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) {
         let mut buffer_ops = Vec::new();
         for op in ops {
             match op {
@@ -767,8 +767,6 @@ impl Context {
         self.buffer
             .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx));
         self.flush_ops(cx);
-
-        Ok(())
     }
 
     fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {
@@ -2137,6 +2135,7 @@ impl Context {
                         telemetry.report_assistant_event(
                             Some(this.id.0.clone()),
                             AssistantKind::Panel,
+                            AssistantPhase::Response,
                             model.telemetry_id(),
                             response_latency,
                             error_message,

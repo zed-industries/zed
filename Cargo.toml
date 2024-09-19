@@ -52,6 +52,7 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
+    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -226,6 +227,7 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
+isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
@@ -394,6 +396,8 @@ runtimelib = { version = "0.15", default-features = false, features = [
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
+rustls = "0.20.3"
+rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }

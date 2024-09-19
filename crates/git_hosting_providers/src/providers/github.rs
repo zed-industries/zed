@@ -3,9 +3,7 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
-use http_client::HttpClient;
-use isahc::config::Configurable;
-use isahc::{AsyncBody, Request};
+use http_client::{AsyncBody, HttpClient, Request};
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
@@ -55,16 +53,14 @@ impl Github {
     ) -> Result<Option<User>> {
         let url = format!("https://api.github.com/repos/{repo_owner}/{repo}/commits/{commit}");
 
-        let mut request = Request::get(&url)
-            .redirect_policy(isahc::config::RedirectPolicy::Follow)
-            .header("Content-Type", "application/json");
+        let mut request = Request::get(&url).header("Content-Type", "application/json");
 
         if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
             request = request.header("Authorization", format!("Bearer {}", github_token));
         }
 
         let mut response = client
-            .send(request.body(AsyncBody::default())?)
+            .send_with_redirect_policy(request.body(AsyncBody::default())?, true)
             .await
             .with_context(|| format!("error fetching GitHub commit details at {:?}", url))?;
 
