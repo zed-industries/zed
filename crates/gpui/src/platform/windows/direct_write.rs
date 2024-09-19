@@ -813,7 +813,7 @@ impl DirectWriteState {
 
             if params.is_emoji {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
-                if let Ok(enumerator) = self.components.factory.TranslateColorGlyphRun(
+                let enumerator = self.components.factory.TranslateColorGlyphRun(
                     baseline_origin,
                     &glyph_run as _,
                     None,
@@ -825,50 +825,41 @@ impl DirectWriteState {
                     DWRITE_MEASURING_MODE_NATURAL,
                     None,
                     0,
-                ) {
-                    while enumerator.MoveNext().is_ok() {
-                        let Ok(color_glyph) = enumerator.GetCurrentRun() else {
-                            break;
-                        };
-                        let color_glyph = &*color_glyph;
-                        let brush_color = translate_color(&color_glyph.Base.runColor);
-                        brush.SetColor(&brush_color);
-                        match color_glyph.glyphImageFormat {
-                            DWRITE_GLYPH_IMAGE_FORMATS_PNG
-                            | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
-                            | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8 => render_target
-                                .DrawColorBitmapGlyphRun(
-                                    color_glyph.glyphImageFormat,
-                                    baseline_origin,
-                                    &color_glyph.Base.glyphRun,
-                                    color_glyph.measuringMode,
-                                    D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT,
-                                ),
-                            DWRITE_GLYPH_IMAGE_FORMATS_SVG => render_target.DrawSvgGlyphRun(
+                )?;
+                while enumerator.MoveNext().is_ok() {
+                    let Ok(color_glyph) = enumerator.GetCurrentRun() else {
+                        break;
+                    };
+                    let color_glyph = &*color_glyph;
+                    let brush_color = translate_color(&color_glyph.Base.runColor);
+                    brush.SetColor(&brush_color);
+                    match color_glyph.glyphImageFormat {
+                        DWRITE_GLYPH_IMAGE_FORMATS_PNG
+                        | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
+                        | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8 => render_target
+                            .DrawColorBitmapGlyphRun(
+                                color_glyph.glyphImageFormat,
                                 baseline_origin,
                                 &color_glyph.Base.glyphRun,
-                                &brush,
-                                None,
-                                color_glyph.Base.paletteIndex as u32,
                                 color_glyph.measuringMode,
+                                D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT,
                             ),
-                            _ => render_target.DrawGlyphRun(
-                                baseline_origin,
-                                &color_glyph.Base.glyphRun,
-                                Some(color_glyph.Base.glyphRunDescription as *const _),
-                                &brush,
-                                color_glyph.measuringMode,
-                            ),
-                        }
+                        DWRITE_GLYPH_IMAGE_FORMATS_SVG => render_target.DrawSvgGlyphRun(
+                            baseline_origin,
+                            &color_glyph.Base.glyphRun,
+                            &brush,
+                            None,
+                            color_glyph.Base.paletteIndex as u32,
+                            color_glyph.measuringMode,
+                        ),
+                        _ => render_target.DrawGlyphRun(
+                            baseline_origin,
+                            &color_glyph.Base.glyphRun,
+                            Some(color_glyph.Base.glyphRunDescription as *const _),
+                            &brush,
+                            color_glyph.measuringMode,
+                        ),
                     }
-                } else {
-                    render_target.DrawGlyphRun(
-                        baseline_origin,
-                        &glyph_run,
-                        None,
-                        &brush,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
                 }
             } else {
                 render_target.DrawGlyphRun(
@@ -1072,7 +1063,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             // This `cast()` action here should never fail since we are running on Win10+, and
             // `IDWriteFontFace3` requires Win10
             let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
-            let Some((font_identifier, font_struct, is_emoji)) =
+            let Some((font_identifier, font_struct, color_font)) =
                 get_font_identifier_and_font_struct(font_face, &self.locale)
             else {
                 return Ok(());
@@ -1093,6 +1084,13 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 context
                     .index_converter
                     .advance_to_utf16_ix(context.utf16_index);
+                let is_emoji = {
+                    if color_font {
+                        is_color_glyph(font_face, id, color_font)
+                    } else {
+                        color_font
+                    }
+                };
                 glyphs.push(ShapedGlyph {
                     id,
                     position: point(px(context.width), px(0.0)),
@@ -1452,6 +1450,21 @@ fn get_render_target_property(
         dpiY: 96.0,
         usage: D2D1_RENDER_TARGET_USAGE_NONE,
         minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+    }
+}
+
+fn is_color_glyph(font_face: &IDWriteFontFace3, glyph_id: GlyphId, color_font: bool) -> bool {
+    unsafe {
+        let Ok(face) = font_face.cast::<IDWriteFontFace4>() else {
+            return color_font;
+        };
+        let Some(format) = face
+            .GetGlyphImageFormats(glyph_id.0 as u16, 0, u32::MAX)
+            .log_err()
+        else {
+            return color_font;
+        };
+        format != DWRITE_GLYPH_IMAGE_FORMATS_NONE
     }
 }
 
