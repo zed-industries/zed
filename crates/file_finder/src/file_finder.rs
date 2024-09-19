@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod file_finder_tests;
 
+mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
+use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 
 use collections::HashMap;
@@ -40,7 +42,12 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
+pub fn init_settings(cx: &mut AppContext) {
+    FileFinderSettings::register(cx);
+}
+
 pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.observe_new_views(FileFinder::register).detach();
     cx.observe_new_views(NewPathPrompt::register).detach();
     cx.observe_new_views(OpenPathPrompt::register).detach();
@@ -1064,8 +1071,10 @@ impl PickerDelegate for FileFinderDelegate {
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .when_some(file_icon_path, |then, icon| {
-                    then.start_slot(Icon::from_path(icon))
+                .when(FileFinderSettings::get_global(cx).file_icons, |it| {
+                    it.when_some(file_icon_path, |then, icon| {
+                        then.start_slot(Icon::from_path(icon))
+                    })
                 })
                 .end_slot::<AnyElement>(history_icon)
                 .inset(true)
