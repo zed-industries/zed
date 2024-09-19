@@ -465,18 +465,28 @@ impl WorktreeStore {
     pub fn send_project_updates(&mut self, cx: &mut ModelContext<Self>) {
         dbg!("send_project_updates");
         let Some(downstream_client) = self.downstream_client.clone() else {
-            dbg!("HA HA HA");
             return;
         };
         let project_id = self.remote_id;
 
-        let update_project = downstream_client.request(proto::UpdateProject {
+        let update = proto::UpdateProject {
             project_id,
             worktrees: self.worktree_metadata_protos(cx),
-        });
+        };
+
+        // collab has bad concurrency guarantees, so we send requests in serial.
+        let update_project = if downstream_client.goes_via_collab() {
+            Some(downstream_client.request(update))
+        } else {
+            downstream_client.send(update).log_err();
+            None
+        };
         cx.spawn(|this, mut cx| async move {
             dbg!("awaiting...");
-            dbg!(update_project.await)?;
+            if let Some(update_project) = update_project {
+                update_project.await?;
+            }
+
             this.update(&mut cx, |this, cx| {
                 let worktrees = this.worktrees().collect::<Vec<_>>();
                 dbg!(worktrees.len());
@@ -487,8 +497,14 @@ impl WorktreeStore {
                         dbg!("observe_updates");
                         worktree.observe_updates(project_id, cx, {
                             move |update| {
-                                dbg!(&update);
-                                client.request(update).map(|result| result.is_ok())
+                                let client = client.clone();
+                                async move {
+                                    if client.goes_via_collab() {
+                                        client.request(update).map(|result| result.is_ok()).await
+                                    } else {
+                                        client.send(update).is_ok()
+                                    }
+                                }
                             }
                         });
                     });

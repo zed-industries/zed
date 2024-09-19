@@ -465,6 +465,10 @@ impl ProtoClient for SshSession {
     fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
         &self.state
     }
+
+    fn goes_via_collab(&self) -> bool {
+        false
+    }
 }
 
 impl SshClientState {

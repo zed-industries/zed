@@ -1605,6 +1605,10 @@ impl ProtoClient for Client {
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
         &self.handler_set
     }
+
+    fn goes_via_collab(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Serialize, Deserialize)]
