@@ -813,7 +813,7 @@ impl DirectWriteState {
 
             if params.is_emoji {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
-                let enumerator = self.components.factory.TranslateColorGlyphRun(
+                if let Ok(enumerator) = self.components.factory.TranslateColorGlyphRun(
                     baseline_origin,
                     &glyph_run as _,
                     None,
@@ -825,41 +825,50 @@ impl DirectWriteState {
                     DWRITE_MEASURING_MODE_NATURAL,
                     None,
                     0,
-                )?;
-                while enumerator.MoveNext().is_ok() {
-                    let Ok(color_glyph) = enumerator.GetCurrentRun() else {
-                        break;
-                    };
-                    let color_glyph = &*color_glyph;
-                    let brush_color = translate_color(&color_glyph.Base.runColor);
-                    brush.SetColor(&brush_color);
-                    match color_glyph.glyphImageFormat {
-                        DWRITE_GLYPH_IMAGE_FORMATS_PNG
-                        | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
-                        | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8 => render_target
-                            .DrawColorBitmapGlyphRun(
-                                color_glyph.glyphImageFormat,
+                ) {
+                    while enumerator.MoveNext().is_ok() {
+                        let Ok(color_glyph) = enumerator.GetCurrentRun() else {
+                            break;
+                        };
+                        let color_glyph = &*color_glyph;
+                        let brush_color = translate_color(&color_glyph.Base.runColor);
+                        brush.SetColor(&brush_color);
+                        match color_glyph.glyphImageFormat {
+                            DWRITE_GLYPH_IMAGE_FORMATS_PNG
+                            | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
+                            | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8 => render_target
+                                .DrawColorBitmapGlyphRun(
+                                    color_glyph.glyphImageFormat,
+                                    baseline_origin,
+                                    &color_glyph.Base.glyphRun,
+                                    color_glyph.measuringMode,
+                                    D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT,
+                                ),
+                            DWRITE_GLYPH_IMAGE_FORMATS_SVG => render_target.DrawSvgGlyphRun(
                                 baseline_origin,
                                 &color_glyph.Base.glyphRun,
+                                &brush,
+                                None,
+                                color_glyph.Base.paletteIndex as u32,
                                 color_glyph.measuringMode,
-                                D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT,
                             ),
-                        DWRITE_GLYPH_IMAGE_FORMATS_SVG => render_target.DrawSvgGlyphRun(
-                            baseline_origin,
-                            &color_glyph.Base.glyphRun,
-                            &brush,
-                            None,
-                            color_glyph.Base.paletteIndex as u32,
-                            color_glyph.measuringMode,
-                        ),
-                        _ => render_target.DrawGlyphRun(
-                            baseline_origin,
-                            &color_glyph.Base.glyphRun,
-                            Some(color_glyph.Base.glyphRunDescription as *const _),
-                            &brush,
-                            color_glyph.measuringMode,
-                        ),
+                            _ => render_target.DrawGlyphRun(
+                                baseline_origin,
+                                &color_glyph.Base.glyphRun,
+                                Some(color_glyph.Base.glyphRunDescription as *const _),
+                                &brush,
+                                color_glyph.measuringMode,
+                            ),
+                        }
                     }
+                } else {
+                    render_target.DrawGlyphRun(
+                        baseline_origin,
+                        &glyph_run,
+                        None,
+                        &brush,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                    );
                 }
             } else {
                 render_target.DrawGlyphRun(
