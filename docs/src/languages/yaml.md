@@ -88,7 +88,7 @@ For example Amazon CloudFormation YAML uses a number of custom tags, to support 
             "!Or mapping",
             "!Or sequence",
             "!FindInMap scalar",
-            "!FindInMap mappping",
+            "!FindInMap mapping",
             "!FindInMap sequence",
             "!Base64 scalar",
             "!Base64 mapping",
