@@ -56,7 +56,7 @@ strip --strip-debug "${target_dir}/${target_triple}/release/remote_server"
 
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
-ldd "${target_dir}/${target_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'
+! ldd "${target_dir}/${target_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'
 
 suffix=""
 if [ "$channel" != "stable" ]; then
