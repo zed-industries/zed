@@ -2,7 +2,6 @@ use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
-    Embedding,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
@@ -32,6 +31,7 @@ pub struct SearchResult {
     pub path: Arc<Path>,
     pub range: Range<usize>,
     pub score: f32,
+    pub query_index: usize,
 }
 
 pub struct LoadedSearchResult {
@@ -40,13 +40,14 @@ pub struct LoadedSearchResult {
     pub full_path: PathBuf,
     pub file_content: String,
     pub row_range: RangeInclusive<u32>,
+    pub query_index: usize,
 }
 
 pub struct WorktreeSearchResult {
     pub worktree_id: WorktreeId,
     pub path: Arc<Path>,
     pub range: Range<usize>,
-    pub _query_index: usize,
+    pub query_index: usize,
     pub score: f32,
 }
 
@@ -302,36 +303,22 @@ impl ProjectIndex {
                     for results in results_by_worker.iter_mut() {
                         cx.spawn(async {
                             while let Ok((worktree_id, path, chunk)) = chunks_rx.recv().await {
-                                let embedding_refs: Vec<&Embedding> =
-                                    query_embeddings.iter().collect();
-                                let scores = chunk.embedding.similarity(embedding_refs);
-                                let scores_iter = if scores.len() as f32 * 1.2 < limit as f32 {
-                                    // If the number of queries is significantly smaller than the result limit,
-                                    // sorting these early saves insertion time.
-                                    let mut sorted_scores: Vec<(usize, &f32)> =
-                                        scores.iter().enumerate().collect();
-                                    sorted_scores.sort_unstable_by(|a, b| {
-                                        b.1.partial_cmp(a.1).unwrap_or(Ordering::Equal)
-                                    });
-                                    Box::new(sorted_scores.into_iter())
-                                        as Box<dyn Iterator<Item = (usize, &f32)>>
-                                } else {
-                                    Box::new(scores.iter().enumerate())
-                                };
+                                let (score, query_index) =
+                                    chunk.embedding.similarity(&query_embeddings);
 
-                                for (query_index, &score) in scores_iter {
-                                    let ix = match results.binary_search_by(|probe| {
-                                        probe.score.partial_cmp(&score).unwrap_or(Ordering::Equal)
-                                    }) {
-                                        Ok(ix) | Err(ix) => ix,
-                                    };
+                                let ix = match results.binary_search_by(|probe| {
+                                    score.partial_cmp(&probe.score).unwrap_or(Ordering::Equal)
+                                }) {
+                                    Ok(ix) | Err(ix) => ix,
+                                };
+                                if ix < limit {
                                     results.insert(
                                         ix,
                                         WorktreeSearchResult {
                                             worktree_id,
                                             path: path.clone(),
                                             range: chunk.chunk.range.clone(),
-                                            _query_index: query_index,
+                                            query_index,
                                             score,
                                         },
                                     );
@@ -358,6 +345,7 @@ impl ProjectIndex {
                             path: result.path,
                             range: result.range,
                             score: result.score,
+                            query_index: result.query_index,
                         })
                     }));
                 }

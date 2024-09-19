@@ -98,7 +98,7 @@ fn main() {
                 .update(|cx| {
                     let project_index = project_index.read(cx);
                     let query = "converting an anchor to a point";
-                    project_index.search(query.into(), 4, cx)
+                    project_index.search(vec![query.into()], 4, cx)
                 })
                 .unwrap()
                 .await

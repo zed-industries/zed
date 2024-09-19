@@ -1,4 +1,7 @@
-use super::{create_label_for_command, SlashCommand, SlashCommandOutput};
+use super::{
+    create_label_for_command, search_command::add_search_result_section, SlashCommand,
+    SlashCommandOutput,
+};
 use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
@@ -6,12 +9,14 @@ use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
 use schemars::JsonSchema;
+use semantic_index::SemanticDb;
 use serde::Deserialize;
 use std::{
+    fmt::Write as _,
     ops::DerefMut,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::IconName;
+use ui::{BorrowAppContext as _, IconName};
 use workspace::Workspace;
 
 pub struct ProjectSlashCommand {
@@ -60,13 +65,24 @@ impl SlashCommand for ProjectSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<Anchor>],
         context_buffer: language::BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let current_model = model_registry.active_model();
         let prompt_builder = self.prompt_builder.clone();
+
+        let Some(workspace) = workspace.upgrade() else {
+            return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
+        };
+        let project = workspace.read(cx).project().clone();
+        let fs = project.read(cx).fs().clone();
+        let Some(project_index) =
+            cx.update_global(|index: &mut SemanticDb, cx| index.project_index(project, cx))
+        else {
+            return Task::ready(Err(anyhow::anyhow!("no project indexer")));
+        };
 
         cx.spawn(|mut cx| async move {
             let current_model = current_model.ok_or_else(|| anyhow!("no model selected"))?;
@@ -91,31 +107,56 @@ impl SlashCommand for ProjectSlashCommand {
                 .await?
                 .search_queries;
 
-            let mut output = "Project context:\n".to_string();
-            for query in search_queries {
-                let section_text = format!("/search {}", query);
-                // sections.push(SlashCommandOutputSection {
-                //     range: output.len()..output.len() + section_text.len(),
-                //     icon: IconName::MagnifyingGlass,
-                //     label: query.into(),
-                //     metadata: None,
-                // });
-                output.push_str(&section_text);
-                output.push('\n');
-            }
+            let results = project_index
+                .read_with(&cx, |project_index, cx| {
+                    project_index.search(search_queries.clone(), 25, cx)
+                })?
+                .await?;
 
-            let sections = vec![SlashCommandOutputSection {
-                range: 0..output.len(),
-                icon: IconName::Book,
-                label: "Project context".into(),
-                metadata: None,
-            }];
+            let results = SemanticDb::load_results(results, &fs, &cx).await?;
 
-            Ok(SlashCommandOutput {
-                text: output,
-                sections,
-                run_commands_in_text: true,
-            })
+            cx.background_executor()
+                .spawn(async move {
+                    let mut output = "Project context:\n".to_string();
+                    let mut sections = Vec::new();
+
+                    for (ix, query) in search_queries.into_iter().enumerate() {
+                        let start_ix = output.len();
+                        writeln!(&mut output, "Results for {query}:").unwrap();
+                        let mut has_results = false;
+                        for result in &results {
+                            if result.query_index == ix {
+                                add_search_result_section(result, &mut output, &mut sections);
+                                has_results = true;
+                            }
+                        }
+                        if has_results {
+                            sections.push(SlashCommandOutputSection {
+                                range: start_ix..output.len(),
+                                icon: IconName::MagnifyingGlass,
+                                label: query.into(),
+                                metadata: None,
+                            });
+                            output.push('\n');
+                        } else {
+                            output.truncate(start_ix);
+                        }
+                    }
+
+                    sections.push(SlashCommandOutputSection {
+                        range: 0..output.len(),
+                        icon: IconName::Book,
+                        label: "Project context".into(),
+                        metadata: None,
+                    });
+
+                    Ok(SlashCommandOutput {
+                        text: output,
+                        sections,
+                        run_commands_in_text: true,
+                    })
+                })
+                .await
         })
     }
 }

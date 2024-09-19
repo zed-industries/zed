@@ -42,19 +42,23 @@ impl Embedding {
         self.0.len()
     }
 
-    pub fn similarity(&self, others: Vec<&Embedding>) -> Vec<f32> {
+    pub fn similarity(&self, others: &[Embedding]) -> (f32, usize) {
         debug_assert!(others.iter().all(|other| self.0.len() == other.0.len()));
         others
             .iter()
-            .map(|other| {
-                self.0
+            .enumerate()
+            .map(|(index, other)| {
+                let dot_product: f32 = self
+                    .0
                     .iter()
                     .copied()
                     .zip(other.0.iter().copied())
                     .map(|(a, b)| a * b)
-                    .sum()
+                    .sum();
+                (dot_product, index)
             })
-            .collect()
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or((0.0, 0))
     }
 }
 

@@ -112,31 +112,8 @@ impl SlashCommand for SearchSlashCommand {
                 .spawn(async move {
                     let mut text = format!("Search results for {query}:\n");
                     let mut sections = Vec::new();
-                    for LoadedSearchResult {
-                        path,
-                        range,
-                        full_path,
-                        file_content,
-                        row_range,
-                    } in loaded_results
-                    {
-                        let section_start_ix = text.len();
-                        text.push_str(&codeblock_fence_for_path(
-                            Some(&path),
-                            Some(row_range.clone()),
-                        ));
-
-                        let mut excerpt = file_content[range].to_string();
-                        LineEnding::normalize(&mut excerpt);
-                        text.push_str(&excerpt);
-                        writeln!(text, "\n```\n").unwrap();
-                        let section_end_ix = text.len() - 1;
-                        sections.push(build_entry_output_section(
-                            section_start_ix..section_end_ix,
-                            Some(&full_path),
-                            false,
-                            Some(row_range.start() + 1..row_range.end() + 1),
-                        ));
+                    for loaded_result in &loaded_results {
+                        add_search_result_section(loaded_result, &mut text, &mut sections);
                     }
 
                     let query = SharedString::from(query);
@@ -158,4 +135,36 @@ impl SlashCommand for SearchSlashCommand {
             Ok(output)
         })
     }
+}
+
+pub fn add_search_result_section(
+    loaded_result: &LoadedSearchResult,
+    text: &mut String,
+    sections: &mut Vec<SlashCommandOutputSection<usize>>,
+) {
+    let LoadedSearchResult {
+        path,
+        range,
+        full_path,
+        file_content,
+        row_range,
+        ..
+    } = loaded_result;
+    let section_start_ix = text.len();
+    text.push_str(&codeblock_fence_for_path(
+        Some(&path),
+        Some(row_range.clone()),
+    ));
+
+    let mut excerpt = file_content[range.clone()].to_string();
+    LineEnding::normalize(&mut excerpt);
+    text.push_str(&excerpt);
+    writeln!(text, "\n```\n").unwrap();
+    let section_end_ix = text.len() - 1;
+    sections.push(build_entry_output_section(
+        section_start_ix..section_end_ix,
+        Some(&full_path),
+        false,
+        Some(row_range.start() + 1..row_range.end() + 1),
+    ));
 }

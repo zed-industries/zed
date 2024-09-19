@@ -114,6 +114,7 @@ impl SemanticDb {
                     full_path,
                     file_content,
                     row_range: start_row..=end_row,
+                    query_index: result.query_index,
                 });
             }
         }
