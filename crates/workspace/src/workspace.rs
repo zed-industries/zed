@@ -1114,18 +1114,16 @@ impl Workspace {
             }
 
             // Get project paths for all of the abs_paths
-            let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
             for path in paths_to_open.into_iter() {
-                if let Some((worktree, project_entry)) = cx
+                if let Some((_, project_entry)) = cx
                     .update(|cx| {
                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
                     })?
                     .await
                     .log_err()
                 {
-                    worktree_roots.extend(worktree.update(&mut cx, |tree, _| tree.abs_path()).ok());
                     project_paths.push((path, Some(project_entry)));
                 } else {
                     project_paths.push((path, None));
@@ -5532,12 +5530,13 @@ pub fn open_ssh_project(
         let serialized_workspace =
             persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
 
-        let workspace_id =
-            if let Some(workspace_id) = serialized_workspace.map(|workspace| workspace.id) {
-                workspace_id
-            } else {
-                persistence::DB.next_id().await?
-            };
+        let workspace_id = if let Some(workspace_id) =
+            serialized_workspace.as_ref().map(|workspace| workspace.id)
+        {
+            workspace_id
+        } else {
+            persistence::DB.next_id().await?
+        };
 
         cx.update_window(window.into(), |_, cx| {
             cx.replace_root_view(|cx| {
@@ -5548,7 +5547,15 @@ pub fn open_ssh_project(
             });
         })?;
 
-        window.update(&mut cx, |_, cx| cx.activate_window())
+        window
+            .update(&mut cx, |_, cx| {
+                cx.activate_window();
+
+                open_items(serialized_workspace, vec![], app_state, cx)
+            })?
+            .await?;
+
+        Ok(())
     })
 }
 
