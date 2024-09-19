@@ -220,7 +220,8 @@ impl PromptBuilder {
         let before_range = 0..range.start;
         let truncated_before = if before_range.len() > MAX_CTX {
             is_truncated = true;
-            range.start - MAX_CTX..range.start
+            let start = buffer.clip_offset(range.start - MAX_CTX, text::Bias::Right);
+            start..range.start
         } else {
             before_range
         };
@@ -228,7 +229,8 @@ impl PromptBuilder {
         let after_range = range.end..buffer.len();
         let truncated_after = if after_range.len() > MAX_CTX {
             is_truncated = true;
-            range.end..range.end + MAX_CTX
+            let end = buffer.clip_offset(range.end + MAX_CTX, text::Bias::Left);
+            range.end..end
         } else {
             after_range
         };
