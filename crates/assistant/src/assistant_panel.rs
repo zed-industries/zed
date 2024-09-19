@@ -5611,7 +5611,7 @@ mod tests {
 
     #[gpui::test]
     fn test_find_code_blocks(cx: &mut AppContext) {
-        let markdown = languages::language("markdown", tree_sitter_md::language());
+        let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
 
         let buffer = cx.new_model(|cx| {
             let text = r#"
