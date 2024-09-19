@@ -1423,7 +1423,7 @@ impl LspStore {
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Vec<CodeAction>> {
+    ) -> Task<Result<Vec<CodeAction>>> {
         if let Some(upstream_client) = self.upstream_client() {
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
@@ -1443,14 +1443,11 @@ impl LspStore {
             let buffer = buffer_handle.clone();
             cx.spawn(|weak_project, cx| async move {
                 let Some(project) = weak_project.upgrade() else {
-                    return Vec::new();
+                    return Ok(Vec::new());
                 };
-                join_all(
-                    request_task
-                        .await
-                        .log_err()
-                        .map(|response| response.responses)
-                        .unwrap_or_default()
+                let responses = request_task.await?.responses;
+                let actions = join_all(
+                    responses
                         .into_iter()
                         .filter_map(|lsp_response| match lsp_response.response? {
                             proto::lsp_response::Response::GetCodeActionsResponse(response) => {
@@ -1472,13 +1469,17 @@ impl LspStore {
                                 buffer.clone(),
                                 cx.clone(),
                             );
-                            async move { response.await.log_err().unwrap_or_default() }
+                            async move { response.await }
                         }),
                 )
-                .await
-                .into_iter()
-                .flatten()
-                .collect()
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -1490,7 +1491,9 @@ impl LspStore {
                 },
                 cx,
             );
-            cx.spawn(|_, _| async move { all_actions_task.await.into_iter().flatten().collect() })
+            cx.spawn(
+                |_, _| async move { Ok(all_actions_task.await.into_iter().flatten().collect()) },
+            )
         }
     }
 

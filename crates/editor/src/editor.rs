@@ -67,7 +67,7 @@ use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use futures::FutureExt;
+use futures::{future, FutureExt};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
@@ -566,7 +566,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
-    code_actions_task: Option<Task<()>>,
+    code_actions_task: Option<Task<Result<()>>>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -586,6 +586,7 @@ pub struct Editor {
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
+    code_action_providers: Vec<Arc<dyn CodeActionProvider>>,
     active_inline_completion: Option<CompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
@@ -1860,6 +1861,11 @@ impl Editor {
             None
         };
 
+        let mut code_action_providers = Vec::new();
+        if let Some(project) = project.clone() {
+            code_action_providers.push(Arc::new(project) as Arc<_>);
+        }
+
         let mut this = Self {
             focus_handle,
             show_cursor_when_unfocused: false,
@@ -1911,6 +1917,7 @@ impl Editor {
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
             next_inlay_id: 0,
+            code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
             document_highlights_task: Default::default(),
@@ -4553,7 +4560,7 @@ impl Editor {
         let action = action.clone();
         cx.spawn(|editor, mut cx| async move {
             while let Some(prev_task) = task {
-                prev_task.await;
+                prev_task.await.log_err();
                 task = editor.update(&mut cx, |this, _| this.code_actions_task.take())?;
             }
 
@@ -4839,7 +4846,6 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
@@ -4853,13 +4859,19 @@ impl Editor {
                 .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let actions = if let Ok(code_actions) = project.update(&mut cx, |project, cx| {
-                project.code_actions(&start_buffer, start..end, cx)
-            }) {
-                code_actions.await
-            } else {
-                Vec::new()
-            };
+            let tasks = this.update(&mut cx, |this, cx| {
+                this.code_action_providers
+                    .iter()
+                    .map(|provider| provider.code_actions(&start_buffer, start..end, cx))
+                    .collect::<Vec<_>>()
+            })?;
+
+            let mut actions = Vec::new();
+            for provider_actions in future::join_all(tasks).await {
+                if let Some(mut provider_actions) = provider_actions.log_err() {
+                    actions.append(&mut provider_actions);
+                }
+            }
 
             this.update(&mut cx, |this, cx| {
                 this.available_code_actions = if actions.is_empty() {
@@ -4875,7 +4887,6 @@ impl Editor {
                 };
                 cx.notify();
             })
-            .log_err();
         }));
         None
     }
@@ -9651,7 +9662,7 @@ impl Editor {
                     })
                     .context("location tasks preparation")?;
 
-                let locations = futures::future::join_all(location_tasks)
+                let locations = future::join_all(location_tasks)
                     .await
                     .into_iter()
                     .filter_map(|location| location.transpose())
@@ -12497,6 +12508,46 @@ pub trait CompletionProvider {
 
     fn sort_completions(&self) -> bool {
         true
+    }
+}
+
+pub trait CodeActionProvider {
+    fn code_actions(
+        &self,
+        buffer: &Model<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<CodeAction>>>;
+
+    fn apply_code_action(
+        &self,
+        buffer_handle: Model<Buffer>,
+        action: CodeAction,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<ProjectTransaction>>;
+}
+
+impl CodeActionProvider for Model<Project> {
+    fn code_actions(
+        &self,
+        buffer: &Model<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        self.update(cx, |project, cx| project.code_actions(buffer, range, cx))
+    }
+
+    fn apply_code_action(
+        &self,
+        buffer_handle: Model<Buffer>,
+        action: CodeAction,
+        push_to_history: bool,
+        cx: &mut AppContext,
+    ) -> Task<Result<ProjectTransaction>> {
+        self.update(cx, |project, cx| {
+            project.apply_code_action(buffer_handle, action, push_to_history, cx)
+        })
     }
 }
 
