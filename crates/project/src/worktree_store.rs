@@ -315,9 +315,7 @@ impl WorktreeStore {
 
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         let worktree_id = worktree.read(cx).id();
-        if self.worktrees().any(|w| w.read(cx).id() == worktree_id) {
-            return;
-        };
+        debug_assert!(!self.worktrees().any(|w| w.read(cx).id() == worktree_id));
 
         let push_strong_handle = self.retain_worktrees || worktree.read(cx).is_visible();
         let handle = if push_strong_handle {
