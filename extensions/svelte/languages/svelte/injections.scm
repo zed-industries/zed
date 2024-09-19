@@ -55,7 +55,7 @@
     (#set! "language" "ts")
 )
 
-; Match style tags with a lang attribute
+; Match <style lang="language"> as the specified language
 (style_element
     (start_tag
         (attribute
@@ -69,7 +69,7 @@
     (raw_text) @content
 )
 
-; Match style tags without a lang attribute
+; Match <style> tags without a lang attribute as CSS
 (style_element
     (start_tag
         (attribute
@@ -82,5 +82,5 @@
 )
 
 
-; Downstream TODO: Style highlighting for `style:background="red"` and `style="background: red"` strings
-; Downstream TODO: Style component comments as markdown
+; Downstream TODOs: Style highlighting for `style:background="red"` and `style="background: red"` strings
+; Downstream TODOs: Style @component comments as markdown
