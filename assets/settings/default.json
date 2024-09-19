@@ -689,9 +689,9 @@
     // Whether to show the terminal button in the status bar
     "button": true,
     // Whether to show the terminal minimize button above the terminal
-    "minimize_button": true,
+    "minimize_button": false,
     // Whether to show the terminal maximize button above the terminal
-    "maximize_button": false,
+    "maximize_button": true,
     // Whether to show a drop down for spawning tasks & creating new terminals or creating a new terminal
     "spawn_task_option_button": true,
     // Whether to show the inline assistent button above the terminal

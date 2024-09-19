@@ -272,10 +272,10 @@ impl TerminalPanel {
                     false => right_children,
                 };
 
-                inline(right_children);
-                new(right_children);
-                minimize(right_children);
-                maximize(right_children)
+                right_children = inline(right_children);
+                right_children = new(right_children);
+                right_children = minimize(right_children);
+                right_children = maximize(right_children);
 
                 let right_children = right_children.into_any_element().into();
                 (None, right_children)
