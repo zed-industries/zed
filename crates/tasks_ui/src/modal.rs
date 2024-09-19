@@ -410,7 +410,7 @@ impl PickerDelegate for TasksModalDelegate {
 
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
-                .inset(false)
+                .inset(true)
                 .start_slot::<Icon>(icon)
                 .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
