@@ -3110,6 +3110,8 @@ impl ContextEditor {
         context_editor_view: &View<ContextEditor>,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<(String, bool)> {
+        const CODE_FENCE_DELIMITER: &'static str = "```";
+
         let context_editor = context_editor_view.read(cx).editor.read(cx);
 
         if context_editor.selections.newest::<Point>(cx).is_empty() {
@@ -3120,9 +3122,16 @@ impl ContextEditor {
             let offset = snapshot.point_to_offset(head);
 
             let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
-            let text = snapshot
+            let mut text = snapshot
                 .text_for_range(surrounding_code_block_range)
                 .collect::<String>();
+
+            // If there is no newline trailing the closing three-backticks, then
+            // tree-sitter-md extends the range of the content node to include
+            // the backticks.
+            if text.ends_with(CODE_FENCE_DELIMITER) {
+                text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+            }
 
             (!text.is_empty()).then_some((text, true))
         } else {
