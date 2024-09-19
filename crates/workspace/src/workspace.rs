@@ -61,7 +61,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
-use remote::{ssh_session::SshProject, SshConnectionOptions, SshSession};
+use remote::{SshConnectionOptions, SshSession};
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -760,6 +760,7 @@ pub struct Workspace {
     render_disconnected_overlay:
         Option<Box<dyn Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
+    serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
 }
@@ -1058,6 +1059,7 @@ impl Workspace {
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
+            serialized_ssh_project: None,
         }
     }
 
@@ -1442,6 +1444,10 @@ impl Workspace {
 
     pub fn set_prompt_for_open_path(&mut self, prompt: PromptForOpenPath) {
         self.on_prompt_for_open_path = Some(prompt)
+    }
+
+    pub fn set_serialized_ssh_project(&mut self, serialized_ssh_project: SerializedSshProject) {
+        self.serialized_ssh_project = Some(serialized_ssh_project);
     }
 
     pub fn set_render_disconnected_overlay(
@@ -4101,10 +4107,8 @@ impl Workspace {
             }
         }
 
-        let location = if let Some(ssh_project) = self.project().read(cx).ssh_project() {
-            Some(SerializedWorkspaceLocation::Ssh(
-                SerializedSshProject::from(ssh_project),
-            ))
+        let location = if let Some(ssh_project) = &self.serialized_ssh_project {
+            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
         } else if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
                 Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
@@ -5505,16 +5509,9 @@ pub fn open_ssh_project(
             )
             .await?;
 
-        let ssh_project = SshProject {
-            id: serialized_ssh_project.id,
-            connection_options,
-            path,
-        };
-
         let project = cx.update(|cx| {
             project::Project::ssh(
                 session,
-                Some(ssh_project),
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),
                 app_state.user_store.clone(),
@@ -5532,17 +5529,20 @@ pub fn open_ssh_project(
                 .await?;
         }
 
-        let workspace_id = if let Some(workspace) =
-            persistence::DB.workspace_for_ssh_project(serialized_ssh_project)
+        let workspace_id = if let Some(workspace_id) =
+            persistence::DB.workspace_id_for_ssh_project(&serialized_ssh_project)
         {
-            workspace.id
+            workspace_id
         } else {
             persistence::DB.next_id().await?
         };
 
         cx.update_window(window.into(), |_, cx| {
             cx.replace_root_view(|cx| {
-                Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
+                let mut workspace =
+                    Workspace::new(Some(workspace_id), project, app_state.clone(), cx);
+                workspace.set_serialized_ssh_project(serialized_ssh_project);
+                workspace
             });
         })?;
 

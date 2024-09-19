@@ -384,7 +384,6 @@ impl DevServerProjects {
                             let app_state = workspace.app_state().clone();
                             let project = project::Project::ssh(
                                 session,
-                                None,
                                 app_state.client.clone(),
                                 app_state.node_runtime.clone(),
                                 app_state.user_store.clone(),
