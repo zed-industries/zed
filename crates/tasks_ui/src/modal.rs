@@ -448,7 +448,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     picker.refresh(cx);
                                 }))
                                 .tooltip(|cx| {
-                                    Tooltip::text("Delete previously scheduled task", cx)
+                                    Tooltip::text("Delete Previously Scheduled Task", cx)
                                 }),
                         );
                         item.end_hover_slot(delete_button)
@@ -499,7 +499,7 @@ impl PickerDelegate for TasksModalDelegate {
             .last_scheduled_task(None)
             .is_some()
         {
-            Some(("Rerun last task", Rerun::default().boxed_clone()))
+            Some(("Rerun Last Task", Rerun::default().boxed_clone()))
         } else {
             None
         };
@@ -535,9 +535,9 @@ impl PickerDelegate for TasksModalDelegate {
                         .boxed_clone();
                         this.children(KeyBinding::for_action(&*action, cx).map(|keybind| {
                             let spawn_oneshot_label = if current_modifiers.secondary() {
-                                "Spawn oneshot without history"
+                                "Spawn Oneshot Without History"
                             } else {
-                                "Spawn oneshot"
+                                "Spawn Oneshot"
                             };
 
                             Button::new("spawn-onehshot", spawn_oneshot_label)
@@ -549,9 +549,9 @@ impl PickerDelegate for TasksModalDelegate {
                         this.children(KeyBinding::for_action(&menu::SecondaryConfirm, cx).map(
                             |keybind| {
                                 let label = if is_recent_selected {
-                                    "Rerun without history"
+                                    "Rerun Without History"
                                 } else {
-                                    "Spawn without history"
+                                    "Spawn Without History"
                                 };
                                 Button::new("spawn", label)
                                     .label_size(LabelSize::Small)
