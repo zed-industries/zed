@@ -1076,6 +1076,13 @@ impl AssistantPanel {
                 self.show_updated_summary(&context_editor, cx);
                 cx.notify()
             }
+            EditorEvent::SelectionsChanged { local } => {
+                if *local {
+                    context_editor.update(cx, |this, cx| {
+                        this.update_code_fence_blocks(cx);
+                    })
+                }
+            }
             EditorEvent::Edited { .. } => cx.emit(AssistantPanelEvent::ContextEdited),
             _ => {}
         }
@@ -1505,6 +1512,7 @@ pub struct ContextEditor {
     editor: View<Editor>,
     blocks: HashMap<MessageId, (MessageHeader, CustomBlockId)>,
     image_blocks: HashSet<CustomBlockId>,
+    code_fence_blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
@@ -1573,6 +1581,7 @@ impl ContextEditor {
             lsp_adapter_delegate,
             blocks: Default::default(),
             image_blocks: Default::default(),
+            code_fence_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
             fs,
@@ -3704,6 +3713,54 @@ impl ContextEditor {
             editor.remove_blocks(old_blocks, None, cx);
             let ids = editor.insert_blocks(new_blocks, None, cx);
             self.image_blocks = HashSet::from_iter(ids);
+        });
+    }
+
+    fn update_code_fence_blocks(&mut self, cx: &mut ViewContext<Self>) {
+        let workspace = self.workspace.clone();
+
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let Some((_, _, snapshot)) = buffer.as_singleton() else {
+                return;
+            };
+            let old_blocks = std::mem::take(&mut self.code_fence_blocks);
+            editor.remove_blocks(old_blocks, None, cx);
+
+            let selection_head = editor.selections.newest::<usize>(cx).head();
+            if let Some(range) = find_surrounding_code_block(snapshot, selection_head) {
+                let start_row = snapshot.offset_to_point(range.start).row.saturating_sub(1);
+                let position = buffer.anchor_after(Point::new(start_row, 0));
+                let block = BlockProperties {
+                    position,
+                    height: 0,
+                    style: BlockStyle::Sticky,
+                    render: Box::new(move |_| {
+                        h_flex()
+                            .justify_end()
+                            .child(
+                                IconButton::new("copy-code", IconName::Copy)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .style(ButtonStyle::Filled)
+                                    .on_click({
+                                        let workspace = workspace.clone();
+                                        move |_, cx| {
+                                            workspace
+                                                .update(cx, |workspace, cx| {
+                                                    Self::copy_code(workspace, &CopyCode, cx);
+                                                })
+                                                .log_err();
+                                        }
+                                    }),
+                            )
+                            .into_any_element()
+                    }),
+                    disposition: BlockDisposition::Above,
+                    priority: 0,
+                };
+                let ids = editor.insert_blocks(vec![block], None, cx);
+                self.code_fence_blocks = HashSet::from_iter(ids);
+            }
         });
     }
 
