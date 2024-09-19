@@ -42,14 +42,19 @@ impl Embedding {
         self.0.len()
     }
 
-    pub fn similarity(self, other: &Embedding) -> f32 {
-        debug_assert_eq!(self.0.len(), other.0.len());
-        self.0
+    pub fn similarity(&self, others: Vec<&Embedding>) -> Vec<f32> {
+        debug_assert!(others.iter().all(|other| self.0.len() == other.0.len()));
+        others
             .iter()
-            .copied()
-            .zip(other.0.iter().copied())
-            .map(|(a, b)| a * b)
-            .sum()
+            .map(|other| {
+                self.0
+                    .iter()
+                    .copied()
+                    .zip(other.0.iter().copied())
+                    .map(|(a, b)| a * b)
+                    .sum()
+            })
+            .collect()
     }
 }
 

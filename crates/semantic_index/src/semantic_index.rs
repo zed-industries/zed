@@ -312,7 +312,7 @@ mod tests {
             .update(|cx| {
                 let project_index = project_index.read(cx);
                 let query = "garbage in, garbage out";
-                project_index.search(query.into(), 4, cx)
+                project_index.search(vec![query.into()], 4, cx)
             })
             .await
             .unwrap();
