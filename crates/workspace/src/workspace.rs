@@ -5529,13 +5529,15 @@ pub fn open_ssh_project(
                 .await?;
         }
 
-        let workspace_id = if let Some(workspace_id) =
-            persistence::DB.workspace_id_for_ssh_project(&serialized_ssh_project)
-        {
-            workspace_id
-        } else {
-            persistence::DB.next_id().await?
-        };
+        let serialized_workspace =
+            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+
+        let workspace_id =
+            if let Some(workspace_id) = serialized_workspace.map(|workspace| workspace.id) {
+                workspace_id
+            } else {
+                persistence::DB.next_id().await?
+            };
 
         cx.update_window(window.into(), |_, cx| {
             cx.replace_root_view(|cx| {

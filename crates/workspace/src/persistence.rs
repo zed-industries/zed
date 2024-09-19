@@ -538,20 +538,60 @@ impl WorkspaceDb {
         })
     }
 
-    pub(crate) fn workspace_id_for_ssh_project(
+    pub(crate) fn workspace_for_ssh_project(
         &self,
         ssh_project: &SerializedSshProject,
-    ) -> Option<WorkspaceId> {
-        self.select_row_bound(sql! {
-            SELECT
-                workspace_id
-            FROM workspaces
-            WHERE ssh_project_id = ?
+    ) -> Option<SerializedWorkspace> {
+        let (workspace_id, window_bounds, display, centered_layout, docks, window_id): (
+            WorkspaceId,
+            Option<SerializedWindowBounds>,
+            Option<Uuid>,
+            Option<bool>,
+            DockStructure,
+            Option<u64>,
+        ) = self
+            .select_row_bound(sql! {
+                SELECT
+                    workspace_id,
+                    window_state,
+                    window_x,
+                    window_y,
+                    window_width,
+                    window_height,
+                    display,
+                    centered_layout,
+                    left_dock_visible,
+                    left_dock_active_panel,
+                    left_dock_zoom,
+                    right_dock_visible,
+                    right_dock_active_panel,
+                    right_dock_zoom,
+                    bottom_dock_visible,
+                    bottom_dock_active_panel,
+                    bottom_dock_zoom,
+                    window_id
+                FROM workspaces
+                WHERE ssh_project_id = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(ssh_project.id.0))
+            .context("No workspaces found")
+            .warn_on_err()
+            .flatten()?;
+
+        Some(SerializedWorkspace {
+            id: workspace_id,
+            location: SerializedWorkspaceLocation::Ssh(ssh_project.clone()),
+            center_group: self
+                .get_center_pane_group(workspace_id)
+                .context("Getting center group")
+                .log_err()?,
+            window_bounds,
+            centered_layout: centered_layout.unwrap_or(false),
+            display,
+            docks,
+            session_id: None,
+            window_id,
         })
-        .and_then(|mut prepared_statement| (prepared_statement)(ssh_project.id.0))
-        .context("No workspaces found")
-        .warn_on_err()
-        .flatten()
     }
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
