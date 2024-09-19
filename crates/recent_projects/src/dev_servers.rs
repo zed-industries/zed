@@ -39,7 +39,6 @@ use ui::{
     RadioWithLabel, Tooltip,
 };
 use ui_input::{FieldLabelLayout, TextField};
-use util::paths::PathWithPosition;
 use util::ResultExt;
 use workspace::notifications::NotifyResultExt;
 use workspace::OpenOptions;
@@ -987,11 +986,7 @@ impl DevServerProjects {
                 cx.spawn(|_, mut cx| async move {
                     let result = open_ssh_project(
                         server.into(),
-                        project
-                            .paths
-                            .into_iter()
-                            .map(|path| PathWithPosition::from_path(PathBuf::from(path)))
-                            .collect(),
+                        project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions::default(),
                         &mut cx,
