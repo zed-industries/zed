@@ -2286,6 +2286,7 @@ impl Codegen {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
+                false,
                 telemetry.clone(),
                 builder.clone(),
                 cx,
@@ -2373,6 +2374,7 @@ impl Codegen {
                 CodegenAlternative::new(
                     self.buffer.clone(),
                     self.range.clone(),
+                    false,
                     self.telemetry.clone(),
                     self.builder.clone(),
                     cx,
@@ -2501,6 +2503,7 @@ impl CodegenAlternative {
     pub fn new(
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
+        active: bool,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
@@ -2540,7 +2543,7 @@ impl CodegenAlternative {
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             builder,
-            active: false,
+            active,
             edits: Vec::new(),
             line_operations: Vec::new(),
             range,
@@ -3327,7 +3330,14 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
+            CodegenAlternative::new(
+                buffer.clone(),
+                range.clone(),
+                true,
+                None,
+                prompt_builder,
+                cx,
+            )
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
@@ -3391,7 +3401,14 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
+            CodegenAlternative::new(
+                buffer.clone(),
+                range.clone(),
+                true,
+                None,
+                prompt_builder,
+                cx,
+            )
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
@@ -3458,7 +3475,14 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
+            CodegenAlternative::new(
+                buffer.clone(),
+                range.clone(),
+                true,
+                None,
+                prompt_builder,
+                cx,
+            )
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
@@ -3524,7 +3548,14 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            CodegenAlternative::new(buffer.clone(), range.clone(), None, prompt_builder, cx)
+            CodegenAlternative::new(
+                buffer.clone(),
+                range.clone(),
+                true,
+                None,
+                prompt_builder,
+                cx,
+            )
         });
 
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
@@ -3557,6 +3588,78 @@ mod tests {
                 \t}
                 }
             "}
+        );
+    }
+
+    #[gpui::test]
+    async fn test_inactive_codegen_alternative(cx: &mut TestAppContext) {
+        cx.update(LanguageModelRegistry::test);
+        cx.set_global(cx.update(SettingsStore::test));
+        cx.update(language_settings::init);
+
+        let text = indoc! {"
+            fn main() {
+                let x = 0;
+            }
+        "};
+        let buffer =
+            cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let range = buffer.read_with(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 14))
+        });
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let codegen = cx.new_model(|cx| {
+            CodegenAlternative::new(
+                buffer.clone(),
+                range.clone(),
+                false,
+                None,
+                prompt_builder,
+                cx,
+            )
+        });
+
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        codegen.update(cx, |codegen, cx| {
+            codegen.handle_stream(
+                String::new(),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
+                cx,
+            )
+        });
+
+        chunks_tx
+            .unbounded_send("let mut x = 0;\nx += 1;".to_string())
+            .unwrap();
+        drop(chunks_tx);
+        cx.run_until_parked();
+
+        // The codegen is inactive, so the buffer doesn't get modified.
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            text
+        );
+
+        // Activating the codegen applies the changes.
+        codegen.update(cx, |codegen, cx| codegen.set_active(true, cx));
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            indoc! {"
+                fn main() {
+                    let mut x = 0;
+                    x += 1;
+                }
+            "}
+        );
+
+        // Deactivating the codegen undoes the changes.
+        codegen.update(cx, |codegen, cx| codegen.set_active(false, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            text
         );
     }
 
