@@ -68,6 +68,8 @@ actions!(
         ConfirmCommand,
         NewContext,
         ToggleModelSelector,
+        CycleNextInlineAssist,
+        CyclePreviousInlineAssist
     ]
 );
 
