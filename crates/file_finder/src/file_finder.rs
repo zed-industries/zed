@@ -3,6 +3,7 @@ mod file_finder_tests;
 
 mod new_path_prompt;
 mod open_path_prompt;
+use file_icons::FileIcons;
 
 use collections::HashMap;
 use editor::{scroll::Autoscroll, Bias, Editor};
@@ -1046,7 +1047,7 @@ impl PickerDelegate for FileFinderDelegate {
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
 
-        let icon = match &path_match {
+        let history_icon = match &path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
                 .color(Color::Muted)
                 .size(IconSize::Small)
@@ -1058,11 +1059,15 @@ impl PickerDelegate for FileFinderDelegate {
         };
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
+        let file_icon_path = FileIcons::get_icon(Path::new(&file_name), cx);
 
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .end_slot::<AnyElement>(Some(icon))
+                .when_some(file_icon_path, |then, icon| {
+                    then.start_slot(Icon::from_path(icon))
+                })
+                .end_slot::<AnyElement>(history_icon)
                 .inset(true)
                 .selected(selected)
                 .child(
