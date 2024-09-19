@@ -31,7 +31,7 @@ use gpui::{
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -41,7 +41,7 @@ use smol::future::FutureExt;
 use std::{
     cmp,
     future::{self, Future},
-    mem,
+    iter, mem,
     ops::{Range, RangeInclusive},
     pin::Pin,
     sync::Arc,
@@ -85,7 +85,7 @@ pub struct InlineAssistant {
             async_watch::Receiver<AssistStatus>,
         ),
     >,
-    confirmed_assists: HashMap<InlineAssistId, Model<Codegen>>,
+    confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
@@ -232,7 +232,7 @@ impl InlineAssistant {
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
             let codegen = cx.new_model(|cx| {
-                ParallelCodegen::new(
+                Codegen::new(
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     None,
@@ -338,7 +338,7 @@ impl InlineAssistant {
         }
 
         let codegen = cx.new_model(|cx| {
-            ParallelCodegen::new(
+            Codegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
                 initial_transaction_id,
@@ -1359,7 +1359,7 @@ struct PromptEditor {
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
-    codegen: Model<ParallelCodegen>,
+    codegen: Model<Codegen>,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
     pending_token_count: Task<Result<()>>,
@@ -1573,7 +1573,7 @@ impl PromptEditor {
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Model<MultiBuffer>,
-        codegen: Model<ParallelCodegen>,
+        codegen: Model<Codegen>,
         parent_editor: &View<Editor>,
         assistant_panel: Option<&View<AssistantPanel>>,
         workspace: Option<WeakView<Workspace>>,
@@ -1749,7 +1749,7 @@ impl PromptEditor {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<ParallelCodegen>, cx: &mut ViewContext<Self>) {
+    fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
         match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle => {
                 self.editor
@@ -2021,7 +2021,7 @@ struct InlineAssist {
     range: Range<Anchor>,
     editor: WeakView<Editor>,
     decorations: Option<InlineAssistDecorations>,
-    codegen: Model<ParallelCodegen>,
+    codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
     include_context: bool,
@@ -2038,7 +2038,7 @@ impl InlineAssist {
         prompt_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
-        codegen: Model<ParallelCodegen>,
+        codegen: Model<Codegen>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Self {
@@ -2181,13 +2181,18 @@ pub enum CodegenEvent {
     Undone,
 }
 
-pub struct ParallelCodegen {
-    alternatives: Vec<Model<Codegen>>,
+pub struct Codegen {
+    alternatives: Vec<Model<CodegenAlternative>>,
     active_alternative: usize,
     subscriptions: Vec<Subscription>,
+    buffer: Model<MultiBuffer>,
+    range: Range<Anchor>,
+    initial_transaction_id: Option<TransactionId>,
+    telemetry: Option<Arc<Telemetry>>,
+    builder: Arc<PromptBuilder>,
 }
 
-impl ParallelCodegen {
+impl Codegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
@@ -2197,7 +2202,7 @@ impl ParallelCodegen {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let codegen = cx.new_model(|cx| {
-            Codegen::new(
+            CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 initial_transaction_id,
@@ -2210,6 +2215,11 @@ impl ParallelCodegen {
             alternatives: vec![codegen],
             active_alternative: 0,
             subscriptions: Vec::new(),
+            buffer,
+            range,
+            initial_transaction_id,
+            telemetry,
+            builder,
         };
         this.activate(0, cx);
         this
@@ -2224,7 +2234,7 @@ impl ParallelCodegen {
             .push(cx.subscribe(&codegen, |_, _, event, cx| cx.emit(*event)));
     }
 
-    fn active_codegen(&self) -> &Model<Codegen> {
+    fn active_codegen(&self) -> &Model<CodegenAlternative> {
         &self.alternatives[self.active_alternative]
     }
 
@@ -2253,16 +2263,43 @@ impl ParallelCodegen {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        for codegen in &self.alternatives {
-            codegen.update(cx, |codegen, cx| {
-                codegen.start(
+        let alternative_models = LanguageModelRegistry::read_global(cx)
+            .inline_alternative_models()
+            .to_vec();
+
+        self.alternatives.truncate(1);
+        for _ in 0..alternative_models.len() {
+            self.alternatives.push(cx.new_model(|cx| {
+                CodegenAlternative::new(
+                    self.buffer.clone(),
+                    self.range.clone(),
+                    self.initial_transaction_id,
+                    self.telemetry.clone(),
+                    self.builder.clone(),
+                    cx,
+                )
+            }));
+        }
+
+        let primary_model = LanguageModelRegistry::read_global(cx)
+            .active_model()
+            .context("no active model")?;
+
+        for (model, alternative) in iter::once(primary_model)
+            .chain(alternative_models)
+            .zip(&self.alternatives)
+        {
+            alternative.update(cx, |alternative, cx| {
+                alternative.start(
                     edit_range.clone(),
                     user_prompt.clone(),
                     assistant_panel_context.clone(),
+                    model.clone(),
                     cx,
                 )
             })?;
         }
+
         Ok(())
     }
 
@@ -2317,9 +2354,9 @@ impl ParallelCodegen {
     }
 }
 
-impl EventEmitter<CodegenEvent> for ParallelCodegen {}
+impl EventEmitter<CodegenEvent> for Codegen {}
 
-pub struct Codegen {
+pub struct CodegenAlternative {
     buffer: Model<MultiBuffer>,
     old_buffer: Model<Buffer>,
     snapshot: MultiBufferSnapshot,
@@ -2356,9 +2393,9 @@ impl Diff {
     }
 }
 
-impl EventEmitter<CodegenEvent> for Codegen {}
+impl EventEmitter<CodegenEvent> for CodegenAlternative {}
 
-impl Codegen {
+impl CodegenAlternative {
     pub fn new(
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
@@ -2484,12 +2521,9 @@ impl Codegen {
         edit_range: Range<Anchor>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
+        model: Arc<dyn LanguageModel>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let model = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .context("no active model")?;
-
         if let Some(transformation_transaction_id) = self.transformation_transaction_id.take() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.undo_transaction(transformation_transaction_id, cx);
@@ -2832,7 +2866,7 @@ impl Codegen {
     fn apply_edits(
         &mut self,
         edits: impl IntoIterator<Item = (Range<Anchor>, String)>,
-        cx: &mut ModelContext<Codegen>,
+        cx: &mut ModelContext<CodegenAlternative>,
     ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
             // Avoid grouping assistant edits with user edits.
@@ -3208,7 +3242,7 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            Codegen::new(
+            CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 None,
@@ -3280,7 +3314,7 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            Codegen::new(
+            CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 None,
@@ -3355,7 +3389,7 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            Codegen::new(
+            CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 None,
@@ -3429,7 +3463,7 @@ mod tests {
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let codegen = cx.new_model(|cx| {
-            Codegen::new(
+            CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 None,
