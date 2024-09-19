@@ -308,7 +308,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     // Incorporating a set of remote ops emits a single edited event,
     // followed by a dirty changed event.
     buffer2.update(cx, |buffer, cx| {
-        buffer.apply_ops(buffer1_ops.lock().drain(..), cx).unwrap();
+        buffer.apply_ops(buffer1_ops.lock().drain(..), cx);
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
@@ -332,7 +332,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     // Incorporating the remote ops again emits a single edited event,
     // followed by a dirty changed event.
     buffer2.update(cx, |buffer, cx| {
-        buffer.apply_ops(buffer1_ops.lock().drain(..), cx).unwrap();
+        buffer.apply_ops(buffer1_ops.lock().drain(..), cx);
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
@@ -2274,13 +2274,11 @@ fn test_serialization(cx: &mut gpui::AppContext) {
         .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new_model(|cx| {
         let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
-        buffer
-            .apply_ops(
-                ops.into_iter()
-                    .map(|op| proto::deserialize_operation(op).unwrap()),
-                cx,
-            )
-            .unwrap();
+        buffer.apply_ops(
+            ops.into_iter()
+                .map(|op| proto::deserialize_operation(op).unwrap()),
+            cx,
+        );
         buffer
     });
     assert_eq!(buffer2.read(cx).text(), "abcDF");
@@ -2401,13 +2399,11 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer =
                 Buffer::from_proto(i as ReplicaId, Capability::ReadWrite, state, None).unwrap();
-            buffer
-                .apply_ops(
-                    ops.into_iter()
-                        .map(|op| proto::deserialize_operation(op).unwrap()),
-                    cx,
-                )
-                .unwrap();
+            buffer.apply_ops(
+                ops.into_iter()
+                    .map(|op| proto::deserialize_operation(op).unwrap()),
+                cx,
+            );
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
@@ -2523,14 +2519,12 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                         None,
                     )
                     .unwrap();
-                    new_buffer
-                        .apply_ops(
-                            old_buffer_ops
-                                .into_iter()
-                                .map(|op| deserialize_operation(op).unwrap()),
-                            cx,
-                        )
-                        .unwrap();
+                    new_buffer.apply_ops(
+                        old_buffer_ops
+                            .into_iter()
+                            .map(|op| deserialize_operation(op).unwrap()),
+                        cx,
+                    );
                     log::info!(
                         "New replica {} text: {:?}",
                         new_buffer.replica_id(),
@@ -2570,7 +2564,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                                 ops
                             );
                             new_buffer.update(cx, |new_buffer, cx| {
-                                new_buffer.apply_ops(ops, cx).unwrap();
+                                new_buffer.apply_ops(ops, cx);
                             });
                         }
                     }
@@ -2598,7 +2592,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                         ops.len(),
                         ops
                     );
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx).unwrap());
+                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
                 }
             }
             _ => {}

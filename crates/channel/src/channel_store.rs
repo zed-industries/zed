@@ -1007,7 +1007,7 @@ impl ChannelStore {
                                                 .into_iter()
                                                 .map(language::proto::deserialize_operation)
                                                 .collect::<Result<Vec<_>>>()?;
-                                        buffer.apply_ops(incoming_operations, cx)?;
+                                        buffer.apply_ops(incoming_operations, cx);
                                         anyhow::Ok(outgoing_operations)
                                     })
                                     .log_err();

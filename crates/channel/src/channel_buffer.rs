@@ -66,7 +66,7 @@ impl ChannelBuffer {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
-        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
+        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -151,7 +151,7 @@ impl ChannelBuffer {
             cx.notify();
             this.buffer
                 .update(cx, |buffer, cx| buffer.apply_ops(ops, cx))
-        })??;
+        })?;
 
         Ok(())
     }
