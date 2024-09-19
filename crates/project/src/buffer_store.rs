@@ -644,7 +644,7 @@ impl BufferStore {
             }
             hash_map::Entry::Occupied(mut entry) => {
                 if let OpenBuffer::Operations(operations) = entry.get_mut() {
-                    buffer.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx))?;
+                    buffer.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx));
                 } else if entry.get().upgrade().is_some() {
                     if is_remote {
                         return Ok(());
@@ -1051,12 +1051,12 @@ impl BufferStore {
             match this.opened_buffers.entry(buffer_id) {
                 hash_map::Entry::Occupied(mut e) => match e.get_mut() {
                     OpenBuffer::Strong(buffer) => {
-                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
                     }
                     OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
                     OpenBuffer::Weak(buffer) => {
                         if let Some(buffer) = buffer.upgrade() {
-                            buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                            buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
                         }
                     }
                 },
@@ -1217,7 +1217,8 @@ impl BufferStore {
                         .into_iter()
                         .map(language::proto::deserialize_operation)
                         .collect::<Result<Vec<_>>>()?;
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))
+                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx));
+                    anyhow::Ok(())
                 });
 
                 if let Err(error) = result {
