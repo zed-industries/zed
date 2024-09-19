@@ -2404,7 +2404,7 @@ fn test_branch_and_merge(cx: &mut AppContext) {
 
     // Create a branch, which initially has the same state as the base buffer.
     let branch_buffer = base_buffer.update(cx, |buffer, cx| buffer.branch(cx));
-    assert_eq!(branch_buffer.read(cx).text(), base_buffer.read(cx).text());
+    assert_eq!(branch_buffer.read(cx).text(), "one\ntwo\nthree\n");
 
     // Edits to the branch are not applied to the base.
     branch_buffer.update(cx, |buffer, cx| {
@@ -2447,7 +2447,7 @@ fn test_branch_and_merge(cx: &mut AppContext) {
         "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
     );
 
-    // Merging applies all changes on the branch to the base.
+    // Merging the branch applies all of its changes to the base.
     base_buffer.update(cx, |buffer, cx| {
         buffer.merge(&branch_buffer, cx);
     });

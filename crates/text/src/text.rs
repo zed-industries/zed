@@ -13,6 +13,7 @@ mod undo_map;
 pub use anchor::*;
 use anyhow::{anyhow, Context as _, Result};
 pub use clock::ReplicaId;
+use clock::LOCAL_BRANCH_REPLICA_ID;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;
@@ -53,7 +54,7 @@ pub struct Buffer {
     history: History,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
-    pub lamport_clock: Arc<clock::AtomicLamport>,
+    pub lamport_clock: clock::Lamport,
     subscriptions: Topic,
     edit_id_resolvers: HashMap<clock::Lamport, Vec<oneshot::Sender<()>>>,
     wait_for_version_txs: Vec<(clock::Global, oneshot::Sender<()>)>,
@@ -175,7 +176,7 @@ impl History {
         &mut self,
         start: clock::Global,
         now: Instant,
-        clock: &clock::AtomicLamport,
+        clock: &mut clock::Lamport,
     ) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
@@ -660,7 +661,7 @@ impl Buffer {
         let mut fragments = SumTree::new(&None);
         let mut insertions = SumTree::default();
 
-        let lamport_clock = clock::AtomicLamport::new(replica_id);
+        let mut lamport_clock = clock::Lamport::new(replica_id);
         let mut version = clock::Global::new();
 
         let visible_text = history.base_text.clone();
@@ -721,7 +722,7 @@ impl Buffer {
             history: History::new(self.base_text().clone()),
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
-            lamport_clock: self.lamport_clock.clone(),
+            lamport_clock: clock::Lamport::new(LOCAL_BRANCH_REPLICA_ID),
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
             wait_for_version_txs: Default::default(),
@@ -1323,7 +1324,7 @@ impl Buffer {
 
     pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
         self.history
-            .start_transaction(self.version.clone(), now, &self.lamport_clock)
+            .start_transaction(self.version.clone(), now, &mut self.lamport_clock)
     }
 
     pub fn end_transaction(&mut self) -> Option<(TransactionId, clock::Global)> {

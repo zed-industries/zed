@@ -2,15 +2,14 @@ mod system_clock;
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::sync::atomic::AtomicU32;
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::Arc;
 use std::{
     cmp::{self, Ordering},
     fmt, iter,
 };
 
 pub use system_clock::*;
+
+pub const LOCAL_BRANCH_REPLICA_ID: u16 = u16::MAX;
 
 /// A unique identifier for each distributed node.
 pub type ReplicaId = u16;
@@ -26,15 +25,12 @@ pub struct Lamport {
     pub value: Seq,
 }
 
-/// A shareable version of a [`Lamport`] timestamp.
-pub struct AtomicLamport {
-    pub replica_id: ReplicaId,
-    pub value: AtomicU32,
-}
-
 /// A [vector clock](https://en.wikipedia.org/wiki/Vector_clock).
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
-pub struct Global(SmallVec<[u32; 8]>);
+pub struct Global {
+    values: SmallVec<[u32; 8]>,
+    local_branch_value: u32,
+}
 
 impl Global {
     pub fn new() -> Self {
@@ -42,41 +38,51 @@ impl Global {
     }
 
     pub fn get(&self, replica_id: ReplicaId) -> Seq {
-        self.0.get(replica_id as usize).copied().unwrap_or(0) as Seq
+        if replica_id == LOCAL_BRANCH_REPLICA_ID {
+            self.local_branch_value
+        } else {
+            self.values.get(replica_id as usize).copied().unwrap_or(0) as Seq
+        }
     }
 
     pub fn observe(&mut self, timestamp: Lamport) {
         if timestamp.value > 0 {
-            let new_len = timestamp.replica_id as usize + 1;
-            if new_len > self.0.len() {
-                self.0.resize(new_len, 0);
-            }
+            if timestamp.replica_id == LOCAL_BRANCH_REPLICA_ID {
+                self.local_branch_value = cmp::max(self.local_branch_value, timestamp.value);
+            } else {
+                let new_len = timestamp.replica_id as usize + 1;
+                if new_len > self.values.len() {
+                    self.values.resize(new_len, 0);
+                }
 
-            let entry = &mut self.0[timestamp.replica_id as usize];
-            *entry = cmp::max(*entry, timestamp.value);
+                let entry = &mut self.values[timestamp.replica_id as usize];
+                *entry = cmp::max(*entry, timestamp.value);
+            }
         }
     }
 
     pub fn join(&mut self, other: &Self) {
-        if other.0.len() > self.0.len() {
-            self.0.resize(other.0.len(), 0);
+        if other.values.len() > self.values.len() {
+            self.values.resize(other.values.len(), 0);
         }
 
-        for (left, right) in self.0.iter_mut().zip(&other.0) {
+        for (left, right) in self.values.iter_mut().zip(&other.values) {
             *left = cmp::max(*left, *right);
         }
+
+        self.local_branch_value = cmp::max(self.local_branch_value, other.local_branch_value);
     }
 
     pub fn meet(&mut self, other: &Self) {
-        if other.0.len() > self.0.len() {
-            self.0.resize(other.0.len(), 0);
+        if other.values.len() > self.values.len() {
+            self.values.resize(other.values.len(), 0);
         }
 
         let mut new_len = 0;
         for (ix, (left, right)) in self
-            .0
+            .values
             .iter_mut()
-            .zip(other.0.iter().chain(iter::repeat(&0)))
+            .zip(other.values.iter().chain(iter::repeat(&0)))
             .enumerate()
         {
             if *left == 0 {
@@ -89,7 +95,8 @@ impl Global {
                 new_len = ix + 1;
             }
         }
-        self.0.resize(new_len, 0);
+        self.values.resize(new_len, 0);
+        self.local_branch_value = cmp::min(self.local_branch_value, other.local_branch_value);
     }
 
     pub fn observed(&self, timestamp: Lamport) -> bool {
@@ -97,34 +104,44 @@ impl Global {
     }
 
     pub fn observed_any(&self, other: &Self) -> bool {
-        self.0
+        self.values
             .iter()
-            .zip(other.0.iter())
+            .zip(other.values.iter())
             .any(|(left, right)| *right > 0 && left >= right)
+            || (other.local_branch_value > 0 && self.local_branch_value >= other.local_branch_value)
     }
 
     pub fn observed_all(&self, other: &Self) -> bool {
-        let mut rhs = other.0.iter();
-        self.0.iter().all(|left| match rhs.next() {
+        let mut rhs = other.values.iter();
+        self.values.iter().all(|left| match rhs.next() {
             Some(right) => left >= right,
             None => true,
         }) && rhs.next().is_none()
+            && self.local_branch_value >= other.local_branch_value
     }
 
     pub fn changed_since(&self, other: &Self) -> bool {
-        self.0.len() > other.0.len()
+        self.values.len() > other.values.len()
             || self
-                .0
+                .values
                 .iter()
-                .zip(other.0.iter())
+                .zip(other.values.iter())
                 .any(|(left, right)| left > right)
+            || self.local_branch_value > other.local_branch_value
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Lamport> + '_ {
-        self.0.iter().enumerate().map(|(replica_id, seq)| Lamport {
-            replica_id: replica_id as ReplicaId,
-            value: *seq,
-        })
+        self.values
+            .iter()
+            .enumerate()
+            .map(|(replica_id, seq)| Lamport {
+                replica_id: replica_id as ReplicaId,
+                value: *seq,
+            })
+            .chain((self.local_branch_value > 0).then_some(Lamport {
+                replica_id: LOCAL_BRANCH_REPLICA_ID,
+                value: self.local_branch_value,
+            }))
     }
 }
 
@@ -201,30 +218,9 @@ impl fmt::Debug for Global {
             }
             write!(f, "{}: {}", timestamp.replica_id, timestamp.value)?;
         }
-        write!(f, "}}")
-    }
-}
-
-impl AtomicLamport {
-    pub fn new(replica_id: ReplicaId) -> Arc<Self> {
-        Arc::new(Self {
-            value: AtomicU32::new(1),
-            replica_id,
-        })
-    }
-
-    pub fn tick(&self) -> Lamport {
-        Lamport {
-            replica_id: self.replica_id,
-            value: self.value.fetch_add(1, SeqCst),
+        if self.local_branch_value > 0 {
+            write!(f, "<branch>: {}", self.local_branch_value)?;
         }
-    }
-
-    pub fn observe(&self, timestamp: Lamport) {
-        self.value
-            .fetch_update(SeqCst, SeqCst, |value| {
-                Some(cmp::max(value, timestamp.value) + 1)
-            })
-            .unwrap();
+        write!(f, "}}")
     }
 }

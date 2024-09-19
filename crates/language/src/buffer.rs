@@ -815,8 +815,18 @@ impl Buffer {
         })
     }
 
-    pub fn merge(&self, branch: &Model<Self>, cx: &mut ModelContext<Self>) {
-        todo!()
+    pub fn merge(&mut self, branch: &Model<Self>, cx: &mut ModelContext<Self>) {
+        let branch = branch.read(cx);
+        let edits = branch
+            .edits_since::<usize>(&self.version)
+            .map(|edit| {
+                (
+                    edit.old,
+                    branch.text_for_range(edit.new).collect::<String>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.edit(edits, None, cx);
     }
 
     #[cfg(test)]
