@@ -343,17 +343,7 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
             }),
         )?))?;
 
-    let mut response = match client.send(request).await {
-        Ok(response) => response,
-        Err(error) => {
-            // Be ok with a timeout during preload of the model
-            // if err.is_timeout() {
-            //     return Ok(());
-            // } else {
-            return Err(error);
-            //}
-        }
-    };
+    let mut response = client.send(request).await?;
 
     if response.status().is_success() {
         Ok(())
