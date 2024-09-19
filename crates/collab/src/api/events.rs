@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
-    SettingEvent,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, Panic,
+    ReplEvent, SettingEvent,
 };
 use uuid::Uuid;
 
@@ -296,10 +296,11 @@ pub async fn post_panic(
         version = %panic.app_version,
         os_name = %panic.os_name,
         os_version = %panic.os_version.clone().unwrap_or_default(),
-        installation_id = %panic.installation_id.unwrap_or_default(),
+        installation_id = %panic.installation_id.clone().unwrap_or_default(),
         description = %panic.payload,
         backtrace = %panic.backtrace.join("\n"),
-        "panic report");
+        "panic report"
+    );
 
     let backtrace = if panic.backtrace.len() > 25 {
         let total = panic.backtrace.len();
@@ -317,6 +318,11 @@ pub async fn post_panic(
     } else {
         panic.backtrace.join("\n")
     };
+
+    if !report_to_slack(&panic) {
+        return Ok(());
+    }
+
     let backtrace_with_summary = panic.payload + "\n" + &backtrace;
 
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
@@ -355,6 +361,23 @@ pub async fn post_panic(
     }
 
     Ok(())
+}
+
+fn report_to_slack(panic: &Panic) -> bool {
+    if panic.os_name == "Linux" {
+        if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
+            return false;
+        }
+
+        if panic
+            .payload
+            .contains("GPU has crashed, and no debug information is available")
+        {
+            return false;
+        }
+    }
+
+    true
 }
 
 pub async fn post_events(
