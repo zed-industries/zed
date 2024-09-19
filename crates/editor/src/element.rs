@@ -1047,7 +1047,7 @@ impl EditorElement {
                                         &[TextRun {
                                             len,
                                             font,
-                                            color: self.style.background,
+                                            color: cx.theme().colors().editor_background,
                                             background_color: None,
                                             strikethrough: None,
                                             underline: None,
