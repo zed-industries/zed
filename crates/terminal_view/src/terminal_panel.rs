@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId};
 use terminal::{
-    terminal_settings::{RightSideButtons, TerminalDockPosition, TerminalSettings},
+    terminal_settings::{TerminalDockPosition, TerminalSettings},
     Terminal,
 };
 use ui::{
@@ -272,14 +272,10 @@ impl TerminalPanel {
                     false => right_children,
                 };
 
-                for item in setting.arrange_buttons() {
-                    right_children = match item {
-                        RightSideButtons::InlineAssist => inline(right_children),
-                        RightSideButtons::New => new(right_children),
-                        RightSideButtons::Minimize => minimize(right_children),
-                        RightSideButtons::Maximize => maximize(right_children),
-                    };
-                }
+                inline(right_children);
+                new(right_children);
+                minimize(right_children);
+                maximize(right_children)
 
                 let right_children = right_children.into_any_element().into();
                 (None, right_children)

@@ -698,8 +698,6 @@
     "inline_assist_button": true,
     // Whether to show the buttons above the terminal only when terminal in focus
     "require_focus_for_buttons": true,
-    // In which order the buttons above the terminal are
-    "arrange_buttons": ["InlineAssist", "New", "Minimize", "Maximize"],
     // Any key-value pairs added to this list will be added to the terminal's
     // environment. Use `:` to separate multiple values.
     "env": {

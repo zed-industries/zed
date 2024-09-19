@@ -42,38 +42,12 @@ pub struct TerminalSettings {
     pub spawn_task_option_button: bool,
     pub inline_assist_button: bool,
     pub require_focus_for_buttons: bool,
-    arrange_buttons: Vec<RightSideButtons>,
     pub dock: TerminalDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
-}
-
-impl TerminalSettings {
-    pub fn arrange_buttons(&self) -> Vec<RightSideButtons> {
-        let mut buttons: Vec<_> = self.arrange_buttons.clone();
-        for item in [
-            RightSideButtons::InlineAssist,
-            RightSideButtons::New,
-            RightSideButtons::Minimize,
-            RightSideButtons::Maximize,
-        ] {
-            if !buttons.contains(&item) {
-                buttons.push(item);
-            }
-        }
-        buttons
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub enum RightSideButtons {
-    InlineAssist,
-    New,
-    Minimize,
-    Maximize,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -204,10 +178,6 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: true
     pub require_focus_for_buttons: Option<bool>,
-    /// In which order the buttons above the terminal are
-    ///
-    /// Default: [InlineAssist, New, Minimize, Maximize]
-    pub arrange_buttons: Option<Vec<RightSideButtons>>,
     pub dock: Option<TerminalDockPosition>,
     /// Default width when the terminal is docked to the left or right.
     ///
