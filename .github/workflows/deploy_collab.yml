@@ -96,6 +96,11 @@ jobs:
       - buildjet-16vcpu-ubuntu-2204
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          clean: false
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
