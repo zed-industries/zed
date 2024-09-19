@@ -1217,9 +1217,8 @@ impl BufferStore {
                         .into_iter()
                         .map(language::proto::deserialize_operation)
                         .collect::<Result<Vec<_>>>()?;
-                    buffer.update(cx, |buffer, cx| {
-                        anyhow::Ok(buffer.apply_ops(operations, cx))
-                    })
+                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx));
+                    anyhow::Ok(())
                 });
 
                 if let Err(error) = result {
