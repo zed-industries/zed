@@ -41,7 +41,7 @@ use std::{
     env,
     fs::OpenOptions,
     io::{IsTerminal, Write},
-    path::{Path, PathBuf},
+    path::Path,
     process,
     sync::Arc,
 };
@@ -670,7 +670,7 @@ fn handle_open_request(
                 request
                     .open_paths
                     .into_iter()
-                    .map(|path| PathBuf::from(path.path))
+                    .map(|path| path.path)
                     .collect::<Vec<_>>(),
                 app_state,
                 workspace::OpenOptions::default(),
