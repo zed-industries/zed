@@ -81,6 +81,4 @@
     (#set! language "css")
 )
 
-
-; Downstream TODOs: Style highlighting for `style:background="red"` and `style="background: red"` strings
 ; Downstream TODOs: Style @component comments as markdown
