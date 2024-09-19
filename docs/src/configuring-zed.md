@@ -602,7 +602,7 @@ While other options may be changed at a runtime and should be placed under `sett
   "yaml-language-server": {
     "settings": {
       "yaml": {
-        "keyOrdering": true" // Enforces alphabetical ordering of keys in maps
+        "keyOrdering": true // Enforces alphabetical ordering of keys in maps
       }
     }
   }
