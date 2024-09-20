@@ -318,9 +318,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
-        self.hidden_windows.read().iter().for_each(|handle| unsafe {
+        let mut state = self.hidden_windows.write();
+        state.iter().for_each(|handle| unsafe {
             ShowWindow(*handle, SW_SHOW).ok().log_err();
         });
+        state.clear();
     }
 
     fn hide(&self) {
