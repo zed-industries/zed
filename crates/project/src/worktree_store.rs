@@ -36,15 +36,14 @@ struct MatchingEntry {
     respond: oneshot::Sender<ProjectPath>,
 }
 
-
-enum WorktreeStoreState{
-    Local{
+enum WorktreeStoreState {
+    Local {
         fs: Arc<dyn Fs>,
     },
-    Remote{
+    Remote {
         dev_server_project_id: Option<DevServerProjectId>,
         upstream_client: AnyProtoClient,
-        upstream_project_id: u64
+        upstream_project_id: u64,
     },
 }
 
@@ -57,7 +56,7 @@ pub struct WorktreeStore {
     #[allow(clippy::type_complexity)]
     loading_worktrees:
         HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
-    state: WorktreeStoreState
+    state: WorktreeStoreState,
 }
 
 pub enum WorktreeStoreEvent {
@@ -78,10 +77,7 @@ impl WorktreeStore {
         client.add_model_request_handler(Self::handle_expand_project_entry);
     }
 
-    pub fn local(
-        retain_worktrees: bool,
-        fs: Arc<dyn Fs>,
-    ) -> Self {
+    pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
         Self {
             next_entry_id: Default::default(),
             loading_worktrees: Default::default(),
@@ -89,10 +85,10 @@ impl WorktreeStore {
             worktrees: Vec::new(),
             worktrees_reordered: false,
             retain_worktrees,
-            state: WorktreeStoreState::Local {fs}
+            state: WorktreeStoreState::Local { fs },
         }
     }
-    
+
     pub fn remote(
         retain_worktrees: bool,
         upstream_client: AnyProtoClient,
@@ -106,7 +102,11 @@ impl WorktreeStore {
             worktrees: Vec::new(),
             worktrees_reordered: false,
             retain_worktrees,
-            state: WorktreeStoreState::Remote {upstream_client, upstream_project_id, dev_server_project_id}
+            state: WorktreeStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+                dev_server_project_id,
+            },
         }
     }
 
@@ -178,16 +178,25 @@ impl WorktreeStore {
         let path: Arc<Path> = abs_path.as_ref().into();
         if !self.loading_worktrees.contains_key(&path) {
             let task = match &self.state {
-                WorktreeStoreState::Remote{upstream_client, dev_server_project_id, ..} => {
-                if let Some(dev_server_project_id) = dev_server_project_id {
-                    self.create_dev_server_worktree(upstream_client.clone(), *dev_server_project_id, abs_path, cx)
-                } else if upstream_client.goes_via_collab() {
-                    Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
-                } else {
-                    self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
+                WorktreeStoreState::Remote {
+                    upstream_client,
+                    dev_server_project_id,
+                    ..
+                } => {
+                    if let Some(dev_server_project_id) = dev_server_project_id {
+                        self.create_dev_server_worktree(
+                            upstream_client.clone(),
+                            *dev_server_project_id,
+                            abs_path,
+                            cx,
+                        )
+                    } else if upstream_client.is_via_collab() {
+                        Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
+                    } else {
+                        self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
+                    }
                 }
-                },
-                WorktreeStoreState::Local{fs} => {
+                WorktreeStoreState::Local { fs } => {
                     self.create_local_worktree(fs.clone(), abs_path, visible, cx)
                 }
             };
@@ -396,11 +405,15 @@ impl WorktreeStore {
     pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
         self.worktrees_reordered = worktrees_reordered;
     }
-    
+
     fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
         match &self.state {
-            WorktreeStoreState::Remote{upstream_client, upstream_project_id, ..} => Some((upstream_client.clone(), *upstream_project_id)),
-            WorktreeStoreState::Local{..} => None
+            WorktreeStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+                ..
+            } => Some((upstream_client.clone(), *upstream_project_id)),
+            WorktreeStoreState::Local { .. } => None,
         }
     }
 
