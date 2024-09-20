@@ -5,12 +5,7 @@ use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvi
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
-use std::{
-    ops::{AddAssign, Range},
-    path::Path,
-    sync::Arc,
-    time::Duration,
-};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 use text::{ToOffset, ToPoint};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
