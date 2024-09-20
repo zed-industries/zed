@@ -31,7 +31,7 @@ use std::{
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathWithPosition, post_inc, ResultExt};
-use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
+use workspace::{item::PreviewTabsSettings, notifications::NotifyResultExt, ModalView, Workspace};
 
 actions!(file_finder, [SelectPrev]);
 
@@ -1011,7 +1011,7 @@ impl PickerDelegate for FileFinderDelegate {
                 let finder = self.file_finder.clone();
 
                 cx.spawn(|_, mut cx| async move {
-                    let item = open_task.await.log_err()?;
+                    let item = open_task.await.notify_async_err(&mut cx)?;
                     if let Some(row) = row {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
