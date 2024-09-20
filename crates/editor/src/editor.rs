@@ -1358,6 +1358,7 @@ impl CompletionsMenu {
 }
 
 struct AvailableCodeAction {
+    excerpt_id: ExcerptId,
     action: CodeAction,
     provider: Arc<dyn CodeActionProvider>,
 }
@@ -1398,6 +1399,7 @@ impl CodeActionContents {
             })
             .chain(self.actions.iter().flat_map(|actions| {
                 actions.iter().map(|available| CodeActionsItem::CodeAction {
+                    excerpt_id: available.excerpt_id,
                     action: available.action.clone(),
                     provider: available.provider.clone(),
                 })
@@ -1415,6 +1417,7 @@ impl CodeActionContents {
                 } else {
                     actions.get(index - tasks.templates.len()).map(|available| {
                         CodeActionsItem::CodeAction {
+                            excerpt_id: available.excerpt_id,
                             action: available.action.clone(),
                             provider: available.provider.clone(),
                         }
@@ -1430,6 +1433,7 @@ impl CodeActionContents {
                 actions
                     .get(index)
                     .map(|available| CodeActionsItem::CodeAction {
+                        excerpt_id: available.excerpt_id,
                         action: available.action.clone(),
                         provider: available.provider.clone(),
                     })
@@ -1444,6 +1448,7 @@ impl CodeActionContents {
 enum CodeActionsItem {
     Task(TaskSourceKind, ResolvedTask),
     CodeAction {
+        excerpt_id: ExcerptId,
         action: CodeAction,
         provider: Arc<dyn CodeActionProvider>,
     },
@@ -4754,8 +4759,13 @@ impl Editor {
                     Some(Task::ready(Ok(())))
                 })
             }
-            CodeActionsItem::CodeAction { action, provider } => {
-                let apply_code_action = provider.apply_code_action(buffer, action, true, cx);
+            CodeActionsItem::CodeAction {
+                excerpt_id,
+                action,
+                provider,
+            } => {
+                let apply_code_action =
+                    provider.apply_code_action(buffer, action, excerpt_id, true, cx);
                 let workspace = workspace.downgrade();
                 Some(cx.spawn(|editor, cx| async move {
                     let project_transaction = apply_code_action.await?;
@@ -4899,6 +4909,7 @@ impl Editor {
                 if let Some(provider_actions) = provider_actions.log_err() {
                     actions.extend(provider_actions.into_iter().map(|action| {
                         AvailableCodeAction {
+                            excerpt_id: newest_selection.start.excerpt_id,
                             action,
                             provider: provider.clone(),
                         }
@@ -12556,6 +12567,7 @@ pub trait CodeActionProvider {
         &self,
         buffer_handle: Model<Buffer>,
         action: CodeAction,
+        excerpt_id: ExcerptId,
         push_to_history: bool,
         cx: &mut WindowContext,
     ) -> Task<Result<ProjectTransaction>>;
@@ -12575,6 +12587,7 @@ impl CodeActionProvider for Model<Project> {
         &self,
         buffer_handle: Model<Buffer>,
         action: CodeAction,
+        _excerpt_id: ExcerptId,
         push_to_history: bool,
         cx: &mut WindowContext,
     ) -> Task<Result<ProjectTransaction>> {
