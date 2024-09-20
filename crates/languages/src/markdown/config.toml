@@ -1,6 +1,6 @@
 name = "Markdown"
 grammar = "markdown"
-path_suffixes = ["md", "mdx", "mdwn", "markdown"]
+path_suffixes = ["md", "mdx", "mdwn", "markdown", "MD"]
 word_characters = ["-"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
