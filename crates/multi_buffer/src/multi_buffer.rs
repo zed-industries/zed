@@ -5,7 +5,6 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use git::diff::DiffHunk;
 use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext};
 use itertools::Itertools;
 use language::{
@@ -108,6 +107,19 @@ pub enum Event {
     Discarded,
     DirtyChanged,
     DiagnosticsUpdated,
+}
+
+/// A diff hunk, representing a range of consequent lines in a multibuffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiBufferDiffHunk {
+    /// The row range in the multibuffer where this diff hunk appears.
+    pub row_range: Range<MultiBufferRow>,
+    /// The buffer ID that this hunk belongs to.
+    pub buffer_id: BufferId,
+    /// The range of the underlying buffer that this hunk corresponds to.
+    pub buffer_range: Range<text::Anchor>,
+    /// The range within the buffer's diff base that this hunk corresponds to.
+    pub diff_base_byte_range: Range<usize>,
 }
 
 pub type MultiBufferPoint = Point;
@@ -1711,7 +1723,7 @@ impl MultiBuffer {
             }
 
             //
-            language::BufferEvent::Operation(_) => return,
+            language::BufferEvent::Operation { .. } => return,
         });
     }
 
@@ -3561,7 +3573,7 @@ impl MultiBufferSnapshot {
     pub fn git_diff_hunks_in_range_rev(
         &self,
         row_range: Range<MultiBufferRow>,
-    ) -> impl Iterator<Item = DiffHunk<MultiBufferRow>> + '_ {
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let mut cursor = self.excerpts.cursor::<Point>(&());
 
         cursor.seek(&Point::new(row_range.end.0, 0), Bias::Left, &());
@@ -3599,22 +3611,19 @@ impl MultiBufferSnapshot {
                 .git_diff_hunks_intersecting_range_rev(buffer_start..buffer_end)
                 .map(move |hunk| {
                     let start = multibuffer_start.row
-                        + hunk
-                            .associated_range
-                            .start
-                            .saturating_sub(excerpt_start_point.row);
+                        + hunk.row_range.start.saturating_sub(excerpt_start_point.row);
                     let end = multibuffer_start.row
                         + hunk
-                            .associated_range
+                            .row_range
                             .end
                             .min(excerpt_end_point.row + 1)
                             .saturating_sub(excerpt_start_point.row);
 
-                    DiffHunk {
-                        associated_range: MultiBufferRow(start)..MultiBufferRow(end),
+                    MultiBufferDiffHunk {
+                        row_range: MultiBufferRow(start)..MultiBufferRow(end),
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         buffer_range: hunk.buffer_range.clone(),
-                        buffer_id: hunk.buffer_id,
+                        buffer_id: excerpt.buffer_id,
                     }
                 });
 
@@ -3628,7 +3637,7 @@ impl MultiBufferSnapshot {
     pub fn git_diff_hunks_in_range(
         &self,
         row_range: Range<MultiBufferRow>,
-    ) -> impl Iterator<Item = DiffHunk<MultiBufferRow>> + '_ {
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let mut cursor = self.excerpts.cursor::<Point>(&());
 
         cursor.seek(&Point::new(row_range.start.0, 0), Bias::Left, &());
@@ -3673,23 +3682,20 @@ impl MultiBufferSnapshot {
                         MultiBufferRow(0)..MultiBufferRow(1)
                     } else {
                         let start = multibuffer_start.row
-                            + hunk
-                                .associated_range
-                                .start
-                                .saturating_sub(excerpt_rows.start);
+                            + hunk.row_range.start.saturating_sub(excerpt_rows.start);
                         let end = multibuffer_start.row
                             + hunk
-                                .associated_range
+                                .row_range
                                 .end
                                 .min(excerpt_rows.end + 1)
                                 .saturating_sub(excerpt_rows.start);
                         MultiBufferRow(start)..MultiBufferRow(end)
                     };
-                    DiffHunk {
-                        associated_range: buffer_range,
+                    MultiBufferDiffHunk {
+                        row_range: buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         buffer_range: hunk.buffer_range.clone(),
-                        buffer_id: hunk.buffer_id,
+                        buffer_id: excerpt.buffer_id,
                     }
                 });
 
