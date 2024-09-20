@@ -12,8 +12,9 @@ use editor::{
         BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
-    Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
-    ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset as _,
+    ToPoint,
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
@@ -35,6 +36,7 @@ use language_model::{
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
+use project::{CodeAction, ProjectTransaction};
 use rope::Rope;
 use settings::{Settings, SettingsStore};
 use smol::future::FutureExt;
@@ -49,6 +51,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal_view::terminal_panel::TerminalPanel;
+use text::{OffsetRangeExt, ToOffset};
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -151,18 +154,29 @@ impl InlineAssistant {
     }
 
     fn handle_workspace_event(&mut self, event: &workspace::Event, cx: &mut WindowContext) {
-        // When the user manually saves an editor, automatically accepts all finished transformations.
-        if let workspace::Event::UserSavedItem { item, .. } = event {
-            if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx)) {
-                if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
-                    for assist_id in editor_assists.assist_ids.clone() {
-                        let assist = &self.assists[&assist_id];
-                        if let CodegenStatus::Done = &assist.codegen.read(cx).status {
-                            self.finish_assist(assist_id, false, cx)
+        match event {
+            workspace::Event::UserSavedItem { item, .. } => {
+                // When the user manually saves an editor, automatically accepts all finished transformations.
+                if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx)) {
+                    if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+                        for assist_id in editor_assists.assist_ids.clone() {
+                            let assist = &self.assists[&assist_id];
+                            if let CodegenStatus::Done = &assist.codegen.read(cx).status {
+                                self.finish_assist(assist_id, false, cx)
+                            }
                         }
                     }
                 }
             }
+            workspace::Event::ItemAdded { item } => {
+                if let Some(editor) = item.act_as::<Editor>(cx) {
+                    editor.update(cx, |editor, cx| {
+                        todo!();
+                        // editor.push_code_action_provider(Arc::new(AssistantCodeActionProvider), cx);
+                    });
+                }
+            }
+            _ => (),
         }
     }
 
@@ -3000,6 +3014,87 @@ where
                 return Poll::Ready(None);
             }
         }
+    }
+}
+
+struct AssistantCodeActionProvider {
+    editor: WeakView<Editor>,
+    assistant_panel: WeakView<AssistantPanel>,
+    workspace: WeakView<Workspace>,
+}
+
+impl CodeActionProvider for AssistantCodeActionProvider {
+    fn code_actions(
+        &self,
+        buffer: &Model<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        let snapshot = buffer.read(cx).snapshot();
+        let mut range = range.to_offset(&snapshot);
+        let mut has_diagnostics = false;
+        for diagnostic in snapshot.diagnostics_in_range::<_, usize>(range.clone(), false) {
+            range.start = cmp::min(range.start, diagnostic.range.start);
+            range.end = cmp::max(range.end, diagnostic.range.end);
+            has_diagnostics = true;
+        }
+        if has_diagnostics {
+            if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None) {
+                if let Some(symbol) = symbols_containing_start.last() {
+                    range.start = cmp::min(range.start, symbol.range.start.to_offset(&snapshot));
+                    range.end = cmp::max(range.end, symbol.range.end.to_offset(&snapshot));
+                }
+            }
+
+            if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None) {
+                if let Some(symbol) = symbols_containing_end.last() {
+                    range.start = cmp::min(range.start, symbol.range.start.to_offset(&snapshot));
+                    range.end = cmp::max(range.end, symbol.range.end.to_offset(&snapshot));
+                }
+            }
+
+            Task::ready(Ok(vec![CodeAction {
+                server_id: language::LanguageServerId(usize::MAX), // todo!("maybe LanguageServerId should be an enum")
+                range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
+                lsp_action: lsp::CodeAction {
+                    title: "Fix with AI".into(),
+                    ..Default::default()
+                },
+            }]))
+        } else {
+            Task::ready(Ok(Vec::new()))
+        }
+    }
+
+    fn apply_code_action(
+        &self,
+        _buffer_handle: Model<Buffer>,
+        action: CodeAction,
+        _push_to_history: bool,
+        cx: &mut WindowContext,
+    ) -> Task<Result<ProjectTransaction>> {
+        let editor = self.editor.clone();
+        let assistant_panel = self.assistant_panel.clone();
+        let workspace = self.workspace.clone();
+        cx.spawn(|mut cx| async move {
+            let editor = editor.upgrade().context("editor was released")?;
+
+            let assistant_panel = assistant_panel
+                .upgrade()
+                .context("assistant was released")?;
+            cx.update_global(|assistant: &mut InlineAssistant, cx| {
+                todo!();
+                // assistant.suggest_assist(
+                //     &editor,
+                //     action.range,
+                //     "Fix Diagnostics".into(),
+                //     workspace,
+                //     assistant_panel,
+                //     cx,
+                // );
+            })?;
+            Ok(ProjectTransaction::default())
+        })
     }
 }
 

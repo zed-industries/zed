@@ -565,7 +565,7 @@ pub struct Editor {
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
-    available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
+    available_code_actions: Option<(Location, Arc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
@@ -1357,10 +1357,15 @@ impl CompletionsMenu {
     }
 }
 
+struct AvailableCodeAction {
+    action: CodeAction,
+    provider: Arc<dyn CodeActionProvider>,
+}
+
 #[derive(Clone)]
 struct CodeActionContents {
     tasks: Option<Arc<ResolvedTasks>>,
-    actions: Option<Arc<[CodeAction]>>,
+    actions: Option<Arc<[AvailableCodeAction]>>,
 }
 
 impl CodeActionContents {
@@ -1392,9 +1397,10 @@ impl CodeActionContents {
                     .map(|(kind, task)| CodeActionsItem::Task(kind.clone(), task.clone()))
             })
             .chain(self.actions.iter().flat_map(|actions| {
-                actions
-                    .iter()
-                    .map(|action| CodeActionsItem::CodeAction(action.clone()))
+                actions.iter().map(|available| CodeActionsItem::CodeAction {
+                    action: available.action.clone(),
+                    provider: available.provider.clone(),
+                })
             }))
     }
     fn get(&self, index: usize) -> Option<CodeActionsItem> {
@@ -1407,10 +1413,12 @@ impl CodeActionContents {
                         .cloned()
                         .map(|(kind, task)| CodeActionsItem::Task(kind, task))
                 } else {
-                    actions
-                        .get(index - tasks.templates.len())
-                        .cloned()
-                        .map(CodeActionsItem::CodeAction)
+                    actions.get(index - tasks.templates.len()).map(|available| {
+                        CodeActionsItem::CodeAction {
+                            action: available.action.clone(),
+                            provider: available.provider.clone(),
+                        }
+                    })
                 }
             }
             (Some(tasks), None) => tasks
@@ -1418,7 +1426,14 @@ impl CodeActionContents {
                 .get(index)
                 .cloned()
                 .map(|(kind, task)| CodeActionsItem::Task(kind, task)),
-            (None, Some(actions)) => actions.get(index).cloned().map(CodeActionsItem::CodeAction),
+            (None, Some(actions)) => {
+                actions
+                    .get(index)
+                    .map(|available| CodeActionsItem::CodeAction {
+                        action: available.action.clone(),
+                        provider: available.provider.clone(),
+                    })
+            }
             (None, None) => None,
         }
     }
@@ -1428,7 +1443,10 @@ impl CodeActionContents {
 #[derive(Clone)]
 enum CodeActionsItem {
     Task(TaskSourceKind, ResolvedTask),
-    CodeAction(CodeAction),
+    CodeAction {
+        action: CodeAction,
+        provider: Arc<dyn CodeActionProvider>,
+    },
 }
 
 impl CodeActionsItem {
@@ -1439,14 +1457,14 @@ impl CodeActionsItem {
         Some(task)
     }
     fn as_code_action(&self) -> Option<&CodeAction> {
-        let Self::CodeAction(action) = self else {
+        let Self::CodeAction { action, .. } = self else {
             return None;
         };
         Some(action)
     }
     fn label(&self) -> String {
         match self {
-            Self::CodeAction(action) => action.lsp_action.title.clone(),
+            Self::CodeAction { action, .. } => action.lsp_action.title.clone(),
             Self::Task(_, task) => task.resolved_label.clone(),
         }
     }
@@ -1585,7 +1603,9 @@ impl CodeActionsMenu {
                 .enumerate()
                 .max_by_key(|(_, action)| match action {
                     CodeActionsItem::Task(_, task) => task.resolved_label.chars().count(),
-                    CodeActionsItem::CodeAction(action) => action.lsp_action.title.chars().count(),
+                    CodeActionsItem::CodeAction { action, .. } => {
+                        action.lsp_action.title.chars().count()
+                    }
                 })
                 .map(|(ix, _)| ix),
         )
@@ -4734,17 +4754,11 @@ impl Editor {
                     Some(Task::ready(Ok(())))
                 })
             }
-            CodeActionsItem::CodeAction(action) => {
-                let apply_code_actions = workspace
-                    .read(cx)
-                    .project()
-                    .clone()
-                    .update(cx, |project, cx| {
-                        project.apply_code_action(buffer, action, true, cx)
-                    });
+            CodeActionsItem::CodeAction { action, provider } => {
+                let apply_code_action = provider.apply_code_action(buffer, action, true, cx);
                 let workspace = workspace.downgrade();
                 Some(cx.spawn(|editor, cx| async move {
-                    let project_transaction = apply_code_actions.await?;
+                    let project_transaction = apply_code_action.await?;
                     Self::open_project_transaction(
                         &editor,
                         workspace,
@@ -4845,6 +4859,15 @@ impl Editor {
         Ok(())
     }
 
+    pub fn push_code_action_provider(
+        &mut self,
+        provider: Arc<dyn CodeActionProvider>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.code_action_providers.push(provider);
+        self.refresh_code_actions(cx);
+    }
+
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
@@ -4859,17 +4882,27 @@ impl Editor {
                 .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let tasks = this.update(&mut cx, |this, cx| {
-                this.code_action_providers
+            let (providers, tasks) = this.update(&mut cx, |this, cx| {
+                let providers = this.code_action_providers.clone();
+                let tasks = this
+                    .code_action_providers
                     .iter()
                     .map(|provider| provider.code_actions(&start_buffer, start..end, cx))
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (providers, tasks)
             })?;
 
             let mut actions = Vec::new();
-            for provider_actions in future::join_all(tasks).await {
-                if let Some(mut provider_actions) = provider_actions.log_err() {
-                    actions.append(&mut provider_actions);
+            for (provider, provider_actions) in
+                providers.into_iter().zip(future::join_all(tasks).await)
+            {
+                if let Some(provider_actions) = provider_actions.log_err() {
+                    actions.extend(provider_actions.into_iter().map(|action| {
+                        AvailableCodeAction {
+                            action,
+                            provider: provider.clone(),
+                        }
+                    }));
                 }
             }
 
@@ -12516,7 +12549,7 @@ pub trait CodeActionProvider {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<CodeAction>>>;
 
     fn apply_code_action(
@@ -12524,7 +12557,7 @@ pub trait CodeActionProvider {
         buffer_handle: Model<Buffer>,
         action: CodeAction,
         push_to_history: bool,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<ProjectTransaction>>;
 }
 
@@ -12533,7 +12566,7 @@ impl CodeActionProvider for Model<Project> {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| project.code_actions(buffer, range, cx))
     }
@@ -12543,7 +12576,7 @@ impl CodeActionProvider for Model<Project> {
         buffer_handle: Model<Buffer>,
         action: CodeAction,
         push_to_history: bool,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<ProjectTransaction>> {
         self.update(cx, |project, cx| {
             project.apply_code_action(buffer_handle, action, push_to_history, cx)
