@@ -753,9 +753,9 @@ impl DirectWriteState {
         let total_bytes;
         let bitmap_format;
         let render_target_property;
-        let bitmap_width;
-        let bitmap_height;
         let bitmap_stride;
+        let bitmap_width = bitmap_size.width.0 as u32;
+        let bitmap_height = bitmap_size.height.0 as u32;
         let bitmap_dpi = 96.0;
         if params.is_emoji {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
@@ -764,16 +764,12 @@ impl DirectWriteState {
                 DXGI_FORMAT_B8G8R8A8_UNORM,
                 D2D1_ALPHA_MODE_PREMULTIPLIED,
             );
-            bitmap_width = bitmap_size.width.0 as u32;
-            bitmap_height = bitmap_size.height.0 as u32;
             bitmap_stride = bitmap_size.width.0 as u32 * 4;
         } else {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
             bitmap_format = &GUID_WICPixelFormat8bppAlpha;
             render_target_property =
                 get_render_target_property(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_STRAIGHT);
-            bitmap_width = bitmap_size.width.0 as u32;
-            bitmap_height = bitmap_size.height.0 as u32;
             bitmap_stride = bitmap_size.width.0 as u32;
         }
 
