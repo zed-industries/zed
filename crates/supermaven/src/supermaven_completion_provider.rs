@@ -86,26 +86,10 @@ fn completion_state_from_diff(
         }
     }
 
-    // println!(
-    //     "=> 2 {},{}",
-    //     completion_text.is_char_boundary(compl_utf8_ix),
-    //     completion_text.is_char_boundary(completion_text.len())
-    // );
     if buffer_ix_converter.utf8_ix == buffer_ix_converter.text.len()
         && compl_ix_converter.utf8_ix < completion_text.len()
     {
         // there is leftover completion text, so drop it as an inlay.
-        // let start = clip_offset(completion_text, compl_utf8_ix, text::Bias::Right);
-        // let end = clip_offset(completion_text, completion_text.len(), text::Bias::Left);
-        // println!(
-        //     "   => diff {}<->{}, {}<->{}",
-        //     compl_utf8_ix,
-        //     start,
-        //     completion_text.len(),
-        //     end
-        // );
-        // let start = compl_utf8_ix;
-        // let end = completion_text.len();
         inlays.push(InlayProposal::Suggestion(
             snapshot.anchor_after(offset),
             completion_text[compl_ix_converter.utf8_ix..completion_text.len()].into(),
