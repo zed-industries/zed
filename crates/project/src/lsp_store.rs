@@ -4475,7 +4475,7 @@ impl LspStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let name = LanguageServerName::from_proto(envelope.payload.name);
+        let server_name = LanguageServerName::from_proto(envelope.payload.name);
 
         let binary = envelope
             .payload
@@ -4494,6 +4494,14 @@ impl LspStore {
         let matcher: LanguageMatcher = serde_json::from_str(&language.matcher)?;
 
         this.update(&mut cx, |this, cx| {
+            let Some(worktree) = this
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+            else {
+                return Err(anyhow!("worktree not found"));
+            };
+
             this.languages
                 .register_language(language_name.clone(), None, matcher.clone(), {
                     let language_name = language_name.clone();
@@ -4513,28 +4521,20 @@ impl LspStore {
                 .spawn(this.languages.language_for_name(language_name.0.as_ref()))
                 .detach();
 
-            let adapter = Arc::new(SshLspAdapter::new(
-                name,
-                binary,
-                envelope.payload.initialization_options,
-                envelope.payload.code_action_kinds,
-            ));
-
-            this.languages
-                .register_lsp_adapter(language_name.clone(), adapter.clone());
-            let Some(worktree) = this
-                .worktree_store
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-            else {
-                return Err(anyhow!("worktree not found"));
-            };
-            this.start_language_server(
-                &worktree,
-                CachedLspAdapter::new(adapter),
-                language_name,
-                cx,
+            let adapter = this.languages.get_or_register_lsp_adapter(
+                language_name.clone(),
+                server_name.clone(),
+                || {
+                    Arc::new(SshLspAdapter::new(
+                        server_name,
+                        binary,
+                        envelope.payload.initialization_options,
+                        envelope.payload.code_action_kinds,
+                    ))
+                },
             );
+
+            this.start_language_server(&worktree, adapter, language_name, cx);
             Ok(())
         })??;
         Ok(proto::Ack {})

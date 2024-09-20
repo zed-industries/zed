@@ -326,13 +326,43 @@ impl LanguageRegistry {
         Some(load_lsp_adapter())
     }
 
-    pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
+    pub fn register_lsp_adapter(
+        &self,
+        language_name: LanguageName,
+        adapter: Arc<dyn LspAdapter>,
+    ) -> Arc<CachedLspAdapter> {
+        let cached = CachedLspAdapter::new(adapter);
         self.state
             .write()
             .lsp_adapters
             .entry(language_name)
             .or_default()
-            .push(CachedLspAdapter::new(adapter));
+            .push(cached.clone());
+        cached
+    }
+
+    pub fn get_or_register_lsp_adapter(
+        &self,
+        language_name: LanguageName,
+        server_name: LanguageServerName,
+        build_adapter: impl FnOnce() -> Arc<dyn LspAdapter> + 'static,
+    ) -> Arc<CachedLspAdapter> {
+        let registered = self
+            .state
+            .write()
+            .lsp_adapters
+            .entry(language_name.clone())
+            .or_default()
+            .iter()
+            .find(|cached_adapter| cached_adapter.name == server_name)
+            .cloned();
+
+        if let Some(found) = registered {
+            found
+        } else {
+            let adapter = build_adapter();
+            self.register_lsp_adapter(language_name, adapter)
+        }
     }
 
     /// Register a fake language server and adapter
