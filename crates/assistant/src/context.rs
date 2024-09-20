@@ -2181,7 +2181,7 @@ impl Context {
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

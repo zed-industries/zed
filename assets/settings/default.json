@@ -496,6 +496,11 @@
     // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
     "enable_preview_from_code_navigation": false
   },
+  // Settings related to the file finder.
+  "file_finder": {
+    // Whether to show file icons in the file finder.
+    "file_icons": true
+  },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
   "remove_trailing_whitespace_on_save": true,
@@ -1029,7 +1034,7 @@
   // environment variables.
   //
   // Examples:
-  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "socks5h://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
   "proxy": null,
   // Set to configure aliases for the command palette.

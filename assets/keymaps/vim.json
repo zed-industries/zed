@@ -124,7 +124,6 @@
       "g i": "vim::InsertAtPrevious",
       "g ,": "vim::ChangeListNewer",
       "g ;": "vim::ChangeListOlder",
-      "g q": "editor::Rewrap",
       "shift-h": "vim::WindowTop",
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",
@@ -240,6 +239,8 @@
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
       "\"": ["vim::PushOperator", "Register"],
+      "g q": ["vim::PushOperator", "Rewrap"],
+      "g w": ["vim::PushOperator", "Rewrap"],
       "q": "vim::ToggleRecord",
       "shift-q": "vim::ReplayLastRecording",
       "@": ["vim::PushOperator", "ReplayRegister"],
@@ -301,6 +302,7 @@
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
       "g c": "vim::ToggleComments",
+      "g q": "vim::Rewrap",
       "\"": ["vim::PushOperator", "Register"],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
@@ -426,6 +428,15 @@
     "bindings": {
       "g ~": "vim::CurrentLine",
       "~": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == gq",
+    "bindings": {
+      "g q": "vim::CurrentLine",
+      "q": "vim::CurrentLine",
+      "g w": "vim::CurrentLine",
+      "w": "vim::CurrentLine"
     }
   },
   {

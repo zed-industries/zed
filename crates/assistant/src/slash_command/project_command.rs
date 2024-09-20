@@ -108,7 +108,7 @@ impl SlashCommand for ProjectSlashCommand {
                         }],
                         tools: vec![],
                         stop: vec![],
-                        temperature: Some(1.0),
+                        temperature: None,
                     },
                     cx.deref_mut(),
                 )
