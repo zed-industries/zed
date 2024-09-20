@@ -6801,10 +6801,10 @@ impl Editor {
                         break 'expand_downwards;
                     }
                 }
-            }
 
-            if !should_rewrap {
-                continue;
+                if !should_rewrap {
+                    continue;
+                }
             }
 
             let start = Point::new(start_row, 0);
