@@ -549,7 +549,7 @@ pub struct Editor {
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
-    completion_tasks: CompletionsTasks,
+    completion_tasks: Option<CompletionTasks>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
@@ -853,20 +853,12 @@ enum ContextMenu {
     CodeActions(CodeActionsMenu),
 }
 
-#[derive(Default, Debug)]
-enum CompletionsTasks {
-    Single {
-        id: CompletionId,
-        task: Task<Option<()>>,
-    },
-    WithBackup {
-        latest_id: CompletionId,
-        latest_task: Task<Option<()>>,
-        backup_id: CompletionId,
-        backup_task: Task<Option<()>>,
-    },
-    #[default]
-    None,
+#[derive(Debug)]
+struct CompletionTasks {
+    id: CompletionId,
+    task: Task<()>,
+    backup_id: Option<CompletionId>,
+    backup_task: Option<Task<()>>,
 }
 
 impl ContextMenu {
@@ -1907,7 +1899,7 @@ impl Editor {
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
-            completion_tasks: CompletionsTasks::None,
+            completion_tasks: None,
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
@@ -2487,7 +2479,7 @@ impl Editor {
                     let mut completion_menu = completion_menu.clone();
                     drop(context_menu);
 
-                    let query = Self::completion_query(buffer, cursor_position);
+                    let (_, query) = Self::completion_query(buffer, cursor_position);
                     cx.spawn(move |this, mut cx| async move {
                         completion_menu
                             .filter(query.as_deref(), cx.background_executor().clone())
@@ -3950,10 +3942,13 @@ impl Editor {
         });
     }
 
-    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
+    fn completion_query(
+        buffer: &MultiBufferSnapshot,
+        position: impl ToOffset,
+    ) -> (multi_buffer::Anchor, Option<String>) {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset, true);
-        if offset > word_range.start && kind == Some(CharKind::Word) {
+        let query = if offset > word_range.start && kind == Some(CharKind::Word) {
             Some(
                 buffer
                     .text_for_range(word_range.start..offset)
@@ -3961,7 +3956,8 @@ impl Editor {
             )
         } else {
             None
-        }
+        };
+        (buffer.anchor_before(word_range.start), query)
     }
 
     pub fn toggle_inlay_hints(&mut self, _: &ToggleInlayHints, cx: &mut ViewContext<Self>) {
@@ -4208,7 +4204,8 @@ impl Editor {
                 return;
             };
 
-        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
+        let (initial_position, query) =
+            Self::completion_query(&self.buffer.read(cx).read(cx), position);
         let is_followup_invoke = {
             let context_menu_state = self.context_menu.read();
             matches!(
@@ -4244,28 +4241,16 @@ impl Editor {
         let completions = provider.completions(&buffer, buffer_position, completion_context, cx);
         let sort_completions = provider.sort_completions();
 
-        let id = post_inc(&mut self.next_completion_id);
-        dbg!(
-            id,
-            &options.trigger,
-            &should_cancel_previous,
-            &self.completion_tasks,
-        );
+        let completion_id = post_inc(&mut self.next_completion_id);
         if should_cancel_previous {
-            self.completion_tasks = CompletionsTasks::None;
-            // maybe even close the menu?
+            self.completion_tasks = None;
         }
         let task = cx.spawn(|this, mut cx| {
-            async move {
-                // TODO: if a menu exists already, then filter it before wait for completions.
-                // looks like this is something else filtering the completion menu.
+            let run = async move {
                 let completions = completions.await.log_err();
-                cx.background_executor()
-                    .timer(Duration::from_millis(1000))
-                    .await;
                 let menu = if let Some(completions) = completions {
                     let mut menu = CompletionsMenu {
-                        id,
+                        id: completion_id,
                         sort_completions,
                         initial_position: position,
                         match_candidates: completions
@@ -4288,14 +4273,25 @@ impl Editor {
                             DebouncedDelay::new(),
                         )),
                     };
-                    let completion_query = this.update(&mut cx, |this, cx| {
-                        Self::completion_query(&this.buffer.read(cx).read(cx), position)
+                    let (cursor_moved, query) = this.update(&mut cx, |this, cx| {
+                        let position = this.selections.newest_anchor().head();
+                        let (new_position, new_query) =
+                            Self::completion_query(&this.buffer.read(cx).read(cx), position);
+                        if initial_position != new_position
+                            && this
+                                .completion_tasks
+                                .as_ref()
+                                .is_some_and(|tasks| tasks.backup_id == Some(completion_id))
+                        {
+                            return (true, None);
+                        }
+                        (false, new_query)
                     })?;
-                    let query = completion_query.or(query);
-                    menu.filter(dbg!(query.as_deref()), cx.background_executor().clone())
+
+                    menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
-                    if menu.matches.is_empty() {
+                    if menu.matches.is_empty() || cursor_moved {
                         None
                     } else {
                         this.update(&mut cx, |editor, cx| {
@@ -4330,7 +4326,7 @@ impl Editor {
                         None => {}
 
                         Some(ContextMenu::Completions(prev_menu)) => {
-                            if prev_menu.id > id {
+                            if prev_menu.id > completion_id {
                                 return;
                             }
                         }
@@ -4338,34 +4334,21 @@ impl Editor {
                         _ => return,
                     }
 
-                    let is_latest = match std::mem::take(&mut this.completion_tasks) {
-                        CompletionsTasks::Single { id: latest_id, .. }
-                        | CompletionsTasks::WithBackup { latest_id, .. }
-                            if latest_id == id =>
-                        {
-                            // if this is latest completion task, then drop all
-                            this.completion_tasks = CompletionsTasks::None;
-                            true
+                    let is_latest = this
+                        .completion_tasks
+                        .as_ref()
+                        .is_some_and(|tasks| tasks.id == completion_id);
+                    if let Some(tasks) = this.completion_tasks.take() {
+                        if Some(completion_id) == tasks.backup_id {
+                            this.completion_tasks = Some(CompletionTasks {
+                                id: tasks.id,
+                                task: tasks.task,
+                                backup_id: None,
+                                backup_task: None,
+                            });
                         }
-                        CompletionsTasks::WithBackup {
-                            backup_id,
-                            latest_id,
-                            latest_task,
-                            ..
-                        } if backup_id == id => {
-                            // convert to single task
-                            this.completion_tasks = CompletionsTasks::Single {
-                                id: latest_id,
-                                task: latest_task,
-                            };
-                            false
-                        }
-                        // neither latest nor backup task
-                        _ => {
-                            // the task didn't get cancelled, so we manually return
-                            return;
-                        }
-                    };
+                    }
+
                     if this.focus_handle.is_focused(cx) && menu.is_some() {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
@@ -4385,37 +4368,25 @@ impl Editor {
 
                 Ok::<_, anyhow::Error>(())
             }
-            .log_err()
+            .log_err();
+            async move {
+                run.await;
+            }
         });
-        match std::mem::take(&mut self.completion_tasks) {
-            CompletionsTasks::None => self.completion_tasks = CompletionsTasks::Single { id, task },
-            CompletionsTasks::Single {
-                id: prev_id,
-                task: prev_task,
-            } => {
-                // move prev task to backup
-                self.completion_tasks = CompletionsTasks::WithBackup {
-                    latest_id: id,
-                    latest_task: task,
-                    backup_id: prev_id,
-                    backup_task: prev_task,
-                }
-            }
-            CompletionsTasks::WithBackup {
-                latest_id: prev_latest_id,
-                latest_task: prev_latest_task,
-                backup_id,
-                backup_task,
-            } => {
-                // replace the latest task
-                self.completion_tasks = &CompletionsTasks::WithBackup {
-                    latest_id: id,
-                    latest_task: task,
-                    backup_id,
-                    backup_task,
-                }
-            }
-        }
+        let (backup_id, backup_task) = if let Some(tasks) = self.completion_tasks.take() {
+            (
+                Some(tasks.backup_id.unwrap_or(tasks.id)),
+                Some(tasks.backup_task.unwrap_or(tasks.task)),
+            )
+        } else {
+            (None, None)
+        };
+        self.completion_tasks = Some(CompletionTasks {
+            id: completion_id,
+            task,
+            backup_id,
+            backup_task,
+        });
     }
 
     pub fn confirm_completion(
@@ -4677,7 +4648,7 @@ impl Editor {
                         return None;
                     }
 
-                    editor.completion_tasks = CompletionsTasks::None;
+                    editor.completion_tasks = None;
                     editor.discard_inline_completion(false, cx);
                     let task_context =
                         tasks
@@ -5285,7 +5256,7 @@ impl Editor {
         let excerpt_id = cursor.excerpt_id;
 
         if self.context_menu.read().is_none()
-            && matches!(self.completion_tasks, CompletionsTasks::None)
+            && matches!(self.completion_tasks, None)
             && selection.start == selection.end
         {
             if let Some(provider) = self.inline_completion_provider() {
@@ -5457,7 +5428,7 @@ impl Editor {
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
         cx.notify();
-        self.completion_tasks = CompletionsTasks::None;
+        self.completion_tasks = None;
         let context_menu = self.context_menu.write().take();
         if context_menu.is_some() {
             self.update_visible_inline_completion(cx);
