@@ -21,7 +21,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
     PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CURSORS_VISIBLE_FOR, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -1445,9 +1445,10 @@ impl EditorElement {
             AvailableSpace::MaxContent
         };
         let scroll_top = scroll_position.y * line_height;
-        let start_x = em_width * 1;
+        let start_x = em_width;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+        println!("em_width: {:?}, width: {:?}", em_width, width);
 
         let shaped_lines = blamed_rows
             .into_iter()
@@ -4228,7 +4229,9 @@ fn render_blame_entry(
     let short_commit_id = blame_entry.sha.display_short();
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
-    let name = util::truncate_and_trailoff(author_name, 20);
+    let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
+
+    dbg!(name.len() + short_commit_id.len() + relative_timestamp.len());
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
@@ -4240,6 +4243,7 @@ fn render_blame_entry(
 
     h_flex()
         .w_full()
+        .debug_bg_green()
         .font_family(style.text.font().family)
         .line_height(style.text.line_height)
         .id(("blame", ix))
@@ -4247,14 +4251,16 @@ fn render_blame_entry(
             div()
                 .text_color(sha_color.cursor)
                 .child(short_commit_id)
-                .mr_2(),
+                .mr_2()
+                .debug_bg_blue(),
             div()
+                .debug_bg_yellow()
                 .w_full()
                 .h_flex()
                 .justify_between()
                 .text_color(cx.theme().status().hint)
-                .child(name)
-                .child(relative_timestamp),
+                .child(div().debug_bg_red().child(name))
+                .child(div().debug_bg_cyan().child(relative_timestamp)),
         ])
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
