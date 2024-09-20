@@ -11894,7 +11894,7 @@ impl Editor {
             .map(|(buffer, ranges)| StagedChangeBuffer { buffer, ranges })
             .collect::<Vec<_>>();
         let staged_changes_editor = cx.new_view(|cx| {
-            StagedChangesEditor::new(&staged_change_buffers, self.project.clone(), cx)
+            StagedChangesEditor::new(staged_change_buffers, self.project.clone(), cx)
         });
 
         cx.window_context().defer(move |cx| {
