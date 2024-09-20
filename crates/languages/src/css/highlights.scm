@@ -1,12 +1,6 @@
 (comment) @comment
 
 [
-  (tag_name)
-  (nesting_selector)
-  (universal_selector)
-] @tag
-
-[
   "~"
   ">"
   "+"
@@ -25,20 +19,29 @@
   "only"
 ] @operator
 
+[
+  (tag_name)
+  (nesting_selector)
+  (universal_selector)
+] @tag
+
+(universal_selector ("*") @tag)
+
 (attribute_selector (plain_value) @string)
 
 (attribute_name) @attribute
-(pseudo_element_selector (tag_name) @attribute)
-(pseudo_class_selector (class_name) @attribute)
 
 [
   (class_name)
   (id_name)
   (namespace_name)
   (feature_name)
-] @property
+] @attribute
 
-(property_name) @constant
+(pseudo_element_selector (tag_name) @tag)
+(pseudo_class_selector (class_name) @function)
+
+(property_name) @property
 
 (function_name) @function
 
@@ -61,7 +64,7 @@
   (to)
   (from)
   (important)
-]  @keyword
+] @keyword
 
 (string_value) @string
 (color_value) @string.special
@@ -71,7 +74,7 @@
   (float_value)
 ] @number
 
-(unit) @type
+(unit) @number.unit
 
 [
   ","
