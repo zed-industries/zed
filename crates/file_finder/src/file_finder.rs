@@ -1080,9 +1080,7 @@ impl PickerDelegate for FileFinderDelegate {
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .when(FileFinderSettings::get_global(cx).file_icons, |el| {
-                    el.start_slot::<Icon>(file_icon)
-                })
+                .start_slot::<Icon>(file_icon)
                 .end_slot::<AnyElement>(history_icon)
                 .inset(true)
                 .selected(selected)
