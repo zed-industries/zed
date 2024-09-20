@@ -284,8 +284,11 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
             })
             .detach();
             let buffer_2_events = buffer_2_events.clone();
-            cx.subscribe(&buffer2, move |_, _, event, _| {
-                buffer_2_events.lock().push(event.clone())
+            cx.subscribe(&buffer2, move |_, _, event, _| match event.clone() {
+                BufferEvent::Operation {
+                    is_local: false, ..
+                } => {}
+                event => buffer_2_events.lock().push(event),
             })
             .detach();
 
