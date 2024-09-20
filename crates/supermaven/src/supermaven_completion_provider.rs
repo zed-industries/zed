@@ -67,15 +67,25 @@ fn completion_state_from_diff(
     let mut i = 0;
     let mut j = 0;
     while i < completion.len() && j < buffer_text.len() {
+        if !completion_text.is_char_boundary(i) {
+            println!("=> 1");
+            // continue;
+        }
         // find the next instance of the buffer text in the completion text.
         let k = completion[i..].iter().position(|c| *c == buffer_text[j]);
         match k {
             Some(k) => {
+                if !completion_text.is_char_boundary(i + k) {
+                    println!("  => 2");
+                }
                 if k != 0 {
                     // the range from the current position to item is an inlay.
+                    let start = snapshot.clip_offset(i, text::Bias::Left);
+                    let end = snapshot.clip_offset(i + k, text::Bias::Right);
+                    println!("      => diff {}<->{}, {}<->{}", i, start, i + k, end);
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
-                        completion_text[i..i + k].into(),
+                        completion_text[start..end].into(),
                     ));
                 }
                 i += k + 1;
@@ -90,11 +100,25 @@ fn completion_state_from_diff(
         }
     }
 
+    println!(
+        "  => 3 {},{}",
+        completion_text.is_char_boundary(i),
+        completion_text.is_char_boundary(completion_text.len())
+    );
     if j == buffer_text.len() && i < completion.len() {
         // there is leftover completion text, so drop it as an inlay.
+        let start = snapshot.clip_offset(i, text::Bias::Left);
+        let end = snapshot.clip_offset(completion_text.len(), text::Bias::Right);
+        println!(
+            "      => diff {}<->{}, {}<->{}",
+            i,
+            start,
+            completion_text.len(),
+            end
+        );
         inlays.push(InlayProposal::Suggestion(
             snapshot.anchor_after(offset),
-            completion_text[i..completion_text.len()].into(),
+            completion_text[start..end].into(),
         ));
     }
 
