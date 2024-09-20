@@ -30,12 +30,18 @@ pub struct DiffHunk<T> {
     pub diff_base_byte_range: Range<usize>,
 }
 
-impl sum_tree::Item for DiffHunk<Anchor> {
+#[derive(Debug, Clone)]
+struct InternalDiffHunk {
+    buffer_range: Range<Anchor>,
+    diff_base_byte_range: Range<usize>,
+}
+
+impl sum_tree::Item for InternalDiffHunk {
     type Summary = DiffHunkSummary;
 
     fn summary(&self) -> Self::Summary {
         DiffHunkSummary {
-            buffer_range: self.associated_range.clone(),
+            buffer_range: self.buffer_range.clone(),
         }
     }
 }
@@ -64,7 +70,7 @@ impl sum_tree::Summary for DiffHunkSummary {
 #[derive(Debug, Clone)]
 pub struct BufferDiff {
     last_buffer_version: Option<clock::Global>,
-    tree: SumTree<DiffHunk<Anchor>>,
+    tree: SumTree<InternalDiffHunk>,
 }
 
 impl BufferDiff {
@@ -109,11 +115,8 @@ impl BufferDiff {
         })
         .flat_map(move |hunk| {
             [
-                (
-                    &hunk.associated_range.start,
-                    hunk.diff_base_byte_range.start,
-                ),
-                (&hunk.associated_range.end, hunk.diff_base_byte_range.end),
+                (&hunk.buffer_range.start, hunk.diff_base_byte_range.start),
+                (&hunk.buffer_range.end, hunk.diff_base_byte_range.end),
             ]
             .into_iter()
         });
@@ -154,7 +157,7 @@ impl BufferDiff {
             cursor.prev(buffer);
 
             let hunk = cursor.item()?;
-            let range = hunk.associated_range.to_point(buffer);
+            let range = hunk.buffer_range.to_point(buffer);
             let end_row = if range.end.column > 0 {
                 range.end.row + 1
             } else {
@@ -165,7 +168,7 @@ impl BufferDiff {
                 associated_range: range.start.row..end_row,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
-                buffer_id: hunk.buffer_id,
+                buffer_id: buffer.remote_id(),
             })
         })
     }
@@ -229,7 +232,7 @@ impl BufferDiff {
         hunk_index: usize,
         buffer: &text::BufferSnapshot,
         buffer_row_divergence: &mut i64,
-    ) -> DiffHunk<Anchor> {
+    ) -> InternalDiffHunk {
         let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
         assert!(line_item_count > 0);
 
@@ -284,11 +287,9 @@ impl BufferDiff {
         let start = Point::new(buffer_row_range.start, 0);
         let end = Point::new(buffer_row_range.end, 0);
         let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
-        DiffHunk {
-            associated_range: buffer_range.clone(),
+        InternalDiffHunk {
             buffer_range,
             diff_base_byte_range,
-            buffer_id: buffer.remote_id(),
         }
     }
 }
