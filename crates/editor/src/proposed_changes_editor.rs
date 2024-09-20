@@ -11,21 +11,21 @@ use text::ToOffset;
 use ui::prelude::*;
 use workspace::Item;
 
-pub struct StagedChangesEditor {
+pub struct ProposedChangesEditor {
     editor: View<Editor>,
     _subscriptions: Vec<Subscription>,
     _recalculate_diffs_task: Task<Option<()>>,
     recalculate_diffs_tx: mpsc::UnboundedSender<Model<Buffer>>,
 }
 
-pub struct StagedChangeBuffer<T> {
+pub struct ProposedChangesBuffer<T> {
     pub buffer: Model<Buffer>,
     pub ranges: Vec<Range<T>>,
 }
 
-impl StagedChangesEditor {
+impl ProposedChangesEditor {
     pub fn new<T: ToOffset>(
-        buffers: Vec<StagedChangeBuffer<T>>,
+        buffers: Vec<ProposedChangesBuffer<T>>,
         project: Option<Model<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -98,21 +98,21 @@ impl StagedChangesEditor {
     }
 }
 
-impl Render for StagedChangesEditor {
+impl Render for ProposedChangesEditor {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.editor.clone()
     }
 }
 
-impl FocusableView for StagedChangesEditor {
+impl FocusableView for ProposedChangesEditor {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
-impl EventEmitter<EditorEvent> for StagedChangesEditor {}
+impl EventEmitter<EditorEvent> for ProposedChangesEditor {}
 
-impl Item for StagedChangesEditor {
+impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {

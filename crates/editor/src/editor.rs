@@ -35,10 +35,10 @@ mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
+mod proposed_changes_editor;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
-mod staged_changes_editor;
 pub mod tasks;
 
 #[cfg(test)]
@@ -99,8 +99,8 @@ use language::{
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
+use proposed_changes_editor::{ProposedChangesBuffer, ProposedChangesEditor};
 use similar::{ChangeTag, TextDiff};
-use staged_changes_editor::{StagedChangeBuffer, StagedChangesEditor};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -11889,9 +11889,9 @@ impl Editor {
         self.searchable
     }
 
-    fn open_staged_changes_editor(
+    fn open_proposed_changes_editor(
         &mut self,
-        _: &OpenStagedChangesEditor,
+        _: &OpenProposedChangesEditor,
         cx: &mut ViewContext<Self>,
     ) {
         let Some(workspace) = self.workspace() else {
@@ -11915,18 +11915,18 @@ impl Editor {
             }
         }
 
-        let staged_change_buffers = new_selections_by_buffer
+        let proposed_changes_buffers = new_selections_by_buffer
             .into_iter()
-            .map(|(buffer, ranges)| StagedChangeBuffer { buffer, ranges })
+            .map(|(buffer, ranges)| ProposedChangesBuffer { buffer, ranges })
             .collect::<Vec<_>>();
-        let staged_changes_editor = cx.new_view(|cx| {
-            StagedChangesEditor::new(staged_change_buffers, self.project.clone(), cx)
+        let proposed_changes_editor = cx.new_view(|cx| {
+            ProposedChangesEditor::new(proposed_changes_buffers, self.project.clone(), cx)
         });
 
         cx.window_context().defer(move |cx| {
             workspace.update(cx, |workspace, cx| {
                 workspace.active_pane().update(cx, |pane, cx| {
-                    pane.add_item(Box::new(staged_changes_editor), true, true, None, cx);
+                    pane.add_item(Box::new(proposed_changes_editor), true, true, None, cx);
                 });
             });
         });

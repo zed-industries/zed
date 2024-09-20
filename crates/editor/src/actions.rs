@@ -273,7 +273,7 @@ gpui::actions!(
         NextScreen,
         OpenExcerpts,
         OpenExcerptsSplit,
-        OpenStagedChangesEditor,
+        OpenProposedChangesEditor,
         OpenFile,
         OpenPermalinkToLine,
         OpenUrl,
