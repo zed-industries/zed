@@ -39,11 +39,11 @@ impl ProjectSlashCommand {
 
 impl SlashCommand for ProjectSlashCommand {
     fn name(&self) -> String {
-        "codebase".into()
+        "project".into()
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
-        create_label_for_command("codebase", &[], cx)
+        create_label_for_command("project", &[], cx)
     }
 
     fn description(&self) -> String {
