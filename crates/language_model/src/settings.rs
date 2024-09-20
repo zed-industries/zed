@@ -99,6 +99,7 @@ impl AnthropicSettingsContent {
                                     tool_override,
                                     cache_configuration,
                                     max_output_tokens,
+                                    default_temperature,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
                                     display_name,
@@ -112,6 +113,7 @@ impl AnthropicSettingsContent {
                                         },
                                     ),
                                     max_output_tokens,
+                                    default_temperature,
                                 }),
                                 _ => None,
                             })
