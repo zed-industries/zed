@@ -144,7 +144,7 @@ pub struct BufferSnapshot {
 
 /// The kind and amount of indentation in a particular line. For now,
 /// assumes that indentation is all the same character.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct IndentSize {
     /// The number of bytes that comprise the indentation.
     pub len: u32,
@@ -153,7 +153,7 @@ pub struct IndentSize {
 }
 
 /// A whitespace character that's used for indentation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum IndentKind {
     /// An ASCII space character.
     #[default]
