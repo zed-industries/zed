@@ -11908,6 +11908,9 @@ impl Editor {
                 if selection.reversed {
                     mem::swap(&mut range.start, &mut range.end);
                 }
+                let mut range = range.to_point(buffer.read(cx));
+                range.start.column = 0;
+                range.end.column = buffer.read(cx).line_len(range.end.row);
                 new_selections_by_buffer
                     .entry(buffer)
                     .or_insert(Vec::new())
