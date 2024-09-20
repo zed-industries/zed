@@ -4,7 +4,7 @@ use std::{
 };
 
 use collections::{hash_map, HashMap, HashSet};
-use git::diff::{DiffHunk, DiffHunkStatus};
+use git::diff::DiffHunkStatus;
 use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Subscription, Task, View};
 use language::Buffer;
 use multi_buffer::{

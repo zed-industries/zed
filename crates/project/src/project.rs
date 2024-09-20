@@ -2277,7 +2277,7 @@ impl Project {
                 .filter_map(|buffer| {
                     let buffer = buffer.upgrade()?;
                     buffer
-                        .update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx))
+                        .update(&mut cx, |buffer, cx| buffer.recalculate_diff(cx))
                         .ok()
                         .flatten()
                 })

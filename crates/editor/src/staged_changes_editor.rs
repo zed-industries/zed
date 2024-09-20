@@ -1,39 +1,22 @@
-use crate::{CustomBlockId, Editor, EditorEvent};
+use crate::{Editor, EditorEvent};
 use clock::LOCAL_BRANCH_REPLICA_ID;
-use collections::HashMap;
-use gpui::{AppContext, EntityId, EventEmitter, FocusableView, Model, Render, Subscription, View};
+use collections::HashSet;
+use futures::{channel::mpsc, future::join_all};
+use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, View};
 use language::{Buffer, BufferEvent, Capability};
-use multi_buffer::{Anchor, ExcerptRange, MultiBuffer};
+use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::Project;
-use std::{cmp::Ordering, ops::Range};
-use text::{BufferId, ToOffset};
+use smol::stream::StreamExt;
+use std::{ops::Range, time::Duration};
+use text::ToOffset;
 use ui::prelude::*;
 use workspace::Item;
 
 pub struct StagedChangesEditor {
     editor: View<Editor>,
-    multibuffer: Model<MultiBuffer>,
-    bases_by_buffer_id: HashMap<EntityId, Model<Buffer>>,
-    base_buffers: HashMap<BufferId, Model<Buffer>>,
-    diff: StagedChangesDiff,
     _subscriptions: Vec<Subscription>,
-}
-
-#[derive(Default)]
-struct StagedChangesDiff {
-    insertions: Vec<Insertion>,
-    deletions: Vec<Deletion>,
-}
-
-struct Insertion {
-    range: Range<Anchor>,
-}
-
-struct Deletion {
-    block_id: CustomBlockId,
-    position: Anchor,
-    base_buffer_id: BufferId,
-    base_buffer_range: Range<text::Anchor>,
+    _recalculate_diffs_task: Task<Option<()>>,
+    recalculate_diffs_tx: mpsc::UnboundedSender<Model<Buffer>>,
 }
 
 pub struct StagedChangeBuffer<T> {
@@ -48,7 +31,6 @@ impl StagedChangesEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut subscriptions = Vec::new();
-        let mut bases_by_buffer_id = HashMap::default();
         let multibuffer =
             cx.new_model(|_| MultiBuffer::new(LOCAL_BRANCH_REPLICA_ID, Capability::ReadWrite));
 
@@ -57,7 +39,6 @@ impl StagedChangesEditor {
             subscriptions.push(cx.subscribe(&branch_buffer, Self::on_buffer_event));
 
             multibuffer.update(cx, |multibuffer, cx| {
-                bases_by_buffer_id.insert(branch_buffer.entity_id(), buffer.buffer.clone());
                 multibuffer.push_excerpts(
                     branch_buffer,
                     buffer.ranges.into_iter().map(|range| ExcerptRange {
@@ -69,18 +50,40 @@ impl StagedChangesEditor {
             });
         }
 
-        let base_buffers = bases_by_buffer_id
-            .values()
-            .map(|buffer| (buffer.read(cx).remote_id(), buffer.clone()))
-            .collect();
+        let (recalculate_diffs_tx, mut rx) = mpsc::unbounded();
 
         Self {
             editor: cx
                 .new_view(|cx| Editor::for_multibuffer(multibuffer.clone(), project, true, cx)),
-            multibuffer,
-            base_buffers,
-            bases_by_buffer_id,
-            diff: Default::default(),
+            recalculate_diffs_tx,
+            _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
+                let mut buffers_to_diff = HashSet::default();
+                while let Some(buffer) = rx.next().await {
+                    buffers_to_diff.insert(buffer);
+
+                    loop {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(250))
+                            .await;
+                        let mut had_further_changes = false;
+                        while let Ok(next_buffer) = rx.try_next() {
+                            buffers_to_diff.insert(next_buffer?);
+                            had_further_changes = true;
+                        }
+                        if !had_further_changes {
+                            break;
+                        }
+                    }
+
+                    join_all(buffers_to_diff.drain().filter_map(|buffer| {
+                        buffer
+                            .update(&mut cx, |buffer, cx| buffer.recalculate_diff(cx))
+                            .ok()?
+                    }))
+                    .await;
+                }
+                None
+            }),
             _subscriptions: subscriptions,
         }
     }
@@ -89,52 +92,11 @@ impl StagedChangesEditor {
         &mut self,
         buffer: Model<Buffer>,
         event: &BufferEvent,
-        cx: &mut ViewContext<Self>,
+        _cx: &mut ViewContext<Self>,
     ) {
         if let BufferEvent::Edited = event {
-            self.update_diff(buffer, cx);
+            self.recalculate_diffs_tx.unbounded_send(buffer).ok();
         }
-    }
-
-    fn update_diff(&mut self, buffer: Model<Buffer>, cx: &mut ViewContext<Self>) {
-        let multibuffer = self.multibuffer.read(cx);
-        let excerpts = multibuffer.excerpts_for_buffer(&buffer, cx);
-        if excerpts.is_empty() {
-            return;
-        }
-
-        let snapshot = multibuffer.read(cx);
-        let start_excerpt = excerpts.first().unwrap();
-        let end_excerpt = excerpts.last().unwrap();
-        let start_anchor = snapshot
-            .anchor_in_excerpt(start_excerpt.0, start_excerpt.1.context.start)
-            .unwrap();
-        let end_anchor = snapshot
-            .anchor_in_excerpt(end_excerpt.0, end_excerpt.1.context.end)
-            .unwrap();
-
-        let insertions_start_ix = self
-            .diff
-            .insertions
-            .binary_search_by(|insertion| {
-                insertion
-                    .range
-                    .end
-                    .cmp(&start_anchor, &*snapshot)
-                    .then(Ordering::Greater)
-            })
-            .unwrap_err();
-        let insertions_end_ix = self
-            .diff
-            .insertions
-            .binary_search_by(|insertion| {
-                insertion
-                    .range
-                    .start
-                    .cmp(&end_anchor, &*snapshot)
-                    .then(Ordering::Less)
-            })
-            .unwrap_err();
     }
 }
 
@@ -161,153 +123,5 @@ impl Item for StagedChangesEditor {
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("Proposed changes".into())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::editor_tests::init_test;
-    use gpui::{TestAppContext, VisualTestContext};
-    use multi_buffer::{AnchorRangeExt, ToOffset as _};
-    use text::Point;
-    use unindent::Unindent as _;
-
-    #[gpui::test]
-    fn test_staged_changes_editor(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        let text = "
-            zero
-            one
-            two
-            three
-            four
-            five
-            six
-        "
-        .unindent();
-
-        let buffer = cx.new_model(|cx| Buffer::local(&text, cx));
-        let staged_change_buffers = vec![StagedChangeBuffer {
-            buffer,
-            ranges: vec![Point::new(2, 0)..Point::new(6, 0)],
-        }];
-
-        let (editor, cx) =
-            cx.add_window_view(|cx| StagedChangesEditor::new(staged_change_buffers, None, cx));
-        let multibuffer = editor.update(cx, |editor, _cx| editor.multibuffer.clone());
-
-        multibuffer.update(cx, |multibuffer, cx| {
-            assert_eq!(
-                multibuffer.read(cx).text(),
-                "
-                    two
-                    three
-                    four
-                    five
-                "
-                .unindent()
-            );
-        });
-
-        multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.edit(
-                [
-                    (Point::new(1, 5)..Point::new(1, 5), "!"),
-                    (Point::new(2, 4)..Point::new(2, 4), "?"),
-                ],
-                None,
-                cx,
-            );
-        });
-
-        expect_diff(
-            &editor,
-            cx,
-            "
-              two
-            - three
-            - four
-            + three!
-            + four?
-              five
-            ",
-        );
-    }
-
-    fn expect_diff(
-        editor: &View<StagedChangesEditor>,
-        cx: &mut VisualTestContext,
-        expected_diff: &str,
-    ) {
-        let expected = expected_diff.unindent();
-        let mut expected_text = String::new();
-        let mut expected_insertions = Vec::<Range<usize>>::new();
-        let mut expected_deletions = Vec::<(usize, String)>::new();
-
-        for line in expected.lines() {
-            let (prefix, content) = line.split_at(2);
-            let offset = expected_text.len();
-            match prefix.trim() {
-                "+" => {
-                    let end = offset + content.len() + 1;
-                    if let Some(last_insertion) = expected_insertions
-                        .last_mut()
-                        .filter(|range| range.end == offset)
-                    {
-                        last_insertion.end = end;
-                    } else {
-                        expected_insertions.push(offset..end);
-                    }
-                    expected_text.push_str(content);
-                    expected_text.push('\n');
-                }
-                "-" => {
-                    let mut content = content.to_string();
-                    content.push('\n');
-                    if let Some(last_deletion) = expected_deletions
-                        .last_mut()
-                        .filter(|(position, _)| *position == offset)
-                    {
-                        last_deletion.1.push_str(&content);
-                    } else {
-                        expected_deletions.push((offset, content));
-                    }
-                }
-                "" => {
-                    expected_text.push_str(content);
-                    expected_text.push('\n');
-                }
-                _ => panic!("invalid line prefix {prefix:?} in expected diff"),
-            }
-        }
-
-        editor.update(cx, |editor, cx| {
-            let multibuffer = editor.multibuffer.read(cx).read(cx);
-            let actual_insertions = editor
-                .diff
-                .insertions
-                .iter()
-                .map(|insertion| insertion.range.to_offset(&*multibuffer))
-                .collect::<Vec<_>>();
-            let actual_deletions = editor
-                .diff
-                .deletions
-                .iter()
-                .map(|deletion| {
-                    let base_buffer = &editor.base_buffers[&deletion.base_buffer_id];
-                    let old_text = base_buffer
-                        .read(cx)
-                        .text_for_range(deletion.base_buffer_range.clone())
-                        .collect();
-                    (deletion.position.to_offset(&*multibuffer), old_text)
-                })
-                .collect::<Vec<_>>();
-
-            assert_eq!(multibuffer.text(), expected_text);
-            assert_eq!(actual_insertions, expected_insertions);
-            assert_eq!(actual_deletions, expected_deletions);
-        });
     }
 }

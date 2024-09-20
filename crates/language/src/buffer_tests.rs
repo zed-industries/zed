@@ -6,6 +6,7 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
+use git::diff::assert_hunks;
 use gpui::{AppContext, BorrowAppContext, Model};
 use gpui::{Context, TestAppContext};
 use indoc::indoc;
@@ -2374,8 +2375,8 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_branch_and_merge(cx: &mut AppContext) {
-    init_settings(cx, |_| {});
+fn test_branch_and_merge(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
 
     let base_buffer = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
 
@@ -2404,7 +2405,9 @@ fn test_branch_and_merge(cx: &mut AppContext) {
 
     // Create a branch, which initially has the same state as the base buffer.
     let branch_buffer = base_buffer.update(cx, |buffer, cx| buffer.branch(cx));
-    assert_eq!(branch_buffer.read(cx).text(), "one\ntwo\nthree\n");
+    branch_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one\ntwo\nthree\n");
+    });
 
     // Edits to the branch are not applied to the base.
     branch_buffer.update(cx, |buffer, cx| {
@@ -2414,21 +2417,24 @@ fn test_branch_and_merge(cx: &mut AppContext) {
             cx,
         )
     });
-    assert_eq!(base_buffer.read(cx).text(), "one\ntwo\nthree\n");
-    assert_eq!(
-        branch_buffer.read(cx).text(),
-        "one\nONE_POINT_FIVE\ntwo\nthree\n"
-    );
+    branch_buffer.read_with(cx, |branch_buffer, cx| {
+        assert_eq!(base_buffer.read(cx).text(), "one\ntwo\nthree\n");
+        assert_eq!(branch_buffer.text(), "one\nONE_POINT_FIVE\ntwo\nthree\n");
+    });
 
     // Edits to the base are applied to the branch.
     base_buffer.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
     });
-    assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\nthree\n");
-    assert_eq!(
-        branch_buffer.read(cx).text(),
-        "ZERO\none\nONE_POINT_FIVE\ntwo\nthree\n"
-    );
+    branch_buffer.read_with(cx, |branch_buffer, cx| {
+        assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\nthree\n");
+        assert_eq!(
+            branch_buffer.text(),
+            "ZERO\none\nONE_POINT_FIVE\ntwo\nthree\n"
+        );
+    });
+
+    assert_diff_hunks(&branch_buffer, cx, &[(2..3, "", "ONE_POINT_FIVE\n")]);
 
     // Edits to any replica of the base are applied to the branch.
     base_buffer_replica.update(cx, |buffer, cx| {
@@ -2438,23 +2444,46 @@ fn test_branch_and_merge(cx: &mut AppContext) {
             cx,
         )
     });
-    assert_eq!(
-        base_buffer.read(cx).text(),
-        "ZERO\none\ntwo\nTWO_POINT_FIVE\nthree\n"
-    );
-    assert_eq!(
-        branch_buffer.read(cx).text(),
-        "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
-    );
+    branch_buffer.read_with(cx, |branch_buffer, cx| {
+        assert_eq!(
+            base_buffer.read(cx).text(),
+            "ZERO\none\ntwo\nTWO_POINT_FIVE\nthree\n"
+        );
+        assert_eq!(
+            branch_buffer.text(),
+            "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
+        );
+    });
 
     // Merging the branch applies all of its changes to the base.
-    base_buffer.update(cx, |buffer, cx| {
-        buffer.merge(&branch_buffer, cx);
+    base_buffer.update(cx, |base_buffer, cx| {
+        base_buffer.merge(&branch_buffer, cx);
+        assert_eq!(
+            base_buffer.text(),
+            "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
+        );
     });
-    assert_eq!(
-        base_buffer.read(cx).text(),
-        "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
-    );
+}
+
+fn assert_diff_hunks(
+    buffer: &Model<Buffer>,
+    cx: &mut TestAppContext,
+    expected_hunks: &[(Range<u32>, &str, &str)],
+) {
+    buffer
+        .update(cx, |buffer, cx| buffer.recalculate_diff(cx).unwrap())
+        .detach();
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        assert_hunks(
+            snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
+            &snapshot,
+            &buffer.diff_base().unwrap().to_string(),
+            expected_hunks,
+        );
+    });
 }
 
 #[gpui::test(iterations = 100)]

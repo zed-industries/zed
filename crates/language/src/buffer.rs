@@ -84,11 +84,17 @@ pub enum Capability {
 
 pub type BufferRow = u32;
 
+#[derive(Clone)]
+enum BufferDiffBase {
+    Git(Rope),
+    PastBufferVersion(Model<Buffer>, BufferSnapshot),
+}
+
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
     text: TextBuffer,
-    diff_base: Option<Rope>,
+    diff_base: Option<BufferDiffBase>,
     git_diff: git::diff::BufferDiff,
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
@@ -648,7 +654,7 @@ impl Buffer {
             id: self.remote_id().into(),
             file: self.file.as_ref().map(|f| f.to_proto(cx)),
             base_text: self.base_text().to_string(),
-            diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
+            diff_base: self.diff_base().as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_mtime: self.saved_mtime.map(|time| time.into()),
@@ -738,12 +744,10 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             has_unsaved_edits: Cell::new((buffer.version(), false)),
             text: buffer,
-            diff_base: diff_base
-                .map(|mut raw_diff_base| {
-                    LineEnding::normalize(&mut raw_diff_base);
-                    raw_diff_base
-                })
-                .map(Rope::from),
+            diff_base: diff_base.map(|mut raw_diff_base| {
+                LineEnding::normalize(&mut raw_diff_base);
+                BufferDiffBase::Git(Rope::from(raw_diff_base))
+            }),
             diff_base_version: 0,
             git_diff,
             file,
@@ -791,13 +795,17 @@ impl Buffer {
         let this = cx.handle();
         cx.new_model(|cx| {
             let mut branch = Self {
-                diff_base: self.diff_base.clone(),
+                diff_base: Some(BufferDiffBase::PastBufferVersion(
+                    this.clone(),
+                    self.snapshot(),
+                )),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
                 _subscriptions: vec![cx.subscribe(&this, |branch: &mut Self, _, event, cx| {
                     if let BufferEvent::Operation { operation, .. } = event {
                         branch.apply_ops([operation.clone()], cx);
+                        branch.diff_base_version += 1;
                     }
                 })],
                 ..Self::build(
@@ -1008,20 +1016,23 @@ impl Buffer {
 
     /// Returns the current diff base, see [Buffer::set_diff_base].
     pub fn diff_base(&self) -> Option<&Rope> {
-        self.diff_base.as_ref()
+        match self.diff_base.as_ref()? {
+            BufferDiffBase::Git(rope) => Some(rope),
+            BufferDiffBase::PastBufferVersion(_, buffer_snapshot) => {
+                Some(buffer_snapshot.as_rope())
+            }
+        }
     }
 
     /// Sets the text that will be used to compute a Git diff
     /// against the buffer text.
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
-        self.diff_base = diff_base
-            .map(|mut raw_diff_base| {
-                LineEnding::normalize(&mut raw_diff_base);
-                raw_diff_base
-            })
-            .map(Rope::from);
+        self.diff_base = diff_base.map(|mut raw_diff_base| {
+            LineEnding::normalize(&mut raw_diff_base);
+            BufferDiffBase::Git(Rope::from(raw_diff_base))
+        });
         self.diff_base_version += 1;
-        if let Some(recalc_task) = self.git_diff_recalc(cx) {
+        if let Some(recalc_task) = self.recalculate_diff(cx) {
             cx.spawn(|buffer, mut cx| async move {
                 recalc_task.await;
                 buffer
@@ -1039,14 +1050,21 @@ impl Buffer {
         self.diff_base_version
     }
 
-    /// Recomputes the Git diff status.
-    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base = self.diff_base.clone()?;
+    /// Recomputes the diff.
+    pub fn recalculate_diff(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
+        let diff_base_rope = match self.diff_base.as_mut()? {
+            BufferDiffBase::Git(rope) => rope.clone(),
+            BufferDiffBase::PastBufferVersion(base_buffer, base_buffer_snapshot) => {
+                let new_base_snapshot = base_buffer.read(cx).snapshot();
+                *base_buffer_snapshot = new_base_snapshot;
+                base_buffer_snapshot.as_rope().clone()
+            }
+        };
         let snapshot = self.snapshot();
 
         let mut diff = self.git_diff.clone();
         let diff = cx.background_executor().spawn(async move {
-            diff.update(&diff_base, &snapshot).await;
+            diff.update(&diff_base_rope, &snapshot).await;
             diff
         });
 
