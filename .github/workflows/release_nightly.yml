@@ -171,3 +171,28 @@ jobs:
 
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
+
+  update-nightly-tag:
+    name: Update nightly tag
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    needs:
+      - bundle-mac
+      - bundle-linux-x86
+      - bundle-linux-arm
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Update nightly tag
+        run: |
+          if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
+            echo "Nightly tag already points to current commit. Skipping tagging."
+            exit 0
+          fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -f nightly
+          git push origin nightly --force
