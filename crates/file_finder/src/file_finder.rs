@@ -1070,8 +1070,7 @@ impl PickerDelegate for FileFinderDelegate {
             self.labels_for_match(path_match, cx, ix);
 
         let file_icon = if settings.file_icons {
-            FileIcons::get_icon(Path::new(&file_name), cx)
-                .map(|icon_path| Icon::from_path(icon_path))
+            FileIcons::get_icon(Path::new(&file_name), cx).map(Icon::from_path)
         } else {
             None
         };
