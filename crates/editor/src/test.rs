@@ -108,16 +108,16 @@ pub fn editor_hunks(
         .buffer_snapshot
         .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
         .map(|hunk| {
-            let display_range = Point::new(hunk.associated_range.start.0, 0)
+            let display_range = Point::new(hunk.row_range.start.0, 0)
                 .to_display_point(snapshot)
                 .row()
-                ..Point::new(hunk.associated_range.end.0, 0)
+                ..Point::new(hunk.row_range.end.0, 0)
                     .to_display_point(snapshot)
                     .row();
             let (_, buffer, _) = editor
                 .buffer()
                 .read(cx)
-                .excerpt_containing(Point::new(hunk.associated_range.start.0, 0), cx)
+                .excerpt_containing(Point::new(hunk.row_range.start.0, 0), cx)
                 .expect("no excerpt for expanded buffer's hunk start");
             let diff_base = buffer
                 .read(cx)

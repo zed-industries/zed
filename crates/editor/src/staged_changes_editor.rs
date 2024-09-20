@@ -135,8 +135,6 @@ impl StagedChangesEditor {
                     .then(Ordering::Less)
             })
             .unwrap_err();
-
-        //
     }
 }
 
