@@ -8,17 +8,14 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
-    future::{BoxFuture, LocalBoxFuture},
+    future::BoxFuture,
     select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, StreamExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, WeakModel};
+use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion};
 use parking_lot::Mutex;
 use rpc::{
-    proto::{
-        self, build_typed_envelope, AnyTypedEnvelope, Envelope, EnvelopedMessage, PeerId,
-        ProtoClient, RequestMessage,
-    },
-    TypedEnvelope,
+    proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
+    EntityMessageSubscriber, ProtoClient, ProtoMessageHandlerSet, RpcError,
 };
 use smol::{
     fs,
@@ -36,6 +33,11 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
+pub struct SshProjectId(pub u64);
+
 #[derive(Clone)]
 pub struct SshSocket {
     connection_options: SshConnectionOptions,
@@ -44,24 +46,11 @@ pub struct SshSocket {
 
 pub struct SshSession {
     next_message_id: AtomicU32,
-    response_channels: ResponseChannels,
+    response_channels: ResponseChannels, // Lock
     outgoing_tx: mpsc::UnboundedSender<Envelope>,
     spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
     client_socket: Option<SshSocket>,
-    message_handlers: Mutex<
-        HashMap<
-            TypeId,
-            Arc<
-                dyn Send
-                    + Sync
-                    + Fn(
-                        Box<dyn AnyTypedEnvelope>,
-                        Arc<SshSession>,
-                        AsyncAppContext,
-                    ) -> Option<LocalBoxFuture<'static, Result<()>>>,
-            >,
-        >,
-    >,
+    state: Mutex<ProtoMessageHandlerSet>, // Lock
 }
 
 struct SshClientState {
@@ -172,9 +161,10 @@ impl SshSession {
         run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
 
         let mut remote_server_child = socket
-            .ssh_command(&format!(
-                "RUST_LOG={} {:?} run",
-                std::env::var("RUST_LOG").unwrap_or(String::new()),
+            .ssh_command(format!(
+                "RUST_LOG={} RUST_BACKTRACE={} {:?} run",
+                std::env::var("RUST_LOG").unwrap_or_default(),
+                std::env::var("RUST_BACKTRACE").unwrap_or_default(),
                 remote_binary_path,
             ))
             .spawn()
@@ -257,7 +247,8 @@ impl SshSession {
                                     let line_ix = start_ix + ix;
                                     let content = &stderr_buffer[start_ix..line_ix];
                                     start_ix = line_ix + 1;
-                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(&content) {
+                                    if let Ok(mut record) = serde_json::from_slice::<LogRecord>(content) {
+                                        record.message = format!("(remote) {}", record.message);
                                         record.log(log::logger())
                                     } else {
                                         eprintln!("(remote) {}", String::from_utf8_lossy(content));
@@ -330,7 +321,7 @@ impl SshSession {
             outgoing_tx,
             spawn_process_tx,
             client_socket,
-            message_handlers: Default::default(),
+            state: Default::default(),
         });
 
         cx.spawn(|cx| {
@@ -351,18 +342,26 @@ impl SshSession {
                     } else if let Some(envelope) =
                         build_typed_envelope(peer_id, Instant::now(), incoming)
                     {
-                        log::debug!(
-                            "ssh message received. name:{}",
-                            envelope.payload_type_name()
-                        );
-                        let type_id = envelope.payload_type_id();
-                        let handler = this.message_handlers.lock().get(&type_id).cloned();
-                        if let Some(handler) = handler {
-                            if let Some(future) = handler(envelope, this.clone(), cx.clone()) {
-                                future.await.ok();
-                            } else {
-                                this.message_handlers.lock().remove(&type_id);
+                        let type_name = envelope.payload_type_name();
+                        if let Some(future) = ProtoMessageHandlerSet::handle_message(
+                            &this.state,
+                            envelope,
+                            this.clone().into(),
+                            cx.clone(),
+                        ) {
+                            log::debug!("ssh message received. name:{type_name}");
+                            match future.await {
+                                Ok(_) => {
+                                    log::debug!("ssh message handled. name:{type_name}");
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "error handling message. type:{type_name}, error:{error}",
+                                    );
+                                }
                             }
+                        } else {
+                            log::error!("unhandled ssh message name:{type_name}");
                         }
                     }
                 }
@@ -379,7 +378,7 @@ impl SshSession {
         payload: T,
     ) -> impl 'static + Future<Output = Result<T::Response>> {
         log::debug!("ssh request start. name:{}", T::NAME);
-        let response = self.request_dynamic(payload.into_envelope(0, None, None), "");
+        let response = self.request_dynamic(payload.into_envelope(0, None, None), T::NAME);
         async move {
             let response = response.await?;
             log::debug!("ssh request finish. name:{}", T::NAME);
@@ -389,27 +388,50 @@ impl SshSession {
     }
 
     pub fn send<T: EnvelopedMessage>(&self, payload: T) -> Result<()> {
+        log::debug!("ssh send name:{}", T::NAME);
         self.send_dynamic(payload.into_envelope(0, None, None))
     }
 
     pub fn request_dynamic(
         &self,
         mut envelope: proto::Envelope,
-        _request_type: &'static str,
+        type_name: &'static str,
     ) -> impl 'static + Future<Output = Result<proto::Envelope>> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         let (tx, rx) = oneshot::channel();
-        self.response_channels
-            .lock()
-            .insert(MessageId(envelope.id), tx);
+        let mut response_channels_lock = self.response_channels.lock();
+        response_channels_lock.insert(MessageId(envelope.id), tx);
+        drop(response_channels_lock);
         self.outgoing_tx.unbounded_send(envelope).ok();
-        async move { Ok(rx.await.context("connection lost")?.0) }
+        async move {
+            let response = rx.await.context("connection lost")?.0;
+            if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
+                return Err(RpcError::from_proto(error, type_name));
+            }
+            Ok(response)
+        }
     }
 
     pub fn send_dynamic(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         self.outgoing_tx.unbounded_send(envelope)?;
         Ok(())
+    }
+
+    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {
+        let id = (TypeId::of::<E>(), remote_id);
+
+        let mut state = self.state.lock();
+        if state.entities_by_type_and_remote_id.contains_key(&id) {
+            panic!("already subscribed to entity");
+        }
+
+        state.entities_by_type_and_remote_id.insert(
+            id,
+            EntityMessageSubscriber::Entity {
+                handle: entity.downgrade().into(),
+            },
+        );
     }
 
     pub async fn spawn_process(&self, command: String) -> process::Child {
@@ -426,54 +448,6 @@ impl SshSession {
     pub fn ssh_args(&self) -> Vec<String> {
         self.client_socket.as_ref().unwrap().ssh_args()
     }
-
-    pub fn add_message_handler<M, E, H, F>(&self, entity: WeakModel<E>, handler: H)
-    where
-        M: EnvelopedMessage,
-        E: 'static,
-        H: 'static + Sync + Send + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F,
-        F: 'static + Future<Output = Result<()>>,
-    {
-        let message_type_id = TypeId::of::<M>();
-        self.message_handlers.lock().insert(
-            message_type_id,
-            Arc::new(move |envelope, _, cx| {
-                let entity = entity.upgrade()?;
-                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                Some(handler(entity, *envelope, cx).boxed_local())
-            }),
-        );
-    }
-
-    pub fn add_request_handler<M, E, H, F>(&self, entity: WeakModel<E>, handler: H)
-    where
-        M: EnvelopedMessage + RequestMessage,
-        E: 'static,
-        H: 'static + Sync + Send + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F,
-        F: 'static + Future<Output = Result<M::Response>>,
-    {
-        let message_type_id = TypeId::of::<M>();
-        self.message_handlers.lock().insert(
-            message_type_id,
-            Arc::new(move |envelope, this, cx| {
-                let entity = entity.upgrade()?;
-                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                let request_id = envelope.message_id();
-                Some(
-                    handler(entity, *envelope, cx)
-                        .then(move |result| async move {
-                            this.outgoing_tx.unbounded_send(result?.into_envelope(
-                                this.next_message_id.fetch_add(1, SeqCst),
-                                Some(request_id),
-                                None,
-                            ))?;
-                            Ok(())
-                        })
-                        .boxed_local(),
-                )
-            }),
-        );
-    }
 }
 
 impl ProtoClient for SshSession {
@@ -485,8 +459,20 @@ impl ProtoClient for SshSession {
         self.request_dynamic(envelope, request_type).boxed()
     }
 
-    fn send(&self, envelope: proto::Envelope) -> Result<()> {
+    fn send(&self, envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {
         self.send_dynamic(envelope)
+    }
+
+    fn send_response(&self, envelope: Envelope, _message_type: &'static str) -> anyhow::Result<()> {
+        self.send_dynamic(envelope)
+    }
+
+    fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
+        &self.state
+    }
+
+    fn is_via_collab(&self) -> bool {
+        false
     }
 }
 
@@ -613,7 +599,7 @@ impl SshClientState {
         let mut server_binary_exists = false;
         if cfg!(not(debug_assertions)) {
             if let Ok(installed_version) =
-                run_cmd(self.socket.ssh_command(&dst_path).arg("version")).await
+                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
             {
                 if installed_version.trim() == version.to_string() {
                     server_binary_exists = true;
@@ -652,7 +638,7 @@ impl SshClientState {
             self.socket
                 .ssh_command("chmod")
                 .arg(format!("{:o}", server_mode))
-                .arg(&dst_path),
+                .arg(dst_path),
         )
         .await?;
 
@@ -691,8 +677,8 @@ impl SshClientState {
                     .map(|port| vec!["-P".to_string(), port.to_string()])
                     .unwrap_or_default(),
             )
-            .arg(&src_path)
-            .arg(&format!(
+            .arg(src_path)
+            .arg(format!(
                 "{}:{}",
                 self.socket.connection_options.scp_url(),
                 dest_path.display()

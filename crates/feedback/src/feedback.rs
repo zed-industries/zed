@@ -39,7 +39,7 @@ pub fn init(cx: &mut AppContext) {
         feedback_modal::FeedbackModal::register(workspace, cx);
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
-                let specs = SystemSpecs::new(&cx);
+                let specs = SystemSpecs::new(cx);
 
                 cx.spawn(|_, mut cx| async move {
                     let specs = specs.await.to_string();
@@ -62,7 +62,7 @@ pub fn init(cx: &mut AppContext) {
                 cx.open_url(request_feature_url());
             })
             .register_action(move |_, _: &FileBugReport, cx| {
-                let specs = SystemSpecs::new(&cx);
+                let specs = SystemSpecs::new(cx);
                 cx.spawn(|_, mut cx| async move {
                     let specs = specs.await;
                     cx.update(|cx| {

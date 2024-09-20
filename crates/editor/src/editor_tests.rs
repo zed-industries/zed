@@ -20,8 +20,8 @@ use language::{
     },
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
-    ParsedMarkdown, Point,
+    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
+    LanguageName, Override, ParsedMarkdown, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
@@ -195,7 +195,7 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| s.select_ranges([2..2]));
 
         // Simulate an edit in another editor
-        _ = buffer.update(cx, |buffer, cx| {
+        buffer.update(cx, |buffer, cx| {
             buffer.start_transaction_at(now, cx);
             buffer.edit([(0..1, "a")], None, cx);
             buffer.edit([(1..1, "b")], None, cx);
@@ -661,7 +661,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
             let mut editor = build_editor(buffer.clone(), cx);
             let handle = cx.view();
-            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
+            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(handle)));
 
             fn pop_history(editor: &mut Editor, cx: &mut WindowContext) -> Option<NavigationEntry> {
                 editor.nav_history.as_mut().unwrap().pop_backward(cx)
@@ -1088,7 +1088,7 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx));
     let view = cx.add_window(|cx| build_editor(buffer.clone(), cx));
 
-    _ = buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         buffer.edit(
             vec![
                 (Point::new(1, 0)..Point::new(1, 0), "\t"),
@@ -1822,7 +1822,7 @@ async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
     cx.simulate_window_resize(window, size(px(1000.), 4. * line_height + px(0.5)));
 
     cx.set_state(
-        &r#"ˇone
+        r#"ˇone
         two
         three
         four
@@ -1886,7 +1886,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
 
     cx.set_state(
-        &r#"ˇone
+        r#"ˇone
             two
             three
             four
@@ -2102,7 +2102,12 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 12),
             ])
         });
-        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        view.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+            },
+            cx,
+        );
         assert_eq!(view.buffer.read(cx).read(cx).text(), "e two te four");
     });
 
@@ -2115,8 +2120,91 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 10),
             ])
         });
-        view.delete_to_next_word_end(&DeleteToNextWordEnd, cx);
+        view.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+            },
+            cx,
+        );
         assert_eq!(view.buffer.read(cx).read(cx).text(), "e t te our");
+    });
+}
+
+#[gpui::test]
+fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("one\n2\nthree\n4", cx);
+        build_editor(buffer.clone(), cx)
+    });
+    let del_to_prev_word_start = DeleteToPreviousWordStart {
+        ignore_newlines: false,
+    };
+    let del_to_prev_word_start_ignore_newlines = DeleteToPreviousWordStart {
+        ignore_newlines: true,
+    };
+
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1)
+            ])
+        });
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\nthree\n");
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\nthree");
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\n");
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2");
+        view.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n");
+        view.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "");
+    });
+}
+
+#[gpui::test]
+fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("\none\n   two\nthree\n   four", cx);
+        build_editor(buffer.clone(), cx)
+    });
+    let del_to_next_word_end = DeleteToNextWordEnd {
+        ignore_newlines: false,
+    };
+    let del_to_next_word_end_ignore_newlines = DeleteToNextWordEnd {
+        ignore_newlines: true,
+    };
+
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ])
+        });
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(
+            view.buffer.read(cx).read(cx).text(),
+            "one\n   two\nthree\n   four"
+        );
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(
+            view.buffer.read(cx).read(cx).text(),
+            "\n   two\nthree\n   four"
+        );
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "two\nthree\n   four");
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "\nthree\n   four");
+        view.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "\n   four");
+        view.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "");
     });
 }
 
@@ -2234,7 +2322,7 @@ async fn test_newline_above(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2282,7 +2370,7 @@ async fn test_newline_below(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2436,7 +2524,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut gpui::TestAp
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2497,7 +2585,7 @@ async fn test_tab_with_mixed_whitespace(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
         .unwrap(),
@@ -2734,7 +2822,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
         Buffer::local("const c: usize = 3;\n", cx).with_language(rust_language, cx)
     });
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             toml_buffer.clone(),
             [ExcerptRange {
@@ -3892,6 +3980,350 @@ fn test_transpose(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rewrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping works inside of a selection
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ»
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that cursors that expand to the same region are collapsed.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
+            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇˇˇˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that non-contiguous selections are treated separately.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
+            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
+            //
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque.ˇˇ
+            //
+            // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
+            // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
+            // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
+            // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
+            // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that different comment prefixes are supported.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["# ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            # Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            # purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            # eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            # hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            # lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit
+            # amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet
+            # in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur
+            # adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis.
+            # Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id
+            # accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping is ignored outside of comments in most languages.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into(), "/// ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            /// Adds two numbers.
+            /// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
+            fn add(a: u32, b: u32) -> u32 {
+                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            /// Adds two numbers. Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+            /// Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
+            fn add(a: u32, b: u32) -> u32 {
+                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping works in Markdown and Plain Text languages.
+    {
+        let markdown_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+        let unwrapped_text = indoc! {"
+            # Hello
+
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
+        "};
+
+        let wrapped_text = indoc! {"
+            # Hello
+
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
+            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
+            Integer sit amet scelerisque nisi.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+
+        let plaintext_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Plain Text".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(plaintext_language), cx));
+
+        let unwrapped_text = indoc! {"
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
+        "};
+
+        let wrapped_text = indoc! {"
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
+            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
+            Integer sit amet scelerisque nisi.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test rewrapping unaligned comments in a selection.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into(), "/// ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            fn foo() {
+                if true {
+            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.ˇ»
+                    do_something();
+                } else {
+                    //
+                }
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            fn foo() {
+                if true {
+                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
+                    // egestas tellus id dignissim.ˇ
+                    do_something();
+                } else {
+                    //
+                }
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+
+        let unwrapped_text = indoc! {"
+            fn foo() {
+                if true {
+            «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.»
+                    do_something();
+                } else {
+                    //
+                }
+
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            fn foo() {
+                if true {
+                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
+                    // egestas tellus id dignissim.ˇ
+                    do_something();
+                } else {
+                    //
+                }
+
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3984,7 +4416,7 @@ async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -4562,17 +4994,8 @@ let foo = «2ˇ»;"#,
 async fn test_select_previous_multibuffer(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new_multibuffer(
-        cx,
-        [
-            &indoc! {
-                "aaa\n«bbb\nccc\n»ddd"
-            },
-            &indoc! {
-                "aaa\n«bbb\nccc\n»ddd"
-            },
-        ],
-    );
+    let mut cx =
+        EditorTestContext::new_multibuffer(cx, ["aaa\n«bbb\nccc\n»ddd", "aaa\n«bbb\nccc\n»ddd"]);
 
     cx.assert_editor_state(indoc! {"
         ˇbbb
@@ -4704,7 +5127,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -4721,7 +5144,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
     editor
-        .condition::<crate::EditorEvent>(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
     editor.update(cx, |view, cx| {
@@ -4913,7 +5336,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(
             r#"
@@ -4933,7 +5356,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([5..5, 8..8, 9..9]));
         editor.newline(&Newline, cx);
         assert_eq!(editor.text(cx), "fn a(\n    \n) {\n    \n}\n");
@@ -5006,7 +5429,7 @@ async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5178,7 +5601,7 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5318,7 +5741,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -5493,7 +5916,7 @@ async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_override_query("(string_literal) @string")
         .unwrap(),
@@ -5598,7 +6021,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -5614,7 +6037,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
@@ -5747,7 +6170,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
             autoclose_before: "}".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -5764,7 +6187,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| {
             s.select_ranges([
                 Point::new(0, 1)..Point::new(0, 1),
@@ -5874,7 +6297,7 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5944,7 +6367,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let buffer = cx.new_model(|cx| Buffer::local("", cx).with_language(language, cx));
@@ -5954,7 +6377,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         editor.set_auto_replace_emoji_shortcode(true);
 
         editor.handle_input("Hello ", cx);
@@ -6023,7 +6446,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
 
         editor
@@ -6126,7 +6549,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6282,7 +6705,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6320,7 +6743,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let multi_buffer = cx.new_model(|cx| {
-        let mut multi_buffer = MultiBuffer::new(0, ReadWrite);
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
         multi_buffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -6478,7 +6901,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6619,7 +7042,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             },
             ..LanguageConfig::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
@@ -6629,7 +7052,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             ..PrettierSettings::default()
         });
     });
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6650,7 +7073,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor
         .update(cx, |editor, cx| {
@@ -6678,7 +7101,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         "one, two\nthree\n"
     );
 
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     // Ensure we don't lock if formatting hangs.
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
@@ -6954,7 +7377,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -7096,7 +7519,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -7507,6 +7930,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
                 resolve_provider: Some(true),
                 ..Default::default()
             }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -7534,6 +7958,37 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    let _handler = handle_signature_help_request(
+        &mut cx,
+        lsp::SignatureHelp {
+            signatures: vec![lsp::SignatureInformation {
+                label: "test signature".to_string(),
+                documentation: None,
+                parameters: Some(vec![lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
+                    documentation: None,
+                }]),
+                active_parameter: None,
+            }],
+            active_signature: None,
+            active_parameter: None,
+        },
+    );
+    cx.update_editor(|editor, cx| {
+        assert!(
+            !editor.signature_help_state.is_shown(),
+            "No signature help was called for"
+        );
+        editor.show_signature_help(&ShowSignatureHelp, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _| {
+        assert!(
+            !editor.signature_help_state.is_shown(),
+            "No signature help should be shown when completions menu is open"
+        );
+    });
 
     let apply_additional_edits = cx.update_editor(|editor, cx| {
         editor.context_menu_next(&Default::default(), cx);
@@ -7645,7 +8100,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
                 settings.show_completions_on_input = Some(false);
@@ -7857,7 +8312,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -7978,7 +8433,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -8131,7 +8586,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -8231,7 +8686,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
 
     let buffer = cx.new_model(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer.clone(),
             [
@@ -8251,7 +8706,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
     });
 
     let (view, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         assert_eq!(view.text(cx), "aaaa\nbbbb");
         view.change_selections(None, cx, |s| {
             s.select_ranges([
@@ -8315,13 +8770,13 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
     });
     let buffer = cx.new_model(|cx| Buffer::local(initial_text, cx));
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(buffer, excerpt_ranges, cx);
         multibuffer
     });
 
     let (view, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         let (expected_text, selection_ranges) = marked_text_ranges(
             indoc! {"
                 aaaa
@@ -8374,7 +8829,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         excerpt1_id = multibuffer
             .push_excerpts(
                 buffer.clone(),
@@ -8425,7 +8880,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
         );
     });
 
-    _ = multibuffer.update(cx, |multibuffer, cx| {
+    multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     _ = editor.update(cx, |editor, cx| {
@@ -8459,7 +8914,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         excerpt1_id = multibuffer
             .push_excerpts(
                 buffer.clone(),
@@ -8492,7 +8947,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
         editor
     });
 
-    _ = multibuffer.update(cx, |multibuffer, cx| {
+    multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     _ = editor.update(cx, |editor, cx| {
@@ -8539,7 +8994,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query("")
         .unwrap(),
@@ -8559,7 +9014,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
@@ -8744,7 +9199,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     _ = follower.update(cx, |follower, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![1..1]);
     });
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
     assert_eq!(*follower_edit_event_count.borrow(), 0);
 
     // Update the scroll position only
@@ -8764,7 +9219,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             .unwrap(),
         gpui::Point::new(1.5, 3.5)
     );
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
     assert_eq!(*follower_edit_event_count.borrow(), 0);
 
     // Update the selections and scroll position. The follower's scroll position is updated
@@ -8785,7 +9240,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
         assert_eq!(follower.selections.ranges(cx), vec![0..0]);
     });
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
 
     // Creating a pending selection that precedes another selection
     _ = leader.update(cx, |leader, cx| {
@@ -8802,7 +9257,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     _ = follower.update(cx, |follower, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
     });
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
 
     // Extend the pending selection so that it surrounds another selection
     _ = leader.update(cx, |leader, cx| {
@@ -8830,7 +9285,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             cx,
         );
     });
-    assert_eq!(*is_still_following.borrow(), false);
+    assert!(!(*is_still_following.borrow()));
 }
 
 #[gpui::test]
@@ -8847,7 +9302,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let leader = pane.update(cx, |_, cx| {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(ReadWrite));
         cx.new_view(|cx| build_editor(multibuffer.clone(), cx))
     });
 
@@ -8891,7 +9346,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     });
 
     // Insert some excerpts.
-    _ = leader.update(cx, |leader, cx| {
+    leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
             let excerpt_ids = multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -8966,7 +9421,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     );
 
     // Remove some excerpts.
-    _ = leader.update(cx, |leader, cx| {
+    leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
             let excerpt_ids = multibuffer.excerpt_ids();
             multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
@@ -9009,8 +9464,8 @@ async fn go_to_prev_overlapping_diagnostic(
         }
     "});
 
-    _ = cx.update(|cx| {
-        _ = project.update(cx, |project, cx| {
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
             project
                 .update_diagnostics(
                     LanguageServerId(0),
@@ -9375,9 +9830,9 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -9448,7 +9903,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
 
-    _ = buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
             "fn main() { let a = {5}; }",
@@ -9476,21 +9931,21 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let server_restarts = Arc::new(AtomicUsize::new(0));
     let closure_restarts = Arc::clone(&server_restarts);
     let language_server_name = "test language server";
-    let language_name: Arc<str> = "Rust".into();
+    let language_name: LanguageName = "Rust".into();
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: Arc::clone(&language_name),
+            name: language_name.clone(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: language_server_name,
@@ -9518,7 +9973,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
         language_settings.languages.insert(
-            Arc::clone(&language_name),
+            language_name.clone(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
                 ..Default::default()
@@ -9721,7 +10176,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_typescript::language_tsx()),
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         )
         .with_override_query("(jsx_self_closing_element) @element")
         .unwrap(),
@@ -9824,7 +10279,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         settings.defaults.prettier = Some(PrettierSettings {
@@ -9834,7 +10289,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     });
 
     let test_plugin = "test_plugin";
-    let _ = language_registry.register_fake_lsp_adapter(
+    let _ = language_registry.register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
@@ -9851,7 +10306,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let buffer_text = "one\ntwo\nthree\n";
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    _ = editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
+    editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
 
     editor
         .update(cx, |editor, cx| {
@@ -10302,7 +10757,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
 
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -10442,7 +10897,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     let buffer_3 = cx.new_model(|cx| Buffer::local(sample_text_3.clone(), cx));
 
     let multi_buffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -10793,7 +11248,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(1)..=DisplayRow(1), DisplayRow(7)..=DisplayRow(7), DisplayRow(9)..=DisplayRow(9)],
@@ -10938,7 +11393,7 @@ async fn test_toggled_diff_base_change(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(9)..=DisplayRow(10), DisplayRow(13)..=DisplayRow(14)],
@@ -11120,7 +11575,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11197,7 +11652,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(0)..=DisplayRow(0), DisplayRow(5)..=DisplayRow(5)],
@@ -11290,7 +11745,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11381,7 +11836,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     });
 
     let multi_buffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -11502,7 +11957,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -11516,7 +11971,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11535,7 +11990,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -11548,7 +12003,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11567,7 +12022,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -11655,7 +12110,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11695,7 +12150,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11740,7 +12195,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11784,7 +12239,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11832,7 +12287,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11868,7 +12323,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![
@@ -11983,7 +12438,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -12019,7 +12474,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
@@ -12058,7 +12513,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -12093,7 +12548,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -12195,7 +12650,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(6)],
@@ -12238,7 +12693,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(6)],
@@ -12284,7 +12739,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(8)],
@@ -12328,7 +12783,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(9)],
@@ -12372,7 +12827,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(8)],
@@ -12413,7 +12868,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
@@ -12516,7 +12971,7 @@ async fn test_multiple_expanded_hunks_merge(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(6)],
@@ -12569,8 +13024,8 @@ async fn setup_indent_guides_editor(
     let buffer_id = cx.update_editor(|editor, cx| {
         editor.set_text(text, cx);
         let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
-        let buffer_id = buffer_ids[0];
-        buffer_id
+
+        buffer_ids[0]
     });
 
     (buffer_id, cx)
@@ -13129,7 +13584,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 
     let render_args = render_args.lock().take().unwrap();
     assert_eq!(render_args.row, MultiBufferRow(1));
-    assert_eq!(render_args.folded, false);
+    assert!(!render_args.folded);
     assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
 
     cx.update_window(*editor, |_, cx| (render_args.callback)(true, cx))
@@ -13496,7 +13951,7 @@ pub(crate) fn update_test_language_settings(
     cx: &mut TestAppContext,
     f: impl Fn(&mut AllLanguageSettingsContent),
 ) {
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
         });
@@ -13507,7 +13962,7 @@ pub(crate) fn update_test_project_settings(
     cx: &mut TestAppContext,
     f: impl Fn(&mut ProjectSettings),
 ) {
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, f);
         });
@@ -13515,7 +13970,7 @@ pub(crate) fn update_test_project_settings(
 }
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         assets::Assets.load_test_fonts(cx);
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -13541,7 +13996,7 @@ pub(crate) fn rust_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 

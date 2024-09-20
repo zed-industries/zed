@@ -24,10 +24,9 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
-    env::set_var("RUST_BACKTRACE", "1");
     env_logger::builder()
         .format(|buf, record| {
-            serde_json::to_writer(&mut *buf, &LogRecord::new(&record))?;
+            serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
             buf.write_all(b"\n")?;
             Ok(())
         })
@@ -47,6 +46,7 @@ fn main() {
     }
 
     gpui::App::headless().run(move |cx| {
+        settings::init(cx);
         HeadlessProject::init(cx);
 
         let (incoming_tx, incoming_rx) = mpsc::unbounded();

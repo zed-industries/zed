@@ -385,7 +385,7 @@ fragment float4 polychrome_sprite_fragment(
     color.g = grayscale;
     color.b = grayscale;
   }
-  color.a *= saturate(0.5 - distance);
+  color.a *= sprite.opacity * saturate(0.5 - distance);
   return color;
 }
 

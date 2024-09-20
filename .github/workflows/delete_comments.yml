@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Check for specific strings in comment
         id: check_comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
         with:
           script: |
             const comment = context.payload.comment.body;
@@ -22,7 +22,7 @@ jobs:
 
       - name: Delete comment if it contains any of the specific strings
         if: steps.check_comment.outputs.result == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
         with:
           script: |
             const commentId = context.payload.comment.id;

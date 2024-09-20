@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{atomic::Ordering::SeqCst, Arc},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -117,7 +117,7 @@ impl App {
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http_client::client(None, None),
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -128,7 +128,7 @@ impl App {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http_client::client(None, None),
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -142,9 +142,11 @@ impl App {
         self
     }
 
-    /// Sets a start time for tracking time to first window draw.
-    pub fn measure_time_to_first_window_draw(self, start: Instant) -> Self {
-        self.0.borrow_mut().time_to_first_window_draw = Some(TimeToFirstWindowDraw::Pending(start));
+    /// Set the http client for the application
+    pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
+        let mut context_lock = self.0.borrow_mut();
+        context_lock.http_client = http_client;
+        drop(context_lock);
         self
     }
 
@@ -210,7 +212,8 @@ impl App {
 
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
-type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
+pub(crate) type KeystrokeObserver =
+    Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
@@ -253,7 +256,6 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) time_to_first_window_draw: Option<TimeToFirstWindowDraw>,
 }
 
 impl AppContext {
@@ -307,7 +309,6 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
-                time_to_first_window_draw: None,
             }),
         });
 
@@ -514,7 +515,7 @@ impl AppContext {
                 }
                 Err(e) => {
                     cx.windows.remove(id);
-                    return Err(e);
+                    Err(e)
                 }
             }
         })
@@ -663,6 +664,11 @@ impl AppContext {
     /// Reveals the specified path at the platform level, such as in Finder on macOS.
     pub fn reveal_path(&self, path: &Path) {
         self.platform.reveal_path(path)
+    }
+
+    /// Opens the specified path with the system's default application.
+    pub fn open_with_system(&self, path: &Path) {
+        self.platform.open_with_system(path)
     }
 
     /// Returns whether the user has configured scrollbars to auto-hide at the platform level.
@@ -1053,7 +1059,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
@@ -1063,7 +1069,14 @@ impl AppContext {
             activate();
             subscription
         }
-        inner(&mut self.keystroke_observers, Box::new(f))
+
+        inner(
+            &mut self.keystroke_observers,
+            Box::new(move |event, cx| {
+                f(event, cx);
+                true
+            }),
+        )
     }
 
     /// Register key bindings.
@@ -1310,14 +1323,6 @@ impl AppContext {
 
         (task, is_first)
     }
-
-    /// Returns the time to first window draw, if available.
-    pub fn time_to_first_window_draw(&self) -> Option<Duration> {
-        match self.time_to_first_window_draw {
-            Some(TimeToFirstWindowDraw::Done(duration)) => Some(duration),
-            _ => None,
-        }
-    }
 }
 
 impl Context for AppContext {
@@ -1481,15 +1486,6 @@ impl<G: Global> DerefMut for GlobalLease<G> {
     }
 }
 
-/// Represents the initialization duration of the application.
-#[derive(Clone, Copy)]
-pub enum TimeToFirstWindowDraw {
-    /// The application is still initializing, and contains the start time.
-    Pending(Instant),
-    /// The application has finished initializing, and contains the total duration.
-    Done(Duration),
-}
-
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
@@ -1523,4 +1519,23 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+}
+
+struct NullHttpClient;
+
+impl HttpClient for NullHttpClient {
+    fn send_with_redirect_policy(
+        &self,
+        _req: http_client::Request<http_client::AsyncBody>,
+        _follow_redirects: bool,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+    > {
+        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+    }
+
+    fn proxy(&self) -> Option<&http_client::Uri> {
+        None
+    }
 }

@@ -289,7 +289,7 @@ async fn test_basic_following(
                 .get_open_buffer(&(worktree_id, "2.txt").into(), cx)
                 .unwrap()
         });
-        let mut result = MultiBuffer::new(0, Capability::ReadWrite);
+        let mut result = MultiBuffer::new(Capability::ReadWrite);
         result.push_excerpts(
             buffer_a1,
             [ExcerptRange {
@@ -506,7 +506,7 @@ async fn test_basic_following(
 
     // Client B activates an item that doesn't implement following,
     // so the previously-opened screen-sharing item gets activated.
-    let unfollowable_item = cx_b.new_view(|cx| TestItem::new(cx));
+    let unfollowable_item = cx_b.new_view(TestItem::new);
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
             pane.add_item(Box::new(unfollowable_item), true, true, None, cx)

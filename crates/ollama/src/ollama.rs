@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
@@ -66,40 +65,37 @@ impl Default for KeepAlive {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
+    pub display_name: Option<String>,
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
 }
 
-// This could be dynamically retrieved via the API (1 call per model)
-// curl -s http://localhost:11434/api/show -d '{"model": "llama3.1:latest"}' | jq '.model_info."llama.context_length"'
 fn get_max_tokens(name: &str) -> usize {
-    match name {
-        "dolphin-llama3:8b-256k" => 262144, // 256K
-        _ => match name.split(':').next().unwrap() {
-            "mistral-nemo" => 1024000,                                      // 1M
-            "deepseek-coder-v2" => 163840,                                  // 160K
-            "llama3.1" | "phi3" | "command-r" | "command-r-plus" => 131072, // 128K
-            "codeqwen" => 65536,                                            // 64K
-            "mistral" | "mistral-large" | "dolphin-mistral" | "codestral"   // 32K
-            | "mistral-openorca" | "dolphin-mixtral" | "mixstral" | "llava"
-            | "qwen" | "qwen2" | "wizardlm2" | "wizard-math" => 32768,
-            "codellama" | "stable-code" | "deepseek-coder" | "starcoder2"   // 16K
-            | "wizardcoder" => 16384,
-            "llama3" | "gemma2" | "gemma" | "codegemma" | "dolphin-llama3"  // 8K
-            | "llava-llama3" | "starcoder" | "openchat" | "aya" => 8192,
-            "llama2" | "yi" | "llama2-chinese" | "vicuna" | "nous-hermes2"  // 4K
-            | "stablelm2" => 4096,
-            "phi" | "orca-mini" | "tinyllama" | "granite-code" => 2048,     // 2K
-            _ => 2048,                                                      // 2K (default)
-        },
+    /// Default context length for unknown models.
+    const DEFAULT_TOKENS: usize = 2048;
+    /// Magic number. Lets many Ollama models work with ~16GB of ram.
+    const MAXIMUM_TOKENS: usize = 16384;
+
+    match name.split(':').next().unwrap() {
+        "phi" | "tinyllama" | "granite-code" => 2048,
+        "llama2" | "yi" | "vicuna" | "stablelm2" => 4096,
+        "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
+        "codellama" | "starcoder2" => 16384,
+        "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "dolphin-mixtral" => 32768,
+        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" | "yi-coder" => 128000,
+        _ => DEFAULT_TOKENS,
     }
+    .clamp(1, MAXIMUM_TOKENS)
 }
 
 impl Model {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
         Self {
             name: name.to_owned(),
-            max_tokens: get_max_tokens(name),
+            display_name: display_name
+                .map(ToString::to_string)
+                .or_else(|| name.strip_suffix(":latest").map(ToString::to_string)),
+            max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
         }
     }
@@ -109,7 +105,7 @@ impl Model {
     }
 
     pub fn display_name(&self) -> &str {
-        &self.name
+        self.display_name.as_ref().unwrap_or(&self.name)
     }
 
     pub fn max_token_count(&self) -> usize {
@@ -265,17 +261,13 @@ pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatRequest,
-    low_speed_timeout: Option<Duration>,
+    _: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -308,17 +300,13 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
-    low_speed_timeout: Option<Duration>,
+    _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
 
     let request = request_builder.body(AsyncBody::default())?;
 
@@ -355,17 +343,7 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
             }),
         )?))?;
 
-    let mut response = match client.send(request).await {
-        Ok(response) => response,
-        Err(err) => {
-            // Be ok with a timeout during preload of the model
-            if err.is_timeout() {
-                return Ok(());
-            } else {
-                return Err(err.into());
-            }
-        }
-    };
+    let mut response = client.send(request).await?;
 
     if response.status().is_success() {
         Ok(())

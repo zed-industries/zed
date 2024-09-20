@@ -52,7 +52,7 @@ impl ObjectFit {
         let image_ratio = image_size.width / image_size.height;
         let bounds_ratio = bounds.size.width / bounds.size.height;
 
-        let result_bounds = match self {
+        match self {
             ObjectFit::Fill => bounds,
             ObjectFit::Contain => {
                 let new_size = if bounds_ratio > image_ratio {
@@ -136,9 +136,7 @@ impl ObjectFit {
                 origin: bounds.origin,
                 size: image_size,
             },
-        };
-
-        result_bounds
+        }
     }
 }
 
@@ -233,6 +231,9 @@ pub struct Style {
 
     /// The mouse cursor style shown when the mouse pointer is over an element.
     pub mouse_cursor: Option<CursorStyle>,
+
+    /// The opacity of this element
+    pub opacity: Option<f32>,
 
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
@@ -694,6 +695,7 @@ impl Default for Style {
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
+            opacity: None,
 
             #[cfg(debug_assertions)]
             debug: false,

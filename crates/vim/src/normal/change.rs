@@ -10,7 +10,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
-use language::{char_kind, CharKind, Selection};
+use language::Selection;
 use ui::ViewContext;
 
 impl Vim {
@@ -59,13 +59,11 @@ impl Vim {
                                 if let Motion::CurrentLine = motion {
                                     let mut start_offset =
                                         selection.start.to_offset(map, Bias::Left);
-                                    let scope = map
+                                    let classifier = map
                                         .buffer_snapshot
-                                        .language_scope_at(selection.start.to_point(&map));
+                                        .char_classifier_at(selection.start.to_point(map));
                                     for (ch, offset) in map.buffer_chars_at(start_offset) {
-                                        if ch == '\n'
-                                            || char_kind(&scope, ch) != CharKind::Whitespace
-                                        {
+                                        if ch == '\n' || !classifier.is_whitespace(ch) {
                                             break;
                                         }
                                         start_offset = offset + ch.len_utf8();
@@ -130,15 +128,15 @@ fn expand_changed_word_selection(
     use_subword: bool,
 ) -> bool {
     let is_in_word = || {
-        let scope = map
+        let classifier = map
             .buffer_snapshot
-            .language_scope_at(selection.start.to_point(map));
+            .char_classifier_at(selection.start.to_point(map));
         let in_word = map
             .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
             .next()
-            .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
+            .map(|(c, _)| !classifier.is_whitespace(c))
             .unwrap_or_default();
-        return in_word;
+        in_word
     };
     if (times.is_none() || times.unwrap() == 1) && is_in_word() {
         let next_char = map
@@ -166,7 +164,7 @@ fn expand_changed_word_selection(
         } else {
             Motion::NextWordStart { ignore_punctuation }
         };
-        motion.expand_selection(map, selection, times, false, &text_layout_details)
+        motion.expand_selection(map, selection, times, false, text_layout_details)
     }
 }
 

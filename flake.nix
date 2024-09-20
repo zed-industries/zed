@@ -7,11 +7,8 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane = {
-      url = "github:ipetkov/crane";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
+    crane.url = "github:ipetkov/crane";
+    flake-compat.url = "github:edolstra/flake-compat";
   };
 
   outputs = {
@@ -32,8 +29,11 @@
   in {
     packages = forAllSystems (pkgs: let
       craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.fenix.stable.toolchain);
+      rustPlatform = pkgs.makeRustPlatform {
+        inherit (pkgs.fenix.stable.toolchain) cargo rustc;
+      };
       nightlyBuild = pkgs.callPackage ./nix/build.nix {
-        inherit craneLib;
+        inherit craneLib rustPlatform;
       };
     in {
       zed-editor = nightlyBuild;
@@ -46,9 +46,12 @@
 
     formatter = forAllSystems (pkgs: pkgs.alejandra);
 
-    overlays.default = final: _prev: {
+    overlays.default = final: prev: {
       zed-editor = final.callPackage ./nix/build.nix {
         craneLib = (crane.mkLib final).overrideToolchain (p: p.fenix.stable.toolchain);
+        rustPlatform = final.makeRustPlatform {
+          inherit (final.fenix.stable.toolchain) cargo rustc;
+        };
       };
     };
   };

@@ -113,7 +113,7 @@ fn display_ranges<'a>(
         .disjoint
         .iter()
         .chain(pending)
-        .map(move |s| s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map))
+        .map(move |s| s.start.to_display_point(display_map)..s.end.to_display_point(display_map))
 }
 
 pub fn deploy_context_menu(

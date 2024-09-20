@@ -2,8 +2,8 @@ use smallvec::{smallvec, SmallVec};
 use std::iter;
 use std::sync::LazyLock;
 
-static MIN: LazyLock<Locator> = LazyLock::new(|| Locator::min());
-static MAX: LazyLock<Locator> = LazyLock::new(|| Locator::max());
+static MIN: LazyLock<Locator> = LazyLock::new(Locator::min);
+static MAX: LazyLock<Locator> = LazyLock::new(Locator::max);
 
 /// An identifier for a position in a ordered collection.
 ///
@@ -84,6 +84,10 @@ impl sum_tree::KeyedItem for Locator {
 
 impl sum_tree::Summary for Locator {
     type Context = ();
+
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.assign(summary);

@@ -198,8 +198,10 @@ pub fn render_item<T>(
     match_ranges: impl IntoIterator<Item = Range<usize>>,
     cx: &AppContext,
 ) -> StyledText {
-    let mut highlight_style = HighlightStyle::default();
-    highlight_style.background_color = Some(color_alpha(cx.theme().colors().text_accent, 0.3));
+    let highlight_style = HighlightStyle {
+        background_color: Some(color_alpha(cx.theme().colors().text_accent, 0.3)),
+        ..Default::default()
+    };
     let custom_highlights = match_ranges
         .into_iter()
         .map(|range| (range, highlight_style));

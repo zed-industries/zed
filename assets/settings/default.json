@@ -28,7 +28,7 @@
   "buffer_font_family": "Zed Plex Mono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
-  "buffer_font_fallbacks": [],
+  "buffer_font_fallbacks": null,
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -54,7 +54,7 @@
   "ui_font_family": "Zed Plex Sans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
-  "ui_font_fallbacks": [],
+  "ui_font_fallbacks": null,
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -111,6 +111,18 @@
   "use_system_path_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // Cursor shape for the default editor.
+  //  1. A vertical bar
+  //     "bar"
+  //  2. A block that surrounds the following character
+  //     "block"
+  //  3. An underline that runs along the following character
+  //     "underscore"
+  //  4. A box drawn around the following character
+  //     "hollow"
+  //
+  // Default: not set, defaults to "bar"
+  "cursor_shape": null,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -227,6 +239,8 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // Enable middle-click paste on Linux.
+  "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).
   // May take 2 values:
@@ -277,6 +291,13 @@
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
+  // Search options to enable by default when opening new project and buffer searches.
+  "search": {
+    "whole_word": false,
+    "case_sensitive": false,
+    "include_ignored": false,
+    "regex": false
+  },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //
@@ -287,6 +308,7 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
@@ -296,6 +318,10 @@
     "show_parameter_hints": true,
     // Corresponds to null/None LSP hint type value.
     "show_other_hints": true,
+    // Whether to show a background for inlay hints.
+    //
+    // If set to `true`, the background will use the `hint.background` color from the current theme.
+    "show_background": false,
     // Time to wait after editing the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "edit_debounce_ms": 700,
@@ -601,7 +627,7 @@
     //     "shell": {
     //         "with_arguments": {
     //           "program": "/bin/bash",
-    //           "arguments": ["--login"]
+    //           "args": ["--login"]
     //         }
     //     }
     "shell": "system",
@@ -688,7 +714,7 @@
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
-        // Can also be `csh`, `fish`, and `nushell`
+        // Can also be `csh`, `fish`, `nushell` and `power_shell`
         "activate_script": "default"
       }
     },
@@ -730,7 +756,13 @@
   //
   "file_types": {
     "JSON": ["flake.lock"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "tsconfig.json"]
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "tsconfig.json",
+      "pyrightconfig.json"
+    ]
   },
   // The extensions that Zed should automatically install on startup.
   //
@@ -900,7 +932,8 @@
     },
     "openai": {
       "version": "1",
-      "api_url": "https://api.openai.com/v1"
+      "api_url": "https://api.openai.com/v1",
+      "low_speed_timeout_in_seconds": 600
     }
   },
   // Zed's Prettier integration settings.
@@ -996,7 +1029,7 @@
   // environment variables.
   //
   // Examples:
-  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "socks5h://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
   "proxy": null,
   // Set to configure aliases for the command palette.

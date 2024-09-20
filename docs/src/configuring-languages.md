@@ -49,13 +49,13 @@ Here's an example of language-specific settings:
 
 You can customize a wide range of settings for each language, including:
 
-- `tab_size`: The number of spaces for each indentation level
-- `formatter`: The tool used for code formatting
-- `format_on_save`: Whether to automatically format code when saving
-- `enable_language_server`: Toggle language server support
-- `hard_tabs`: Use tabs instead of spaces for indentation
-- `preferred_line_length`: The recommended maximum line length
-- `soft_wrap`: How to wrap long lines of code
+- [`tab_size`](./configuring-zed.md#tab-size): The number of spaces for each indentation level
+- [`formatter`](./configuring-zed.md#formatter): The tool used for code formatting
+- [`format_on_save`](./configuring-zed.md#format-on-save): Whether to automatically format code when saving
+- [`enable_language_server`](./configuring-zed.md#enable-language-server): Toggle language server support
+- [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
+- [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
+- [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -63,7 +63,7 @@ These settings allow you to maintain specific coding styles across different lan
 
 Zed automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
 
-To set up custom file associations, use the `file_types` setting in your `settings.json`:
+To set up custom file associations, use the [`file_types`](./configuring-zed.md#file-types) setting in your `settings.json`:
 
 ```json
 "file_types": {
@@ -295,7 +295,9 @@ Zed offers customization options for syntax highlighting and themes, allowing yo
 
 ### Customizing Syntax Highlighting
 
-Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting:
+Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
+
+This example makes comments italic and changes the color of strings:
 
 ```json
 "experimental.theme_overrides": {
@@ -309,28 +311,6 @@ Zed uses Tree-sitter grammars for syntax highlighting. Override the default high
   }
 }
 ```
-
-This example makes comments italic and changes the color of strings.
-
-### Language-Specific Theme Overrides
-
-Apply theme overrides for specific languages:
-
-```json
-"languages": {
-  "Python": {
-    "theme_overrides": {
-      "syntax": {
-        "function": {
-          "color": "#0000FF"
-        }
-      }
-    }
-  }
-}
-```
-
-This configuration changes the color of function names in Python files.
 
 ### Selecting and Customizing Themes
 
