@@ -67,22 +67,20 @@ fn completion_state_from_diff(
     let mut i = 0;
     let mut j = 0;
     while i < completion.len() && j < buffer_text.len() {
-        if !completion_text.is_char_boundary(i) {
-            println!("=> 1");
-            // continue;
-        }
         // find the next instance of the buffer text in the completion text.
         let k = completion[i..].iter().position(|c| *c == buffer_text[j]);
         match k {
             Some(k) => {
-                if !completion_text.is_char_boundary(i + k) {
-                    println!("  => 2");
-                }
                 if k != 0 {
                     // the range from the current position to item is an inlay.
-                    let start = snapshot.clip_offset(i, text::Bias::Left);
-                    let end = snapshot.clip_offset(i + k, text::Bias::Right);
-                    println!("      => diff {}<->{}, {}<->{}", i, start, i + k, end);
+                    let start = clip_offset(completion_text, i, text::Bias::Right);
+                    let end = clip_offset(completion_text, i + k, text::Bias::Left);
+                    println!(
+                        "=> 1 {},{}",
+                        completion_text.is_char_boundary(i),
+                        completion_text.is_char_boundary(i + k)
+                    );
+                    println!("  => diff {}<->{}, {}<->{}", i, start, i + k, end);
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
                         completion_text[start..end].into(),
@@ -101,16 +99,16 @@ fn completion_state_from_diff(
     }
 
     println!(
-        "  => 3 {},{}",
+        "=> 2 {},{}",
         completion_text.is_char_boundary(i),
         completion_text.is_char_boundary(completion_text.len())
     );
     if j == buffer_text.len() && i < completion.len() {
         // there is leftover completion text, so drop it as an inlay.
-        let start = snapshot.clip_offset(i, text::Bias::Left);
-        let end = snapshot.clip_offset(completion_text.len(), text::Bias::Right);
+        let start = clip_offset(completion_text, i, text::Bias::Right);
+        let end = clip_offset(completion_text, completion_text.len(), text::Bias::Left);
         println!(
-            "      => diff {}<->{}, {}<->{}",
+            "   => diff {}<->{}, {}<->{}",
             i,
             start,
             completion_text.len(),
@@ -277,4 +275,15 @@ fn has_leading_newline(text: &str) -> bool {
         }
     }
     false
+}
+
+fn clip_offset(text: &str, index: usize, bias: text::Bias) -> usize {
+    let mut cursor = index;
+    while !text.is_char_boundary(cursor) {
+        match bias {
+            text::Bias::Left => cursor -= 1,
+            text::Bias::Right => cursor += 1,
+        }
+    }
+    cursor.clamp(0, text.len())
 }
