@@ -73,7 +73,7 @@ fn completion_state_from_diff(
         match k {
             Some(k) => {
                 if k != 0 {
-                    let utf8_ix = compl_chars[..compl_char_ix + k + 1]
+                    let utf8_ix = compl_chars[..compl_char_ix + k]
                         .iter()
                         .map(|c| c.len_utf8())
                         .sum::<usize>();
@@ -103,9 +103,11 @@ fn completion_state_from_diff(
                     offset + 1,
                     snapshot.clip_offset(offset + 1, text::Bias::Right)
                 );
-                compl_utf8_ix += 1;
-                buffer_utf8_ix += 1;
+                compl_utf8_ix = clip_offset(completion_text, compl_utf8_ix + 1, text::Bias::Right);
+                buffer_utf8_ix = clip_offset(&buffer_text, buffer_utf8_ix + 1, text::Bias::Right);
                 offset = snapshot.clip_offset(offset + 1, text::Bias::Right);
+                compl_char_ix += 1;
+                buffer_char_ix += 1;
             }
             None => {
                 // there are no more matching completions, so drop the remaining
