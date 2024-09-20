@@ -19,6 +19,7 @@ use gpui::{
     Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, Method, Response};
+use isahc::config::Configurable;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -390,7 +391,7 @@ impl CloudLanguageModel {
         let mut did_retry = false;
 
         let response = loop {
-            let request_builder = http_client::Request::builder();
+            let mut request_builder = http_client::Request::builder();
             if let Some(low_speed_timeout) = low_speed_timeout {
                 request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
             };
@@ -510,9 +511,8 @@ impl LanguageModel for CloudLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let openai_low_speed_timeout = AllLanguageModelSettings::get_global(cx)
-            .openai
-            .low_speed_timeout;
+        let openai_low_speed_timeout =
+            AllLanguageModelSettings::try_read_global(cx, |s| s.openai.low_speed_timeout.unwrap());
 
         match &self.model {
             CloudModel::Anthropic(model) => {
@@ -635,7 +635,7 @@ impl LanguageModel for CloudLanguageModel {
         tool_name: String,
         tool_description: String,
         input_schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
