@@ -236,7 +236,7 @@ impl LogStore {
                             ));
                         this.add_language_server(
                             LanguageServerKind::Global {
-                                name: LanguageServerName(Arc::from("copilot")),
+                                name: LanguageServerName::new_static("copilot"),
                             },
                             server.server_id(),
                             Some(server.clone()),
