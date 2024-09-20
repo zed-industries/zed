@@ -64,7 +64,7 @@ use project::{
 use remote::{SshConnectionOptions, SshSession};
 use serde::Deserialize;
 use session::AppSession;
-use settings::Settings;
+use settings::{InvalidSettingsError, Settings};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -829,6 +829,23 @@ impl Workspace {
                         pane.update(cx, |pane, cx| {
                             pane.handle_deleted_project_item(*entry_id, cx)
                         });
+                    }
+                }
+
+                project::Event::LocalSettingsUpdated(result) => {
+                    struct LocalSettingsUpdated;
+                    let id = NotificationId::unique::<LocalSettingsUpdated>();
+
+                    match result {
+                        Err(InvalidSettingsError::LocalSettings { message, path }) => {
+                            let full_message =
+                                format!("Failed to set local settings in {:?}:\n{}", path, message);
+                            this.show_notification(id, cx, |cx| {
+                                cx.new_view(|_| MessageNotification::new(full_message.clone()))
+                            })
+                        }
+                        Err(_) => {}
+                        Ok(_) => this.dismiss_notification(&id, cx),
                     }
                 }
 
