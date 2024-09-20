@@ -13,9 +13,9 @@ use std::{
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct ProjectSlashCommand;
+pub(crate) struct CargoWorkspaceSlashCommand;
 
-impl ProjectSlashCommand {
+impl CargoWorkspaceSlashCommand {
     async fn build_message(fs: Arc<dyn Fs>, path_to_cargo_toml: &Path) -> Result<String> {
         let buffer = fs.load(path_to_cargo_toml).await?;
         let cargo_toml: cargo_toml::Manifest = toml::from_str(&buffer)?;
@@ -88,17 +88,17 @@ impl ProjectSlashCommand {
     }
 }
 
-impl SlashCommand for ProjectSlashCommand {
+impl SlashCommand for CargoWorkspaceSlashCommand {
     fn name(&self) -> String {
-        "project".into()
+        "cargo-workspace".into()
     }
 
     fn description(&self) -> String {
-        "insert project metadata".into()
+        "insert project workspace metadata".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Project Metadata".into()
+        "Insert Project Workspace Metadata".into()
     }
 
     fn complete_argument(

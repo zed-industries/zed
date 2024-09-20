@@ -19,6 +19,7 @@ use std::{
 use ui::ActiveTheme;
 use workspace::Workspace;
 pub mod auto_command;
+pub mod cargo_workspace_command;
 pub mod context_server_command;
 pub mod default_command;
 pub mod delta_command;
@@ -27,7 +28,6 @@ pub mod docs_command;
 pub mod fetch_command;
 pub mod file_command;
 pub mod now_command;
-pub mod project_command;
 pub mod project_command_2;
 pub mod prompt_command;
 pub mod search_command;
