@@ -72,7 +72,7 @@ pub trait NodeRuntime: Send + Sync {
 
     async fn npm_package_installed_version(
         &self,
-        local_package_directory: &PathBuf,
+        local_package_directory: &Path,
         name: &str,
     ) -> Result<Option<String>>;
 
@@ -80,7 +80,7 @@ pub trait NodeRuntime: Send + Sync {
         &self,
         package_name: &str,
         local_executable_path: &Path,
-        local_package_directory: &PathBuf,
+        local_package_directory: &Path,
         latest_version: &str,
     ) -> bool {
         // In the case of the local system not having the package installed,
@@ -102,7 +102,7 @@ pub trait NodeRuntime: Send + Sync {
         let Some(installed_version) = Version::parse(&installed_version).log_err() else {
             return true;
         };
-        let Some(latest_version) = Version::parse(&latest_version).log_err() else {
+        let Some(latest_version) = Version::parse(latest_version).log_err() else {
             return true;
         };
 
@@ -360,10 +360,10 @@ impl NodeRuntime for RealNodeRuntime {
 
     async fn npm_package_installed_version(
         &self,
-        local_package_directory: &PathBuf,
+        local_package_directory: &Path,
         name: &str,
     ) -> Result<Option<String>> {
-        let mut package_json_path = local_package_directory.clone();
+        let mut package_json_path = local_package_directory.to_owned();
         package_json_path.extend(["node_modules", name, "package.json"]);
 
         let mut file = match fs::File::open(package_json_path).await {
@@ -394,7 +394,7 @@ impl NodeRuntime for RealNodeRuntime {
         packages: &[(&str, &str)],
     ) -> Result<()> {
         let packages: Vec<_> = packages
-            .into_iter()
+            .iter()
             .map(|(name, version)| format!("{name}@{version}"))
             .collect();
 
@@ -448,7 +448,7 @@ impl NodeRuntime for FakeNodeRuntime {
 
     async fn npm_package_installed_version(
         &self,
-        _local_package_directory: &PathBuf,
+        _local_package_directory: &Path,
         name: &str,
     ) -> Result<Option<String>> {
         unreachable!("Should not query npm package '{name}' for installed version")
@@ -460,5 +460,54 @@ impl NodeRuntime for FakeNodeRuntime {
         packages: &[(&str, &str)],
     ) -> anyhow::Result<()> {
         unreachable!("Should not install packages {packages:?}")
+    }
+}
+
+// TODO: Remove this when headless binary can  run node
+pub struct DummyNodeRuntime;
+
+impl DummyNodeRuntime {
+    pub fn new() -> Arc<dyn NodeRuntime> {
+        Arc::new(Self)
+    }
+}
+
+#[async_trait::async_trait]
+impl NodeRuntime for DummyNodeRuntime {
+    async fn binary_path(&self) -> anyhow::Result<PathBuf> {
+        anyhow::bail!("Dummy Node Runtime")
+    }
+
+    async fn node_environment_path(&self) -> anyhow::Result<OsString> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn run_npm_subcommand(
+        &self,
+        _: Option<&Path>,
+        _subcommand: &str,
+        _args: &[&str],
+    ) -> anyhow::Result<Output> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn npm_package_latest_version(&self, _name: &str) -> anyhow::Result<String> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn npm_package_installed_version(
+        &self,
+        _local_package_directory: &Path,
+        _name: &str,
+    ) -> Result<Option<String>> {
+        anyhow::bail!("Dummy node runtime")
+    }
+
+    async fn npm_install_packages(
+        &self,
+        _: &Path,
+        _packages: &[(&str, &str)],
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("Dummy node runtime")
     }
 }

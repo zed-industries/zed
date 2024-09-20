@@ -356,7 +356,7 @@ async fn update_editor_from_message(
                 .collect::<Vec<_>>();
             removed_excerpt_ids.sort_by({
                 let multibuffer = multibuffer.read(cx);
-                move |a, b| a.cmp(&b, &multibuffer)
+                move |a, b| a.cmp(b, &multibuffer)
             });
 
             let mut insertions = message.inserted_excerpts.into_iter().peekable();
@@ -604,7 +604,7 @@ impl Item for Editor {
                     .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
             })
             .flatten()
-            .map(|icon| Icon::from_path(icon))
+            .map(Icon::from_path)
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
@@ -631,7 +631,7 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
         });
 
         h_flex()
@@ -829,7 +829,7 @@ impl Item for Editor {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(&variant.syntax()), cx)?;
+            multibuffer.symbols_containing(cursor, Some(variant.syntax()), cx)?;
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
@@ -1087,10 +1087,14 @@ impl SerializableItem for Editor {
         let workspace_id = workspace.database_id()?;
 
         let buffer = self.buffer().read(cx).as_singleton()?;
+        let path = buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx))
+            .and_then(|full_path| project.read(cx).find_project_path(&full_path, cx))
+            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx));
 
         let is_dirty = buffer.read(cx).is_dirty();
-        let local_file = buffer.read(cx).file().and_then(|file| file.as_local());
-        let path = local_file.map(|file| file.abs_path(cx));
         let mtime = buffer.read(cx).saved_mtime();
 
         let snapshot = buffer.read(cx).snapshot();
@@ -1154,7 +1158,7 @@ impl SearchableItem for Editor {
         self.background_highlights
             .get(&TypeId::of::<BufferSearchHighlights>())
             .map_or(Vec::new(), |(_color, ranges)| {
-                ranges.iter().map(|range| range.clone()).collect()
+                ranges.iter().cloned().collect()
             })
     }
 
@@ -1254,7 +1258,7 @@ impl SearchableItem for Editor {
         self.unfold_ranges(matches.to_vec(), false, false, cx);
         let mut ranges = Vec::new();
         for m in matches {
-            ranges.push(self.range_for_match(&m))
+            ranges.push(self.range_for_match(m))
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
@@ -1335,7 +1339,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_gt()
                 {
-                    count = count - 1
+                    count -= 1
                 }
 
                 (current_index + count) % matches.len()
@@ -1346,7 +1350,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_lt()
                 {
-                    count = count - 1;
+                    count -= 1;
                 }
 
                 if current_index >= count {
@@ -1368,7 +1372,7 @@ impl SearchableItem for Editor {
             .background_highlights
             .get(&TypeId::of::<SearchWithinRange>())
             .map_or(vec![], |(_color, ranges)| {
-                ranges.iter().map(|range| range.clone()).collect::<Vec<_>>()
+                ranges.iter().cloned().collect::<Vec<_>>()
             });
 
         cx.background_executor().spawn(async move {
@@ -1411,7 +1415,7 @@ impl SearchableItem for Editor {
                     if !search_range.is_empty() {
                         ranges.extend(
                             query
-                                .search(&search_buffer, Some(search_range.clone()))
+                                .search(search_buffer, Some(search_range.clone()))
                                 .await
                                 .into_iter()
                                 .map(|match_range| {
@@ -1599,7 +1603,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -1705,8 +1709,8 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert_eq!(
-                    buffer.language().map(|lang| lang.name()).as_deref(),
-                    Some("Rust")
+                    buffer.language().map(|lang| lang.name()),
+                    Some("Rust".into())
                 ); // Language should be set to Rust
                 assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });

@@ -18,7 +18,7 @@ impl Render for ToolbarControls {
             let editor = editor.read(cx);
             include_warnings = editor.include_warnings;
             has_stale_excerpts = !editor.paths_to_update.is_empty();
-            is_updating = editor.update_paths_tx.len() > 0
+            is_updating = !editor.update_paths_tx.is_empty()
                 || editor
                     .project
                     .read(cx)
@@ -50,7 +50,7 @@ impl Render for ToolbarControls {
                 )
             })
             .child(
-                IconButton::new("toggle-warnings", IconName::ExclamationTriangle)
+                IconButton::new("toggle-warnings", IconName::Warning)
                     .tooltip(move |cx| Tooltip::text(tooltip, cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(editor) = this.editor() {
@@ -81,6 +81,12 @@ impl ToolbarItemView for ToolbarControls {
         } else {
             ToolbarItemLocation::Hidden
         }
+    }
+}
+
+impl Default for ToolbarControls {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

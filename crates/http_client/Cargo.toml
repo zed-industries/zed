@@ -16,13 +16,12 @@ path = "src/http_client.rs"
 doctest = true
 
 [dependencies]
-http = "1.0.0"
+http = "0.2"
 anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true
-isahc.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-futures-lite.workspace = true
+smol.workspace = true
 url.workspace = true

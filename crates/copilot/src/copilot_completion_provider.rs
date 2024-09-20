@@ -1,14 +1,14 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use editor::{Direction, InlineCompletionProvider};
+use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, OffsetRangeExt, ToOffset,
 };
 use settings::Settings;
-use std::{ops::Range, path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -145,7 +145,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                     };
                 }
                 Direction::Next => {
-                    if self.completions.len() == 0 {
+                    if self.completions.is_empty() {
                         self.active_completion_index = 0
                     } else {
                         self.active_completion_index =
@@ -221,15 +221,13 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })
             .detach_and_log_err(cx);
 
-        if should_report_inline_completion_event {
-            if self.active_completion().is_some() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_inline_completion_event(
-                        Self::name().to_string(),
-                        false,
-                        self.file_extension.clone(),
-                    );
-                }
+        if should_report_inline_completion_event && self.active_completion().is_some() {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
             }
         }
     }
@@ -239,7 +237,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<(&'a str, Option<Range<language::Anchor>>)> {
+    ) -> Option<CompletionProposal> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -269,7 +267,14 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
-                Some((completion_text, None))
+                Some(CompletionProposal {
+                    inlays: vec![InlayProposal::Suggestion(
+                        cursor_position.bias_right(buffer),
+                        completion_text.into(),
+                    )],
+                    text: completion_text.into(),
+                    delete_range: None,
+                })
             }
         } else {
             None
@@ -1148,7 +1153,7 @@ mod tests {
     }
 
     fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
-        _ = cx.update(|cx| {
+        cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);

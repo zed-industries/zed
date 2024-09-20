@@ -1,12 +1,21 @@
 mod supported_countries;
 
 use anyhow::{anyhow, Context, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
+use futures::{
+    io::BufReader,
+    stream::{self, BoxStream},
+    AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
+};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, future::Future, pin::Pin, time::Duration};
+use std::{
+    convert::TryFrom,
+    future::{self, Future},
+    pin::Pin,
+    time::Duration,
+};
 use strum::EnumIter;
 
 pub use supported_countries::*;
@@ -54,22 +63,30 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo-0613")]
+    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo")]
     ThreePointFiveTurbo,
-    #[serde(rename = "gpt-4", alias = "gpt-4-0613")]
+    #[serde(rename = "gpt-4", alias = "gpt-4")]
     Four,
-    #[serde(rename = "gpt-4-turbo-preview", alias = "gpt-4-1106-preview")]
+    #[serde(rename = "gpt-4-turbo", alias = "gpt-4-turbo")]
     FourTurbo,
-    #[serde(rename = "gpt-4o", alias = "gpt-4o-2024-05-13")]
+    #[serde(rename = "gpt-4o", alias = "gpt-4o")]
     #[default]
     FourOmni,
-    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
+    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini")]
     FourOmniMini,
+    #[serde(rename = "o1-preview", alias = "o1-preview")]
+    O1Preview,
+    #[serde(rename = "o1-mini", alias = "o1-mini")]
+    O1Mini,
+
     #[serde(rename = "custom")]
     Custom {
         name: String,
+        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        display_name: Option<String>,
         max_tokens: usize,
         max_output_tokens: Option<u32>,
+        max_completion_tokens: Option<u32>,
     },
 }
 
@@ -81,6 +98,8 @@ impl Model {
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
+            "o1-preview" => Ok(Self::O1Preview),
+            "o1-mini" => Ok(Self::O1Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -89,9 +108,11 @@ impl Model {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
-            Self::FourTurbo => "gpt-4-turbo-preview",
+            Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::O1Preview => "o1-preview",
+            Self::O1Mini => "o1-mini",
             Self::Custom { name, .. } => name,
         }
     }
@@ -103,17 +124,23 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::Custom { name, .. } => name,
+            Self::O1Preview => "o1-preview",
+            Self::O1Mini => "o1-mini",
+            Self::Custom {
+                name, display_name, ..
+            } => display_name.as_ref().unwrap_or(name),
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::ThreePointFiveTurbo => 4096,
+            Self::ThreePointFiveTurbo => 16385,
             Self::Four => 8192,
             Self::FourTurbo => 128000,
             Self::FourOmni => 128000,
             Self::FourOmniMini => 128000,
+            Self::O1Preview => 128000,
+            Self::O1Mini => 128000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -135,6 +162,7 @@ pub struct Request {
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
     pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -259,6 +287,111 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Response {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<Choice>,
+    pub usage: Usage,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Choice {
+    pub index: u32,
+    pub message: RequestMessage,
+    pub finish_reason: Option<String>,
+}
+
+pub async fn complete(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    low_speed_timeout: Option<Duration>,
+) -> Result<Response> {
+    let uri = format!("{api_url}/chat/completions");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+    if let Some(low_speed_timeout) = low_speed_timeout {
+        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+    };
+
+    let mut request_body = request;
+    request_body.stream = false;
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        let response: Response = serde_json::from_str(&body)?;
+        Ok(response)
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        #[derive(Deserialize)]
+        struct OpenAiResponse {
+            error: OpenAiError,
+        }
+
+        #[derive(Deserialize)]
+        struct OpenAiError {
+            message: String,
+        }
+
+        match serde_json::from_str::<OpenAiResponse>(&body) {
+            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+                "Failed to connect to OpenAI API: {}",
+                response.error.message,
+            )),
+
+            _ => Err(anyhow!(
+                "Failed to connect to OpenAI API: {} {}",
+                response.status(),
+                body,
+            )),
+        }
+    }
+}
+
+fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
+    ResponseStreamEvent {
+        created: response.created as u32,
+        model: response.model,
+        choices: response
+            .choices
+            .into_iter()
+            .map(|choice| ChoiceDelta {
+                index: choice.index,
+                delta: ResponseMessageDelta {
+                    role: Some(match choice.message {
+                        RequestMessage::Assistant { .. } => Role::Assistant,
+                        RequestMessage::User { .. } => Role::User,
+                        RequestMessage::System { .. } => Role::System,
+                        RequestMessage::Tool { .. } => Role::Tool,
+                    }),
+                    content: match choice.message {
+                        RequestMessage::Assistant { content, .. } => content,
+                        RequestMessage::User { content } => Some(content),
+                        RequestMessage::System { content } => Some(content),
+                        RequestMessage::Tool { content, .. } => Some(content),
+                    },
+                    tool_calls: None,
+                },
+                finish_reason: choice.finish_reason,
+            })
+            .collect(),
+        usage: Some(response.usage),
+    }
+}
+
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -266,6 +399,12 @@ pub async fn stream_completion(
     request: Request,
     low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
+    if request.model == "o1-preview" || request.model == "o1-mini" {
+        let response = complete(client, api_url, api_key, request, low_speed_timeout).await;
+        let response_stream_event = response.map(adapt_response_to_stream);
+        return Ok(stream::once(future::ready(response_stream_event)).boxed());
+    }
+
     let uri = format!("{api_url}/chat/completions");
     let mut request_builder = HttpRequest::builder()
         .method(Method::POST)

@@ -538,10 +538,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Leave the room
     active_call_a
-        .update(cx_a, |call, cx| {
-            let hang_up = call.hang_up(cx);
-            hang_up
-        })
+        .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
 
@@ -574,10 +571,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Leave the room
     active_call_a
-        .update(cx_a, |call, cx| {
-            let hang_up = call.hang_up(cx);
-            hang_up
-        })
+        .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
 
@@ -2279,7 +2273,7 @@ async fn test_propagate_saves_and_fs_changes(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     let javascript = Arc::new(Language::new(
         LanguageConfig {
@@ -2290,7 +2284,7 @@ async fn test_propagate_saves_and_fs_changes(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     for client in [&client_a, &client_b, &client_c] {
         client.language_registry().add(rust.clone());
@@ -2334,11 +2328,11 @@ async fn test_propagate_saves_and_fs_changes(
         .unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(&*buffer.language().unwrap().name(), "Rust");
+        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
-        assert_eq!(&*buffer.language().unwrap().name(), "Rust");
+        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
     });
     buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], None, cx));
     buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], None, cx));
@@ -2438,17 +2432,17 @@ async fn test_propagate_saves_and_fs_changes(
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
-        assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
-        assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
-        assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
     let new_buffer_a = project_a
@@ -2578,7 +2572,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2602,7 +2596,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2626,7 +2620,7 @@ async fn test_git_diff_base_change(
 
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2641,7 +2635,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2684,7 +2678,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2708,7 +2702,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
@@ -2741,7 +2735,7 @@ async fn test_git_diff_base_change(
 
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2756,7 +2750,7 @@ async fn test_git_diff_base_change(
         );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
-            &buffer,
+            buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
         );
@@ -2884,8 +2878,8 @@ async fn test_git_status_sync(
     client_a.fs().set_status_for_repo_via_git_operation(
         Path::new("/dir/.git"),
         &[
-            (&Path::new(A_TXT), GitFileStatus::Added),
-            (&Path::new(B_TXT), GitFileStatus::Added),
+            (Path::new(A_TXT), GitFileStatus::Added),
+            (Path::new(B_TXT), GitFileStatus::Added),
         ],
     );
 
@@ -2932,8 +2926,8 @@ async fn test_git_status_sync(
     client_a.fs().set_status_for_repo_via_working_copy_change(
         Path::new("/dir/.git"),
         &[
-            (&Path::new(A_TXT), GitFileStatus::Modified),
-            (&Path::new(B_TXT), GitFileStatus::Modified),
+            (Path::new(A_TXT), GitFileStatus::Modified),
+            (Path::new(B_TXT), GitFileStatus::Modified),
         ],
     );
 
@@ -3330,7 +3324,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{"tab_size":2}"#.to_string()),
@@ -3349,7 +3343,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{}"#.to_string()),
@@ -3378,7 +3372,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
                 (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
@@ -3410,7 +3404,7 @@ async fn test_local_settings(
         let store = cx.global::<SettingsStore>();
         assert_eq!(
             store
-                .local_settings(worktree_b.entity_id().as_u64() as _)
+                .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
         )
@@ -3861,11 +3855,11 @@ async fn test_collaborating_with_diagnostics(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
 
     // Share a project as client A
     client_a
@@ -4132,7 +4126,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         .await;
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             disk_based_diagnostics_progress_token: Some("the-disk-based-token".into()),
@@ -4355,7 +4349,7 @@ async fn test_formatting_buffer(
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+        .register_fake_lsp("Rust", FakeLspAdapter::default());
 
     // Here we insert a fake tree with a directory that exists on disk. This is needed
     // because later we'll invoke a command, which requires passing a working directory
@@ -4464,9 +4458,9 @@ async fn test_prettier_formatting_buffer(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
@@ -4582,7 +4576,7 @@ async fn test_definition(
 
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
     client_a.language_registry().add(rust_lang());
 
     client_a
@@ -4718,7 +4712,7 @@ async fn test_references(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "my-fake-lsp-adapter",
@@ -4989,7 +4983,7 @@ async fn test_document_highlights(
 
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
     client_a.language_registry().add(rust_lang());
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
@@ -5085,28 +5079,30 @@ async fn test_lsp_hover(
 
     client_a.language_registry().add(rust_lang());
     let language_server_names = ["rust-analyzer", "CrabLang-ls"];
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
-        "Rust",
-        FakeLspAdapter {
-            name: "rust-analyzer",
-            capabilities: lsp::ServerCapabilities {
-                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
+    let mut language_servers = [
+        client_a.language_registry().register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
-    let _other_server = client_a.language_registry().register_fake_lsp_adapter(
-        "Rust",
-        FakeLspAdapter {
-            name: "CrabLang-ls",
-            capabilities: lsp::ServerCapabilities {
-                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
+        ),
+        client_a.language_registry().register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "CrabLang-ls",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
             },
-            ..FakeLspAdapter::default()
-        },
-    );
+        ),
+    ];
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a
@@ -5121,7 +5117,7 @@ async fn test_lsp_hover(
 
     let mut servers_with_hover_requests = HashMap::default();
     for i in 0..language_server_names.len() {
-        let new_server = fake_language_servers.next().await.unwrap_or_else(|| {
+        let new_server = language_servers[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
                 &language_server_names[i]
@@ -5266,7 +5262,7 @@ async fn test_project_symbols(
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
 
     client_a
         .fs()
@@ -5368,7 +5364,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_fake_lsp("Rust", Default::default());
 
     client_a
         .fs()
@@ -6336,7 +6332,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Close permanent tab
     pane.update(cx, |pane, cx| {
-        let id = pane.items().nth(0).unwrap().item_id();
+        let id = pane.items().next().unwrap().item_id();
         pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
     })
     .await
@@ -6347,7 +6343,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());
@@ -6366,7 +6362,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());
@@ -6395,7 +6391,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());
@@ -6433,7 +6429,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert_eq!(get_path(pane, 0, cx), path_2.clone());
         assert_eq!(
             pane.preview_item_id(),
-            Some(pane.items().nth(0).unwrap().item_id())
+            Some(pane.items().next().unwrap().item_id())
         );
 
         assert!(pane.can_navigate_backward());

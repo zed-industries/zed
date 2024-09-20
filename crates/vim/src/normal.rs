@@ -2,7 +2,6 @@ mod case;
 mod change;
 mod delete;
 mod increment;
-mod indent;
 pub(crate) mod mark;
 mod paste;
 pub(crate) mod repeat;
@@ -16,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
+    indent::IndentDirection,
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mode, Operator},
@@ -34,8 +34,6 @@ use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
 
-use self::indent::IndentDirection;
-
 actions!(
     vim,
     [
@@ -52,13 +50,10 @@ actions!(
         DeleteToEndOfLine,
         Yank,
         YankLine,
-        YankToEndOfLine,
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
         JoinLines,
-        Indent,
-        Outdent,
         ToggleComments,
         Undo,
         Redo,
@@ -77,7 +72,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_upper_case);
     Vim::action(editor, cx, Vim::convert_to_lower_case);
     Vim::action(editor, cx, Vim::yank_line);
-    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
 
@@ -131,41 +125,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             })
         });
         if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, false, cx)
-        }
-    });
-
-    Vim::action(editor, cx, |vim, _: &Indent, cx| {
-        vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
-        vim.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                let mut original_positions = save_selection_starts(editor, cx);
-                for _ in 0..count {
-                    editor.indent(&Default::default(), cx);
-                }
-                restore_selection_cursors(editor, cx, &mut original_positions);
-            });
-        });
-        if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, false, cx)
-        }
-    });
-
-    Vim::action(editor, cx, |vim, _: &Outdent, cx| {
-        vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
-        vim.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                let mut original_positions = save_selection_starts(editor, cx);
-                for _ in 0..count {
-                    editor.outdent(&Default::default(), cx);
-                }
-                restore_selection_cursors(editor, cx, &mut original_positions);
-            });
-        });
-        if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, false, cx)
+            vim.switch_mode(Mode::Normal, true, cx)
         }
     });
 
@@ -250,7 +210,7 @@ impl Vim {
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
-                        target: Some(SurroundsType::Object(object)),
+                        target: Some(SurroundsType::Object(object, around)),
                     });
                 }
                 Some(Operator::ToggleComments) => self.toggle_comments_object(object, around, cx),
@@ -428,29 +388,18 @@ impl Vim {
         self.yank_motion(motion::Motion::CurrentLine, count, cx)
     }
 
-    fn yank_to_end_of_line(&mut self, _: &YankToEndOfLine, cx: &mut ViewContext<Self>) {
-        self.record_current_action(cx);
-        let count = self.take_count(cx);
-        self.yank_motion(
-            motion::Motion::EndOfLine {
-                display_lines: false,
-            },
-            count,
-            cx,
-        )
-    }
-
     fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.record_current_action(cx);
-        self.update_editor(cx, |_, editor, cx| {
+        self.store_visual_marks(cx);
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let mut original_positions = save_selection_starts(editor, cx);
+                let mut original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), cx);
-                restore_selection_cursors(editor, cx, &mut original_positions);
+                vim.restore_selection_cursors(editor, cx, &mut original_positions);
             });
         });
         if self.mode.is_visual() {
-            self.switch_mode(Mode::Normal, false, cx)
+            self.switch_mode(Mode::Normal, true, cx)
         }
     }
 
@@ -494,33 +443,38 @@ impl Vim {
         });
         self.pop_operator(cx);
     }
-}
 
-fn save_selection_starts(editor: &Editor, cx: &mut ViewContext<Editor>) -> HashMap<usize, Anchor> {
-    let (map, selections) = editor.selections.all_display(cx);
-    selections
-        .iter()
-        .map(|selection| {
-            (
-                selection.id,
-                map.display_point_to_anchor(selection.start, Bias::Right),
-            )
-        })
-        .collect::<HashMap<_, _>>()
-}
+    pub fn save_selection_starts(
+        &self,
+        editor: &Editor,
+        cx: &mut ViewContext<Editor>,
+    ) -> HashMap<usize, Anchor> {
+        let (map, selections) = editor.selections.all_display(cx);
+        selections
+            .iter()
+            .map(|selection| {
+                (
+                    selection.id,
+                    map.display_point_to_anchor(selection.start, Bias::Right),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    }
 
-fn restore_selection_cursors(
-    editor: &mut Editor,
-    cx: &mut ViewContext<Editor>,
-    positions: &mut HashMap<usize, Anchor>,
-) {
-    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-        s.move_with(|map, selection| {
-            if let Some(anchor) = positions.remove(&selection.id) {
-                selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
-            }
+    pub fn restore_selection_cursors(
+        &self,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+        positions: &mut HashMap<usize, Anchor>,
+    ) {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_with(|map, selection| {
+                if let Some(anchor) = positions.remove(&selection.id) {
+                    selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+                }
+            });
         });
-    });
+    }
 }
 #[cfg(test)]
 mod test {
@@ -1406,15 +1360,6 @@ mod test {
             indoc! {"assert_bindinˇg"},
             indoc! {"asserˇt_binding"},
         );
-    }
-
-    #[gpui::test]
-    async fn test_shift_y(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        cx.set_shared_state("helˇlo\n").await;
-        cx.simulate_shared_keystrokes("shift-y").await;
-        cx.shared_clipboard().await.assert_eq("lo");
     }
 
     #[gpui::test]

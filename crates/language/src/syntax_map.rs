@@ -18,13 +18,12 @@ use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
 
-#[derive(Default)]
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
     language_registry: Option<Arc<LanguageRegistry>>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SyntaxSnapshot {
     layers: SumTree<SyntaxLayerEntry>,
     parsed_version: clock::Global,
@@ -212,8 +211,11 @@ struct ByteChunks<'a>(text::Chunks<'a>);
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 impl SyntaxMap {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(text: &BufferSnapshot) -> Self {
+        Self {
+            snapshot: SyntaxSnapshot::new(text),
+            language_registry: None,
+        }
     }
 
     pub fn set_language_registry(&mut self, registry: Arc<LanguageRegistry>) {
@@ -242,12 +244,21 @@ impl SyntaxMap {
         self.snapshot = snapshot;
     }
 
-    pub fn clear(&mut self) {
-        self.snapshot = SyntaxSnapshot::default();
+    pub fn clear(&mut self, text: &BufferSnapshot) {
+        self.snapshot = SyntaxSnapshot::new(text);
     }
 }
 
 impl SyntaxSnapshot {
+    fn new(text: &BufferSnapshot) -> Self {
+        Self {
+            layers: SumTree::new(text),
+            parsed_version: clock::Global::default(),
+            interpolated_version: clock::Global::default(),
+            language_registry_version: 0,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.layers.is_empty()
     }
@@ -262,10 +273,10 @@ impl SyntaxSnapshot {
             return;
         }
 
-        let mut layers = SumTree::new();
+        let mut layers = SumTree::new(text);
         let mut first_edit_ix_for_depth = 0;
         let mut prev_depth = 0;
-        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
+        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>(text);
         cursor.next(text);
 
         'outer: loop {
@@ -388,7 +399,7 @@ impl SyntaxSnapshot {
                 let mut resolved_injection_ranges = Vec::new();
                 let mut cursor = self
                     .layers
-                    .filter::<_, ()>(|summary| summary.contains_unknown_injections);
+                    .filter::<_, ()>(text, |summary| summary.contains_unknown_injections);
                 cursor.next(text);
                 while let Some(layer) = cursor.item() {
                     let SyntaxLayerContent::Pending { language_name } = &layer.content else {
@@ -430,9 +441,9 @@ impl SyntaxSnapshot {
         log::trace!("reparse. invalidated ranges:{:?}", invalidated_ranges);
 
         let max_depth = self.layers.summary().max_depth;
-        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
+        let mut cursor = self.layers.cursor::<SyntaxLayerSummary>(text);
         cursor.next(text);
-        let mut layers = SumTree::new();
+        let mut layers = SumTree::new(text);
 
         let mut changed_regions = ChangeRegionSet::default();
         let mut queue = BinaryHeap::new();
@@ -734,19 +745,24 @@ impl SyntaxSnapshot {
         let mut max_depth = 0;
         let mut prev_range: Option<Range<Anchor>> = None;
         for layer in self.layers.iter() {
-            if layer.depth == max_depth {
-                if let Some(prev_range) = prev_range {
-                    match layer.range.start.cmp(&prev_range.start, text) {
-                        Ordering::Less => panic!("layers out of order"),
-                        Ordering::Equal => {
-                            assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
+            match Ord::cmp(&layer.depth, &max_depth) {
+                Ordering::Less => {
+                    panic!("layers out of order")
+                }
+                Ordering::Equal => {
+                    if let Some(prev_range) = prev_range {
+                        match layer.range.start.cmp(&prev_range.start, text) {
+                            Ordering::Less => panic!("layers out of order"),
+                            Ordering::Equal => {
+                                assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
+                            }
+                            Ordering::Greater => {}
                         }
-                        Ordering::Greater => {}
                     }
                 }
-            } else if layer.depth < max_depth {
-                panic!("layers out of order")
+                Ordering::Greater => {}
             }
+
             max_depth = layer.depth;
             prev_range = Some(layer.range.clone());
         }
@@ -818,7 +834,7 @@ impl SyntaxSnapshot {
         let start = buffer.anchor_before(start_offset);
         let end = buffer.anchor_after(end_offset);
 
-        let mut cursor = self.layers.filter::<_, ()>(move |summary| {
+        let mut cursor = self.layers.filter::<_, ()>(buffer, move |summary| {
             if summary.max_depth > summary.min_depth {
                 true
             } else {
@@ -1343,7 +1359,7 @@ pub(crate) fn splice_included_ranges(
     new_ranges: &[tree_sitter::Range],
 ) -> (Vec<tree_sitter::Range>, Range<usize>) {
     let mut removed_ranges = removed_ranges.iter().cloned().peekable();
-    let mut new_ranges = new_ranges.into_iter().cloned().peekable();
+    let mut new_ranges = new_ranges.iter().cloned().peekable();
     let mut ranges_ix = 0;
     let mut changed_portion: Option<Range<usize>> = None;
     loop {
@@ -1661,6 +1677,10 @@ impl Default for SyntaxLayerSummary {
 impl sum_tree::Summary for SyntaxLayerSummary {
     type Context = BufferSnapshot;
 
+    fn zero(_cx: &BufferSnapshot) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         if other.max_depth > self.max_depth {
             self.max_depth = other.max_depth;
@@ -1709,7 +1729,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
 {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
         if self.change.cmp(cursor_location, buffer).is_le() {
-            return Ordering::Less;
+            Ordering::Less
         } else {
             self.position.cmp(cursor_location, buffer)
         }
@@ -1759,7 +1779,7 @@ impl<'a> Iterator for ByteChunks<'a> {
 
 impl QueryCursorHandle {
     pub fn new() -> Self {
-        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
+        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_default();
         cursor.set_match_limit(64);
         QueryCursorHandle(Some(cursor))
     }

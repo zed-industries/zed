@@ -4,7 +4,7 @@ use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Tas
 use http_client::HttpClient;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
-    ChatResponseDelta, OllamaToolCall,
+    ChatResponseDelta, KeepAlive, OllamaToolCall,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
+use crate::LanguageModelCompletionEvent;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -41,6 +42,8 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     /// The Context Length parameter to the model (aka num_ctx or n_ctx)
     pub max_tokens: usize,
+    /// The number of seconds to keep the connection open after the last request
+    pub keep_alive: Option<KeepAlive>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -155,7 +158,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                    keep_alive: None,
+                    keep_alive: model.keep_alive.clone(),
                 },
             );
         }
@@ -302,7 +305,7 @@ impl LanguageModel for OllamaLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
@@ -335,7 +338,13 @@ impl LanguageModel for OllamaLanguageModel {
             Ok(stream)
         });
 
-        async move { Ok(future.await?.boxed()) }.boxed()
+        async move {
+            Ok(future
+                .await?
+                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(

@@ -75,7 +75,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         font_size: theme::get_buffer_font_size(cx).into(),
         font_style: FontStyle::Normal,
         line_height: cx.line_height().into(),
-        background_color: Some(theme.colors().terminal_background),
+        background_color: Some(theme.colors().terminal_ansi_background),
         white_space: WhiteSpace::Normal,
         truncate: None,
         // These are going to be overridden per-cell
@@ -323,7 +323,7 @@ impl OutputContent for TerminalOutput {
     }
 
     fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
-        if let Some(_) = self.full_buffer.as_ref() {
+        if self.full_buffer.as_ref().is_some() {
             return self.full_buffer.clone();
         }
 

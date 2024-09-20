@@ -28,6 +28,7 @@
   stdenvAdapters,
   nix-gitignore,
   withGLES ? false,
+  cmake,
 }: let
   includeFilter = path: type: let
     baseName = baseNameOf (toString path);
@@ -58,6 +59,7 @@
         pkg-config
         protobuf
         rustPlatform.bindgenHook
+        cmake
       ];
 
       buildInputs = [

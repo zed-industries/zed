@@ -85,7 +85,7 @@ async fn test_core_channel_buffers(
 
     // Client B sees that client A is gone from the channel buffer.
     channel_buffer_b.read_with(cx_b, |buffer, _| {
-        assert_collaborators(&buffer.collaborators(), &[client_b.user_id()]);
+        assert_collaborators(buffer.collaborators(), &[client_b.user_id()]);
     });
 
     // Client A rejoins the channel buffer
@@ -99,7 +99,7 @@ async fn test_core_channel_buffers(
     // Sanity test, make sure we saw A rejoining
     channel_buffer_b.read_with(cx_b, |buffer, _| {
         assert_collaborators(
-            &buffer.collaborators(),
+            buffer.collaborators(),
             &[client_a.user_id(), client_b.user_id()],
         );
     });
@@ -111,7 +111,7 @@ async fn test_core_channel_buffers(
 
     // Client B observes A disconnect
     channel_buffer_b.read_with(cx_b, |buffer, _| {
-        assert_collaborators(&buffer.collaborators(), &[client_b.user_id()]);
+        assert_collaborators(buffer.collaborators(), &[client_b.user_id()]);
     });
 
     // TODO:
@@ -687,7 +687,7 @@ fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Op
     user_ids.sort();
     assert_eq!(
         user_ids,
-        ids.into_iter().map(|id| id.unwrap()).collect::<Vec<_>>()
+        ids.iter().map(|id| id.unwrap()).collect::<Vec<_>>()
     );
 }
 

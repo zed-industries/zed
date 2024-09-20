@@ -1,13 +1,23 @@
 #!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
-const { GITHUB_ACCESS_TOKEN } = process.env;
+let { GITHUB_ACCESS_TOKEN } = process.env;
 const PR_REGEX = /#\d+/; // Ex: matches on #4241
 const FIXES_REGEX = /(fixes|closes|completes) (.+[/#]\d+.*)$/im;
 
 main();
 
 async function main() {
+  if (!GITHUB_ACCESS_TOKEN) {
+    try {
+      GITHUB_ACCESS_TOKEN = execFileSync("gh", ["auth", "token"]).toString();
+    } catch (error) {
+      console.log(error);
+      console.log("No GITHUB_ACCESS_TOKEN, and no `gh auth token`");
+      process.exit(1);
+    }
+  }
+
   // Use form of: YYYY-MM-DD - 2023-01-09
   const startDate = new Date(process.argv[2]);
   const today = new Date();

@@ -12,6 +12,7 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
+use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle as rwh;
@@ -63,6 +64,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
+    pub(crate) main_receiver: flume::Receiver<Runnable>,
 }
 
 impl WindowsWindowState {
@@ -226,6 +228,7 @@ impl WindowsWindowStatePtr {
             executor: context.executor.clone(),
             windows_version: context.windows_version,
             validation_number: context.validation_number,
+            main_receiver: context.main_receiver.clone(),
         }))
     }
 }
@@ -253,18 +256,23 @@ struct WindowCreateContext {
     current_cursor: HCURSOR,
     windows_version: WindowsVersion,
     validation_number: usize,
+    main_receiver: flume::Receiver<Runnable>,
 }
 
 impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
-        icon: HICON,
-        executor: ForegroundExecutor,
-        current_cursor: HCURSOR,
-        windows_version: WindowsVersion,
-        validation_number: usize,
+        creation_info: WindowCreationInfo,
     ) -> Result<Self> {
+        let WindowCreationInfo {
+            icon,
+            executor,
+            current_cursor,
+            windows_version,
+            validation_number,
+            main_receiver,
+        } = creation_info;
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
             .titlebar
@@ -305,6 +313,7 @@ impl WindowsWindow {
             current_cursor,
             windows_version,
             validation_number,
+            main_receiver,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -660,8 +669,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
-        self.0.state.borrow_mut().renderer.draw(scene, on_complete)
+    fn draw(&self, scene: &Scene) {
+        self.0.state.borrow_mut().renderer.draw(scene)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -678,10 +687,6 @@ impl PlatformWindow for WindowsWindow {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         // todo(windows)
-    }
-
-    fn fps(&self) -> Option<f32> {
-        None
     }
 }
 

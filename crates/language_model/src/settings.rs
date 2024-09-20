@@ -175,12 +175,16 @@ impl OpenAiSettingsContent {
                             .filter_map(|model| match model {
                                 open_ai::Model::Custom {
                                     name,
+                                    display_name,
                                     max_tokens,
                                     max_output_tokens,
+                                    max_completion_tokens,
                                 } => Some(provider::open_ai::AvailableModel {
                                     name,
                                     max_tokens,
                                     max_output_tokens,
+                                    display_name,
+                                    max_completion_tokens,
                                 }),
                                 _ => None,
                             })

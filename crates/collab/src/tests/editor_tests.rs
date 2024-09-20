@@ -284,7 +284,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -552,7 +552,7 @@ async fn test_collaborating_with_code_actions(
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
+        .register_fake_lsp("Rust", FakeLspAdapter::default());
 
     client_a
         .fs()
@@ -757,7 +757,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // Set up a fake language server.
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -982,7 +982,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_b.update(editor::init);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "the-language-server",
@@ -1268,7 +1268,7 @@ async fn test_on_input_format_from_host_to_guest(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -1388,7 +1388,7 @@ async fn test_on_input_format_from_guest_to_host(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -1524,6 +1524,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
+                    show_background: false,
                 })
             });
         });
@@ -1538,6 +1539,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
+                    show_background: false,
                 })
             });
         });
@@ -1545,7 +1547,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     client_a.language_registry().add(rust_lang());
     client_b.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -1786,6 +1788,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                     show_type_hints: false,
                     show_parameter_hints: false,
                     show_other_hints: false,
+                    show_background: false,
                 })
             });
         });
@@ -1800,6 +1803,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                     show_type_hints: true,
                     show_parameter_hints: true,
                     show_other_hints: true,
+                    show_background: false,
                 })
             });
         });
@@ -1807,7 +1811,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     client_a.language_registry().add(rust_lang());
     client_b.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -2109,7 +2113,7 @@ struct Row10;"#};
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -2146,7 +2150,7 @@ struct Row10;"#};
     editor_cx_b.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(1)..=DisplayRow(2), DisplayRow(8)..=DisplayRow(8)],
@@ -2194,7 +2198,7 @@ struct Row10;"#};
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -2209,7 +2213,7 @@ struct Row10;"#};
     editor_cx_b.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(5)..=DisplayRow(5)]

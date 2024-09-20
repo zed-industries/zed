@@ -184,6 +184,12 @@ pub struct StorySection {
     children: SmallVec<[AnyElement; 2]>,
 }
 
+impl Default for StorySection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StorySection {
     pub fn new() -> Self {
         Self {

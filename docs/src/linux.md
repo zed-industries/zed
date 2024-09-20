@@ -12,14 +12,20 @@ We also offer a preview build of Zed which receives updates about a week ahead o
 curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
-The Zed installed by the script does not work on systems that:
+The Zed installed by the script works best on systems that:
 
-- have no Vulkan compatible GPU available (for example Linux on an M-series macBook)
-- have no system-wide glibc (for example on NixOS or Alpine by default)
-- have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
-- use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+- have a Vulkan compatible GPU available (for example Linux on an M-series macBook)
+- have a system-wide glibc (NixOS and Alpine do not by default)
+  - x86_64 (Intel/AMD): glibc version >= 2.35 (Ubuntu 22 and newer)
+  - aarch64 (ARM): glibc version >= 2.35 (Ubuntu 22 and newer)
 
 Both Nix and Alpine have third-party Zed packages available (though they are currently a few weeks out of date). If you'd like to use our builds they do work if you install a glibc compatibility layer. On NixOS you can try [nix-ld](https://github.com/Mic92/nix-ld), and on Alpine [gcompat](https://wiki.alpinelinux.org/wiki/Running_glibc_programs).
+
+You will need to build from source for:
+
+- architectures other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+- Amazon Linux
+- Rocky Linux 9.3
 
 ## Other ways to install Zed on Linux
 
@@ -108,6 +114,8 @@ If Zed is selecting your integrated GPU instead of your discrete GPU, you can fi
 If you are using Mesa, and want more control over which GPU is selected you can run `MESA_VK_DEVICE_SELECT=list zed --foreground` to get a list of available GPUs and then export `MESA_VK_DEVICE_SELECT=xxxx:yyyy` to choose a specific device.
 
 If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141).
+
+If you have a discrete GPU and you are using [PRIME](https://wiki.archlinux.org/title/PRIME) you may be able to configure Zed to work by setting `/etc/prime-discrete` to 'on'.
 
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 

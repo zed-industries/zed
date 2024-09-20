@@ -58,6 +58,8 @@ const REGEX_SPECIAL_CHARS: &[char] = &[
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
+const GIT_DIFF_PATH_PREFIXES: &[char] = &['a', 'b'];
+
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
@@ -645,7 +647,7 @@ fn subscribe_for_terminal_events(
                                 &path_like_target.maybe_path,
                                 cx,
                             );
-                            smol::block_on(valid_files_to_open_task).len() > 0
+                            !smol::block_on(valid_files_to_open_task).is_empty()
                         } else {
                             false
                         }
@@ -826,6 +828,19 @@ fn possible_open_targets(
                 {
                     potential_cwd_and_workspace_paths.insert(potential_worktree_path);
                 }
+
+                for prefix in GIT_DIFF_PATH_PREFIXES {
+                    let prefix_str = &prefix.to_string();
+                    if maybe_path.starts_with(prefix_str) {
+                        let stripped = maybe_path.strip_prefix(prefix_str).unwrap_or(&maybe_path);
+                        for potential_worktree_path in workspace
+                            .worktrees(cx)
+                            .map(|worktree| worktree.read(cx).abs_path().join(&stripped))
+                        {
+                            potential_cwd_and_workspace_paths.insert(potential_worktree_path);
+                        }
+                    }
+                }
             });
         }
 
@@ -867,7 +882,7 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
     if query == "." {
         return None;
     }
-    let searcher = RegexSearch::new(&query);
+    let searcher = RegexSearch::new(query);
     searcher.ok()
 }
 
@@ -991,7 +1006,7 @@ impl Item for TerminalView {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Unknown => (
-                    IconName::ExclamationTriangle,
+                    IconName::Warning,
                     Color::Warning,
                     Some(rerun_button(terminal_task.id.clone())),
                 ),
@@ -1008,7 +1023,7 @@ impl Item for TerminalView {
         };
 
         h_flex()
-            .gap_2()
+            .gap_1()
             .group("term-tab-icon")
             .child(
                 h_flex()
@@ -1239,7 +1254,7 @@ impl SearchableItem for TerminalView {
         let searcher = match &*query {
             SearchQuery::Text { .. } => regex_search_for_query(
                 &(SearchQuery::text(
-                    regex_to_literal(&query.as_str()),
+                    regex_to_literal(query.as_str()),
                     query.whole_word(),
                     query.case_sensitive(),
                     query.include_ignored(),
@@ -1269,7 +1284,7 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if matches.len() > 0 {
+        let res = if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 if let Some(ix) = matches

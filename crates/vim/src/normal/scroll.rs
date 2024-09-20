@@ -73,14 +73,24 @@ fn scroll_editor(
         return;
     }
 
-    editor.scroll_screen(amount, cx);
+    let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
+    let amount = match (amount.is_full_page(), editor.visible_line_count()) {
+        (true, Some(visible_line_count)) => {
+            if amount.direction().is_upwards() {
+                ScrollAmount::Line(amount.lines(visible_line_count) + 1.0)
+            } else {
+                ScrollAmount::Line(amount.lines(visible_line_count) - 1.0)
+            }
+        }
+        _ => amount.clone(),
+    };
+
+    editor.scroll_screen(&amount, cx);
     if !should_move_cursor {
         return;
     }
 
-    let visible_line_count = if let Some(visible_line_count) = editor.visible_line_count() {
-        visible_line_count
-    } else {
+    let Some(visible_line_count) = editor.visible_line_count() else {
         return;
     };
 
@@ -115,11 +125,18 @@ fn scroll_editor(
             } else {
                 DisplayRow(top.row().0 + vertical_scroll_margin)
             };
-            let max_row = DisplayRow(map.max_point().row().0.max(top.row().0.saturating_add(
-                (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
-            )));
 
-            let new_row = if head.row() < min_row {
+            let max_visible_row = top.row().0.saturating_add(
+                (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
+            );
+            let max_row = DisplayRow(map.max_point().row().0.max(max_visible_row));
+
+            let new_row = if full_page_up {
+                // Special-casing ctrl-b/page-up, which is special-cased by Vim, it seems
+                // to always put the cursor on the last line of the page, even if the cursor
+                // was before that.
+                DisplayRow(max_visible_row)
+            } else if head.row() < min_row {
                 min_row
             } else if head.row() > max_row {
                 max_row
@@ -251,6 +268,7 @@ mod test {
             )
         });
     }
+
     #[gpui::test]
     async fn test_ctrl_d_u(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -279,6 +297,64 @@ mod test {
         // test returning to top
         cx.simulate_shared_keystrokes("g g ctrl-d ctrl-u ctrl-u")
             .await;
+        cx.shared_state().await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_f_b(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        let visible_lines = 10;
+        cx.set_scroll_height(visible_lines).await;
+
+        // First test without vertical scroll margin
+        cx.neovim.set_option(&format!("scrolloff={}", 0)).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<EditorSettings>(cx, |s| {
+                s.vertical_scroll_margin = Some(0.0)
+            });
+        });
+
+        let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
+        cx.set_shared_state(&content).await;
+
+        // scroll down: ctrl-f
+        cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        // scroll up: ctrl-b
+        cx.simulate_shared_keystrokes("ctrl-b").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("ctrl-b").await;
+        cx.shared_state().await.assert_matches();
+
+        // Now go back to start of file, and test with vertical scroll margin
+        cx.simulate_shared_keystrokes("g g").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.neovim.set_option(&format!("scrolloff={}", 3)).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<EditorSettings>(cx, |s| {
+                s.vertical_scroll_margin = Some(3.0)
+            });
+        });
+
+        // scroll down: ctrl-f
+        cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("ctrl-f").await;
+        cx.shared_state().await.assert_matches();
+
+        // scroll up: ctrl-b
+        cx.simulate_shared_keystrokes("ctrl-b").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("ctrl-b").await;
         cx.shared_state().await.assert_matches();
     }
 

@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
+use axum::routing::get;
 use axum::{
     body::Body,
     http::{self, HeaderName, HeaderValue, Request, StatusCode},
@@ -21,7 +22,8 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-use http_client::IsahcHttpClient;
+use isahc_http_client::IsahcHttpClient;
+use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
@@ -70,6 +72,7 @@ impl LlmState {
         let http_client = IsahcHttpClient::builder()
             .default_header("User-Agent", user_agent)
             .build()
+            .map(IsahcHttpClient::from)
             .context("failed to construct http client")?;
 
         let this = Self {
@@ -114,6 +117,7 @@ impl LlmState {
 
 pub fn routes() -> Router<(), Body> {
     Router::new()
+        .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
         .layer(middleware::from_fn(validate_api_token))
 }
@@ -138,7 +142,7 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
         })?;
 
     let state = req.extensions().get::<Arc<LlmState>>().unwrap();
-    match LlmTokenClaims::validate(&token, &state.config) {
+    match LlmTokenClaims::validate(token, &state.config) {
         Ok(claims) => {
             if state.db.is_access_token_revoked(&claims.jti).await? {
                 return Err(Error::http(
@@ -151,7 +155,7 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
                 .record("user_id", claims.user_id)
                 .record("login", claims.github_user_login.clone())
                 .record("authn.jti", &claims.jti)
-                .record("is_staff", &claims.is_staff);
+                .record("is_staff", claims.is_staff);
 
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
@@ -173,6 +177,37 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
     }
 }
 
+async fn list_models(
+    Extension(state): Extension<Arc<LlmState>>,
+    Extension(claims): Extension<LlmTokenClaims>,
+    country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
+) -> Result<Json<ListModelsResponse>> {
+    let country_code = country_code_header.map(|header| header.to_string());
+
+    let mut accessible_models = Vec::new();
+
+    for (provider, model) in state.db.all_models() {
+        let authorize_result = authorize_access_to_language_model(
+            &state.config,
+            &claims,
+            country_code.as_deref(),
+            provider,
+            &model.name,
+        );
+
+        if authorize_result.is_ok() {
+            accessible_models.push(rpc::LanguageModel {
+                provider,
+                name: model.name,
+            });
+        }
+    }
+
+    Ok(Json(ListModelsResponse {
+        models: accessible_models,
+    }))
+}
+
 async fn perform_completion(
     Extension(state): Extension<Arc<LlmState>>,
     Extension(claims): Extension<LlmTokenClaims>,
@@ -187,7 +222,9 @@ async fn perform_completion(
     authorize_access_to_language_model(
         &state.config,
         &claims,
-        country_code_header.map(|header| header.to_string()),
+        country_code_header
+            .map(|header| header.to_string())
+            .as_deref(),
         params.provider,
         &model,
     )?;
@@ -211,7 +248,7 @@ async fn perform_completion(
             };
 
             let mut request: anthropic::Request =
-                serde_json::from_str(&params.provider_request.get())?;
+                serde_json::from_str(params.provider_request.get())?;
 
             // Override the model on the request with the latest version of the model that is
             // known to the server.
@@ -312,7 +349,7 @@ async fn perform_completion(
                 &state.http_client,
                 open_ai::OPEN_AI_API_URL,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
                 None,
             )
             .await?;
@@ -343,7 +380,8 @@ async fn perform_completion(
                 &state.http_client,
                 google_ai::API_URL,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
+                None,
             )
             .await?;
 
@@ -365,19 +403,19 @@ async fn perform_completion(
         LanguageModelProvider::Zed => {
             let api_key = state
                 .config
-                .qwen2_7b_api_key
+                .runpod_api_key
                 .as_ref()
                 .context("no Qwen2-7B API key configured on the server")?;
             let api_url = state
                 .config
-                .qwen2_7b_api_url
+                .runpod_api_summary_url
                 .as_ref()
                 .context("no Qwen2-7B URL configured on the server")?;
             let chunks = open_ai::stream_completion(
                 &state.http_client,
-                &api_url,
+                api_url,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
                 None,
             )
             .await?;

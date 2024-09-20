@@ -53,7 +53,7 @@ impl Render for InlineCompletionButton {
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.inline_completions.provider {
-            InlineCompletionProvider::None => return div(),
+            InlineCompletionProvider::None => div(),
 
             InlineCompletionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {

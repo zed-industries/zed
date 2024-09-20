@@ -1,4 +1,5 @@
 use gpui::AppContext;
+use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -6,6 +7,7 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
+    pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
@@ -20,6 +22,7 @@ pub struct EditorSettings {
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub use_smartcase_search: bool,
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
@@ -27,6 +30,8 @@ pub struct EditorSettings {
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     pub search_wrap: bool,
+    #[serde(default)]
+    pub search: SearchSettings,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
@@ -155,12 +160,30 @@ pub enum ScrollBeyondLastLine {
     VerticalScrollMargin,
 }
 
+/// Default options for buffer and project search items.
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchSettings {
+    #[serde(default)]
+    pub whole_word: bool,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub include_ignored: bool,
+    #[serde(default)]
+    pub regex: bool,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
     /// Default: true
     pub cursor_blink: Option<bool>,
+    /// Cursor shape for the default editor.
+    /// Can be "bar", "block", "underscore", or "hollow".
+    ///
+    /// Default: None
+    pub cursor_shape: Option<CursorShape>,
     /// How to highlight the current line in the editor.
     ///
     /// Default: all
@@ -218,6 +241,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+    pub use_smartcase_search: Option<bool>,
     /// The key to use for adding multiple cursors
     ///
     /// Default: alt
@@ -248,6 +272,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub search_wrap: Option<bool>,
+
+    /// Defaults to use when opening a new buffer and project search items.
+    ///
+    /// Default: nothing is enabled
+    pub search: Option<SearchSettings>,
 
     /// Whether to automatically show a signature help pop-up or not.
     ///

@@ -15,12 +15,9 @@ use gpui::{
 use http_client::Url;
 use language::{
     proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
-    Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
+    Buffer, BufferEvent, Capability, File as _, Language, Operation,
 };
-use rpc::{
-    proto::{self, AnyProtoClient},
-    ErrorExt as _, TypedEnvelope,
-};
+use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use smol::channel::Receiver;
 use std::{io, path::Path, str::FromStr as _, sync::Arc, time::Instant};
 use text::BufferId;
@@ -65,13 +62,13 @@ pub enum BufferStoreEvent {
     },
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>);
 
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
-    pub fn init(client: &Arc<Client>) {
+    pub fn init(client: &AnyProtoClient) {
         client.add_model_message_handler(Self::handle_buffer_reloaded);
         client.add_model_message_handler(Self::handle_buffer_saved);
         client.add_model_message_handler(Self::handle_update_buffer_file);
@@ -91,11 +88,10 @@ impl BufferStore {
         remote_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.subscribe(&worktree_store, |this, _, event, cx| match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+        cx.subscribe(&worktree_store, |this, _, event, cx| {
+            if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
                 this.subscribe_to_worktree(worktree, cx);
             }
-            _ => {}
         })
         .detach();
 
@@ -648,7 +644,7 @@ impl BufferStore {
             }
             hash_map::Entry::Occupied(mut entry) => {
                 if let OpenBuffer::Operations(operations) = entry.get_mut() {
-                    buffer.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx))?;
+                    buffer.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx));
                 } else if entry.get().upgrade().is_some() {
                     if is_remote {
                         return Ok(());
@@ -711,7 +707,7 @@ impl BufferStore {
     pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<Buffer>> {
         self.buffers().find_map(|buffer| {
             let file = File::from_dyn(buffer.read(cx).file())?;
-            if file.worktree_id(cx) == path.worktree_id && &file.path == &path.path {
+            if file.worktree_id(cx) == path.worktree_id && file.path == path.path {
                 Some(buffer)
             } else {
                 None
@@ -885,11 +881,8 @@ impl BufferStore {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        match event {
-            BufferEvent::FileHandleChanged => {
-                self.buffer_changed_file(buffer, cx);
-            }
-            _ => {}
+        if event == &BufferEvent::FileHandleChanged {
+            self.buffer_changed_file(buffer, cx);
         }
     }
 
@@ -1058,10 +1051,14 @@ impl BufferStore {
             match this.opened_buffers.entry(buffer_id) {
                 hash_map::Entry::Occupied(mut e) => match e.get_mut() {
                     OpenBuffer::Strong(buffer) => {
-                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
                     }
                     OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
-                    OpenBuffer::Weak(_) => {}
+                    OpenBuffer::Weak(buffer) => {
+                        if let Some(buffer) = buffer.upgrade() {
+                            buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
+                        }
+                    }
                 },
                 hash_map::Entry::Vacant(e) => {
                     e.insert(OpenBuffer::Operations(ops));
@@ -1220,7 +1217,8 @@ impl BufferStore {
                         .into_iter()
                         .map(language::proto::deserialize_operation)
                         .collect::<Result<Vec<_>>>()?;
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))
+                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx));
+                    anyhow::Ok(())
                 });
 
                 if let Err(error) = result {

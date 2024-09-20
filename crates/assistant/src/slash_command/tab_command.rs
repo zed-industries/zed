@@ -1,21 +1,17 @@
-use super::{
-    diagnostics_command::write_single_file_diagnostics,
-    file_command::{build_entry_output_section, codeblock_fence_for_path},
-    SlashCommand, SlashCommandOutput,
-};
+use super::{file_command::append_buffer_to_output, SlashCommand, SlashCommandOutput};
 use anyhow::{Context, Result};
-use assistant_slash_command::ArgumentCompletion;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
 use gpui::{Entity, Task, WeakView};
-use language::{BufferSnapshot, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
-    fmt::Write,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::WindowContext;
+use ui::{ActiveTheme, WindowContext};
+use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) struct TabSlashCommand;
@@ -79,6 +75,8 @@ impl SlashCommand for TabSlashCommand {
         let current_query = arguments.last().cloned().unwrap_or_default();
         let tab_items_search =
             tab_items_for_queries(workspace, &[current_query], cancel, false, cx);
+
+        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
         cx.spawn(|_| async move {
             let tab_items = tab_items_search.await?;
             let run_command = tab_items.len() == 1;
@@ -90,8 +88,9 @@ impl SlashCommand for TabSlashCommand {
                 if active_item_path.is_some() && active_item_path == path {
                     return None;
                 }
+                let label = create_tab_completion_label(path.as_ref()?, comment_id);
                 Some(ArgumentCompletion {
-                    label: path_string.clone().into(),
+                    label,
                     new_text: path_string,
                     replace_previous_arguments: false,
                     after_completion: run_command.into(),
@@ -100,14 +99,17 @@ impl SlashCommand for TabSlashCommand {
 
             let active_item_completion = active_item_path
                 .as_deref()
-                .map(|active_item_path| active_item_path.to_string_lossy().to_string())
-                .filter(|path_string| !argument_set.contains(path_string))
-                .map(|path_string| ArgumentCompletion {
-                    label: path_string.clone().into(),
-                    new_text: path_string,
-                    replace_previous_arguments: false,
-                    after_completion: run_command.into(),
-                });
+                .map(|active_item_path| {
+                    let path_string = active_item_path.to_string_lossy().to_string();
+                    let label = create_tab_completion_label(active_item_path, comment_id);
+                    ArgumentCompletion {
+                        label,
+                        new_text: path_string,
+                        replace_previous_arguments: false,
+                        after_completion: run_command.into(),
+                    }
+                })
+                .filter(|completion| !argument_set.contains(&completion.new_text));
 
             Ok(active_item_completion
                 .into_iter()
@@ -125,6 +127,8 @@ impl SlashCommand for TabSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -138,40 +142,11 @@ impl SlashCommand for TabSlashCommand {
         );
 
         cx.background_executor().spawn(async move {
-            let mut sections = Vec::new();
-            let mut text = String::new();
-            let mut has_diagnostics = false;
+            let mut output = SlashCommandOutput::default();
             for (full_path, buffer, _) in tab_items_search.await? {
-                let section_start_ix = text.len();
-                text.push_str(&codeblock_fence_for_path(full_path.as_deref(), None));
-                for chunk in buffer.as_rope().chunks() {
-                    text.push_str(chunk);
-                }
-                if !text.ends_with('\n') {
-                    text.push('\n');
-                }
-                writeln!(text, "```").unwrap();
-                if write_single_file_diagnostics(&mut text, full_path.as_deref(), &buffer) {
-                    has_diagnostics = true;
-                }
-                if !text.ends_with('\n') {
-                    text.push('\n');
-                }
-
-                let section_end_ix = text.len() - 1;
-                sections.push(build_entry_output_section(
-                    section_start_ix..section_end_ix,
-                    full_path.as_deref(),
-                    false,
-                    None,
-                ));
+                append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
             }
-
-            Ok(SlashCommandOutput {
-                text,
-                sections,
-                run_commands_in_text: has_diagnostics,
-            })
+            Ok(output)
         })
     }
 }
@@ -247,7 +222,7 @@ fn tab_items_for_queries(
                         .fold(HashMap::default(), |mut candidates, (id, path_string)| {
                             candidates
                                 .entry(path_string)
-                                .or_insert_with(|| Vec::new())
+                                .or_insert_with(Vec::new)
                                 .push(id);
                             candidates
                         });
@@ -318,4 +293,24 @@ fn active_item_buffer(
         .read(cx)
         .snapshot();
     Ok(snapshot)
+}
+
+fn create_tab_completion_label(
+    path: &std::path::Path,
+    comment_id: Option<HighlightId>,
+) -> CodeLabel {
+    let file_name = path
+        .file_name()
+        .map(|f| f.to_string_lossy())
+        .unwrap_or_default();
+    let parent_path = path
+        .parent()
+        .map(|p| p.to_string_lossy())
+        .unwrap_or_default();
+    let mut label = CodeLabel::default();
+    label.push_str(&file_name, None);
+    label.push_str(" ", None);
+    label.push_str(&parent_path, comment_id);
+    label.filter_range = 0..file_name.len();
+    label
 }

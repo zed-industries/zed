@@ -282,7 +282,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || rng.gen() {
-                                Path::new("/").join(&plan.next_root_dir_name())
+                                Path::new("/").join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
                             };
@@ -1047,7 +1047,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             },
             None,
         )));
-        client.language_registry().register_fake_lsp_adapter(
+        client.language_registry().register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 name: "the-fake-language-server",

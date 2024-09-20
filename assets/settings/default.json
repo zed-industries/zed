@@ -111,6 +111,18 @@
   "use_system_path_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // Cursor shape for the default editor.
+  //  1. A vertical bar
+  //     "bar"
+  //  2. A block that surrounds the following character
+  //     "block"
+  //  3. An underline that runs along the following character
+  //     "underscore"
+  //  4. A box drawn around the following character
+  //     "hollow"
+  //
+  // Default: not set, defaults to "bar"
+  "cursor_shape": null,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -279,6 +291,13 @@
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
+  // Search options to enable by default when opening new project and buffer searches.
+  "search": {
+    "whole_word": false,
+    "case_sensitive": false,
+    "include_ignored": false,
+    "regex": false
+  },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //
@@ -289,6 +308,7 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
@@ -298,6 +318,10 @@
     "show_parameter_hints": true,
     // Corresponds to null/None LSP hint type value.
     "show_other_hints": true,
+    // Whether to show a background for inlay hints.
+    //
+    // If set to `true`, the background will use the `hint.background` color from the current theme.
+    "show_background": false,
     // Time to wait after editing the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "edit_debounce_ms": 700,
@@ -603,7 +627,7 @@
     //     "shell": {
     //         "with_arguments": {
     //           "program": "/bin/bash",
-    //           "arguments": ["--login"]
+    //           "args": ["--login"]
     //         }
     //     }
     "shell": "system",
@@ -690,7 +714,7 @@
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
-        // Can also be `csh`, `fish`, and `nushell`
+        // Can also be `csh`, `fish`, `nushell` and `power_shell`
         "activate_script": "default"
       }
     },
@@ -908,7 +932,8 @@
     },
     "openai": {
       "version": "1",
-      "api_url": "https://api.openai.com/v1"
+      "api_url": "https://api.openai.com/v1",
+      "low_speed_timeout_in_seconds": 600
     }
   },
   // Zed's Prettier integration settings.

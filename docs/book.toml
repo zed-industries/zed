@@ -8,8 +8,8 @@ site-url = "/docs/"
 
 [output.html]
 no-section-label = true
-preferred-dark-theme = "light"
-additional-css = ["theme/page-toc.css", "theme/plugins.css"]
+preferred-dark-theme = "dark"
+additional-css = ["theme/page-toc.css", "theme/plugins.css", "theme/highlight.css"]
 additional-js  = ["theme/page-toc.js", "theme/plugins.js"]
 
 [output.html.print]

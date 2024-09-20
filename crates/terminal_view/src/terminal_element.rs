@@ -269,7 +269,7 @@ impl TerminalElement {
                                 cur_rect = Some(LayoutRect::new(
                                     AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
                                     1,
-                                    convert_color(&bg, &theme),
+                                    convert_color(&bg, theme),
                                 ));
                             }
                         }
@@ -344,7 +344,7 @@ impl TerminalElement {
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
     ) -> TextRun {
         let flags = indexed.cell.flags;
-        let mut fg = convert_color(&fg, &colors);
+        let mut fg = convert_color(&fg, colors);
 
         // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
         // uses 0.75. We're using 0.7 because it's pretty well in the middle of that.
@@ -439,7 +439,7 @@ impl TerminalElement {
             move |e, cx| {
                 cx.focus(&focus);
                 terminal.update(cx, |terminal, cx| {
-                    terminal.mouse_down(&e, origin, cx);
+                    terminal.mouse_down(e, origin, cx);
                     cx.notify();
                 })
             }
@@ -460,18 +460,16 @@ impl TerminalElement {
                         if terminal.selection_started() {
                             terminal.mouse_drag(e, origin, hitbox.bounds);
                             cx.notify();
-                        } else {
-                            if hovered {
-                                terminal.mouse_drag(e, origin, hitbox.bounds);
-                                cx.notify();
-                            }
+                        } else if hovered {
+                            terminal.mouse_drag(e, origin, hitbox.bounds);
+                            cx.notify();
                         }
                     })
                 }
 
                 if hitbox.is_hovered(cx) {
                     terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_move(&e, origin);
+                        terminal.mouse_move(e, origin);
                         cx.notify();
                     })
                 }
@@ -485,7 +483,7 @@ impl TerminalElement {
                 origin,
                 focus.clone(),
                 move |terminal, origin, e, cx| {
-                    terminal.mouse_up(&e, origin, cx);
+                    terminal.mouse_up(e, origin, cx);
                 },
             ),
         );
@@ -496,7 +494,7 @@ impl TerminalElement {
                 origin,
                 focus.clone(),
                 move |terminal, origin, e, cx| {
-                    terminal.mouse_down(&e, origin, cx);
+                    terminal.mouse_down(e, origin, cx);
                 },
             ),
         );
@@ -522,7 +520,7 @@ impl TerminalElement {
                     origin,
                     focus.clone(),
                     move |terminal, origin, e, cx| {
-                        terminal.mouse_down(&e, origin, cx);
+                        terminal.mouse_down(e, origin, cx);
                     },
                 ),
             );
@@ -533,7 +531,7 @@ impl TerminalElement {
                     origin,
                     focus.clone(),
                     move |terminal, origin, e, cx| {
-                        terminal.mouse_up(&e, origin, cx);
+                        terminal.mouse_up(e, origin, cx);
                     },
                 ),
             );
@@ -544,7 +542,7 @@ impl TerminalElement {
                     origin,
                     focus,
                     move |terminal, origin, e, cx| {
-                        terminal.mouse_up(&e, origin, cx);
+                        terminal.mouse_up(e, origin, cx);
                     },
                 ),
             );
@@ -591,9 +589,8 @@ impl Element for TerminalElement {
                 style.size.width = relative(1.).into();
                 style.size.height = relative(1.).into();
                 // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
-                let layout_id = cx.request_layout(style, None);
 
-                layout_id
+                cx.request_layout(style, None)
             });
         (layout_id, ())
     }
@@ -625,7 +622,7 @@ impl Element for TerminalElement {
                     .font_fallbacks
                     .as_ref()
                     .or(settings.buffer_font.fallbacks.as_ref())
-                    .map(|fallbacks| fallbacks.clone());
+                    .cloned();
 
                 let font_features = terminal_settings
                     .font_features
@@ -665,7 +662,7 @@ impl Element for TerminalElement {
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
                     line_height: line_height.into(),
-                    background_color: Some(theme.colors().terminal_background),
+                    background_color: Some(theme.colors().terminal_ansi_background),
                     white_space: WhiteSpace::Normal,
                     truncate: None,
                     // These are going to be overridden per-cell
@@ -758,7 +755,7 @@ impl Element for TerminalElement {
                 let (cells, rects) = TerminalElement::layout_grid(
                     cells.iter().cloned(),
                     &text_style,
-                    &cx.text_system(),
+                    cx.text_system(),
                     last_hovered_word
                         .as_ref()
                         .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
@@ -781,7 +778,7 @@ impl Element for TerminalElement {
                                 &[TextRun {
                                     len,
                                     font: text_style.font(),
-                                    color: theme.colors().terminal_background,
+                                    color: theme.colors().terminal_ansi_background,
                                     background_color: None,
                                     underline: Default::default(),
                                     strikethrough: None,
@@ -926,7 +923,7 @@ impl Element for TerminalElement {
                         layout.relative_highlighted_ranges.iter()
                     {
                         if let Some((start_y, highlighted_range_lines)) =
-                            to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
+                            to_highlighted_range_lines(relative_highlighted_range, layout, origin)
                         {
                             let hr = HighlightedRange {
                                 start_y,
@@ -1069,7 +1066,7 @@ pub fn is_blank(cell: &IndexedCell) -> bool {
         return false;
     }
 
-    return true;
+    true
 }
 
 fn to_highlighted_range_lines(
@@ -1161,7 +1158,7 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
             NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
             NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
             NamedColor::Foreground => colors.terminal_foreground,
-            NamedColor::Background => colors.terminal_background,
+            NamedColor::Background => colors.terminal_ansi_background,
             NamedColor::Cursor => theme.players().local().cursor,
             NamedColor::DimBlack => colors.terminal_ansi_dim_black,
             NamedColor::DimRed => colors.terminal_ansi_dim_red,

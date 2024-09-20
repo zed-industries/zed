@@ -1,87 +1,183 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use node_runtime::DummyNodeRuntime;
 use project::{
-    buffer_store::BufferStore, search::SearchQuery, worktree_store::WorktreeStore, ProjectPath,
-    WorktreeId, WorktreeSettings,
+    buffer_store::{BufferStore, BufferStoreEvent},
+    project_settings::SettingsObserver,
+    search::SearchQuery,
+    worktree_store::WorktreeStore,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
-    proto::{self, AnyProtoClient, PeerId},
-    TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
+    AnyProtoClient, TypedEnvelope,
 };
-use settings::{Settings as _, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt;
 use worktree::Worktree;
-
-const PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
-const PROJECT_ID: u64 = 0;
 
 pub struct HeadlessProject {
     pub fs: Arc<dyn Fs>,
     pub session: AnyProtoClient,
     pub worktree_store: Model<WorktreeStore>,
     pub buffer_store: Model<BufferStore>,
+    pub lsp_store: Model<LspStore>,
+    pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
+    pub languages: Arc<LanguageRegistry>,
 }
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::new(cx));
-        WorktreeSettings::register(cx);
+        settings::init(cx);
+        language::init(cx);
+        project::Project::init_settings(cx);
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let this = cx.weak_model();
+        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
-        let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
+        let worktree_store = cx.new_model(|cx| {
+            let mut store = WorktreeStore::new(None, true, fs.clone());
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
+        });
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store = BufferStore::new(worktree_store.clone(), Some(PROJECT_ID), cx);
-            buffer_store.shared(PROJECT_ID, session.clone().into(), cx);
+            let mut buffer_store =
+                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+        let prettier_store = cx.new_model(|cx| {
+            PrettierStore::new(
+                DummyNodeRuntime::new(),
+                fs.clone(),
+                languages.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
 
-        session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
-        session.add_request_handler(this.clone(), Self::handle_add_worktree);
-        session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
-        session.add_request_handler(this.clone(), Self::handle_find_search_candidates);
+        let settings_observer = cx.new_model(|cx| {
+            let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
+            observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            observer
+        });
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let lsp_store = cx.new_model(|cx| {
+            let mut lsp_store = LspStore::new_local(
+                buffer_store.clone(),
+                worktree_store.clone(),
+                prettier_store.clone(),
+                environment,
+                languages.clone(),
+                None,
+                fs.clone(),
+                cx,
+            );
+            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            lsp_store
+        });
 
-        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
-        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
-        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_save_buffer);
-        session.add_message_handler(buffer_store.downgrade(), BufferStore::handle_close_buffer);
+        cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_create_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_rename_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_copy_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_delete_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_expand_project_entry,
-        );
+        cx.subscribe(
+            &buffer_store,
+            |_this, _buffer_store, event, cx| match event {
+                BufferStoreEvent::BufferAdded(buffer) => {
+                    cx.subscribe(buffer, Self::on_buffer_event).detach();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
+        let client: AnyProtoClient = session.clone().into();
+
+        session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+        session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
+
+        client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
+
+        client.add_model_request_handler(Self::handle_add_worktree);
+        client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_find_search_candidates);
+
+        client.add_model_request_handler(BufferStore::handle_update_buffer);
+        client.add_model_message_handler(BufferStore::handle_close_buffer);
+
+        client.add_model_request_handler(LspStore::handle_create_language_server);
+        client.add_model_request_handler(LspStore::handle_which_command);
+        client.add_model_request_handler(LspStore::handle_shell_env);
+        client.add_model_request_handler(LspStore::handle_try_exec);
+        client.add_model_request_handler(LspStore::handle_read_text_file);
+
+        BufferStore::init(&client);
+        WorktreeStore::init(&client);
+        SettingsObserver::init(&client);
+        LspStore::init(&client);
 
         HeadlessProject {
-            session: session.into(),
+            session: client,
+            settings_observer,
             fs,
             worktree_store,
             buffer_store,
+            lsp_store,
             next_entry_id: Default::default(),
+            languages,
+        }
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferEvent::Operation(op) => cx
+                .background_executor()
+                .spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: SSH_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(op)],
+                }))
+                .detach(),
+            _ => {}
+        }
+    }
+
+    fn on_lsp_store_event(
+        &mut self,
+        _lsp_store: Model<LspStore>,
+        event: &LspStoreEvent,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            LspStoreEvent::LanguageServerUpdate {
+                language_server_id,
+                message,
+            } => {
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: SSH_PROJECT_ID,
+                        language_server_id: language_server_id.to_proto(),
+                        variant: Some(message.clone()),
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 
@@ -104,18 +200,11 @@ impl HeadlessProject {
             .await?;
 
         this.update(&mut cx, |this, cx| {
-            let session = this.session.clone();
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.add(&worktree, cx);
             });
-            worktree.update(cx, |worktree, cx| {
-                worktree.observe_updates(0, cx, move |update| {
-                    session.send(update).ok();
-                    futures::future::ready(true)
-                });
-                proto::AddWorktreeResponse {
-                    worktree_id: worktree.id().to_proto(),
-                }
+            worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
+                worktree_id: worktree.id().to_proto(),
             })
         })
     }
@@ -144,7 +233,7 @@ impl HeadlessProject {
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, PEER_ID, cx)
+                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -181,7 +270,7 @@ impl HeadlessProject {
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {
-                    buffer_store.create_buffer_for_peer(&buffer, PEER_ID, cx)
+                    buffer_store.create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
                 })?
                 .await?;
         }

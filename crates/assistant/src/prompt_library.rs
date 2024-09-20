@@ -921,10 +921,8 @@ impl PromptLibrary {
                                                     scrollbar_width: Pixels::ZERO,
                                                     syntax: cx.theme().syntax().clone(),
                                                     status: cx.theme().status().clone(),
-                                                    inlay_hints_style: HighlightStyle {
-                                                        color: Some(cx.theme().status().hint),
-                                                        ..HighlightStyle::default()
-                                                    },
+                                                    inlay_hints_style:
+                                                        editor::make_inlay_hints_style(cx),
                                                     suggestions_style: HighlightStyle {
                                                         color: Some(cx.theme().status().predictive),
                                                         ..HighlightStyle::default()

@@ -337,7 +337,7 @@ impl InlayHintCache {
     /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
     /// To reduce inlay hint jumping, attempts to query a visible range of the editor(s) first,
     /// followed by the delayed queries of the same range above and below the visible one.
-    /// This way, concequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
+    /// This way, subsequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
     pub(super) fn spawn_hint_refresh(
         &mut self,
         reason_description: &'static str,
@@ -466,7 +466,7 @@ impl InlayHintCache {
                                             to_insert.push(Inlay::hint(
                                                 cached_hint_id.id(),
                                                 anchor,
-                                                &cached_hint,
+                                                cached_hint,
                                             ));
                                         }
                                     }
@@ -490,7 +490,7 @@ impl InlayHintCache {
                         to_insert.push(Inlay::hint(
                             cached_hint_id.id(),
                             anchor,
-                            &maybe_missed_cached_hint,
+                            maybe_missed_cached_hint,
                         ));
                     }
                 }
@@ -844,7 +844,7 @@ fn new_update_task(
                             .get_mut(&query.excerpt_id)
                         {
                             let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
-                            task_ranges.invalidate_range(&buffer_snapshot, &range);
+                            task_ranges.invalidate_range(&buffer_snapshot, range);
                         }
                     })
                     .ok()
@@ -1296,6 +1296,7 @@ pub mod tests {
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
 
@@ -1428,6 +1429,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1547,6 +1549,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1575,9 +1578,9 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )));
-            let fake_servers = language_registry.register_fake_lsp_adapter(
+            let fake_servers = language_registry.register_fake_lsp(
                 name,
                 FakeLspAdapter {
                     name,
@@ -1777,6 +1780,7 @@ pub mod tests {
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
 
@@ -1941,6 +1945,7 @@ pub mod tests {
                     show_parameter_hints: new_allowed_hint_kinds
                         .contains(&Some(InlayHintKind::Parameter)),
                     show_other_hints: new_allowed_hint_kinds.contains(&None),
+                    show_background: false,
                 })
             });
             cx.executor().run_until_parked();
@@ -1987,6 +1992,7 @@ pub mod tests {
                 show_parameter_hints: another_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: another_allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -2047,6 +2053,7 @@ pub mod tests {
                 show_parameter_hints: final_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: final_allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -2122,6 +2129,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2256,6 +2264,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2273,7 +2282,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -2551,6 +2560,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2569,7 +2579,7 @@ pub mod tests {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let language = crate::editor_tests::rust_lang();
         language_registry.add(language);
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -2902,6 +2912,7 @@ pub mod tests {
                 show_type_hints: false,
                 show_parameter_hints: false,
                 show_other_hints: false,
+                show_background: false,
             })
         });
 
@@ -2919,7 +2930,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -3096,6 +3107,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -3131,6 +3143,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -3148,7 +3161,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -3225,6 +3238,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -3305,6 +3319,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -3389,7 +3404,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -3424,7 +3439,7 @@ pub mod tests {
 
     pub fn cached_hint_labels(editor: &Editor) -> Vec<String> {
         let mut labels = Vec::new();
-        for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
+        for excerpt_hints in editor.inlay_hint_cache().hints.values() {
             let excerpt_hints = excerpt_hints.read();
             for id in &excerpt_hints.ordered_hints {
                 labels.push(excerpt_hints.hints_by_id[id].text());

@@ -37,6 +37,7 @@ futures.workspace = true
 google_ai.workspace = true
 hex.workspace = true
 http_client.workspace = true
+isahc_http_client.workspace = true
 jsonwebtoken.workspace = true
 live_kit_server.workspace = true
 log.workspace = true

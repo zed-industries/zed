@@ -181,7 +181,7 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             let matches = fuzzy::match_strings(
-                &match_candidates.as_slice(),
+                match_candidates.as_slice(),
                 &suffix,
                 false,
                 100,

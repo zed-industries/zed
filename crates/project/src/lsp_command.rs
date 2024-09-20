@@ -46,8 +46,8 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
 }
 
 #[async_trait(?Send)]
-pub trait LspCommand: 'static + Sized + Send {
-    type Response: 'static + Default + Send;
+pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
+    type Response: 'static + Default + Send + std::fmt::Debug;
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
 
@@ -104,72 +104,80 @@ pub trait LspCommand: 'static + Sized + Send {
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
 }
 
+#[derive(Debug)]
 pub(crate) struct PrepareRename {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct PerformRename {
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
 }
 
+#[derive(Debug)]
 pub struct GetDefinition {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetDeclaration {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetTypeDefinition {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetImplementation {
     pub position: PointUtf16,
 }
-
+#[derive(Debug)]
 pub(crate) struct GetReferences {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetDocumentHighlights {
     pub position: PointUtf16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GetSignatureHelp {
     pub position: PointUtf16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GetHover {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetCompletions {
     pub position: PointUtf16,
     pub context: CompletionContext,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GetCodeActions {
     pub range: Range<Anchor>,
     pub kinds: Option<Vec<lsp::CodeActionKind>>,
 }
-
+#[derive(Debug)]
 pub(crate) struct OnTypeFormatting {
     pub position: PointUtf16,
     pub trigger: String,
     pub options: lsp::FormattingOptions,
     pub push_to_history: bool,
 }
-
+#[derive(Debug)]
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
-
+#[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
 }
@@ -728,11 +736,10 @@ impl LspCommand for GetTypeDefinition {
     type ProtoRequest = proto::GetTypeDefinition;
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        match &capabilities.server_capabilities.type_definition_provider {
-            None => false,
-            Some(lsp::TypeDefinitionProviderCapability::Simple(false)) => false,
-            _ => true,
-        }
+        !matches!(
+            &capabilities.server_capabilities.type_definition_provider,
+            None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
+        )
     }
 
     fn to_lsp(
@@ -1037,7 +1044,7 @@ impl LspCommand for GetReferences {
     type ProtoRequest = proto::GetReferences;
 
     fn status(&self) -> Option<String> {
-        return Some("Finding references...".to_owned());
+        Some("Finding references...".to_owned())
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
@@ -1469,7 +1476,7 @@ impl LspCommand for GetSignatureHelp {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         Ok(response
             .signature_help
-            .map(|proto_help| proto_to_lsp_signature(proto_help))
+            .map(proto_to_lsp_signature)
             .and_then(|lsp_help| SignatureHelp::new(lsp_help, language)))
     }
 
@@ -2835,7 +2842,7 @@ impl LspCommand for InlayHints {
         proto::InlayHintsResponse {
             hints: response
                 .into_iter()
-                .map(|response_hint| InlayHints::project_to_proto_hint(response_hint))
+                .map(InlayHints::project_to_proto_hint)
                 .collect(),
             version: serialize_version(buffer_version),
         }
@@ -2883,7 +2890,7 @@ impl LspCommand for LinkedEditingRange {
         if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
             return false;
         }
-        return true;
+        true
     }
 
     fn to_lsp(
@@ -2913,7 +2920,8 @@ impl LspCommand for LinkedEditingRange {
     ) -> Result<Vec<Range<Anchor>>> {
         if let Some(lsp::LinkedEditingRanges { mut ranges, .. }) = message {
             ranges.sort_by_key(|range| range.start);
-            let ranges = buffer.read_with(&cx, |buffer, _| {
+
+            buffer.read_with(&cx, |buffer, _| {
                 ranges
                     .into_iter()
                     .map(|range| {
@@ -2923,9 +2931,7 @@ impl LspCommand for LinkedEditingRange {
                         buffer.anchor_before(start)..buffer.anchor_after(end)
                     })
                     .collect()
-            });
-
-            ranges
+            })
         } else {
             Ok(vec![])
         }
