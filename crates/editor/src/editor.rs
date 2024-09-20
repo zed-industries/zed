@@ -13007,12 +13007,9 @@ impl EditorSnapshot {
                 .map(|max_author_length| {
                     // Length of the author name, but also space for the commit hash,
                     // the spacing and the timestamp.
-                    let chars = max_author_length.min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
-                        + "0d10a42".len()
-                        + "44 minutes ago".len()
-                        + 1;
-                    dbg!(em_width);
-                    (em_width * dbg!(chars)) + (chars as f32 * px(1.5))
+                    let max_char_count =
+                        max_author_length.min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED) + 22;
+                    em_width * max_char_count
                 });
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);

@@ -4231,8 +4231,6 @@ fn render_blame_entry(
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
-    dbg!(name.len() + short_commit_id.len() + relative_timestamp.len());
-
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
@@ -4243,7 +4241,6 @@ fn render_blame_entry(
 
     h_flex()
         .w_full()
-        .debug_bg_green()
         .font_family(style.text.font().family)
         .line_height(style.text.line_height)
         .id(("blame", ix))
@@ -4251,16 +4248,14 @@ fn render_blame_entry(
             div()
                 .text_color(sha_color.cursor)
                 .child(short_commit_id)
-                .mr_2()
-                .debug_bg_blue(),
+                .mr_2(),
             div()
-                .debug_bg_yellow()
                 .w_full()
                 .h_flex()
                 .justify_between()
                 .text_color(cx.theme().status().hint)
-                .child(div().debug_bg_red().child(name))
-                .child(div().debug_bg_cyan().child(relative_timestamp)),
+                .child(name)
+                .child(relative_timestamp),
         ])
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
@@ -4960,12 +4955,7 @@ impl Element for EditorElement {
                     let font_id = cx.text_system().resolve_font(&style.text.font());
                     let font_size = style.text.font_size.to_pixels(cx.rem_size());
                     let line_height = style.text.line_height_in_pixels(cx.rem_size());
-                    let em_width = cx
-                        .text_system()
-                        .typographic_bounds(font_id, font_size, 'm')
-                        .unwrap()
-                        .size
-                        .width;
+                    let em_width = self.column_pixels(1, cx);
                     let em_advance = cx
                         .text_system()
                         .advance(font_id, font_size, 'm')
