@@ -170,7 +170,7 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub spawn_task_option_button: Option<bool>,
-    /// Whether to show the inline assistent button above the terminal
+    /// Whether to show the inline assist button above the terminal
     ///
     /// Default: true
     pub inline_assist_button: Option<bool>,
