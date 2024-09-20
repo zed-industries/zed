@@ -1967,8 +1967,9 @@ impl Context {
     }
 
     pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let provider = model_registry.active_provider()?;
+        let model = model_registry.active_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
 
         if !provider.is_authenticated(cx) {
