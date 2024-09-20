@@ -873,7 +873,7 @@ impl Project {
                 response
                     .payload
                     .dev_server_project_id
-                    .map(|id| DevServerProjectId(id)),
+                    .map(DevServerProjectId),
             )
         })?;
         let buffer_store =

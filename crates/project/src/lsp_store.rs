@@ -3190,9 +3190,7 @@ impl LspStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::MultiLspQueryResponse> {
         let response_from_ssh = this.update(&mut cx, |this, _| {
-            let Some(ssh) = this.as_ssh() else {
-                return None;
-            };
+            let ssh = this.as_ssh()?;
             let mut payload = envelope.payload.clone();
             payload.project_id = SSH_PROJECT_ID;
 
