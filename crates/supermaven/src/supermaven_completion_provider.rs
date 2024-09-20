@@ -54,33 +54,45 @@ fn completion_state_from_diff(
 ) -> CompletionProposal {
     let buffer_text = snapshot
         .text_for_range(delete_range.clone())
-        .collect::<String>()
-        .chars()
-        .collect::<Vec<char>>();
+        .collect::<String>();
+    let buffer_chars = buffer_text.chars().collect::<Vec<_>>();
+    let compl_chars = completion_text.chars().collect::<Vec<_>>();
 
     let mut inlays: Vec<InlayProposal> = Vec::new();
-
-    let completion = completion_text.chars().collect::<Vec<char>>();
-
     let mut offset = position.to_offset(&snapshot);
 
-    let mut i = 0;
-    let mut j = 0;
-    while i < completion.len() && j < buffer_text.len() {
+    let mut compl_utf8_ix = 0;
+    let mut buffer_utf8_ix = 0;
+    let mut compl_char_ix = 0;
+    let mut buffer_char_ix = 0;
+    while compl_utf8_ix < completion_text.len() && buffer_utf8_ix < buffer_text.len() {
         // find the next instance of the buffer text in the completion text.
-        let k = completion[i..].iter().position(|c| *c == buffer_text[j]);
+        let k = compl_chars[compl_char_ix..]
+            .iter()
+            .position(|c| *c == buffer_chars[buffer_char_ix]);
         match k {
             Some(k) => {
                 if k != 0 {
+                    let utf8_ix = compl_chars[..compl_char_ix + k + 1]
+                        .iter()
+                        .map(|c| c.len_utf8())
+                        .sum::<usize>();
                     // the range from the current position to item is an inlay.
-                    let start = clip_offset(completion_text, i, text::Bias::Right);
-                    let end = clip_offset(completion_text, i + k, text::Bias::Left);
+                    let start = clip_offset(completion_text, compl_utf8_ix, text::Bias::Right);
+                    let end =
+                        clip_offset(completion_text, compl_utf8_ix + utf8_ix, text::Bias::Left);
                     println!(
                         "=> 1 {},{}",
-                        completion_text.is_char_boundary(i),
-                        completion_text.is_char_boundary(i + k)
+                        completion_text.is_char_boundary(compl_utf8_ix),
+                        completion_text.is_char_boundary(compl_utf8_ix + utf8_ix)
                     );
-                    println!("    => diff {}<->{}, {}<->{}", i, start, i + k, end);
+                    println!(
+                        "    => diff {}<->{}, {}<->{}",
+                        compl_utf8_ix,
+                        start,
+                        compl_utf8_ix + utf8_ix,
+                        end
+                    );
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
                         completion_text[start..end].into(),
@@ -91,8 +103,8 @@ fn completion_state_from_diff(
                     offset + 1,
                     snapshot.clip_offset(offset + 1, text::Bias::Right)
                 );
-                i += k + 1;
-                j += 1;
+                compl_utf8_ix += 1;
+                buffer_utf8_ix += 1;
                 offset = snapshot.clip_offset(offset + 1, text::Bias::Right);
             }
             None => {
@@ -105,16 +117,16 @@ fn completion_state_from_diff(
 
     println!(
         "=> 2 {},{}",
-        completion_text.is_char_boundary(i),
+        completion_text.is_char_boundary(compl_utf8_ix),
         completion_text.is_char_boundary(completion_text.len())
     );
-    if j == buffer_text.len() && i < completion.len() {
+    if buffer_utf8_ix == buffer_text.len() && compl_utf8_ix < completion_text.len() {
         // there is leftover completion text, so drop it as an inlay.
-        let start = clip_offset(completion_text, i, text::Bias::Right);
+        let start = clip_offset(completion_text, compl_utf8_ix, text::Bias::Right);
         let end = clip_offset(completion_text, completion_text.len(), text::Bias::Left);
         println!(
             "   => diff {}<->{}, {}<->{}",
-            i,
+            compl_utf8_ix,
             start,
             completion_text.len(),
             end
