@@ -1,5 +1,4 @@
 use crate::{Editor, EditorEvent};
-use clock::LOCAL_BRANCH_REPLICA_ID;
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, View};
@@ -31,8 +30,7 @@ impl StagedChangesEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut subscriptions = Vec::new();
-        let multibuffer =
-            cx.new_model(|_| MultiBuffer::new(LOCAL_BRANCH_REPLICA_ID, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
 
         for buffer in buffers {
             let branch_buffer = buffer.buffer.update(cx, |buffer, cx| buffer.branch(cx));
@@ -50,7 +48,7 @@ impl StagedChangesEditor {
             });
         }
 
-        let (recalculate_diffs_tx, mut rx) = mpsc::unbounded();
+        let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
 
         Self {
             editor: cx
@@ -58,7 +56,7 @@ impl StagedChangesEditor {
             recalculate_diffs_tx,
             _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
                 let mut buffers_to_diff = HashSet::default();
-                while let Some(buffer) = rx.next().await {
+                while let Some(buffer) = recalculate_diffs_rx.next().await {
                     buffers_to_diff.insert(buffer);
 
                     loop {
@@ -66,7 +64,7 @@ impl StagedChangesEditor {
                             .timer(Duration::from_millis(250))
                             .await;
                         let mut had_further_changes = false;
-                        while let Ok(next_buffer) = rx.try_next() {
+                        while let Ok(next_buffer) = recalculate_diffs_rx.try_next() {
                             buffers_to_diff.insert(next_buffer?);
                             had_further_changes = true;
                         }

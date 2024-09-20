@@ -34,7 +34,9 @@ use parking_lot::Mutex;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
 use session::{AppSession, Session};
-use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
+use settings::{
+    handle_settings_file_changes, watch_config_file, InvalidSettingsError, Settings, SettingsStore,
+};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
@@ -626,20 +628,30 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, cx| match &error {
-                Some(error) => {
-                    workspace.show_notification(id.clone(), cx, |cx| {
-                        cx.new_view(|_| {
-                            MessageNotification::new(format!("Invalid settings file\n{error}"))
-                                .with_click_message("Open settings file")
-                                .on_click(|cx| {
-                                    cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
-                                    cx.emit(DismissEvent);
+            .update(cx, |workspace, cx| {
+                match error.as_ref() {
+                    Some(error) => {
+                        if let Some(InvalidSettingsError::LocalSettings { .. }) =
+                            error.downcast_ref::<InvalidSettingsError>()
+                        {
+                            // Local settings will be displayed by the projects
+                        } else {
+                            workspace.show_notification(id.clone(), cx, |cx| {
+                                cx.new_view(|_| {
+                                    MessageNotification::new(format!(
+                                        "Invalid user settings file\n{error}"
+                                    ))
+                                    .with_click_message("Open settings file")
+                                    .on_click(|cx| {
+                                        cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                        cx.emit(DismissEvent);
+                                    })
                                 })
-                        })
-                    });
+                            });
+                        }
+                    }
+                    None => workspace.dismiss_notification(&id, cx),
                 }
-                None => workspace.dismiss_notification(&id, cx),
             })
             .log_err();
     }

@@ -1671,7 +1671,7 @@ mod tests {
 
         let mut excerpt_ids = Vec::new();
         let multi_buffer = cx.new_model(|cx| {
-            let mut multi_buffer = MultiBuffer::new(0, Capability::ReadWrite);
+            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
                 [ExcerptRange {

@@ -2159,10 +2159,6 @@ impl Editor {
         });
     }
 
-    pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
-        self.buffer.read(cx).replica_id()
-    }
-
     pub fn leader_peer_id(&self) -> Option<PeerId> {
         self.leader_peer_id
     }
@@ -4762,8 +4758,6 @@ impl Editor {
         title: String,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
-        let replica_id = this.update(&mut cx, |this, cx| this.replica_id(cx))?;
-
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
         cx.update(|cx| {
             entries.sort_unstable_by_key(|(buffer, _)| {
@@ -4806,8 +4800,7 @@ impl Editor {
 
         let mut ranges_to_highlight = Vec::new();
         let excerpt_buffer = cx.new_model(|cx| {
-            let mut multibuffer =
-                MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite).with_title(title);
             for (buffer_handle, transaction) in &entries {
                 let buffer = buffer_handle.read(cx);
                 ranges_to_highlight.extend(
@@ -6716,6 +6709,10 @@ impl Editor {
     }
 
     pub fn rewrap(&mut self, _: &Rewrap, cx: &mut ViewContext<Self>) {
+        self.rewrap_impl(true, cx)
+    }
+
+    pub fn rewrap_impl(&mut self, only_text: bool, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
@@ -6736,7 +6733,7 @@ impl Editor {
                 continue;
             }
 
-            let mut should_rewrap = false;
+            let mut should_rewrap = !only_text;
 
             if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
                 match language_scope.language_name().0.as_ref() {
@@ -6747,9 +6744,31 @@ impl Editor {
                 }
             }
 
-            let row = selection.head().row;
-            let indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
-            let indent_end = Point::new(row, indent_size.len);
+            // Since not all lines in the selection may be at the same indent
+            // level, choose the indent size that is the most common between all
+            // of the lines.
+            //
+            // If there is a tie, we use the deepest indent.
+            let (indent_size, indent_end) = {
+                let mut indent_size_occurrences = HashMap::default();
+                let mut rows_by_indent_size = HashMap::<IndentSize, Vec<u32>>::default();
+
+                for row in start_row..=end_row {
+                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                    rows_by_indent_size.entry(indent).or_default().push(row);
+                    *indent_size_occurrences.entry(indent).or_insert(0) += 1;
+                }
+
+                let indent_size = indent_size_occurrences
+                    .into_iter()
+                    .max_by_key(|(indent, count)| (*count, indent.len))
+                    .map(|(indent, _)| indent)
+                    .unwrap_or_default();
+                let row = rows_by_indent_size[&indent_size][0];
+                let indent_end = Point::new(row, indent_size.len);
+
+                (indent_size, indent_end)
+            };
 
             let mut line_prefix = indent_size.chars().collect::<String>();
 
@@ -6799,10 +6818,22 @@ impl Editor {
             let start = Point::new(start_row, 0);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
-            let unwrapped_text = selection_text
+            let Some(lines_without_prefixes) = selection_text
                 .lines()
-                .map(|line| line.strip_prefix(&line_prefix).unwrap())
-                .join(" ");
+                .map(|line| {
+                    line.strip_prefix(&line_prefix)
+                        .or_else(|| line.trim_start().strip_prefix(&line_prefix.trim_start()))
+                        .ok_or_else(|| {
+                            anyhow!("line did not start with prefix {line_prefix:?}: {line:?}")
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .log_err()
+            else {
+                continue;
+            };
+
+            let unwrapped_text = lines_without_prefixes.join(" ");
             let wrap_column = buffer
                 .settings_at(Point::new(start_row, 0), cx)
                 .preferred_line_length as usize;
@@ -9614,7 +9645,6 @@ impl Editor {
                 })
             })
         } else if !definitions.is_empty() {
-            let replica_id = self.replica_id(cx);
             cx.spawn(|editor, mut cx| async move {
                 let (title, location_tasks, workspace) = editor
                     .update(&mut cx, |editor, cx| {
@@ -9667,9 +9697,7 @@ impl Editor {
                 };
                 let opened = workspace
                     .update(&mut cx, |workspace, cx| {
-                        Self::open_locations_in_multibuffer(
-                            workspace, locations, replica_id, title, split, cx,
-                        )
+                        Self::open_locations_in_multibuffer(workspace, locations, title, split, cx)
                     })
                     .ok();
 
@@ -9766,7 +9794,6 @@ impl Editor {
         }
 
         let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
-        let replica_id = self.replica_id(cx);
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
@@ -9807,9 +9834,7 @@ impl Editor {
                         )
                     })
                     .unwrap();
-                Self::open_locations_in_multibuffer(
-                    workspace, locations, replica_id, title, false, cx,
-                );
+                Self::open_locations_in_multibuffer(workspace, locations, title, false, cx);
                 Navigated::Yes
             })
         }))
@@ -9819,7 +9844,6 @@ impl Editor {
     pub fn open_locations_in_multibuffer(
         workspace: &mut Workspace,
         mut locations: Vec<Location>,
-        replica_id: ReplicaId,
         title: String,
         split: bool,
         cx: &mut ViewContext<Workspace>,
@@ -9831,7 +9855,7 @@ impl Editor {
         let capability = workspace.project().read(cx).capability();
 
         let excerpt_buffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(replica_id, capability);
+            let mut multibuffer = MultiBuffer::new(capability);
             while let Some(location) = locations.next() {
                 let buffer = location.buffer.read(cx);
                 let mut ranges_for_buffer = Vec::new();
