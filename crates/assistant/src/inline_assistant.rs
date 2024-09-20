@@ -3080,7 +3080,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             }
 
             Task::ready(Ok(vec![CodeAction {
-                server_id: language::LanguageServerId(usize::MAX), // todo!("maybe LanguageServerId should be an enum")
+                server_id: language::LanguageServerId(0),
                 range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
                 lsp_action: lsp::CodeAction {
                     title: "Fix with AI".into(),
@@ -3094,7 +3094,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
 
     fn apply_code_action(
         &self,
-        _buffer_handle: Model<Buffer>,
+        buffer: Model<Buffer>,
         action: CodeAction,
         excerpt_id: ExcerptId,
         _push_to_history: bool,
@@ -3106,12 +3106,36 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
                 .update(&mut cx, |editor, cx| {
-                    editor.buffer().update(cx, |buffer, cx| {
-                        // todo!("resize excerpt if it's not big enough")
+                    editor.buffer().update(cx, |multibuffer, cx| {
                         let buffer = buffer.read(cx);
+                        let multibuffer_snapshot = multibuffer.read(cx);
+
+                        let old_context_range =
+                            multibuffer_snapshot.context_range_for_excerpt(excerpt_id)?;
+                        let mut new_context_range = old_context_range.clone();
+                        if action
+                            .range
+                            .start
+                            .cmp(&old_context_range.start, buffer)
+                            .is_lt()
+                        {
+                            new_context_range.start = action.range.start;
+                        }
+                        if action.range.end.cmp(&old_context_range.end, buffer).is_gt() {
+                            new_context_range.end = action.range.end;
+                        }
+                        drop(multibuffer_snapshot);
+
+                        if new_context_range != old_context_range {
+                            multibuffer.resize_excerpt(excerpt_id, new_context_range, cx);
+                        }
+
+                        let multibuffer_snapshot = multibuffer.read(cx);
                         Some(
-                            buffer.anchor_in_excerpt(excerpt_id, action.range.start)?
-                                ..buffer.anchor_in_excerpt(excerpt_id, action.range.end)?,
+                            multibuffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, action.range.start)?
+                                ..multibuffer_snapshot
+                                    .anchor_in_excerpt(excerpt_id, action.range.end)?,
                         )
                     })
                 })?
