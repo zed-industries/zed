@@ -240,6 +240,7 @@
       "g ~": ["vim::PushOperator", "OppositeCase"],
       "\"": ["vim::PushOperator", "Register"],
       "g q": ["vim::PushOperator", "Rewrap"],
+      "g w": ["vim::PushOperator", "Rewrap"],
       "q": "vim::ToggleRecord",
       "shift-q": "vim::ReplayLastRecording",
       "@": ["vim::PushOperator", "ReplayRegister"],
@@ -433,7 +434,9 @@
     "context": "vim_operator == gq",
     "bindings": {
       "g q": "vim::CurrentLine",
-      "q": "vim::CurrentLine"
+      "q": "vim::CurrentLine",
+      "g w": "vim::CurrentLine",
+      "w": "vim::CurrentLine"
     }
   },
   {
