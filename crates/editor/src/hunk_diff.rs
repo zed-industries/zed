@@ -764,7 +764,7 @@ fn editor_with_deleted_text(
     let parent_editor = cx.view().downgrade();
     let editor = cx.new_view(|cx| {
         let multi_buffer =
-            cx.new_model(|_| MultiBuffer::without_headers(0, language::Capability::ReadOnly));
+            cx.new_model(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
         multi_buffer.update(cx, |multi_buffer, cx| {
             multi_buffer.push_excerpts(
                 diff_base_buffer,
