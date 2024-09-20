@@ -72,20 +72,20 @@ You can override these settings in your configuration file:
 
 ```json
 "lsp": {
-    "$LANGUAGE_SERVER_NAME": {
-        "initialization_options": {
-            "preferences": {
-              "includeInlayParameterNameHints": "all",
-              "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-              "includeInlayFunctionParameterTypeHints": true,
-              "includeInlayVariableTypeHints": true,
-              "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
-              "includeInlayPropertyDeclarationTypeHints": true,
-              "includeInlayFunctionLikeReturnTypeHints": true,
-              "includeInlayEnumMemberValueHints": true,
-            }
-        }
+  "$LANGUAGE_SERVER_NAME": {
+    "initialization_options": {
+      "preferences": {
+      "includeInlayParameterNameHints": "all",
+        "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
+        "includeInlayFunctionParameterTypeHints": true,
+        "includeInlayVariableTypeHints": true,
+        "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
+        "includeInlayPropertyDeclarationTypeHints": true,
+        "includeInlayFunctionLikeReturnTypeHints": true,
+        "includeInlayEnumMemberValueHints": true,
+      }
     }
+  }
 }
 ```
 

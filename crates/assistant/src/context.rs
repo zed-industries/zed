@@ -683,7 +683,7 @@ impl Context {
             buffer.set_text(saved_context.text.as_str(), cx)
         });
         let operations = saved_context.into_ops(&this.buffer, cx);
-        this.apply_ops(operations, cx).unwrap();
+        this.apply_ops(operations, cx);
         this
     }
 
@@ -756,7 +756,7 @@ impl Context {
         &mut self,
         ops: impl IntoIterator<Item = ContextOperation>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) {
         let mut buffer_ops = Vec::new();
         for op in ops {
             match op {
@@ -765,10 +765,8 @@ impl Context {
             }
         }
         self.buffer
-            .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx))?;
+            .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx));
         self.flush_ops(cx);
-
-        Ok(())
     }
 
     fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {

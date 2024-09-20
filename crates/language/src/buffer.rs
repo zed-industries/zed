@@ -144,7 +144,7 @@ pub struct BufferSnapshot {
 
 /// The kind and amount of indentation in a particular line. For now,
 /// assumes that indentation is all the same character.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct IndentSize {
     /// The number of bytes that comprise the indentation.
     pub len: u32,
@@ -153,7 +153,7 @@ pub struct IndentSize {
 }
 
 /// A whitespace character that's used for indentation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum IndentKind {
     /// An ASCII space character.
     #[default]
@@ -1972,7 +1972,7 @@ impl Buffer {
         &mut self,
         ops: I,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) {
         self.pending_autoindent.take();
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1991,14 +1991,13 @@ impl Buffer {
                 }
             })
             .collect::<Vec<_>>();
-        self.text.apply_ops(buffer_ops)?;
+        self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
-        Ok(())
     }
 
     fn flush_deferred_ops(&mut self, cx: &mut ModelContext<Self>) {

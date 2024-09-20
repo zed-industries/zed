@@ -2814,9 +2814,8 @@ impl ContextEditor {
         } else {
             // If there are multiple buffers or suggestion groups, create a multibuffer
             let multibuffer = cx.new_model(|cx| {
-                let replica_id = project.read(cx).replica_id();
-                let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
-                    .with_title(resolved_step.title.clone());
+                let mut multibuffer =
+                    MultiBuffer::new(Capability::ReadWrite).with_title(resolved_step.title.clone());
                 for (buffer, groups) in &resolved_step.suggestion_groups {
                     let excerpt_ids = multibuffer.push_excerpts(
                         buffer.clone(),
@@ -3533,7 +3532,9 @@ impl ContextEditor {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
                     }
-                    text.push('\n');
+                    if message.offset_range.end < selection.range().end {
+                        text.push('\n');
+                    }
                 }
             }
         }

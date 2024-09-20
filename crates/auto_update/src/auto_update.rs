@@ -268,7 +268,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
 
     let client = client::Client::global(cx).http_client();
     let url = client.build_url(&format!(
-        "/api/release_notes/{}/{}",
+        "/api/release_notes/v2/{}/{}",
         release_channel.dev_name(),
         version
     ));

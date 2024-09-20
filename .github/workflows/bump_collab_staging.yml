@@ -1,12 +1,12 @@
-name: Update Nightly Tag
+name: Bump collab-staging Tag
 
 on:
   schedule:
-    # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
-    - cron: "0 7 * * *"
+    # Fire every day at 16:00 UTC (At the start of the US workday)
+    - cron: "0 16 * * *"
 
 jobs:
-  update-nightly-tag:
+  update-collab-staging-tag:
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
@@ -15,9 +15,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update nightly tag
+      - name: Update collab-staging tag
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git tag -f nightly
-          git push origin nightly --force
+          git tag -f collab-staging
+          git push origin collab-staging --force
