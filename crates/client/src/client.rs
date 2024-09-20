@@ -1622,7 +1622,7 @@ impl ProtoClient for Client {
         &self.handler_set
     }
 
-    fn goes_via_collab(&self) -> bool {
+    fn is_via_collab(&self) -> bool {
         true
     }
 }
