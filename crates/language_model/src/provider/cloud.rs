@@ -87,6 +87,8 @@ pub struct AvailableModel {
     pub tool_override: Option<String>,
     /// Indicates whether this custom model supports caching.
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
+    /// The default temperature to use for this model.
+    pub default_temperature: Option<f32>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -255,6 +257,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                             min_total_token: config.min_total_token,
                         }
                     }),
+                    default_temperature: model.default_temperature,
                     max_output_tokens: model.max_output_tokens,
                 }),
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
@@ -516,7 +519,11 @@ impl LanguageModel for CloudLanguageModel {
 
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let request = request.into_anthropic(model.id().into(), model.max_output_tokens());
+                let request = request.into_anthropic(
+                    model.id().into(),
+                    model.default_temperature(),
+                    model.max_output_tokens(),
+                );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -642,8 +649,11 @@ impl LanguageModel for CloudLanguageModel {
 
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let mut request =
-                    request.into_anthropic(model.tool_model_id().into(), model.max_output_tokens());
+                let mut request = request.into_anthropic(
+                    model.tool_model_id().into(),
+                    model.default_temperature(),
+                    model.max_output_tokens(),
+                );
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
                 });
