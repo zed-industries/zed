@@ -3088,7 +3088,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                 server_id: language::LanguageServerId(0),
                 range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
                 lsp_action: lsp::CodeAction {
-                    title: "Fix with AI".into(),
+                    title: "Fix with Assistant".into(),
                     ..Default::default()
                 },
             }]))
