@@ -12,7 +12,7 @@ pub struct FileFinderSettings {
 pub struct FileFinderSettingsContent {
     /// Whether to show file icons in the file finder.
     ///
-    /// default: true
+    /// Default: true
     pub file_icons: Option<bool>,
 }
 

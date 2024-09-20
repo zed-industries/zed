@@ -4,11 +4,11 @@ mod file_finder_tests;
 mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
-use file_finder_settings::FileFinderSettings;
-use file_icons::FileIcons;
 
 use collections::HashMap;
 use editor::{scroll::Autoscroll, Bias, Editor};
+use file_finder_settings::FileFinderSettings;
+use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
@@ -1049,6 +1049,8 @@ impl PickerDelegate for FileFinderDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let settings = FileFinderSettings::get_global(cx);
+
         let path_match = self
             .matches
             .get(ix)
@@ -1064,17 +1066,22 @@ impl PickerDelegate for FileFinderDelegate {
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
+
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
-        let file_icon_path = FileIcons::get_icon(Path::new(&file_name), cx);
+
+        let file_icon = if settings.file_icons {
+            FileIcons::get_icon(Path::new(&file_name), cx)
+                .map(|icon_path| Icon::from_path(icon_path))
+        } else {
+            None
+        };
 
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .when(FileFinderSettings::get_global(cx).file_icons, |it| {
-                    it.when_some(file_icon_path, |then, icon| {
-                        then.start_slot(Icon::from_path(icon))
-                    })
+                .when(FileFinderSettings::get_global(cx).file_icons, |el| {
+                    el.start_slot::<Icon>(file_icon)
                 })
                 .end_slot::<AnyElement>(history_icon)
                 .inset(true)
