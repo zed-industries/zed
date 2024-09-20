@@ -3533,7 +3533,9 @@ impl ContextEditor {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
                     }
-                    text.push('\n');
+                    if message.offset_range.end < selection.range().end {
+                        text.push('\n');
+                    }
                 }
             }
         }

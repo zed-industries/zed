@@ -831,13 +831,14 @@ impl Pane {
                 }
             }
         }
-        // If no destination index is specified, add or move the item after the active item.
+        // If no destination index is specified, add or move the item after the
+        // active item (or at the start of tab bar, if the active item is pinned)
         let mut insertion_index = {
             cmp::min(
                 if let Some(destination_index) = destination_index {
                     destination_index
                 } else {
-                    self.active_item_index + 1
+                    cmp::max(self.active_item_index + 1, self.pinned_count())
                 },
                 self.items.len(),
             )

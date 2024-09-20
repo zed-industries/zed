@@ -1106,6 +1106,26 @@ impl MultiBuffer {
         }
     }
 
+    pub fn forget_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, _| {
+                buffer.forget_transaction(transaction_id);
+            });
+        } else if let Some(transaction) = self.history.forget(transaction_id) {
+            for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
+                if let Some(state) = self.buffers.borrow_mut().get_mut(&buffer_id) {
+                    state.buffer.update(cx, |buffer, _| {
+                        buffer.forget_transaction(buffer_transaction_id);
+                    });
+                }
+            }
+        }
+    }
+
     pub fn stream_excerpts_with_context_lines(
         &mut self,
         buffer: Model<Buffer>,
@@ -5019,13 +5039,11 @@ mod tests {
                 .background_executor()
                 .block(host_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
-            buffer
-                .apply_ops(
-                    ops.into_iter()
-                        .map(|op| language::proto::deserialize_operation(op).unwrap()),
-                    cx,
-                )
-                .unwrap();
+            buffer.apply_ops(
+                ops.into_iter()
+                    .map(|op| language::proto::deserialize_operation(op).unwrap()),
+                cx,
+            );
             buffer
         });
         let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));

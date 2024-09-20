@@ -19,7 +19,6 @@ use ui::{
     h_flex, v_flex, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement,
     Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext, WindowContext,
 };
-use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(Deserialize)]
@@ -358,24 +357,29 @@ pub fn connect_over_ssh(
 
 pub async fn open_ssh_project(
     connection_options: SshConnectionOptions,
-    paths: Vec<PathWithPosition>,
+    paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
-    _open_options: workspace::OpenOptions,
+    open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
-    let window = cx.open_window(options, |cx| {
-        let project = project::Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            cx,
-        );
-        cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
-    })?;
+
+    let window = if let Some(window) = open_options.replace_window {
+        window
+    } else {
+        cx.open_window(options, |cx| {
+            let project = project::Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                cx,
+            );
+            cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
+        })?
+    };
 
     let result = window
         .update(cx, |workspace, cx| {
@@ -387,40 +391,17 @@ pub async fn open_ssh_project(
                 .read(cx)
                 .prompt
                 .clone();
-            connect_over_ssh(connection_options, ui, cx)
+            connect_over_ssh(connection_options.clone(), ui, cx)
         })?
         .await;
 
     if result.is_err() {
         window.update(cx, |_, cx| cx.remove_window()).ok();
     }
-
     let session = result?;
 
-    let project = cx.update(|cx| {
-        project::Project::ssh(
-            session,
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            cx,
-        )
-    })?;
-
-    for path in paths {
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_worktree(&path.path, true, cx)
-            })?
-            .await?;
-    }
-
-    window.update(cx, |_, cx| {
-        cx.replace_root_view(|cx| Workspace::new(None, project, app_state, cx))
-    })?;
-    window.update(cx, |_, cx| cx.activate_window())?;
-
-    Ok(())
+    cx.update(|cx| {
+        workspace::open_ssh_project(window, connection_options, session, app_state, paths, cx)
+    })?
+    .await
 }
