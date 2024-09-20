@@ -5,12 +5,20 @@ use super::{
 use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
 use schemars::JsonSchema;
 use semantic_index::SemanticDb;
 use serde::Deserialize;
+
+pub struct ProjectSlashCommandFeatureFlag;
+
+impl FeatureFlag for ProjectSlashCommandFeatureFlag {
+    const NAME: &'static str = "project-slash-command";
+}
+
 use std::{
     fmt::Write as _,
     ops::DerefMut,

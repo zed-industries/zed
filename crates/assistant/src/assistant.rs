@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
-    diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command_2,
+    diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
     prompt_command, search_command, symbols_command, tab_command, terminal_command,
     workflow_command,
 };
@@ -392,18 +392,26 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
             workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
             true,
         );
-        slash_command_registry.register_command(
-            project_command_2::ProjectSlashCommand::new(prompt_builder.clone()),
-            true,
-        );
+        cx.observe_flag::<project_command::ProjectSlashCommandFeatureFlag, _>({
+            let slash_command_registry = slash_command_registry.clone();
+            move |is_enabled, _cx| {
+                if is_enabled {
+                    slash_command_registry.register_command(
+                        project_command::ProjectSlashCommand::new(prompt_builder.clone()),
+                        true,
+                    );
+                }
+            }
+        })
+        .detach();
     }
-    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
     cx.observe_flag::<auto_command::AutoSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
