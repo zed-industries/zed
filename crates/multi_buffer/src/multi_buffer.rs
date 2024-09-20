@@ -67,7 +67,6 @@ pub struct MultiBuffer {
     subscriptions: Topic,
     /// If true, the multi-buffer only contains a single [`Buffer`] and a single [`Excerpt`]
     singleton: bool,
-    replica_id: ReplicaId,
     history: History,
     title: Option<String>,
     capability: Capability,
@@ -350,7 +349,7 @@ impl std::ops::Deref for MultiBufferIndentGuide {
 }
 
 impl MultiBuffer {
-    pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
+    pub fn new(capability: Capability) -> Self {
         Self {
             snapshot: RefCell::new(MultiBufferSnapshot {
                 show_headers: true,
@@ -360,7 +359,6 @@ impl MultiBuffer {
             subscriptions: Topic::default(),
             singleton: false,
             capability,
-            replica_id,
             title: None,
             history: History {
                 next_transaction_id: clock::Lamport::default(),
@@ -372,14 +370,13 @@ impl MultiBuffer {
         }
     }
 
-    pub fn without_headers(replica_id: ReplicaId, capability: Capability) -> Self {
+    pub fn without_headers(capability: Capability) -> Self {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
             subscriptions: Default::default(),
             singleton: false,
             capability,
-            replica_id,
             history: History {
                 next_transaction_id: Default::default(),
                 undo_stack: Default::default(),
@@ -414,7 +411,6 @@ impl MultiBuffer {
             subscriptions: Default::default(),
             singleton: self.singleton,
             capability: self.capability,
-            replica_id: self.replica_id,
             history: self.history.clone(),
             title: self.title.clone(),
         }
@@ -430,7 +426,7 @@ impl MultiBuffer {
     }
 
     pub fn singleton(buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Self {
-        let mut this = Self::new(buffer.read(cx).replica_id(), buffer.read(cx).capability());
+        let mut this = Self::new(buffer.read(cx).capability());
         this.singleton = true;
         this.push_excerpts(
             buffer,
@@ -442,10 +438,6 @@ impl MultiBuffer {
         );
         this.snapshot.borrow_mut().singleton = true;
         this
-    }
-
-    pub fn replica_id(&self) -> ReplicaId {
-        self.replica_id
     }
 
     /// Returns an up-to-date snapshot of the MultiBuffer.
@@ -2011,7 +2003,7 @@ impl MultiBuffer {
         excerpts: [(&str, Vec<Range<Point>>); COUNT],
         cx: &mut gpui::AppContext,
     ) -> Model<Self> {
-        let multi = cx.new_model(|_| Self::new(0, Capability::ReadWrite));
+        let multi = cx.new_model(|_| Self::new(Capability::ReadWrite));
         for (text, ranges) in excerpts {
             let buffer = cx.new_model(|cx| Buffer::local(text, cx));
             let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
@@ -2032,7 +2024,7 @@ impl MultiBuffer {
 
     pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::AppContext) -> Model<Self> {
         cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             let mutation_count = rng.gen_range(1..=5);
             multibuffer.randomly_edit_excerpts(rng, mutation_count, cx);
             multibuffer
@@ -5063,7 +5055,7 @@ mod tests {
     fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
 
         let events = Arc::new(RwLock::new(Vec::<Event>::new()));
         multibuffer.update(cx, |_, cx| {
@@ -5306,8 +5298,8 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'm'), cx));
 
-        let leader_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
-        let follower_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let leader_multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let follower_multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let follower_edit_event_count = Arc::new(RwLock::new(0));
 
         follower_multibuffer.update(cx, |_, cx| {
@@ -5410,7 +5402,7 @@ mod tests {
     #[gpui::test]
     fn test_expand_excerpts(cx: &mut AppContext) {
         let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
 
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts_with_context_lines(
@@ -5486,7 +5478,7 @@ mod tests {
     #[gpui::test]
     fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
         let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts_with_context_lines(
                 buffer.clone(),
@@ -5539,7 +5531,7 @@ mod tests {
     #[gpui::test]
     async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
         let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = buffer.read(cx);
             let ranges = vec![
@@ -5589,7 +5581,7 @@ mod tests {
 
     #[gpui::test]
     fn test_empty_multibuffer(cx: &mut AppContext) {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "");
@@ -5628,7 +5620,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local("abcd", cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local("efghi", cx));
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [ExcerptRange {
@@ -5685,7 +5677,7 @@ mod tests {
     fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
         let buffer_1 = cx.new_model(|cx| Buffer::local("abcd", cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local("ABCDEFGHIJKLMNOP", cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
 
         // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
         // Add an excerpt from buffer 1 that spans this new insertion.
@@ -5819,7 +5811,7 @@ mod tests {
             .unwrap_or(10);
 
         let mut buffers: Vec<Model<Buffer>> = Vec::new();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let mut excerpt_ids = Vec::<ExcerptId>::new();
         let mut expected_excerpts = Vec::<(Model<Buffer>, Range<text::Anchor>)>::new();
         let mut anchors = Vec::new();
@@ -6283,7 +6275,7 @@ mod tests {
 
         let buffer_1 = cx.new_model(|cx| Buffer::local("1234", cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local("5678", cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let group_interval = multibuffer.read(cx).history.group_interval;
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(
@@ -6418,7 +6410,7 @@ mod tests {
     fn test_excerpts_in_ranges_no_ranges(cx: &mut AppContext) {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -6496,7 +6488,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
         let buffer_len = buffer_1.read(cx).len();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let mut expected_excerpt_id = ExcerptId(0);
 
         multibuffer.update(cx, |multibuffer, cx| {
@@ -6557,7 +6549,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
         let buffer_len = buffer_1.read(cx).len();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let mut excerpt_1_id = ExcerptId(0);
         let mut excerpt_2_id = ExcerptId(0);
 
@@ -6623,7 +6615,7 @@ mod tests {
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
         let buffer_3 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'r'), cx));
         let buffer_len = buffer_1.read(cx).len();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let mut excerpt_1_id = ExcerptId(0);
         let mut excerpt_2_id = ExcerptId(0);
         let mut excerpt_3_id = ExcerptId(0);
@@ -6698,7 +6690,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
         let buffer_len = buffer_1.read(cx).len();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let mut excerpt_1_id = ExcerptId(0);
         let mut excerpt_2_id = ExcerptId(0);
 
@@ -6764,7 +6756,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
         let buffer_len = buffer_1.read(cx).len();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let mut excerpt_1_id = ExcerptId(0);
         let mut excerpt_2_id = ExcerptId(0);
 
@@ -6829,7 +6821,7 @@ mod tests {
     fn test_split_ranges(cx: &mut AppContext) {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -6885,7 +6877,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
         let buffer_3 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'm'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(
                 buffer_1.clone(),
