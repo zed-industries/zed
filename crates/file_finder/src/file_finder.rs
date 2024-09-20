@@ -1,11 +1,14 @@
 #[cfg(test)]
 mod file_finder_tests;
 
+mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 
 use collections::HashMap;
 use editor::{scroll::Autoscroll, Bias, Editor};
+use file_finder_settings::FileFinderSettings;
+use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
@@ -39,7 +42,12 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
+pub fn init_settings(cx: &mut AppContext) {
+    FileFinderSettings::register(cx);
+}
+
 pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.observe_new_views(FileFinder::register).detach();
     cx.observe_new_views(NewPathPrompt::register).detach();
     cx.observe_new_views(OpenPathPrompt::register).detach();
@@ -1041,12 +1049,14 @@ impl PickerDelegate for FileFinderDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let settings = FileFinderSettings::get_global(cx);
+
         let path_match = self
             .matches
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
 
-        let icon = match &path_match {
+        let history_icon = match &path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
                 .color(Color::Muted)
                 .size(IconSize::Small)
@@ -1059,10 +1069,17 @@ impl PickerDelegate for FileFinderDelegate {
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
 
+        let file_icon = if settings.file_icons {
+            FileIcons::get_icon(Path::new(&file_name), cx).map(Icon::from_path)
+        } else {
+            None
+        };
+
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .end_slot::<AnyElement>(Some(icon))
+                .start_slot::<Icon>(file_icon)
+                .end_slot::<AnyElement>(history_icon)
                 .inset(true)
                 .selected(selected)
                 .child(
