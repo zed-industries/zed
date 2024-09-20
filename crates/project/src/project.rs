@@ -59,12 +59,14 @@ use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_path};
 pub use prettier_store::PrettierStore;
-use project_settings::{ProjectSettings, SettingsObserver};
+use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::SshSession;
 use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
+use settings::{
+    watch_config_file, InvalidSettingsError, Settings, SettingsLocation, SettingsStore,
+};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -230,6 +232,7 @@ pub enum Event {
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     Notification(String),
+    LocalSettingsUpdated(Result<(), InvalidSettingsError>),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
@@ -644,6 +647,8 @@ impl Project {
             let settings_observer = cx.new_model(|cx| {
                 SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx)
             });
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
             let lsp_store = cx.new_model(|cx| {
@@ -729,6 +734,8 @@ impl Project {
             let settings_observer = cx.new_model(|cx| {
                 SettingsObserver::new_ssh(ssh.clone().into(), worktree_store.clone(), cx)
             });
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
             let lsp_store = cx.new_model(|cx| {
@@ -913,6 +920,8 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
 
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -2054,6 +2063,19 @@ impl Project {
             }
             LspStoreEvent::FinishFormattingLocalBuffer(buffer_id) => {
                 self.buffers_being_formatted.remove(buffer_id);
+            }
+        }
+    }
+
+    fn on_settings_observer_event(
+        &mut self,
+        _: Model<SettingsObserver>,
+        event: &SettingsObserverEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            SettingsObserverEvent::LocalSettingsUpdated(error) => {
+                cx.emit(Event::LocalSettingsUpdated(error.clone()))
             }
         }
     }
