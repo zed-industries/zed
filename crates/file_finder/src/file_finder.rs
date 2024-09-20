@@ -1066,7 +1066,6 @@ impl PickerDelegate for FileFinderDelegate {
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
-
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
 
