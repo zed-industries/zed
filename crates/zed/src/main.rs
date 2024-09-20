@@ -629,26 +629,28 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
             .update(cx, |workspace, cx| {
-                match error
-                    .as_ref()
-                    .and_then(|error| error.downcast_ref::<InvalidSettingsError>())
-                {
-                    Some(InvalidSettingsError::UserSettings { message }) => {
-                        workspace.show_notification(id.clone(), cx, |cx| {
-                            cx.new_view(|_| {
-                                MessageNotification::new(format!(
-                                    "Invalid user settings file\n{message}"
-                                ))
-                                .with_click_message("Open settings file")
-                                .on_click(|cx| {
-                                    cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
-                                    cx.emit(DismissEvent);
+                match error.as_ref() {
+                    Some(error) => {
+                        if let Some(InvalidSettingsError::LocalSettings { .. }) =
+                            error.downcast_ref::<InvalidSettingsError>()
+                        {
+                            // Local settings will be displayed by the projects
+                        } else {
+                            workspace.show_notification(id.clone(), cx, |cx| {
+                                cx.new_view(|_| {
+                                    MessageNotification::new(format!(
+                                        "Invalid user settings file\n{error}"
+                                    ))
+                                    .with_click_message("Open settings file")
+                                    .on_click(|cx| {
+                                        cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                        cx.emit(DismissEvent);
+                                    })
                                 })
-                            })
-                        });
+                            });
+                        }
                     }
                     None => workspace.dismiss_notification(&id, cx),
-                    _ => {}
                 }
             })
             .log_err();
