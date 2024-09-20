@@ -1127,10 +1127,10 @@ The following URI schemes are supported:
 
 - `http`
 - `https`
-- `socks4`
-- `socks4a`
-- `socks5`
-- `socks5h`
+- `socks4` - SOCKS4 proxy with local DNS
+- `socks4a` - SOCKS4 proxy with remote DNS
+- `socks5` - SOCKS5 proxy with local DNS
+- `socks5h` - SOCKS5 proxy with remote DNS
 
 `http` will be used when no scheme is specified.
 
@@ -1148,7 +1148,7 @@ Or to set a `socks5` proxy:
 
 ```json
 {
-  "proxy": "socks5://localhost:10808"
+  "proxy": "socks5h://localhost:10808"
 }
 ```
 

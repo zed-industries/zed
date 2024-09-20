@@ -289,7 +289,7 @@ async fn test_basic_following(
                 .get_open_buffer(&(worktree_id, "2.txt").into(), cx)
                 .unwrap()
         });
-        let mut result = MultiBuffer::new(0, Capability::ReadWrite);
+        let mut result = MultiBuffer::new(Capability::ReadWrite);
         result.push_excerpts(
             buffer_a1,
             [ExcerptRange {

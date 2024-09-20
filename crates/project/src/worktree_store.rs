@@ -313,9 +313,10 @@ impl WorktreeStore {
         })
     }
 
+    #[track_caller]
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         let worktree_id = worktree.read(cx).id();
-        debug_assert!(!self.worktrees().any(|w| w.read(cx).id() == worktree_id));
+        debug_assert!(self.worktrees().all(|w| w.read(cx).id() != worktree_id));
 
         let push_strong_handle = self.retain_worktrees || worktree.read(cx).is_visible();
         let handle = if push_strong_handle {
@@ -487,7 +488,7 @@ impl WorktreeStore {
         };
 
         // collab has bad concurrency guarantees, so we send requests in serial.
-        let update_project = if downstream_client.goes_via_collab() {
+        let update_project = if downstream_client.is_via_collab() {
             Some(downstream_client.request(update))
         } else {
             downstream_client.send(update).log_err();
@@ -508,7 +509,7 @@ impl WorktreeStore {
                             move |update| {
                                 let client = client.clone();
                                 async move {
-                                    if client.goes_via_collab() {
+                                    if client.is_via_collab() {
                                         client.request(update).map(|result| result.is_ok()).await
                                     } else {
                                         client.send(update).is_ok()

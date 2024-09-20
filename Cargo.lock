@@ -6286,6 +6286,7 @@ dependencies = [
  "http_client",
  "image",
  "inline_completion_button",
+ "isahc",
  "language",
  "log",
  "menu",
