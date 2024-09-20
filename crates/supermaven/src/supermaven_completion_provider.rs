@@ -55,59 +55,28 @@ fn completion_state_from_diff(
     let buffer_text = snapshot
         .text_for_range(delete_range.clone())
         .collect::<String>();
-    let buffer_chars = buffer_text.chars().collect::<Vec<_>>();
-    let compl_chars = completion_text.chars().collect::<Vec<_>>();
+    let mut compl_ix_converter = StringIndexConverter::new(completion_text);
+    let mut buffer_ix_converter = StringIndexConverter::new(buffer_text);
 
     let mut inlays: Vec<InlayProposal> = Vec::new();
     let mut offset = position.to_offset(&snapshot);
-
-    let mut compl_utf8_ix = 0;
-    let mut buffer_utf8_ix = 0;
-    let mut compl_char_ix = 0;
-    let mut buffer_char_ix = 0;
-    while compl_utf8_ix < completion_text.len() && buffer_utf8_ix < buffer_text.len() {
+    while compl_ix_converter.can_loop() && buffer_ix_converter.can_loop() {
         // find the next instance of the buffer text in the completion text.
-        let k = compl_chars[compl_char_ix..]
-            .iter()
-            .position(|c| *c == buffer_chars[buffer_char_ix]);
-        match k {
-            Some(k) => {
-                if k != 0 {
-                    let utf8_ix = compl_chars[..compl_char_ix + k]
-                        .iter()
-                        .map(|c| c.len_utf8())
-                        .sum::<usize>();
-                    // the range from the current position to item is an inlay.
-                    let start = clip_offset(completion_text, compl_utf8_ix, text::Bias::Right);
-                    let end =
-                        clip_offset(completion_text, compl_utf8_ix + utf8_ix, text::Bias::Left);
-                    println!(
-                        "=> 1 {},{}",
-                        completion_text.is_char_boundary(compl_utf8_ix),
-                        completion_text.is_char_boundary(compl_utf8_ix + utf8_ix)
-                    );
-                    println!(
-                        "    => diff {}<->{}, {}<->{}",
-                        compl_utf8_ix,
-                        start,
-                        compl_utf8_ix + utf8_ix,
-                        end
-                    );
+        match compl_ix_converter.has_char_from_current_ix(buffer_ix_converter.current_char()) {
+            Some((utf8_dist, char_dist)) => {
+                // the range from the current position to item is an inlay.
+                if utf8_dist != 0 {
+                    debug_assert!(char_dist != 0);
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
-                        completion_text[start..end].into(),
+                        completion_text
+                            [compl_ix_converter.utf8_ix..compl_ix_converter.utf8_ix + utf8_dist]
+                            .into(),
                     ));
                 }
-                println!(
-                    "=> 2, {}<->{}",
-                    offset + 1,
-                    snapshot.clip_offset(offset + 1, text::Bias::Right)
-                );
-                compl_utf8_ix = clip_offset(completion_text, compl_utf8_ix + 1, text::Bias::Right);
-                buffer_utf8_ix = clip_offset(&buffer_text, buffer_utf8_ix + 1, text::Bias::Right);
+                compl_ix_converter.update_ix(utf8_dist + 1, char_dist + 1);
+                buffer_ix_converter.update_ix(1, 1);
                 offset = snapshot.clip_offset(offset + 1, text::Bias::Right);
-                compl_char_ix += 1;
-                buffer_char_ix += 1;
             }
             None => {
                 // there are no more matching completions, so drop the remaining
@@ -117,25 +86,29 @@ fn completion_state_from_diff(
         }
     }
 
-    println!(
-        "=> 2 {},{}",
-        completion_text.is_char_boundary(compl_utf8_ix),
-        completion_text.is_char_boundary(completion_text.len())
-    );
-    if buffer_utf8_ix == buffer_text.len() && compl_utf8_ix < completion_text.len() {
+    // println!(
+    //     "=> 2 {},{}",
+    //     completion_text.is_char_boundary(compl_utf8_ix),
+    //     completion_text.is_char_boundary(completion_text.len())
+    // );
+    if buffer_ix_converter.utf8_ix == buffer_ix_converter.text.len()
+        && compl_ix_converter.utf8_ix < completion_text.len()
+    {
         // there is leftover completion text, so drop it as an inlay.
-        let start = clip_offset(completion_text, compl_utf8_ix, text::Bias::Right);
-        let end = clip_offset(completion_text, completion_text.len(), text::Bias::Left);
-        println!(
-            "   => diff {}<->{}, {}<->{}",
-            compl_utf8_ix,
-            start,
-            completion_text.len(),
-            end
-        );
+        // let start = clip_offset(completion_text, compl_utf8_ix, text::Bias::Right);
+        // let end = clip_offset(completion_text, completion_text.len(), text::Bias::Left);
+        // println!(
+        //     "   => diff {}<->{}, {}<->{}",
+        //     compl_utf8_ix,
+        //     start,
+        //     completion_text.len(),
+        //     end
+        // );
+        // let start = compl_utf8_ix;
+        // let end = completion_text.len();
         inlays.push(InlayProposal::Suggestion(
             snapshot.anchor_after(offset),
-            completion_text[start..end].into(),
+            completion_text[compl_ix_converter.utf8_ix..completion_text.len()].into(),
         ));
     }
 
@@ -296,13 +269,47 @@ fn has_leading_newline(text: &str) -> bool {
     false
 }
 
-fn clip_offset(text: &str, index: usize, bias: text::Bias) -> usize {
-    let mut cursor = index;
-    while !text.is_char_boundary(cursor) {
-        match bias {
-            text::Bias::Left => cursor -= 1,
-            text::Bias::Right => cursor += 1,
+struct StringIndexConverter {
+    text: String,
+    chars: Vec<char>,
+    utf8_ix: usize,
+    char_ix: usize,
+}
+
+impl StringIndexConverter {
+    fn new(input: impl Into<String>) -> Self {
+        let text = input.into();
+        let chars = text.chars().collect();
+        Self {
+            text,
+            chars,
+            utf8_ix: 0,
+            char_ix: 0,
         }
     }
-    cursor.clamp(0, text.len())
+
+    fn update_ix(&mut self, utf8_step: usize, char_step: usize) {
+        self.utf8_ix += utf8_step;
+        while !self.text.is_char_boundary(self.utf8_ix) {
+            self.utf8_ix += 1;
+        }
+        self.char_ix += char_step;
+    }
+
+    fn can_loop(&self) -> bool {
+        self.utf8_ix < self.text.len()
+    }
+
+    fn has_char_from_current_ix(&self, ch: char) -> Option<(usize, usize)> {
+        let char_dist = self.chars[self.char_ix..].iter().position(|c| *c == ch)?;
+        let utf8_dist = self.chars[self.char_ix..self.char_ix + char_dist]
+            .iter()
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
+        Some((utf8_dist, char_dist))
+    }
+
+    fn current_char(&self) -> char {
+        self.chars[self.char_ix]
+    }
 }
