@@ -4270,7 +4270,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 } else {
                     //
                 }
-
             }
         "};
 
@@ -4284,7 +4283,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 } else {
                     //
                 }
-
             }
         "};
 
