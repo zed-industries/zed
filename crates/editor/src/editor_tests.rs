@@ -4264,8 +4264,8 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         let unwrapped_text = indoc! {"
             fn foo() {
                 if true {
-            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-            // Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ»
+            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.ˇ»
                     do_something();
                 } else {
                     //
@@ -4277,8 +4277,40 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         let wrapped_text = indoc! {"
             fn foo() {
                 if true {
-                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-                    // Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
+                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
+                    // egestas tellus id dignissim.ˇ
+                    do_something();
+                } else {
+                    //
+                }
+
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+
+        let unwrapped_text = indoc! {"
+            fn foo() {
+                if true {
+            «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.»
+                    do_something();
+                } else {
+                    //
+                }
+
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            fn foo() {
+                if true {
+                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
+                    // egestas tellus id dignissim.ˇ
                     do_something();
                 } else {
                     //
