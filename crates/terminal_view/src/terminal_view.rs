@@ -58,6 +58,8 @@ const REGEX_SPECIAL_CHARS: &[char] = &[
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
+const GIT_DIFF_PATH_PREFIXES: &[char] = &['a', 'b'];
+
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
@@ -825,6 +827,19 @@ fn possible_open_targets(
                     .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
                 {
                     potential_cwd_and_workspace_paths.insert(potential_worktree_path);
+                }
+
+                for prefix in GIT_DIFF_PATH_PREFIXES {
+                    let prefix_str = &prefix.to_string();
+                    if maybe_path.starts_with(prefix_str) {
+                        let stripped = maybe_path.strip_prefix(prefix_str).unwrap_or(&maybe_path);
+                        for potential_worktree_path in workspace
+                            .worktrees(cx)
+                            .map(|worktree| worktree.read(cx).abs_path().join(&stripped))
+                        {
+                            potential_cwd_and_workspace_paths.insert(potential_worktree_path);
+                        }
+                    }
                 }
             });
         }

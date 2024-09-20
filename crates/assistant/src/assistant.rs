@@ -41,9 +41,10 @@ use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    auto_command, context_server_command, default_command, delta_command, diagnostics_command,
-    docs_command, fetch_command, file_command, now_command, project_command, prompt_command,
-    search_command, symbols_command, tab_command, terminal_command, workflow_command,
+    auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
+    diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
+    prompt_command, search_command, symbols_command, tab_command, terminal_command,
+    workflow_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,6 +59,7 @@ actions!(
     [
         Assist,
         Split,
+        CopyCode,
         CycleMessageRole,
         QuoteSelection,
         InsertIntoEditor,
@@ -68,6 +70,8 @@ actions!(
         ConfirmCommand,
         NewContext,
         ToggleModelSelector,
+        CycleNextInlineAssist,
+        CyclePreviousInlineAssist
     ]
 );
 
@@ -358,8 +362,19 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
     let settings = AssistantSettings::get_global(cx);
     let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
     let model_id = LanguageModelId::from(settings.default_model.model.clone());
+    let inline_alternatives = settings
+        .inline_alternatives
+        .iter()
+        .map(|alternative| {
+            (
+                LanguageModelProviderId::from(alternative.provider.clone()),
+                LanguageModelId::from(alternative.model.clone()),
+            )
+        })
+        .collect::<Vec<_>>();
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
         registry.select_active_model(&provider_name, &model_id, cx);
+        registry.select_inline_alternative_models(inline_alternatives, cx);
     });
 }
 
@@ -370,20 +385,33 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(delta_command::DeltaSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tab_command::TabSlashCommand, true);
-    slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
+    slash_command_registry
+        .register_command(cargo_workspace_command::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
     slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
             workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
             true,
         );
+        cx.observe_flag::<project_command::ProjectSlashCommandFeatureFlag, _>({
+            let slash_command_registry = slash_command_registry.clone();
+            move |is_enabled, _cx| {
+                if is_enabled {
+                    slash_command_registry.register_command(
+                        project_command::ProjectSlashCommand::new(prompt_builder.clone()),
+                        true,
+                    );
+                }
+            }
+        })
+        .detach();
     }
-    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
     cx.observe_flag::<auto_command::AutoSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
@@ -421,10 +449,12 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
         slash_command_registry.unregister_command(docs_command::DocsSlashCommand);
     }
 
-    if settings.project.enabled {
-        slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
+    if settings.cargo_workspace.enabled {
+        slash_command_registry
+            .register_command(cargo_workspace_command::CargoWorkspaceSlashCommand, true);
     } else {
-        slash_command_registry.unregister_command(project_command::ProjectSlashCommand);
+        slash_command_registry
+            .unregister_command(cargo_workspace_command::CargoWorkspaceSlashCommand);
     }
 }
 

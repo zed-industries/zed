@@ -346,6 +346,7 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
         register_action(view, cx, Editor::open_excerpts_in_split);
+        register_action(view, cx, Editor::open_proposed_changes_editor);
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_tab_bar);
         register_action(view, cx, Editor::toggle_line_numbers);
@@ -2079,13 +2080,13 @@ impl EditorElement {
                         .id(("path excerpt header", EntityId::from(block_id)))
                         .w_full()
                         .px(header_padding)
+                        .pt(header_padding)
                         .child(
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                                 .id("path header block")
                                 .h(2. * cx.line_height())
-                                .pl(gpui::px(12.))
-                                .pr(gpui::px(8.))
+                                .px(gpui::px(12.))
                                 .rounded_md()
                                 .shadow_md()
                                 .border_1()
@@ -3710,11 +3711,11 @@ impl EditorElement {
                                     )
                                     .map(|hunk| {
                                         let start_display_row =
-                                            MultiBufferPoint::new(hunk.associated_range.start.0, 0)
+                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         let mut end_display_row =
-                                            MultiBufferPoint::new(hunk.associated_range.end.0, 0)
+                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         if end_display_row != start_display_row {

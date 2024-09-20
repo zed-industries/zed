@@ -43,17 +43,21 @@ pub struct WorkflowSuggestionGroup {
 pub enum WorkflowSuggestion {
     Update {
         range: Range<language::Anchor>,
+        new_text: String,
         description: String,
     },
     CreateFile {
         description: String,
+        new_text: String,
     },
     InsertBefore {
         position: language::Anchor,
+        new_text: String,
         description: String,
     },
     InsertAfter {
         position: language::Anchor,
+        new_text: String,
         description: String,
     },
     Delete {
@@ -76,7 +80,7 @@ impl WorkflowSuggestion {
     pub fn description(&self) -> Option<&str> {
         match self {
             Self::Update { description, .. }
-            | Self::CreateFile { description }
+            | Self::CreateFile { description, .. }
             | Self::InsertBefore { description, .. }
             | Self::InsertAfter { description, .. } => Some(description),
             Self::Delete { .. } => None,
@@ -86,7 +90,7 @@ impl WorkflowSuggestion {
     fn description_mut(&mut self) -> Option<&mut String> {
         match self {
             Self::Update { description, .. }
-            | Self::CreateFile { description }
+            | Self::CreateFile { description, .. }
             | Self::InsertBefore { description, .. }
             | Self::InsertAfter { description, .. } => Some(description),
             Self::Delete { .. } => None,
@@ -135,7 +139,7 @@ impl WorkflowSuggestion {
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
             }
-            Self::CreateFile { description } => {
+            Self::CreateFile { description, .. } => {
                 initial_prompt = description.clone();
                 suggestion_range = editor::Anchor::min()..editor::Anchor::min();
             }
@@ -275,12 +279,19 @@ impl AssistantEdit {
                         description,
                     } => {
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        WorkflowSuggestion::Update { range, description }
+                        WorkflowSuggestion::Update {
+                            range,
+                            description,
+                            new_text,
+                        }
                     }
                     AssistantEditKind::Create {
                         new_text,
                         description,
-                    } => WorkflowSuggestion::CreateFile { description },
+                    } => WorkflowSuggestion::CreateFile {
+                        description,
+                        new_text,
+                    },
                     AssistantEditKind::InsertBefore {
                         old_text,
                         new_text,
@@ -290,6 +301,7 @@ impl AssistantEdit {
                         WorkflowSuggestion::InsertBefore {
                             position: range.start,
                             description,
+                            new_text,
                         }
                     }
                     AssistantEditKind::InsertAfter {
@@ -301,6 +313,7 @@ impl AssistantEdit {
                         WorkflowSuggestion::InsertAfter {
                             position: range.end,
                             description,
+                            new_text,
                         }
                     }
                     AssistantEditKind::Delete { old_text } => {

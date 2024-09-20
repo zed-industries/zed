@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.154.0"
+version = "0.155.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -57,6 +57,7 @@ image_viewer.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
 isahc.workspace = true
+isahc_http_client.workspace = true
 journal.workspace = true
 language.workspace = true
 language_model.workspace = true

@@ -2,12 +2,13 @@ use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use node_runtime::DummyNodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
     search::SearchQuery,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, ProjectPath, WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
@@ -41,19 +42,29 @@ impl HeadlessProject {
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
-        languages
-            .set_language_server_download_dir(PathBuf::from("/Users/conrad/what-could-go-wrong"));
+        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
-        let languages = Arc::new(languages);
-
-        let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
+        let worktree_store = cx.new_model(|cx| {
+            let mut store = WorktreeStore::new(None, true, fs.clone());
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
+        });
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store =
                 BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+        let prettier_store = cx.new_model(|cx| {
+            PrettierStore::new(
+                DummyNodeRuntime::new(),
+                fs.clone(),
+                languages.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
         let settings_observer = cx.new_model(|cx| {
             let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
@@ -64,6 +75,7 @@ impl HeadlessProject {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
+                prettier_store.clone(),
                 environment,
                 languages.clone(),
                 None,
@@ -107,6 +119,8 @@ impl HeadlessProject {
         client.add_model_request_handler(LspStore::handle_create_language_server);
         client.add_model_request_handler(LspStore::handle_which_command);
         client.add_model_request_handler(LspStore::handle_shell_env);
+        client.add_model_request_handler(LspStore::handle_try_exec);
+        client.add_model_request_handler(LspStore::handle_read_text_file);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
@@ -132,12 +146,15 @@ impl HeadlessProject {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            BufferEvent::Operation(op) => cx
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx
                 .background_executor()
                 .spawn(self.session.request(proto::UpdateBuffer {
                     project_id: SSH_PROJECT_ID,
                     buffer_id: buffer.read(cx).remote_id().to_proto(),
-                    operations: vec![serialize_operation(op)],
+                    operations: vec![serialize_operation(operation)],
                 }))
                 .detach(),
             _ => {}
@@ -186,18 +203,11 @@ impl HeadlessProject {
             .await?;
 
         this.update(&mut cx, |this, cx| {
-            let session = this.session.clone();
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.add(&worktree, cx);
             });
-            worktree.update(cx, |worktree, cx| {
-                worktree.observe_updates(0, cx, move |update| {
-                    session.send(update).ok();
-                    futures::future::ready(true)
-                });
-                proto::AddWorktreeResponse {
-                    worktree_id: worktree.id().to_proto(),
-                }
+            worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
+                worktree_id: worktree.id().to_proto(),
             })
         })
     }

@@ -176,12 +176,11 @@ pub struct ProjectSearchBar {
 
 impl ProjectSearch {
     pub fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
-        let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
         Self {
             project,
-            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(capability)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,

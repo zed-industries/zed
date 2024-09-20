@@ -127,7 +127,9 @@ impl DisplayMap {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
 
         let tab_size = Self::tab_size(&buffer, cx);
-        let (inlay_map, snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let crease_map = CreaseMap::new(&buffer_snapshot);
+        let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
@@ -138,7 +140,6 @@ impl DisplayMap {
             excerpt_header_height,
             excerpt_footer_height,
         );
-        let crease_map = CreaseMap::default();
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 

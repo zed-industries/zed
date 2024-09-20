@@ -166,6 +166,7 @@
   {
     "context": "AssistantPanel",
     "bindings": {
+      "ctrl-k c": "assistant::CopyCode",
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
@@ -517,6 +518,13 @@
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
       "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "PromptEditor",
+    "bindings": {
+      "ctrl-[": "assistant::CyclePreviousInlineAssist",
+      "ctrl-]": "assistant::CycleNextInlineAssist"
     }
   },
   {

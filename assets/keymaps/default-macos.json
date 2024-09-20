@@ -188,6 +188,7 @@
   {
     "context": "AssistantPanel",
     "bindings": {
+      "cmd-k c": "assistant::CopyCode",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
@@ -524,6 +525,13 @@
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "PromptEditor",
+    "bindings": {
+      "ctrl-[": "assistant::CyclePreviousInlineAssist",
+      "ctrl-]": "assistant::CycleNextInlineAssist"
     }
   },
   {

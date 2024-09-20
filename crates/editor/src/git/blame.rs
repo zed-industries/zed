@@ -37,12 +37,20 @@ impl sum_tree::Item for GitBlameEntry {
 impl sum_tree::Summary for GitBlameEntrySummary {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _cx: &()) {
         self.rows += summary.rows;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a GitBlameEntrySummary, _cx: &()) {
         *self += summary.rows;
     }
@@ -191,7 +199,7 @@ impl GitBlame {
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
-        let mut cursor = self.entries.cursor::<u32>();
+        let mut cursor = self.entries.cursor::<u32>(&());
         rows.into_iter().map(move |row| {
             let row = row?;
             cursor.seek_forward(&row.0, Bias::Right, &());
@@ -249,8 +257,8 @@ impl GitBlame {
             })
             .peekable();
 
-        let mut new_entries = SumTree::new();
-        let mut cursor = self.entries.cursor::<u32>();
+        let mut new_entries = SumTree::default();
+        let mut cursor = self.entries.cursor::<u32>(&());
 
         while let Some(mut edit) = row_edits.next() {
             while let Some(next_edit) = row_edits.peek() {

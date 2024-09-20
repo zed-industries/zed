@@ -28,13 +28,13 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 
 ## JSX
 
-TBD: Mention JSX
+Zed supports JSX syntax highlighting out of the box.
+
+In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used provide autocompletion for Tailwind CSS classes.
 
 ## JSDoc
 
-TBD: Document JSDoc support in Zed.
-
-- Tree Sitter: [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc)
+Zed supports JSDoc syntax in JavaScript and TypeScript comments that match the JSDoc syntax. Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc) for parsing and highlighting JSDoc.
 
 ## ESLint
 

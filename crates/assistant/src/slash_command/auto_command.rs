@@ -216,7 +216,7 @@ async fn commands_for_summaries(
         }],
         tools: Vec::new(),
         stop: Vec::new(),
-        temperature: 1.0,
+        temperature: None,
     };
 
     while let Some(current_summaries) = stack.pop() {

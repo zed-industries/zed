@@ -1296,6 +1296,7 @@ pub mod tests {
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
 
@@ -1428,6 +1429,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1547,6 +1549,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1777,6 +1780,7 @@ pub mod tests {
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
 
@@ -1941,6 +1945,7 @@ pub mod tests {
                     show_parameter_hints: new_allowed_hint_kinds
                         .contains(&Some(InlayHintKind::Parameter)),
                     show_other_hints: new_allowed_hint_kinds.contains(&None),
+                    show_background: false,
                 })
             });
             cx.executor().run_until_parked();
@@ -1987,6 +1992,7 @@ pub mod tests {
                 show_parameter_hints: another_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: another_allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -2047,6 +2053,7 @@ pub mod tests {
                 show_parameter_hints: final_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: final_allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -2122,6 +2129,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2256,6 +2264,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2551,6 +2560,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2597,7 +2607,7 @@ pub mod tests {
             .await
             .unwrap();
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
@@ -2902,6 +2912,7 @@ pub mod tests {
                 show_type_hints: false,
                 show_parameter_hints: false,
                 show_other_hints: false,
+                show_background: false,
             })
         });
 
@@ -2946,7 +2957,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -3096,6 +3107,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -3131,6 +3143,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -3225,6 +3238,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -3305,6 +3319,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();

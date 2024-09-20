@@ -27,6 +27,8 @@ pub trait ProtoClient: Send + Sync {
     fn send_response(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
 
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
+
+    fn is_via_collab(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -137,6 +139,10 @@ where
 impl AnyProtoClient {
     pub fn new<T: ProtoClient + 'static>(client: Arc<T>) -> Self {
         Self(client)
+    }
+
+    pub fn is_via_collab(&self) -> bool {
+        self.0.is_via_collab()
     }
 
     pub fn request<T: RequestMessage>(

@@ -831,13 +831,14 @@ impl Pane {
                 }
             }
         }
-        // If no destination index is specified, add or move the item after the active item.
+        // If no destination index is specified, add or move the item after the
+        // active item (or at the start of tab bar, if the active item is pinned)
         let mut insertion_index = {
             cmp::min(
                 if let Some(destination_index) = destination_index {
                     destination_index
                 } else {
-                    self.active_item_index + 1
+                    cmp::max(self.active_item_index + 1, self.pinned_count())
                 },
                 self.items.len(),
             )
@@ -1594,8 +1595,13 @@ impl Pane {
             }
 
             if can_save {
-                pane.update(cx, |_, cx| item.save(should_format, project, cx))?
-                    .await?;
+                pane.update(cx, |pane, cx| {
+                    if pane.is_active_preview_item(item.item_id()) {
+                        pane.set_preview_item_id(None, cx);
+                    }
+                    item.save(should_format, project, cx)
+                })?
+                .await?;
             } else if can_save_as {
                 let abs_path = pane.update(cx, |pane, cx| {
                     pane.workspace

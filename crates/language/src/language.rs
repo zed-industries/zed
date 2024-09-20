@@ -208,7 +208,7 @@ impl CachedLspAdapter {
 
     pub async fn get_language_server_command(
         self: Arc<Self>,
-        container_dir: Arc<Path>,
+        container_dir: Option<Arc<Path>>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<LanguageServerBinary> {
@@ -294,7 +294,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        container_dir: Arc<Path>,
+        container_dir: Option<Arc<Path>>,
         delegate: Arc<dyn LspAdapterDelegate>,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncAppContext,
@@ -324,6 +324,10 @@ pub trait LspAdapter: 'static + Send + Sync {
             if let Some(cached_binary) = cached_binary.as_ref() {
                 return Ok(cached_binary.clone());
             }
+
+            let Some(container_dir) = container_dir else {
+                anyhow::bail!("cannot download language servers for remotes (yet)")
+            };
 
             if !container_dir.exists() {
                 smol::fs::create_dir_all(&container_dir)
@@ -1664,7 +1668,7 @@ impl LspAdapter for FakeLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Arc<Path>,
+        _: Option<Arc<Path>>,
         _: Arc<dyn LspAdapterDelegate>,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncAppContext,
