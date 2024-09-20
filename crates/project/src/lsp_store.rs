@@ -1459,7 +1459,7 @@ impl LspStore {
                             }
                         })
                         .map(|code_actions_response| {
-                            let response = GetCodeActions {
+                            GetCodeActions {
                                 range: range.clone(),
                                 kinds: None,
                             }
@@ -1468,8 +1468,7 @@ impl LspStore {
                                 project.clone(),
                                 buffer.clone(),
                                 cx.clone(),
-                            );
-                            async move { response.await }
+                            )
                         }),
                 )
                 .await;
