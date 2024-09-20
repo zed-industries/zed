@@ -80,15 +80,20 @@ fn completion_state_from_diff(
                         completion_text.is_char_boundary(i),
                         completion_text.is_char_boundary(i + k)
                     );
-                    println!("  => diff {}<->{}, {}<->{}", i, start, i + k, end);
+                    println!("    => diff {}<->{}, {}<->{}", i, start, i + k, end);
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
                         completion_text[start..end].into(),
                     ));
                 }
+                println!(
+                    "=> 2, {}<->{}",
+                    offset + 1,
+                    snapshot.clip_offset(offset + 1, text::Bias::Right)
+                );
                 i += k + 1;
                 j += 1;
-                offset.add_assign(1);
+                offset = snapshot.clip_offset(offset + 1, text::Bias::Right);
             }
             None => {
                 // there are no more matching completions, so drop the remaining
