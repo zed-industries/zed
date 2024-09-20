@@ -188,6 +188,10 @@ jobs:
 
       - name: Update nightly tag
         run: |
+          if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
+            echo "Nightly tag already points to current commit. Skipping tagging."
+            exit 0
+          fi
           git config user.name github-actions
           git config user.email github-actions@github.com
           git tag -f nightly
