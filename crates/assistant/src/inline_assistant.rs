@@ -51,7 +51,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal_view::terminal_panel::TerminalPanel;
-use text::{OffsetRangeExt, ToOffset};
+use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -3057,9 +3057,14 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         let snapshot = buffer.read(cx).snapshot();
-        let mut range = range.to_offset(&snapshot);
+        let mut range = range.to_point(&snapshot);
+
+        // Expand the range to line boundaries.
+        range.start.column = 0;
+        range.end.column = snapshot.line_len(range.end.row);
+
         let mut has_diagnostics = false;
-        for diagnostic in snapshot.diagnostics_in_range::<_, usize>(range.clone(), false) {
+        for diagnostic in snapshot.diagnostics_in_range::<_, Point>(range.clone(), false) {
             range.start = cmp::min(range.start, diagnostic.range.start);
             range.end = cmp::max(range.end, diagnostic.range.end);
             has_diagnostics = true;
@@ -3067,15 +3072,15 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         if has_diagnostics {
             if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None) {
                 if let Some(symbol) = symbols_containing_start.last() {
-                    range.start = cmp::min(range.start, symbol.range.start.to_offset(&snapshot));
-                    range.end = cmp::max(range.end, symbol.range.end.to_offset(&snapshot));
+                    range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
+                    range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
                 }
             }
 
             if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None) {
                 if let Some(symbol) = symbols_containing_end.last() {
-                    range.start = cmp::min(range.start, symbol.range.start.to_offset(&snapshot));
-                    range.end = cmp::max(range.end, symbol.range.end.to_offset(&snapshot));
+                    range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
+                    range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
                 }
             }
 
