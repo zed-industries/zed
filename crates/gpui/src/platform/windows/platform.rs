@@ -337,7 +337,9 @@ impl Platform for WindowsPlatform {
     }
 
     // todo(windows)
-    fn hide_other_apps(&self) {}
+    fn hide_other_apps(&self) {
+        unimplemented!()
+    }
 
     // todo(windows)
     fn unhide_other_apps(&self) {
