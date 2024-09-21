@@ -129,11 +129,10 @@ jobs:
       - name: Build Zed
         run: cargo build -p zed
 
-  # todo(windows): Actually run the tests
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
-    runs-on: hosted-windows-1
+    runs-on: windows-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -149,6 +148,9 @@ jobs:
       - name: cargo clippy
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
+
+      - name: Run tests
+        run: cargo test
 
       - name: Build Zed
         run: cargo build -p zed

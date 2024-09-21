@@ -165,3 +165,24 @@ pub(crate) fn system_appearance() -> Result<WindowAppearance> {
 fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
 }
+
+// Additional utility functions for Windows support
+
+pub(crate) fn get_system_metrics(index: i32) -> i32 {
+    unsafe { GetSystemMetrics(index) }
+}
+
+pub(crate) fn get_dpi_for_window(hwnd: HWND) -> u32 {
+    unsafe { GetDpiForWindow(hwnd) }
+}
+
+pub(crate) fn get_monitor_info(hmonitor: HMONITOR) -> Option<MONITORINFO> {
+    let mut monitor_info: MONITORINFO = unsafe { std::mem::zeroed() };
+    monitor_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let status = unsafe { GetMonitorInfoW(hmonitor, &mut monitor_info) };
+    if status.as_bool() {
+        Some(monitor_info)
+    } else {
+        None
+    }
+}

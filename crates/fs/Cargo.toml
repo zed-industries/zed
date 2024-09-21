@@ -42,6 +42,7 @@ notify = "6.1.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+smol = { version = "1.2", features = ["windows"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd.workspace = true
