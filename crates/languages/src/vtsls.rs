@@ -48,11 +48,11 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
-const SERVER_NAME: &str = "vtsls";
+const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vtsls");
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(SERVER_NAME.into())
+        SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -74,7 +74,7 @@ impl LspAdapter for VtslsLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, SERVER_NAME, cx).and_then(|s| s.binary.clone())
+            language_server_settings(delegate, &SERVER_NAME, cx).and_then(|s| s.binary.clone())
         });
 
         match configured_binary {
@@ -267,7 +267,7 @@ impl LspAdapter for VtslsLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), SERVER_NAME, cx)
+            language_server_settings(delegate.as_ref(), &SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
         })?;
 

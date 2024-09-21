@@ -33,7 +33,7 @@ fn server_binary_arguments() -> Vec<OsString> {
 pub struct GoLspAdapter;
 
 impl GoLspAdapter {
-    const SERVER_NAME: &'static str = "gopls";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("gopls");
 }
 
 static GOPLS_VERSION_REGEX: LazyLock<Regex> =
@@ -46,7 +46,7 @@ static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -71,7 +71,8 @@ impl super::LspAdapter for GoLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, Self::SERVER_NAME, cx).and_then(|s| s.binary.clone())
+            language_server_settings(delegate, &Self::SERVER_NAME, cx)
+                .and_then(|s| s.binary.clone())
         });
 
         match configured_binary {

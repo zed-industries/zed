@@ -25,13 +25,13 @@ use util::{fs::remove_matching, maybe, ResultExt};
 pub struct RustLspAdapter;
 
 impl RustLspAdapter {
-    const SERVER_NAME: &'static str = "rust-analyzer";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 }
 
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn check_if_user_installed(
@@ -41,7 +41,7 @@ impl LspAdapter for RustLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx
             .update(|cx| {
-                language_server_settings(delegate, Self::SERVER_NAME, cx)
+                language_server_settings(delegate, &Self::SERVER_NAME, cx)
                     .and_then(|s| s.binary.clone())
             })
             .ok()?;
@@ -60,7 +60,7 @@ impl LspAdapter for RustLspAdapter {
                 path_lookup: None,
                 ..
             }) => {
-                let path = delegate.which(Self::SERVER_NAME.as_ref()).await;
+                let path = delegate.which("rust-analyzer".as_ref()).await;
                 let env = delegate.shell_env().await;
 
                 if let Some(path) = path {

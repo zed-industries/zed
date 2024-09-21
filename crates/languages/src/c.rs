@@ -13,13 +13,13 @@ use util::{fs::remove_matching, maybe, ResultExt};
 pub struct CLspAdapter;
 
 impl CLspAdapter {
-    const SERVER_NAME: &'static str = "clangd";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 }
 
 #[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn check_if_user_installed(
@@ -28,7 +28,8 @@ impl super::LspAdapter for CLspAdapter {
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, Self::SERVER_NAME, cx).and_then(|s| s.binary.clone())
+            language_server_settings(delegate, &Self::SERVER_NAME, cx)
+                .and_then(|s| s.binary.clone())
         });
 
         match configured_binary {

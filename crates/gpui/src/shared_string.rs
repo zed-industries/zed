@@ -9,6 +9,13 @@ use util::arc_cow::ArcCow;
 #[derive(Deref, DerefMut, Eq, PartialEq, PartialOrd, Ord, Hash, Clone)]
 pub struct SharedString(ArcCow<'static, str>);
 
+impl SharedString {
+    /// creates a static SharedString
+    pub const fn new_static(s: &'static str) -> Self {
+        Self(ArcCow::Borrowed(s))
+    }
+}
+
 impl Default for SharedString {
     fn default() -> Self {
         Self(ArcCow::Owned(Arc::default()))
