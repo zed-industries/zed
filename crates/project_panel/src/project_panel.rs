@@ -462,6 +462,7 @@ impl ProjectPanel {
                         path_buf.push(component);
                         (path_buf.clone(), color)
                     })
+                    .chain(std::iter::once((PathBuf::from(""), color)))
                     .collect::<Vec<_>>()
             })
             .collect();
