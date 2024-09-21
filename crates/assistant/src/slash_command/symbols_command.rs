@@ -2,8 +2,8 @@ use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use editor::Editor;
-use gpui::{AppContext, Task, WeakView};
-use language::LspAdapterDelegate;
+use gpui::{Task, WeakView};
+use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
 use ui::{IconName, WindowContext};
@@ -26,10 +26,10 @@ impl SlashCommand for OutlineSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -40,9 +40,11 @@ impl SlashCommand for OutlineSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        _arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let output = workspace.update(cx, |workspace, cx| {
@@ -77,6 +79,7 @@ impl SlashCommand for OutlineSlashCommand {
                         range: 0..outline_text.len(),
                         icon: IconName::ListTree,
                         label: path.to_string_lossy().to_string().into(),
+                        metadata: None,
                     }],
                     text: outline_text,
                     run_commands_in_text: false,

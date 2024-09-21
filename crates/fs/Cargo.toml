@@ -19,8 +19,7 @@ collections.workspace = true
 futures.workspace = true
 git.workspace = true
 git2.workspace = true
-gpui = { workspace = true, optional = true }
-lazy_static.workspace = true
+gpui.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
@@ -36,7 +35,7 @@ util.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true
 objc = "0.2"
-cocoa = "0.25"
+cocoa = "0.26"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"

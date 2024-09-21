@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use collections::BTreeMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{AppContext, Global};
-use http::HttpClient;
+use http_client::HttpClient;
 use parking_lot::RwLock;
 use url::Url;
 
@@ -171,7 +171,7 @@ pub fn parse_git_remote_url(
         .into_iter()
         .find_map(|provider| {
             provider
-                .parse_remote_url(&url)
+                .parse_remote_url(url)
                 .map(|parsed_remote| (provider, parsed_remote))
         })
 }

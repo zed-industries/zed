@@ -29,7 +29,7 @@ pub fn toggle(editor: View<Editor>, _: &ToggleOutline, cx: &mut WindowContext) {
         .buffer()
         .read(cx)
         .snapshot(cx)
-        .outline(Some(&cx.theme().syntax()));
+        .outline(Some(cx.theme().syntax()));
 
     if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
         workspace.update(cx, |workspace, cx| {
@@ -321,7 +321,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
-                project.worktrees().next().unwrap().read(cx).id()
+                project.worktrees(cx).next().unwrap().read(cx).id()
             })
         });
         let _buffer = project
@@ -338,9 +338,9 @@ mod tests {
             .unwrap();
         let ensure_outline_view_contents =
             |outline_view: &View<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
-                assert_eq!(query(&outline_view, cx), "");
+                assert_eq!(query(outline_view, cx), "");
                 assert_eq!(
-                    outline_names(&outline_view, cx),
+                    outline_names(outline_view, cx),
                     vec![
                         "struct SingleLine",
                         "struct MultiLine",
@@ -484,7 +484,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_outline_query(
                 r#"(struct_item

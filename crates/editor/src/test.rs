@@ -27,6 +27,7 @@ pub fn marked_display_snapshot(
     let font = Font {
         family: "Zed Plex Mono".into(),
         features: FontFeatures::default(),
+        fallbacks: None,
         weight: FontWeight::default(),
         style: FontStyle::default(),
     };
@@ -62,6 +63,7 @@ pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContex
     editor.change_selections(None, cx, |s| s.select_ranges(text_ranges));
 }
 
+#[track_caller]
 pub fn assert_text_with_selections(
     editor: &mut Editor,
     marked_text: &str,
@@ -106,16 +108,16 @@ pub fn editor_hunks(
         .buffer_snapshot
         .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
         .map(|hunk| {
-            let display_range = Point::new(hunk.associated_range.start.0, 0)
+            let display_range = Point::new(hunk.row_range.start.0, 0)
                 .to_display_point(snapshot)
                 .row()
-                ..Point::new(hunk.associated_range.end.0, 0)
+                ..Point::new(hunk.row_range.end.0, 0)
                     .to_display_point(snapshot)
                     .row();
             let (_, buffer, _) = editor
                 .buffer()
                 .read(cx)
-                .excerpt_containing(Point::new(hunk.associated_range.start.0, 0), cx)
+                .excerpt_containing(Point::new(hunk.row_range.start.0, 0), cx)
                 .expect("no excerpt for expanded buffer's hunk start");
             let diff_base = buffer
                 .read(cx)

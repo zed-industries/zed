@@ -19,6 +19,7 @@ pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
+const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
 
 pub(crate) fn handle_msg(
     handle: HWND,
@@ -76,6 +77,7 @@ pub(crate) fn handle_msg(
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
         WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, state_ptr),
         WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
@@ -83,6 +85,7 @@ pub(crate) fn handle_msg(
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
+        WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(state_ptr),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -174,6 +177,9 @@ fn handle_timer_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
+        for runnable in state_ptr.main_receiver.drain() {
+            runnable.run();
+        }
         handle_paint_msg(handle, state_ptr)
     } else {
         None
@@ -216,7 +222,13 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
         callback();
     }
     unsafe {
-        PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
+        PostMessageW(
+            None,
+            CLOSE_ONE_WINDOW,
+            WPARAM(state_ptr.validation_number),
+            LPARAM(handle.0 as isize),
+        )
+        .log_err();
     }
     Some(0)
 }
@@ -273,7 +285,8 @@ fn handle_syskeydown_msg(
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
-    let result = if func(PlatformInput::KeyDown(event)).default_prevented {
+    let result = if !func(PlatformInput::KeyDown(event)).propagate {
+        state_ptr.state.borrow_mut().system_key_handled = true;
         Some(0)
     } else {
         None
@@ -378,22 +391,18 @@ fn handle_char_msg(
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
-
     let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
         return Some(0);
     }
     let Some(ime_char) = ime_key else {
         return Some(1);
     };
-    let Some(mut input_handler) = lock.input_handler.take() else {
-        return Some(1);
-    };
-    drop(lock);
-    input_handler.replace_text_in_range(None, &ime_char);
-    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    with_input_handler(&state_ptr, |input_handler| {
+        input_handler.replace_text_in_range(None, &ime_char);
+    });
 
     Some(0)
 }
@@ -489,13 +498,17 @@ fn handle_mouse_wheel_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let modifiers = current_modifiers();
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_lines = lock.system_settings.mouse_wheel_settings.wheel_scroll_lines;
+        let wheel_scroll_amount = match modifiers.shift {
+            true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
+            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
+        };
         drop(lock);
         let wheel_distance =
-            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_lines as f32;
+            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
@@ -503,9 +516,15 @@ fn handle_mouse_wheel_msg(
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(Point {
-                x: 0.0,
-                y: wheel_distance,
+            delta: ScrollDelta::Lines(match modifiers.shift {
+                true => Point {
+                    x: wheel_distance,
+                    y: 0.0,
+                },
+                false => Point {
+                    y: wheel_distance,
+                    x: 0.0,
+                },
             }),
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
@@ -563,33 +582,42 @@ fn handle_mouse_horizontal_wheel_msg(
     }
 }
 
+fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
+    with_input_handler_and_scale_factor(state_ptr, |input_handler, scale_factor| {
+        let caret_range = input_handler.selected_text_range(false)?;
+        let caret_position = input_handler.bounds_for_range(caret_range.range)?;
+        Some(POINT {
+            // logical to physical
+            x: (caret_position.origin.x.0 * scale_factor) as i32,
+            y: (caret_position.origin.y.0 * scale_factor) as i32
+                + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
+        })
+    })
+}
+
 fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     unsafe {
-        let mut lock = state_ptr.state.borrow_mut();
         let ctx = ImmGetContext(handle);
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return Some(1);
-        };
-        let scale_factor = lock.scale_factor;
-        drop(lock);
 
-        let Some(caret_range) = input_handler.selected_text_range() else {
-            state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let Some(caret_position) = retrieve_caret_position(&state_ptr) else {
             return Some(0);
         };
-        let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        let config = CANDIDATEFORM {
-            dwStyle: CFS_CANDIDATEPOS,
-            // logical to physical
-            ptCurrentPos: POINT {
-                x: (caret_position.origin.x.0 * scale_factor) as i32,
-                y: (caret_position.origin.y.0 * scale_factor) as i32
-                    + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
-            },
-            ..Default::default()
-        };
-        ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        {
+            let config = COMPOSITIONFORM {
+                dwStyle: CFS_POINT,
+                ptCurrentPos: caret_position,
+                ..Default::default()
+            };
+            ImmSetCompositionWindow(ctx, &config as _).ok().log_err();
+        }
+        {
+            let config = CANDIDATEFORM {
+                dwStyle: CFS_CANDIDATEPOS,
+                ptCurrentPos: caret_position,
+                ..Default::default()
+            };
+            ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        }
         ImmReleaseContext(handle, ctx).ok().log_err();
         Some(0)
     }
@@ -600,34 +628,45 @@ fn handle_ime_composition(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let ctx = unsafe { ImmGetContext(handle) };
+    let result = handle_ime_composition_inner(ctx, lparam, state_ptr);
+    unsafe { ImmReleaseContext(handle, ctx).ok().log_err() };
+    result
+}
+
+fn handle_ime_composition_inner(
+    ctx: HIMC,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let (comp_string, string_len) = parse_ime_compostion_string(handle)?;
-        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
-        input_handler.replace_and_mark_text_in_range(
-            None,
-            &comp_string,
-            Some(string_len..string_len),
-        );
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                &comp_string,
+                Some(string_len..string_len),
+            );
+        })?;
         ime_input = Some(comp_string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
         let comp_string = &ime_input?;
-        let caret_pos = retrieve_composition_cursor_position(handle);
-        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
-        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(caret_pos..caret_pos));
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let caret_pos = retrieve_composition_cursor_position(ctx);
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                comp_string,
+                Some(caret_pos..caret_pos),
+            );
+        })?;
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let comp_result = parse_ime_compostion_result(handle)?;
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return Some(1);
-        };
-        drop(lock);
-        input_handler.replace_text_in_range(None, &comp_result);
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let comp_result = parse_ime_compostion_result(ctx)?;
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_text_in_range(None, &comp_result);
+        })?;
         return Some(0);
     }
     // currently, we don't care other stuff
@@ -645,25 +684,45 @@ fn handle_calc_client_size(
         return None;
     }
 
-    let dpi = unsafe { GetDpiForWindow(handle) };
-
-    let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, dpi) };
-    let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-    let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
-
+    let is_maximized = state_ptr.state.borrow().is_maximized();
+    let insets = get_client_area_insets(handle, is_maximized, state_ptr.windows_version);
     // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
     let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
     let mut requested_client_rect = unsafe { &mut ((*params).rgrc) };
 
-    requested_client_rect[0].right -= frame_x + padding;
-    requested_client_rect[0].left += frame_x + padding;
-    requested_client_rect[0].bottom -= frame_y + padding;
+    requested_client_rect[0].left += insets.left;
+    requested_client_rect[0].top += insets.top;
+    requested_client_rect[0].right -= insets.right;
+    requested_client_rect[0].bottom -= insets.bottom;
 
-    if state_ptr.state.borrow().is_maximized() {
-        requested_client_rect[0].top += frame_y + padding;
-    } else {
-        // Magic number that calculates the width of the border
-        requested_client_rect[0].top += frame_y - 3;
+    // Fix auto hide taskbar not showing. This solution is based on the approach
+    // used by Chrome. However, it may result in one row of pixels being obscured
+    // in our client area. But as Chrome says, "there seems to be no better solution."
+    if is_maximized {
+        if let Some(ref taskbar_position) = state_ptr
+            .state
+            .borrow()
+            .system_settings
+            .auto_hide_taskbar_position
+        {
+            // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
+            // so the window isn't treated as a "fullscreen app", which would cause
+            // the taskbar to disappear.
+            match taskbar_position {
+                AutoHideTaskbarPosition::Left => {
+                    requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Top => {
+                    requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Right => {
+                    requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Bottom => {
+                    requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+            }
+        }
     }
 
     Some(0)
@@ -701,28 +760,12 @@ fn handle_activate_msg(
 }
 
 fn handle_create_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut size_rect = RECT::default();
-    unsafe { GetWindowRect(handle, &mut size_rect).log_err() };
-
-    let width = size_rect.right - size_rect.left;
-    let height = size_rect.bottom - size_rect.top;
-
     if state_ptr.hide_title_bar {
-        unsafe {
-            SetWindowPos(
-                handle,
-                None,
-                size_rect.left,
-                size_rect.top,
-                width,
-                height,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-            )
-            .log_err()
-        };
+        notify_frame_changed(handle);
+        Some(0)
+    } else {
+        None
     }
-
-    Some(0)
 }
 
 fn handle_dpi_changed_msg(
@@ -734,7 +777,7 @@ fn handle_dpi_changed_msg(
     let new_dpi = wparam.loword() as f32;
     let mut lock = state_ptr.state.borrow_mut();
     lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
-    lock.border_offset.udpate(handle).log_err();
+    lock.border_offset.update(handle).log_err();
     drop(lock);
 
     let rect = unsafe { &*(lparam.0 as *const RECT) };
@@ -772,7 +815,7 @@ fn handle_dpi_changed_msg(
 fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // NOTE:
     // Even the `lParam` holds the resolution of the screen, we just ignore it.
-    // Because WM_DPICHANGED, WM_MOVE, WM_SIEZ will come first, window reposition and resize
+    // Because WM_DPICHANGED, WM_MOVE, WM_SIZE will come first, window reposition and resize
     // are handled there.
     // So we only care about if monitor is disconnected.
     let previous_monitor = state_ptr.as_ref().state.borrow().display;
@@ -1038,7 +1081,7 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0);
+    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0 as _);
     Some(0)
 }
 
@@ -1058,12 +1101,40 @@ fn handle_system_settings_changed(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    // mouse wheel
-    lock.system_settings.mouse_wheel_settings.update();
+    let display = lock.display;
+    // system settings
+    lock.system_settings.update(display);
     // mouse double click
     lock.click_state.system_update();
     // window border offset
-    lock.border_offset.udpate(handle).log_err();
+    lock.border_offset.update(handle).log_err();
+    drop(lock);
+    // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
+    // taskbar correctly.
+    notify_frame_changed(handle);
+    Some(0)
+}
+
+fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    if wparam.0 == SC_KEYMENU as usize {
+        let mut lock = state_ptr.state.borrow_mut();
+        if lock.system_key_handled {
+            lock.system_key_handled = false;
+            return Some(0);
+        }
+    }
+    None
+}
+
+fn handle_system_theme_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut callback = state_ptr
+        .state
+        .borrow_mut()
+        .callbacks
+        .appearance_changed
+        .take()?;
+    callback();
+    state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     Some(0)
 }
 
@@ -1183,11 +1254,10 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
-fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
+fn parse_ime_compostion_string(ctx: HIMC) -> Option<(String, usize)> {
     unsafe {
-        let ctx = ImmGetContext(handle);
         let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
-        let result = if string_len >= 0 {
+        if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
                 ctx,
@@ -1203,26 +1273,19 @@ fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
             Some((string, string_len as usize / 2))
         } else {
             None
-        };
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        result
+        }
     }
 }
 
-fn retrieve_composition_cursor_position(handle: HWND) -> usize {
-    unsafe {
-        let ctx = ImmGetContext(handle);
-        let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        ret as usize
-    }
+#[inline]
+fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
+    unsafe { ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0) as usize }
 }
 
-fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
+fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
     unsafe {
-        let ctx = ImmGetContext(handle);
         let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
-        let result = if string_len >= 0 {
+        if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
                 ctx,
@@ -1238,9 +1301,7 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
             Some(string)
         } else {
             None
-        };
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        result
+        }
     }
 }
 
@@ -1287,4 +1348,101 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+fn get_client_area_insets(
+    handle: HWND,
+    is_maximized: bool,
+    windows_version: WindowsVersion,
+) -> RECT {
+    // For maximized windows, Windows outdents the window rect from the screen's client rect
+    // by `frame_thickness` on each edge, meaning `insets` must contain `frame_thickness`
+    // on all sides (including the top) to avoid the client area extending onto adjacent
+    // monitors.
+    //
+    // For non-maximized windows, things become complicated:
+    //
+    // - On Windows 10
+    // The top inset must be zero, since if there is any nonclient area, Windows will draw
+    // a full native titlebar outside the client area. (This doesn't occur in the maximized
+    // case.)
+    //
+    // - On Windows 11
+    // The top inset is calculated using an empirical formula that I derived through various
+    // tests. Without this, the top 1-2 rows of pixels in our window would be obscured.
+    let dpi = unsafe { GetDpiForWindow(handle) };
+    let frame_thickness = get_frame_thickness(dpi);
+    let top_insets = if is_maximized {
+        frame_thickness
+    } else {
+        match windows_version {
+            WindowsVersion::Win10 => 0,
+            WindowsVersion::Win11 => (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32,
+        }
+    };
+    RECT {
+        left: frame_thickness,
+        top: top_insets,
+        right: frame_thickness,
+        bottom: frame_thickness,
+    }
+}
+
+// there is some additional non-visible space when talking about window
+// borders on Windows:
+// - SM_CXSIZEFRAME: The resize handle.
+// - SM_CXPADDEDBORDER: Additional border space that isn't part of the resize handle.
+fn get_frame_thickness(dpi: u32) -> i32 {
+    let resize_frame_thickness = unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) };
+    let padding_thickness = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+    resize_frame_thickness + padding_thickness
+}
+
+fn notify_frame_changed(handle: HWND) {
+    unsafe {
+        SetWindowPos(
+            handle,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED
+                | SWP_NOACTIVATE
+                | SWP_NOCOPYBITS
+                | SWP_NOMOVE
+                | SWP_NOOWNERZORDER
+                | SWP_NOREPOSITION
+                | SWP_NOSENDCHANGING
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+        .log_err();
+    }
+}
+
+fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler) -> R,
+{
+    let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+    let result = f(&mut input_handler);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    Some(result)
+}
+
+fn with_input_handler_and_scale_factor<F, R>(
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    f: F,
+) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
+{
+    let mut lock = state_ptr.state.borrow_mut();
+    let mut input_handler = lock.input_handler.take()?;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
+    let result = f(&mut input_handler, scale_factor);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    result
 }

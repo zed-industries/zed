@@ -1,11 +1,17 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use editor::{Direction, InlineCompletionProvider};
+use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use language::{language_settings::all_language_settings, Anchor, Buffer};
-use std::{path::Path, sync::Arc, time::Duration};
+use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
+use std::{
+    ops::{AddAssign, Range},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
+use text::{ToOffset, ToPoint};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -33,6 +39,69 @@ impl SupermavenCompletionProvider {
     pub fn with_telemetry(mut self, telemetry: Arc<Telemetry>) -> Self {
         self.telemetry = Some(telemetry);
         self
+    }
+}
+
+// Computes the completion state from the difference between the completion text.
+// this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
+// for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
+// the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
+fn completion_state_from_diff(
+    snapshot: BufferSnapshot,
+    completion_text: &str,
+    position: Anchor,
+    delete_range: Range<Anchor>,
+) -> CompletionProposal {
+    let buffer_text = snapshot
+        .text_for_range(delete_range.clone())
+        .collect::<String>()
+        .chars()
+        .collect::<Vec<char>>();
+
+    let mut inlays: Vec<InlayProposal> = Vec::new();
+
+    let completion = completion_text.chars().collect::<Vec<char>>();
+
+    let mut offset = position.to_offset(&snapshot);
+
+    let mut i = 0;
+    let mut j = 0;
+    while i < completion.len() && j < buffer_text.len() {
+        // find the next instance of the buffer text in the completion text.
+        let k = completion[i..].iter().position(|c| *c == buffer_text[j]);
+        match k {
+            Some(k) => {
+                if k != 0 {
+                    // the range from the current position to item is an inlay.
+                    inlays.push(InlayProposal::Suggestion(
+                        snapshot.anchor_after(offset),
+                        completion_text[i..i + k].into(),
+                    ));
+                }
+                i += k + 1;
+                j += 1;
+                offset.add_assign(1);
+            }
+            None => {
+                // there are no more matching completions, so drop the remaining
+                // completion text as an inlay.
+                break;
+            }
+        }
+    }
+
+    if j == buffer_text.len() && i < completion.len() {
+        // there is leftover completion text, so drop it as an inlay.
+        inlays.push(InlayProposal::Suggestion(
+            snapshot.anchor_after(offset),
+            completion_text[i..completion_text.len()].into(),
+        ));
+    }
+
+    CompletionProposal {
+        inlays,
+        text: completion_text.into(),
+        delete_range: Some(delete_range),
     }
 }
 
@@ -118,15 +187,13 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         should_report_inline_completion_event: bool,
         _cx: &mut ModelContext<Self>,
     ) {
-        if should_report_inline_completion_event {
-            if self.completion_id.is_some() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_inline_completion_event(
-                        Self::name().to_string(),
-                        false,
-                        self.file_extension.clone(),
-                    );
-                }
+        if should_report_inline_completion_event && self.completion_id.is_some() {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
             }
         }
 
@@ -139,7 +206,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<CompletionProposal> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -150,7 +217,16 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         let completion_text = completion_text.trim_end();
 
         if !completion_text.trim().is_empty() {
-            Some(completion_text)
+            let snapshot = buffer.read(cx).snapshot();
+            let mut point = cursor_position.to_point(&snapshot);
+            point.column = snapshot.line_len(point.row);
+            let range = cursor_position..snapshot.anchor_after(point);
+            Some(completion_state_from_diff(
+                snapshot,
+                completion_text,
+                cursor_position,
+                range,
+            ))
         } else {
             None
         }
@@ -158,7 +234,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 }
 
 fn trim_to_end_of_line_unless_leading_newline(text: &str) -> &str {
-    if has_leading_newline(&text) {
+    if has_leading_newline(text) {
         text
     } else if let Some(i) = text.find('\n') {
         &text[..i]

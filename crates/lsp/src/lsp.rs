@@ -89,6 +89,16 @@ pub struct LanguageServer {
 #[repr(transparent)]
 pub struct LanguageServerId(pub usize);
 
+impl LanguageServerId {
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(self) -> u64 {
+        self.0 as u64
+    }
+}
+
 /// Handle to a language server RPC activity subscription.
 pub enum Subscription {
     Notification {
@@ -262,7 +272,7 @@ impl LanguageServer {
         };
 
         log::info!(
-            "starting language server. binary path: {:?}, working directory: {:?}, args: {:?}",
+            "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
             &binary.arguments
@@ -389,7 +399,7 @@ impl LanguageServer {
             notification_handlers,
             response_handlers,
             io_handlers,
-            name: "".into(),
+            name: Arc::default(),
             capabilities: Default::default(),
             code_action_kinds,
             next_id: Default::default(),

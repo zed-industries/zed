@@ -2,9 +2,9 @@ use anyhow::Context;
 
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
     X11ClientStatePtr,
 };
@@ -14,6 +14,7 @@ use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
+    properties::WmSizeHints,
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -31,7 +32,24 @@ use std::{
 use super::{X11Display, XINPUT_MASTER_DEVICE};
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
+        XA_ATOM,
+        XdndAware,
+        XdndStatus,
+        XdndEnter,
+        XdndLeave,
+        XdndPosition,
+        XdndSelection,
+        XdndDrop,
+        XdndFinished,
+        XdndTypeList,
+        XdndActionCopy,
+        TextUriList: b"text/uri-list",
         UTF8_STRING,
+        TEXT,
+        STRING,
+        TEXT_PLAIN_UTF8: b"text/plain;charset=utf-8",
+        TEXT_PLAIN: b"text/plain",
+        XDND_DATA,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
@@ -55,6 +73,7 @@ x11rb::atom_manager! {
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
+        _NET_CLIENT_LIST_STACKING,
     }
 }
 
@@ -370,6 +389,14 @@ impl X11WindowState {
                 format!("CreateWindow request to X server failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
                     visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
             })?;
+
+        if let Some(size) = params.window_min_size {
+            let mut size_hints = WmSizeHints::new();
+            size_hints.min_size = Some((size.width.0 as i32, size.height.0 as i32));
+            size_hints
+                .set_normal_hints(xcb_connection, x_window)
+                .unwrap();
+        }
 
         let reply = xcb_connection
             .get_geometry(x_window)
@@ -781,15 +808,6 @@ impl X11WindowStatePtr {
                 state.hidden = true;
             }
         }
-
-        let hovered_window = self
-            .xcb_connection
-            .query_pointer(state.x_root_window)
-            .unwrap()
-            .reply()
-            .unwrap()
-            .child;
-        self.set_hovered(hovered_window == self.x_window);
     }
 
     pub fn close(&self) {
@@ -872,8 +890,8 @@ impl X11WindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(selection.range);
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
@@ -1221,6 +1239,14 @@ impl PlatformWindow for X11Window {
 
     fn show_window_menu(&self, position: Point<Pixels>) {
         let state = self.0.state.borrow();
+
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+
         let coords = self.get_root_position(position);
         let message = ClientMessageEvent::new(
             32,
@@ -1384,5 +1410,16 @@ impl PlatformWindow for X11Window {
         if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
             appearance_changed();
         }
+    }
+
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let mut state = self.0.state.borrow_mut();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.0.state.borrow().renderer.gpu_specs().into()
     }
 }

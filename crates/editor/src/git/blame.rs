@@ -7,7 +7,7 @@ use git::{
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
-use http::HttpClient;
+use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::MultiBufferRow;
 use project::{Item, Project};
@@ -37,12 +37,20 @@ impl sum_tree::Item for GitBlameEntry {
 impl sum_tree::Summary for GitBlameEntrySummary {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _cx: &()) {
         self.rows += summary.rows;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a GitBlameEntrySummary, _cx: &()) {
         *self += summary.rows;
     }
@@ -121,12 +129,12 @@ impl GitBlame {
         );
 
         let buffer_subscriptions = cx.subscribe(&buffer, |this, buffer, event, cx| match event {
-            language::Event::DirtyChanged => {
+            language::BufferEvent::DirtyChanged => {
                 if !buffer.read(cx).is_dirty() {
                     this.generate(cx);
                 }
             }
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 this.regenerate_on_edit(cx);
             }
             _ => {}
@@ -191,7 +199,7 @@ impl GitBlame {
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
-        let mut cursor = self.entries.cursor::<u32>();
+        let mut cursor = self.entries.cursor::<u32>(&());
         rows.into_iter().map(move |row| {
             let row = row?;
             cursor.seek_forward(&row.0, Bias::Right, &());
@@ -249,8 +257,8 @@ impl GitBlame {
             })
             .peekable();
 
-        let mut new_entries = SumTree::new();
-        let mut cursor = self.entries.cursor::<u32>();
+        let mut new_entries = SumTree::default();
+        let mut cursor = self.entries.cursor::<u32>(&());
 
         while let Some(mut edit) = row_edits.next() {
             while let Some(next_edit) = row_edits.peek() {
@@ -455,7 +463,7 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let parsed_message = parse_markdown(&message, &languages).await;
+        let parsed_message = parse_markdown(&message, languages).await;
 
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
             Some(provider.build_commit_permalink(

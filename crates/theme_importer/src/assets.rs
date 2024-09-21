@@ -15,7 +15,7 @@ impl AssetSource for Assets {
         Self::get(path)
             .map(|f| f.data)
             .ok_or_else(|| anyhow!("could not find asset at path \"{}\"", path))
-            .map(|result| Some(result))
+            .map(Some)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {

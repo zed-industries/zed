@@ -75,7 +75,7 @@ impl EditorTestContext {
         cx: &mut gpui::TestAppContext,
         excerpts: [&str; COUNT],
     ) -> EditorTestContext {
-        let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+        let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
         let buffer = cx.new_model(|cx| {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
@@ -120,8 +120,7 @@ impl EditorTestContext {
     where
         F: FnOnce(&Editor, &ViewContext<Editor>) -> T,
     {
-        self.editor
-            .update(&mut self.cx, |this, cx| read(&this, &cx))
+        self.editor.update(&mut self.cx, |this, cx| read(this, cx))
     }
 
     #[track_caller]
@@ -327,8 +326,8 @@ impl EditorTestContext {
                 .background_highlights
                 .get(&TypeId::of::<Tag>())
                 .map(|h| h.1.clone())
-                .unwrap_or_else(|| Arc::from([]))
-                .into_iter()
+                .unwrap_or_default()
+                .iter()
                 .map(|range| range.to_offset(&snapshot.buffer_snapshot))
                 .collect()
         });
@@ -422,6 +421,12 @@ impl DerefMut for EditorTestContext {
 pub struct AssertionContextManager {
     id: Arc<AtomicUsize>,
     contexts: Arc<RwLock<BTreeMap<usize, String>>>,
+}
+
+impl Default for AssertionContextManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AssertionContextManager {

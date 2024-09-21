@@ -51,7 +51,7 @@ fn syntactic_ranges(
     let outline = grammar.outline_config.as_ref()?;
     let tree = with_parser(|parser| {
         parser.set_language(&grammar.ts_language).log_err()?;
-        parser.parse(&text, None)
+        parser.parse(text, None)
     });
 
     let Some(tree) = tree else {
@@ -398,7 +398,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_outline_query(
                 "

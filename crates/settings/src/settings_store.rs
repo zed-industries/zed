@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, UpdateGlobal};
-use lazy_static::lazy_static;
+use fs::Fs;
+use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
+use paths::local_settings_file_relative_path;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
 use smallvec::SmallVec;
@@ -9,11 +11,14 @@ use std::{
     any::{type_name, Any, TypeId},
     fmt::Debug,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     str,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
+use tree_sitter::Query;
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
+
+use crate::{SettingsJsonSchemaParams, WorktreeId};
 
 /// A value that can be defined as a user setting.
 ///
@@ -23,6 +28,14 @@ pub trait Settings: 'static + Send + Sync {
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
     const KEY: Option<&'static str>;
+
+    /// The name of the keys in the [`FileContent`] that should always be written to
+    /// a settings file, even if their value matches the default value.
+    ///
+    /// This is useful for tagged [`FileContent`]s where the tag is a "version" field
+    /// that should always be persisted, even if the current user settings match the
+    /// current version of the settings.
+    const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// The type that is stored in an individual JSON file.
     type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema;
@@ -138,16 +151,10 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
-    pub worktree_id: usize,
+    pub worktree_id: WorktreeId,
     pub path: &'a Path,
-}
-
-pub struct SettingsJsonSchemaParams<'a> {
-    pub staff_mode: bool,
-    pub language_names: &'a [String],
-    pub font_names: &'a [String],
 }
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
@@ -156,32 +163,23 @@ pub struct SettingsStore {
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
     raw_extension_settings: serde_json::Value,
-    raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
+    raw_local_settings: BTreeMap<(WorktreeId, Arc<Path>), serde_json::Value>,
     tab_size_callback: Option<(
         TypeId,
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
     )>,
+    _setting_file_updates: Task<()>,
+    setting_file_updates_tx: mpsc::UnboundedSender<
+        Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
+    >,
 }
 
 impl Global for SettingsStore {}
 
-impl Default for SettingsStore {
-    fn default() -> Self {
-        SettingsStore {
-            setting_values: Default::default(),
-            raw_default_settings: serde_json::json!({}),
-            raw_user_settings: serde_json::json!({}),
-            raw_extension_settings: serde_json::json!({}),
-            raw_local_settings: Default::default(),
-            tab_size_callback: Default::default(),
-        }
-    }
-}
-
 #[derive(Debug)]
 struct SettingValue<T> {
     global_value: Option<T>,
-    local_values: Vec<(usize, Arc<Path>, T)>,
+    local_values: Vec<(WorktreeId, Arc<Path>, T)>,
 }
 
 trait AnySettingValue: 'static + Send + Sync {
@@ -195,7 +193,7 @@ trait AnySettingValue: 'static + Send + Sync {
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
-    fn set_local_value(&mut self, root_id: usize, path: Arc<Path>, value: Box<dyn Any>);
+    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
         &self,
         generator: &mut SchemaGenerator,
@@ -207,6 +205,24 @@ trait AnySettingValue: 'static + Send + Sync {
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
+    pub fn new(cx: &AppContext) -> Self {
+        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
+        Self {
+            setting_values: Default::default(),
+            raw_default_settings: serde_json::json!({}),
+            raw_user_settings: serde_json::json!({}),
+            raw_extension_settings: serde_json::json!({}),
+            raw_local_settings: Default::default(),
+            tab_size_callback: Default::default(),
+            setting_file_updates_tx,
+            _setting_file_updates: cx.spawn(|cx| async move {
+                while let Some(setting_file_update) = setting_file_updates_rx.next().await {
+                    (setting_file_update)(cx.clone()).await.log_err();
+                }
+            }),
+        }
+    }
+
     pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
     where
         C: BorrowAppContext,
@@ -293,15 +309,15 @@ impl SettingsStore {
 
     /// Get the user's settings as a raw JSON value.
     ///
-    /// This is only for debugging and reporting. For user-facing functionality,
-    /// use the typed setting interface.
+    /// For user-facing functionality use the typed setting interface.
+    /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &serde_json::Value {
         &self.raw_user_settings
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Self {
-        let mut this = Self::default();
+        let mut this = Self::new(cx);
         this.set_default_settings(&crate::test_settings(), cx)
             .unwrap();
         this.set_user_settings("{}", cx).unwrap();
@@ -321,6 +337,59 @@ impl SettingsStore {
         let old_text = serde_json::to_string(&self.raw_user_settings).unwrap();
         let new_text = self.new_text_for_update::<T>(old_text, update);
         self.set_user_settings(&new_text, cx).unwrap();
+    }
+
+    async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
+        match fs.load(paths::settings_file()).await {
+            result @ Ok(_) => result,
+            Err(err) => {
+                if let Some(e) = err.downcast_ref::<std::io::Error>() {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        return Ok(crate::initial_user_settings_content().to_string());
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
+    pub fn update_settings_file<T: Settings>(
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut T::FileContent, &AppContext),
+    ) {
+        self.setting_file_updates_tx
+            .unbounded_send(Box::new(move |cx: AsyncAppContext| {
+                async move {
+                    let old_text = Self::load_settings(&fs).await?;
+                    let new_text = cx.read_global(|store: &SettingsStore, cx| {
+                        store.new_text_for_update::<T>(old_text, |content| update(content, cx))
+                    })?;
+                    let initial_path = paths::settings_file().as_path();
+                    if fs.is_file(initial_path).await {
+                        let resolved_path =
+                            fs.canonicalize(initial_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", initial_path)
+                            })?;
+
+                        fs.atomic_write(resolved_path.clone(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", resolved_path)
+                            })?;
+                    } else {
+                        fs.atomic_write(initial_path.to_path_buf(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", initial_path)
+                            })?;
+                    }
+
+                    anyhow::Ok(())
+                }
+                .boxed_local()
+            }))
+            .ok();
     }
 
     /// Updates the value of a setting in a JSON file, returning the new text
@@ -346,6 +415,8 @@ impl SettingsStore {
         update: impl FnOnce(&mut T::FileContent),
     ) -> Vec<(Range<usize>, String)> {
         let setting_type_id = TypeId::of::<T>();
+
+        let preserved_keys = T::PRESERVED_KEYS.unwrap_or_default();
 
         let setting = self
             .setting_values
@@ -376,6 +447,7 @@ impl SettingsStore {
             tab_size,
             &old_value,
             &new_value,
+            preserved_keys,
             &mut edits,
         );
         edits
@@ -447,7 +519,7 @@ impl SettingsStore {
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
-        root_id: usize,
+        root_id: WorktreeId,
         path: Arc<Path>,
         settings_content: Option<&str>,
         cx: &mut AppContext,
@@ -480,15 +552,24 @@ impl SettingsStore {
     }
 
     /// Add or remove a set of local settings via a JSON string.
-    pub fn clear_local_settings(&mut self, root_id: usize, cx: &mut AppContext) -> Result<()> {
+    pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut AppContext) -> Result<()> {
         self.raw_local_settings.retain(|k, _| k.0 != root_id);
         self.recompute_values(Some((root_id, "".as_ref())), cx)?;
         Ok(())
     }
 
-    pub fn local_settings(&self, root_id: usize) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
+    pub fn local_settings(
+        &self,
+        root_id: WorktreeId,
+    ) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
         self.raw_local_settings
-            .range((root_id, Path::new("").into())..(root_id + 1, Path::new("").into()))
+            .range(
+                (root_id, Path::new("").into())
+                    ..(
+                        WorktreeId::from_usize(root_id.to_usize() + 1),
+                        Path::new("").into(),
+                    ),
+            )
             .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
     }
 
@@ -601,12 +682,12 @@ impl SettingsStore {
 
     fn recompute_values(
         &mut self,
-        changed_local_path: Option<(usize, &Path)>,
+        changed_local_path: Option<(WorktreeId, &Path)>,
         cx: &mut AppContext,
     ) -> Result<()> {
         // Reload the global and local values for every setting.
         let mut project_settings_stack = Vec::<DeserializedSetting>::new();
-        let mut paths_stack = Vec::<Option<(usize, &Path)>>::new();
+        let mut paths_stack = Vec::<Option<(WorktreeId, &Path)>>::new();
         for setting_value in self.setting_values.values_mut() {
             let default_settings = setting_value.deserialize_setting(&self.raw_default_settings)?;
 
@@ -614,9 +695,14 @@ impl SettingsStore {
                 .deserialize_setting(&self.raw_extension_settings)
                 .log_err();
 
-            let user_settings = setting_value
-                .deserialize_setting(&self.raw_user_settings)
-                .log_err();
+            let user_settings = match setting_value.deserialize_setting(&self.raw_user_settings) {
+                Ok(settings) => Some(settings),
+                Err(error) => {
+                    return Err(anyhow!(InvalidSettingsError::UserSettings {
+                        message: error.to_string()
+                    }));
+                }
+            };
 
             let mut release_channel_settings = None;
             if let Some(release_settings) = &self
@@ -666,34 +752,43 @@ impl SettingsStore {
                     break;
                 }
 
-                if let Some(local_settings) =
-                    setting_value.deserialize_setting(local_settings).log_err()
-                {
-                    paths_stack.push(Some((*root_id, path.as_ref())));
-                    project_settings_stack.push(local_settings);
+                match setting_value.deserialize_setting(local_settings) {
+                    Ok(local_settings) => {
+                        paths_stack.push(Some((*root_id, path.as_ref())));
+                        project_settings_stack.push(local_settings);
 
-                    // If a local settings file changed, then avoid recomputing local
-                    // settings for any path outside of that directory.
-                    if changed_local_path.map_or(false, |(changed_root_id, changed_local_path)| {
-                        *root_id != changed_root_id || !path.starts_with(changed_local_path)
-                    }) {
-                        continue;
-                    }
-
-                    if let Some(value) = setting_value
-                        .load_setting(
-                            SettingsSources {
-                                default: &default_settings,
-                                extensions: extension_settings.as_ref(),
-                                user: user_settings.as_ref(),
-                                release_channel: release_channel_settings.as_ref(),
-                                project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                        // If a local settings file changed, then avoid recomputing local
+                        // settings for any path outside of that directory.
+                        if changed_local_path.map_or(
+                            false,
+                            |(changed_root_id, changed_local_path)| {
+                                *root_id != changed_root_id || !path.starts_with(changed_local_path)
                             },
-                            cx,
-                        )
-                        .log_err()
-                    {
-                        setting_value.set_local_value(*root_id, path.clone(), value);
+                        ) {
+                            continue;
+                        }
+
+                        if let Some(value) = setting_value
+                            .load_setting(
+                                SettingsSources {
+                                    default: &default_settings,
+                                    extensions: extension_settings.as_ref(),
+                                    user: user_settings.as_ref(),
+                                    release_channel: release_channel_settings.as_ref(),
+                                    project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                                },
+                                cx,
+                            )
+                            .log_err()
+                        {
+                            setting_value.set_local_value(*root_id, path.clone(), value);
+                        }
+                    }
+                    Err(error) => {
+                        return Err(anyhow!(InvalidSettingsError::LocalSettings {
+                            path: path.join(local_settings_file_relative_path()),
+                            message: error.to_string()
+                        }));
                     }
                 }
             }
@@ -701,6 +796,24 @@ impl SettingsStore {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InvalidSettingsError {
+    LocalSettings { path: PathBuf, message: String },
+    UserSettings { message: String },
+}
+
+impl std::fmt::Display for InvalidSettingsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InvalidSettingsError::LocalSettings { message, .. }
+            | InvalidSettingsError::UserSettings { message } => {
+                write!(f, "{}", message)
+            }
+        }
+    }
+}
+impl std::error::Error for InvalidSettingsError {}
 
 impl Debug for SettingsStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -787,7 +900,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         self.global_value = Some(*value.downcast().unwrap());
     }
 
-    fn set_local_value(&mut self, root_id: usize, path: Arc<Path>, value: Box<dyn Any>) {
+    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>) {
         let value = *value.downcast().unwrap();
         match self
             .local_values
@@ -814,6 +927,7 @@ fn update_value_in_json_text<'a>(
     tab_size: usize,
     old_value: &'a serde_json::Value,
     new_value: &'a serde_json::Value,
+    preserved_keys: &[&str],
     edits: &mut Vec<(Range<usize>, String)>,
 ) {
     // If the old and new values are both objects, then compare them key by key,
@@ -831,6 +945,7 @@ fn update_value_in_json_text<'a>(
                 tab_size,
                 old_sub_value,
                 new_sub_value,
+                preserved_keys,
                 edits,
             );
             key_path.pop();
@@ -844,12 +959,17 @@ fn update_value_in_json_text<'a>(
                     tab_size,
                     &serde_json::Value::Null,
                     new_sub_value,
+                    preserved_keys,
                     edits,
                 );
             }
             key_path.pop();
         }
-    } else if old_value != new_value {
+    } else if key_path
+        .last()
+        .map_or(false, |key| preserved_keys.contains(key))
+        || old_value != new_value
+    {
         let mut new_value = new_value.clone();
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());
@@ -866,16 +986,18 @@ fn replace_value_in_json_text(
     tab_size: usize,
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
-    lazy_static! {
-        static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(
-            &tree_sitter_json::language(),
+    static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
             "(pair key: (string) @key value: (_) @value)",
         )
-        .unwrap();
-    }
+        .expect("Failed to create PAIR_QUERY")
+    });
 
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_json::language()).unwrap();
+    parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .unwrap();
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();
@@ -1019,7 +1141,7 @@ mod tests {
 
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut AppContext) {
-        let mut store = SettingsStore::default();
+        let mut store = SettingsStore::new(cx);
         store.register_setting::<UserSettings>(cx);
         store.register_setting::<TurboSetting>(cx);
         store.register_setting::<MultiKeySettings>(cx);
@@ -1077,7 +1199,7 @@ mod tests {
 
         store
             .set_local_settings(
-                1,
+                WorktreeId::from_usize(1),
                 Path::new("/root1").into(),
                 Some(r#"{ "user": { "staff": true } }"#),
                 cx,
@@ -1085,7 +1207,7 @@ mod tests {
             .unwrap();
         store
             .set_local_settings(
-                1,
+                WorktreeId::from_usize(1),
                 Path::new("/root1/subdir").into(),
                 Some(r#"{ "user": { "name": "Jane Doe" } }"#),
                 cx,
@@ -1094,7 +1216,7 @@ mod tests {
 
         store
             .set_local_settings(
-                1,
+                WorktreeId::from_usize(1),
                 Path::new("/root2").into(),
                 Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
                 cx,
@@ -1103,7 +1225,7 @@ mod tests {
 
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root1/something"),
             })),
             &UserSettings {
@@ -1114,7 +1236,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root1/subdir/something")
             })),
             &UserSettings {
@@ -1125,7 +1247,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root2/something")
             })),
             &UserSettings {
@@ -1136,7 +1258,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<MultiKeySettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root2/something")
             })),
             &MultiKeySettings {
@@ -1148,7 +1270,7 @@ mod tests {
 
     #[gpui::test]
     fn test_setting_store_assign_json_before_register(cx: &mut AppContext) {
-        let mut store = SettingsStore::default();
+        let mut store = SettingsStore::new(cx);
         store
             .set_default_settings(
                 r#"{
@@ -1191,7 +1313,7 @@ mod tests {
 
     #[gpui::test]
     fn test_setting_store_update(cx: &mut AppContext) {
-        let mut store = SettingsStore::default();
+        let mut store = SettingsStore::new(cx);
         store.register_setting::<MultiKeySettings>(cx);
         store.register_setting::<UserSettings>(cx);
         store.register_setting::<LanguageSettings>(cx);

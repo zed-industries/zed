@@ -5,6 +5,14 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = [
+    "client/test-support",
+    "editor/test-support",
+    "gpui/test-support",
+    "workspace/test-support",
+]
+
 [lints]
 workspace = true
 

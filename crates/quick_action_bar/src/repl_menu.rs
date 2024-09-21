@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use repl::{
-    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, RuntimePanel,
-    Session, SessionSupport,
+    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
+    SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -39,15 +39,7 @@ impl QuickActionBar {
             return None;
         }
 
-        let workspace = self.workspace.upgrade()?.read(cx);
-
-        let (editor, repl_panel) = if let (Some(editor), Some(repl_panel)) =
-            (self.active_editor(), workspace.panel::<RuntimePanel>(cx))
-        {
-            (editor, repl_panel)
-        } else {
-            return None;
-        };
+        let editor = self.active_editor()?;
 
         let has_nonempty_selection = {
             editor.update(cx, |this, cx| {
@@ -62,10 +54,7 @@ impl QuickActionBar {
             })
         };
 
-        let session = repl_panel.update(cx, |repl_panel, cx| {
-            repl_panel.session(editor.downgrade(), cx)
-        });
-
+        let session = repl::session(editor.downgrade(), cx);
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
@@ -73,7 +62,7 @@ impl QuickActionBar {
                 return self.render_repl_launch_menu(spec, cx);
             }
             SessionSupport::RequiresSetup(language) => {
-                return self.render_repl_setup(&language, cx);
+                return self.render_repl_setup(&language.0, cx);
             }
             SessionSupport::Unsupported => return None,
         };
@@ -84,50 +73,44 @@ impl QuickActionBar {
 
         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
 
-        let panel_clone = repl_panel.clone();
-        let editor_clone = editor.downgrade();
+        let editor = editor.downgrade();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
-                let panel_clone = panel_clone.clone();
-                let editor_clone = editor_clone.clone();
+                let editor = editor.clone();
                 let session = session.clone();
                 ContextMenu::build(cx, move |menu, cx| {
                     let menu_state = session_state(session, cx);
                     let status = menu_state.status;
-                    let editor_clone = editor_clone.clone();
-                    let panel_clone = panel_clone.clone();
+                    let editor = editor.clone();
 
-                    menu.when_else(
-                        status.is_connected(),
-                        |running| {
+                    menu.map(|menu| {
+                        if status.is_connected() {
                             let status = status.clone();
-                            running
-                                .custom_row(move |_cx| {
-                                    h_flex()
-                                        .child(
-                                            Label::new(format!(
-                                                "kernel: {} ({})",
-                                                menu_state.kernel_name.clone(),
-                                                menu_state.kernel_language.clone()
-                                            ))
+                            menu.custom_row(move |_cx| {
+                                h_flex()
+                                    .child(
+                                        Label::new(format!(
+                                            "kernel: {} ({})",
+                                            menu_state.kernel_name.clone(),
+                                            menu_state.kernel_language.clone()
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                    .into_any_element()
+                            })
+                            .custom_row(move |_cx| {
+                                h_flex()
+                                    .child(
+                                        Label::new(status.clone().to_string())
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
-                                        )
-                                        .into_any_element()
-                                })
-                                .custom_row(move |_cx| {
-                                    h_flex()
-                                        .child(
-                                            Label::new(status.clone().to_string())
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any_element()
-                                })
-                        },
-                        |not_running| {
+                                    )
+                                    .into_any_element()
+                            })
+                        } else {
                             let status = status.clone();
-                            not_running.custom_row(move |_cx| {
+                            menu.custom_row(move |_cx| {
                                 h_flex()
                                     .child(
                                         Label::new(format!("{}...", status.clone().to_string()))
@@ -136,10 +119,9 @@ impl QuickActionBar {
                                     )
                                     .into_any_element()
                             })
-                        },
-                    )
+                        }
+                    })
                     .separator()
-                    // Run
                     .custom_entry(
                         move |_cx| {
                             Label::new(if has_nonempty_selection {
@@ -150,17 +132,12 @@ impl QuickActionBar {
                             .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.run(editor_clone.clone(), cx).log_err();
-                                });
+                                repl::run(editor.clone(), true, cx).log_err();
                             }
                         },
                     )
-                    // Interrupt
                     .custom_entry(
                         move |_cx| {
                             Label::new("Interrupt")
@@ -169,17 +146,12 @@ impl QuickActionBar {
                                 .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.interrupt(editor_clone, cx);
-                                });
+                                repl::interrupt(editor.clone(), cx);
                             }
                         },
                     )
-                    // Clear Outputs
                     .custom_entry(
                         move |_cx| {
                             Label::new("Clear Outputs")
@@ -188,13 +160,9 @@ impl QuickActionBar {
                                 .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.clear_outputs(editor_clone, cx);
-                                });
+                                repl::clear_outputs(editor.clone(), cx);
                             }
                         },
                     )
@@ -205,9 +173,6 @@ impl QuickActionBar {
                             url: format!("{}#change-kernel", ZED_REPL_DOCUMENTATION),
                         }),
                     )
-                    // TODO: Add Restart action
-                    // .action("Restart", Box::new(gpui::NoAction))
-                    // Shut down kernel
                     .custom_entry(
                         move |_cx| {
                             Label::new("Shut Down Kernel")
@@ -216,17 +181,28 @@ impl QuickActionBar {
                                 .into_any_element()
                         },
                         {
-                            let panel_clone = panel_clone.clone();
-                            let editor_clone = editor_clone.clone();
+                            let editor = editor.clone();
                             move |cx| {
-                                let editor_clone = editor_clone.clone();
-                                panel_clone.update(cx, |this, cx| {
-                                    this.shutdown(editor_clone, cx);
-                                });
+                                repl::shutdown(editor.clone(), cx);
                             }
                         },
                     )
-                    // .separator()
+                    .custom_entry(
+                        move |_cx| {
+                            Label::new("Restart Kernel")
+                                .size(LabelSize::Small)
+                                .color(Color::Error)
+                                .into_any_element()
+                        },
+                        {
+                            let editor = editor.clone();
+                            move |cx| {
+                                repl::restart(editor.clone(), cx);
+                            }
+                        },
+                    )
+                    .separator()
+                    .action("View Sessions", Box::new(repl::Sessions))
                     // TODO: Add shut down all kernels action
                     // .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 })
@@ -340,7 +316,16 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         }
     };
 
-    let menu_state = match &session.kernel {
+    match &session.kernel {
+        Kernel::Restarting => ReplMenuState {
+            tooltip: format!("Restarting {}", kernel_name).into(),
+            icon_is_animating: true,
+            popover_disabled: true,
+            icon_color: Color::Muted,
+            indicator: Some(Indicator::dot().color(Color::Muted)),
+            status: session.kernel.status(),
+            ..fill_fields()
+        },
         Kernel::RunningKernel(kernel) => match &kernel.execution_state {
             ExecutionState::Idle => ReplMenuState {
                 tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
@@ -391,7 +376,5 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             status: KernelStatus::Shutdown,
             ..fill_fields()
         },
-    };
-
-    menu_state
+    }
 }

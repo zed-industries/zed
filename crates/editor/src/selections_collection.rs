@@ -44,7 +44,7 @@ impl SelectionsCollection {
             buffer,
             next_selection_id: 1,
             line_mode: false,
-            disjoint: Arc::from([]),
+            disjoint: Arc::default(),
             pending: Some(PendingSelection {
                 selection: Selection {
                     id: 0,
@@ -339,7 +339,7 @@ impl SelectionsCollection {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
 
-        let line = display_map.layout_row(row, &text_layout_details);
+        let line = display_map.layout_row(row, text_layout_details);
 
         let start_col = line.closest_index_for_x(positions.start) as u32;
         if start_col < line_len || (is_empty && positions.start == line.width) {
@@ -393,12 +393,12 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.display_map(self.cx)
     }
 
-    fn buffer(&self) -> Ref<MultiBufferSnapshot> {
+    pub fn buffer(&self) -> Ref<MultiBufferSnapshot> {
         self.collection.buffer(self.cx)
     }
 
     pub fn clear_disjoint(&mut self) {
-        self.collection.disjoint = Arc::from([]);
+        self.collection.disjoint = Arc::default();
     }
 
     pub fn delete(&mut self, selection_id: usize) {

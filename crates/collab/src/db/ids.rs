@@ -3,6 +3,7 @@ use rpc::proto;
 use sea_orm::{entity::prelude::*, DbErr};
 use serde::{Deserialize, Serialize};
 
+#[macro_export]
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(
@@ -68,6 +69,8 @@ macro_rules! id_type {
 }
 
 id_type!(AccessTokenId);
+id_type!(BillingCustomerId);
+id_type!(BillingSubscriptionId);
 id_type!(BufferId);
 id_type!(ChannelBufferCollaboratorId);
 id_type!(ChannelChatParticipantId);
@@ -96,12 +99,12 @@ id_type!(UserId);
 #[derive(
     Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash, Serialize,
 )]
-#[sea_orm(rs_type = "String", db_type = "String(None)")]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 pub enum ChannelRole {
     /// Admin can read/write and change permissions.
     #[sea_orm(string_value = "admin")]
     Admin,
-    /// Member can read/write, but not change pemissions.
+    /// Member can read/write, but not change permissions.
     #[sea_orm(string_value = "member")]
     #[default]
     Member,
@@ -215,9 +218,9 @@ impl From<proto::ChannelRole> for ChannelRole {
     }
 }
 
-impl Into<proto::ChannelRole> for ChannelRole {
-    fn into(self) -> proto::ChannelRole {
-        match self {
+impl From<ChannelRole> for proto::ChannelRole {
+    fn from(val: ChannelRole) -> Self {
+        match val {
             ChannelRole::Admin => proto::ChannelRole::Admin,
             ChannelRole::Member => proto::ChannelRole::Member,
             ChannelRole::Talker => proto::ChannelRole::Talker,
@@ -227,16 +230,16 @@ impl Into<proto::ChannelRole> for ChannelRole {
     }
 }
 
-impl Into<i32> for ChannelRole {
-    fn into(self) -> i32 {
-        let proto: proto::ChannelRole = self.into();
+impl From<ChannelRole> for i32 {
+    fn from(val: ChannelRole) -> Self {
+        let proto: proto::ChannelRole = val.into();
         proto.into()
     }
 }
 
 /// ChannelVisibility controls whether channels are public or private.
 #[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
-#[sea_orm(rs_type = "String", db_type = "String(None)")]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 pub enum ChannelVisibility {
     /// Public channels are visible to anyone with the link. People join with the Guest role by default.
     #[sea_orm(string_value = "public")]
@@ -256,18 +259,18 @@ impl From<proto::ChannelVisibility> for ChannelVisibility {
     }
 }
 
-impl Into<proto::ChannelVisibility> for ChannelVisibility {
-    fn into(self) -> proto::ChannelVisibility {
-        match self {
+impl From<ChannelVisibility> for proto::ChannelVisibility {
+    fn from(val: ChannelVisibility) -> Self {
+        match val {
             ChannelVisibility::Public => proto::ChannelVisibility::Public,
             ChannelVisibility::Members => proto::ChannelVisibility::Members,
         }
     }
 }
 
-impl Into<i32> for ChannelVisibility {
-    fn into(self) -> i32 {
-        let proto: proto::ChannelVisibility = self.into();
+impl From<ChannelVisibility> for i32 {
+    fn from(val: ChannelVisibility) -> Self {
+        let proto: proto::ChannelVisibility = val.into();
         proto.into()
     }
 }

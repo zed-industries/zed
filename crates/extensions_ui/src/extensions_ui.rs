@@ -14,9 +14,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, FontStyle,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
+    KeyContext, ParentElement, Render, Styled, Task, TextStyle, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -48,10 +48,10 @@ pub fn init(cx: &mut AppContext) {
                     .find_map(|item| item.downcast::<ExtensionsPage>());
 
                 if let Some(existing) = existing {
-                    workspace.activate_item(&existing, cx);
+                    workspace.activate_item(&existing, true, true, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
                 }
             })
             .register_action(move |workspace, _: &InstallDevExtension, cx| {
@@ -95,11 +95,10 @@ pub fn init(cx: &mut AppContext) {
                     .detach();
             });
 
-        cx.subscribe(workspace.project(), |_, _, event, cx| match event {
-            project::Event::LanguageNotFound(buffer) => {
+        cx.subscribe(workspace.project(), |_, _, event, cx| {
+            if let project::Event::LanguageNotFound(buffer) = event {
                 extension_suggest::suggest(buffer.clone(), cx);
             }
-            _ => {}
         })
         .detach();
     })
@@ -134,6 +133,7 @@ impl ExtensionFilter {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
     Git,
+    OpenIn,
     Vim,
     LanguageBash,
     LanguageC,
@@ -150,6 +150,19 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
             (Feature::Git, vec!["git"]),
+            (
+                Feature::OpenIn,
+                vec![
+                    "github",
+                    "gitlab",
+                    "bitbucket",
+                    "codeberg",
+                    "sourcehut",
+                    "permalink",
+                    "link",
+                    "open in",
+                ],
+            ),
             (Feature::Vim, vec!["vim"]),
             (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
@@ -438,28 +451,34 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        ),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .children(extension.description.as_ref().map(|description| {
-                        Label::new(description.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Default)
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(description.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Default),
+                        )
                     }))
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
@@ -533,18 +552,21 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.manifest.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.manifest.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.manifest.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.manifest.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        ),
                     )
                     .child(
                         Label::new(format!(
@@ -559,7 +581,7 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.manifest.description.as_ref().map(|description| {
-                        h_flex().overflow_x_hidden().child(
+                        div().overflow_x_hidden().text_ellipsis().child(
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Default),
@@ -619,7 +641,7 @@ impl ExtensionsPage {
             context_menu.entry(
                 "Install Another Version...",
                 None,
-                cx.handler_for(&this, move |this, cx| {
+                cx.handler_for(this, move |this, cx| {
                     this.show_extension_version_list(extension_id.clone(), cx)
                 }),
             )
@@ -669,8 +691,7 @@ impl ExtensionsPage {
         has_dev_extension: bool,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
-        let is_compatible =
-            extension::is_version_compatible(ReleaseChannel::global(cx), &extension);
+        let is_compatible = extension::is_version_compatible(ReleaseChannel::global(cx), extension);
 
         if has_dev_extension {
             // If we have a dev extension for the given extension, just treat it as uninstalled.
@@ -802,18 +823,15 @@ impl ExtensionsPage {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(
-            &editor,
+            editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
@@ -849,7 +867,7 @@ impl ExtensionsPage {
             // If the search was just cleared then we can just reload the list
             // of extensions without a debounce, which allows us to avoid seeing
             // an intermittent flash of a "no extensions" state.
-            if let Some(_) = search {
+            if search.is_some() {
                 cx.background_executor()
                     .timer(Duration::from_millis(250))
                     .await;
@@ -914,7 +932,7 @@ impl ExtensionsPage {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings| {
+            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
                 let value = match selection {
                     Selection::Unselected => false,
                     Selection::Selected => true,
@@ -945,7 +963,7 @@ impl ExtensionsPage {
             {
                 self.upsells.insert(*feature);
             } else {
-                self.upsells.remove(&feature);
+                self.upsells.remove(feature);
             }
         }
     }
@@ -961,6 +979,11 @@ impl ExtensionsPage {
                     "Zed comes with basic Git support. More Git features are coming in the future.",
                 )
                 .docs_url("https://zed.dev/docs/git"),
+                Feature::OpenIn => FeatureUpsell::new(
+                    telemetry,
+                    "Zed supports linking to a source line on GitHub and others.",
+                )
+                .docs_url("https://zed.dev/docs/git#git-integrations"),
                 Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(

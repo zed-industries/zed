@@ -311,15 +311,11 @@ impl Render for LanguageServerPrompt {
                                                 .mt(px(-2.0))
                                                 .map(|icon| {
                                                     if severity == DiagnosticSeverity::ERROR {
-                                                        icon.path(
-                                                            IconName::ExclamationTriangle.path(),
-                                                        )
-                                                        .text_color(Color::Error.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Error.color(cx))
                                                     } else {
-                                                        icon.path(
-                                                            IconName::ExclamationTriangle.path(),
-                                                        )
-                                                        .text_color(Color::Warning.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Warning.color(cx))
                                                     }
                                                 })
                                         }),
@@ -342,7 +338,7 @@ impl Render for LanguageServerPrompt {
                                         .on_click({
                                             let message = request.message.clone();
                                             move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new(
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
                                                     message.clone(),
                                                 ))
                                             }
@@ -421,7 +417,7 @@ impl Render for ErrorMessagePrompt {
                                     .mr_2()
                                     .mt(px(-2.0))
                                     .map(|icon| {
-                                        icon.path(IconName::ExclamationTriangle.path())
+                                        icon.path(IconName::Warning.path())
                                             .text_color(Color::Error.color(cx))
                                     }),
                             )
@@ -625,13 +621,13 @@ where
     }
 }
 
-pub trait DetachAndPromptErr {
+pub trait DetachAndPromptErr<R> {
     fn prompt_err(
         self,
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) -> Task<()>;
+    ) -> Task<Option<R>>;
 
     fn detach_and_prompt_err(
         self,
@@ -641,7 +637,7 @@ pub trait DetachAndPromptErr {
     );
 }
 
-impl<R> DetachAndPromptErr for Task<anyhow::Result<R>>
+impl<R> DetachAndPromptErr<R> for Task<anyhow::Result<R>>
 where
     R: 'static,
 {
@@ -650,18 +646,21 @@ where
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) -> Task<()> {
+    ) -> Task<Option<R>> {
         let msg = msg.to_owned();
         cx.spawn(|mut cx| async move {
-            if let Err(err) = self.await {
+            let result = self.await;
+            if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|cx| {
-                    let detail = f(&err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                    let detail = f(err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
                     cx.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"])
                 }) {
                     prompt.await.ok();
                 }
+                return None;
             }
+            Some(result.unwrap())
         })
     }
 

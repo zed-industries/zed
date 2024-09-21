@@ -227,7 +227,7 @@ impl ChannelView {
             {
                 self.editor.update(cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
-                        s.replace_cursors_with(|map| vec![item.range.start.to_display_point(&map)])
+                        s.replace_cursors_with(|map| vec![item.range.start.to_display_point(map)])
                     })
                 });
                 return;
@@ -280,7 +280,7 @@ impl ChannelView {
         };
 
         let link = channel.notes_link(closest_heading.map(|heading| heading.text), cx);
-        cx.write_to_clipboard(ClipboardItem::new(link));
+        cx.write_to_clipboard(ClipboardItem::new_string(link));
         self.workspace
             .update(cx, |workspace, cx| {
                 struct CopyLinkForPositionToast;
@@ -460,8 +460,7 @@ impl Item for ChannelView {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| Item::deactivated(editor, cx))
+        self.editor.update(cx, Item::deactivated)
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, cx: &mut ViewContext<Self>) {

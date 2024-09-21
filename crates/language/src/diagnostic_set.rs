@@ -15,7 +15,7 @@ use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
 /// The diagnostics are stored in a [`SumTree`], which allows this struct
 /// to be cheaply copied, and allows for efficient retrieval of the
 /// diagnostics that intersect a given range of the buffer.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DiagnosticSet {
     diagnostics: SumTree<DiagnosticEntry<Anchor>>,
 }
@@ -69,6 +69,7 @@ impl DiagnosticEntry<PointUtf16> {
             severity: Some(self.diagnostic.severity),
             source: self.diagnostic.source.clone(),
             message: self.diagnostic.message.clone(),
+            data: self.diagnostic.data.clone(),
             ..Default::default()
         }
     }
@@ -109,6 +110,10 @@ impl DiagnosticSet {
     pub fn len(&self) -> usize {
         self.diagnostics.summary().count
     }
+    /// Returns true when there are no diagnostics in this diagnostic set
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Returns an iterator over the diagnostic entries in the set.
     pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry<Anchor>> {
@@ -130,7 +135,7 @@ impl DiagnosticSet {
     {
         let end_bias = if inclusive { Bias::Right } else { Bias::Left };
         let range = buffer.anchor_before(range.start)..buffer.anchor_at(range.end, end_bias);
-        let mut cursor = self.diagnostics.filter::<_, ()>({
+        let mut cursor = self.diagnostics.filter::<_, ()>(buffer, {
             move |summary: &Summary| {
                 let start_cmp = range.start.cmp(&summary.max_end, buffer);
                 let end_cmp = range.end.cmp(&summary.min_start, buffer);
@@ -255,6 +260,10 @@ impl Default for Summary {
 
 impl sum_tree::Summary for Summary {
     type Context = text::BufferSnapshot;
+
+    fn zero(_cx: &Self::Context) -> Self {
+        Default::default()
+    }
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         if other.min_start.cmp(&self.min_start, buffer).is_lt() {

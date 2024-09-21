@@ -2,19 +2,14 @@ use futures::Future;
 use git::blame::BlameEntry;
 use git::Oid;
 use gpui::{
-    Asset, Element, ParentElement, Render, ScrollHandle, StatefulInteractiveElement, WeakView,
-    WindowContext,
+    AppContext, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
+    StatefulInteractiveElement, WeakView,
 };
 use settings::Settings;
 use std::hash::Hash;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ThemeSettings;
 use time::UtcOffset;
-use ui::{
-    div, h_flex, tooltip_container, v_flex, Avatar, Button, ButtonStyle, Clickable as _, Color,
-    FluentBuilder, Icon, IconName, IconPosition, InteractiveElement as _, IntoElement,
-    SharedString, Styled as _, ViewContext,
-};
-use ui::{ButtonCommon, Disableable as _};
+use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
 use workspace::Workspace;
 
 use crate::git::blame::{CommitDetails, GitRemote};
@@ -40,7 +35,7 @@ impl<'a> CommitAvatar<'a> {
 
         let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
 
-        let element = match cx.use_cached_asset::<CommitAvatarAsset>(&avatar_url) {
+        let element = match cx.use_asset::<CommitAvatarAsset>(&avatar_url) {
             // Loading or no avatar found
             None | Some(None) => Icon::new(IconName::Person)
                 .color(Color::Muted)
@@ -78,7 +73,7 @@ impl Asset for CommitAvatarAsset {
 
     fn load(
         source: Self::Source,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
 
@@ -130,6 +125,7 @@ impl Render for BlameEntryTooltip {
         let author_email = self.blame_entry.author_mail.clone();
 
         let short_commit_id = self.blame_entry.sha.display_short();
+        let full_sha = self.blame_entry.sha.to_string().clone();
         let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry);
 
         let message = self
@@ -164,6 +160,7 @@ impl Render for BlameEntryTooltip {
                         .gap_4()
                         .child(
                             h_flex()
+                                .pb_1p5()
                                 .gap_x_2()
                                 .overflow_x_hidden()
                                 .flex_wrap()
@@ -177,7 +174,7 @@ impl Render for BlameEntryTooltip {
                                     )
                                 })
                                 .border_b_1()
-                                .border_color(cx.theme().colors().border),
+                                .border_color(cx.theme().colors().border_variant),
                         )
                         .child(
                             div()
@@ -193,10 +190,13 @@ impl Render for BlameEntryTooltip {
                                 .text_color(cx.theme().colors().text_muted)
                                 .w_full()
                                 .justify_between()
+                                .pt_1p5()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
                                 .child(absolute_timestamp)
                                 .child(
                                     h_flex()
-                                        .gap_2()
+                                        .gap_1p5()
                                         .when_some(pull_request, |this, pr| {
                                             this.child(
                                                 Button::new(
@@ -207,19 +207,20 @@ impl Render for BlameEntryTooltip {
                                                 .icon(IconName::PullRequest)
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
-                                                .style(ButtonStyle::Transparent)
+                                                .style(ButtonStyle::Subtle)
                                                 .on_click(move |_, cx| {
                                                     cx.stop_propagation();
                                                     cx.open_url(pr.url.as_str())
                                                 }),
                                             )
                                         })
+                                        .child(Divider::vertical())
                                         .child(
                                             Button::new(
                                                 "commit-sha-button",
                                                 short_commit_id.clone(),
                                             )
-                                            .style(ButtonStyle::Transparent)
+                                            .style(ButtonStyle::Subtle)
                                             .color(Color::Muted)
                                             .icon(IconName::FileGit)
                                             .icon_color(Color::Muted)
@@ -240,6 +241,18 @@ impl Render for BlameEntryTooltip {
                                                     })
                                                 },
                                             ),
+                                        )
+                                        .child(
+                                            IconButton::new("copy-sha-button", IconName::Copy)
+                                                .shape(IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .on_click(move |_, cx| {
+                                                    cx.stop_propagation();
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(full_sha.clone()),
+                                                    )
+                                                }),
                                         ),
                                 ),
                         ),
