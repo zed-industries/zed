@@ -82,6 +82,7 @@ pub struct ProjectPanel {
     show_scrollbar: bool,
     scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     hide_scrollbar_task: Option<Task<()>>,
+    diagnostic_error_colors: HashMap<PathBuf, Color>,
 }
 
 #[derive(Clone, Debug)]
@@ -237,6 +238,12 @@ impl ProjectPanel {
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
                 }
+                project::Event::DiskBasedDiagnosticsFinished { .. }
+                | project::Event::DiagnosticsUpdated { .. } => {
+                    this.update_diagnostics(cx);
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
                     this.update_visible_entries(None, cx);
@@ -312,6 +319,7 @@ impl ProjectPanel {
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 scrollbar_drag_thumb_offset: Default::default(),
+                diagnostic_error_colors: Default::default(),
             };
             this.update_visible_entries(None, cx);
 
@@ -431,6 +439,32 @@ impl ProjectPanel {
             }
             panel
         })
+    }
+
+    fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        self.diagnostic_error_colors = self
+            .project
+            .read(cx)
+            .diagnostic_summaries(false, cx)
+            .filter_map(|(path, _, diagnostic_summary)| {
+                if diagnostic_summary.error_count > 0 {
+                    Some((path, Color::Error))
+                } else {
+                    None
+                }
+            })
+            .flat_map(|(project_path, color)| {
+                let mut path_buf = PathBuf::new();
+                project_path
+                    .path
+                    .components()
+                    .map(|component| {
+                        path_buf.push(component);
+                        (path_buf.clone(), color)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
@@ -2195,8 +2229,14 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color =
-            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked);
+        let filename_text_color = if let Some(color) = self
+            .diagnostic_error_colors
+            .get(&details.path.to_path_buf())
+        {
+            color.clone()
+        } else {
+            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked)
+        };
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
