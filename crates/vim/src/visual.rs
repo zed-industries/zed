@@ -54,7 +54,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, Vim::other_end);
     Vim::action(editor, cx, Vim::visual_insert_end_of_line);
-    Vim::action(editor, cx, Vim::visual_insert_first_none_white_space);
+    Vim::action(editor, cx, Vim::visual_insert_first_non_white_space);
     Vim::action(editor, cx, |vim, _: &VisualDelete, cx| {
         vim.record_current_action(cx);
         vim.visual_delete(false, cx);
@@ -391,7 +391,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, cx);
     }
 
-    fn visual_insert_first_none_white_space(
+    fn visual_insert_first_non_white_space(
         &mut self,
         _: &VisualInsertFirstNonWhiteSpace,
         cx: &mut ViewContext<Self>,
