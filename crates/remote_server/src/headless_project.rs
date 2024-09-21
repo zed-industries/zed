@@ -4,9 +4,12 @@ use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::DummyNodeRuntime;
 use project::{
-    buffer_store::{BufferStore, BufferStoreEvent}, dap_store::DapStore, project_settings::SettingsObserver,
-    search::SearchQuery, worktree_store::WorktreeStore, LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
-    WorktreeSettings,
+    buffer_store::{BufferStore, BufferStoreEvent},
+    dap_store::DapStore,
+    project_settings::SettingsObserver,
+    search::SearchQuery,
+    worktree_store::WorktreeStore,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{

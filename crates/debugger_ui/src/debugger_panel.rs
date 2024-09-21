@@ -685,7 +685,7 @@ impl DebugPanel {
     ) {
         let restart_args = event.clone().and_then(|e| e.restart);
 
-        // TODO debugger: remove current hightlights
+        // TODO debugger: remove current highlights
 
         self.dap_store.update(cx, |store, cx| {
             if restart_args.is_some() {
