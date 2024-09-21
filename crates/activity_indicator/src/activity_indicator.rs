@@ -19,7 +19,10 @@ use workspace::{item::ItemHandle, StatusItemView, Workspace};
 actions!(activity_indicator, [ShowErrorMessage]);
 
 pub enum Event {
-    ShowError { lsp_name: Arc<str>, error: String },
+    ShowError {
+        lsp_name: LanguageServerName,
+        error: String,
+    },
 }
 
 pub struct ActivityIndicator {
@@ -123,7 +126,7 @@ impl ActivityIndicator {
         self.statuses.retain(|status| {
             if let LanguageServerBinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {
-                    lsp_name: status.name.0.clone(),
+                    lsp_name: status.name.clone(),
                     error: error.clone(),
                 });
                 false
@@ -262,7 +265,7 @@ impl ActivityIndicator {
         if !failed.is_empty() {
             return Some(Content {
                 icon: Some(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
@@ -280,7 +283,7 @@ impl ActivityIndicator {
         if let Some(failure) = self.project.read(cx).last_formatting_failure() {
             return Some(Content {
                 icon: Some(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
@@ -333,7 +336,7 @@ impl ActivityIndicator {
                 }),
                 AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
-                        Icon::new(IconName::ExclamationTriangle)
+                        Icon::new(IconName::Warning)
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),

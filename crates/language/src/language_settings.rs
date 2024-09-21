@@ -1,6 +1,6 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageServerName};
+use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
@@ -32,7 +32,7 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_deref())
+    all_language_settings(file, cx).language(language_name.as_ref())
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -53,7 +53,7 @@ pub struct AllLanguageSettings {
     /// The inline completion settings.
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
-    languages: HashMap<Arc<str>, LanguageSettings>,
+    languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
@@ -99,7 +99,7 @@ pub struct LanguageSettings {
     /// special tokens:
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    pub language_servers: Vec<Arc<str>>,
+    pub language_servers: Vec<String>,
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     pub show_inline_completions: bool,
@@ -137,22 +137,24 @@ impl LanguageSettings {
     }
 
     pub(crate) fn resolve_language_servers(
-        configured_language_servers: &[Arc<str>],
+        configured_language_servers: &[String],
         available_language_servers: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
-        let (disabled_language_servers, enabled_language_servers): (Vec<Arc<str>>, Vec<Arc<str>>) =
-            configured_language_servers.iter().partition_map(
-                |language_server| match language_server.strip_prefix('!') {
-                    Some(disabled) => Either::Left(disabled.into()),
-                    None => Either::Right(language_server.clone()),
-                },
-            );
+        let (disabled_language_servers, enabled_language_servers): (
+            Vec<LanguageServerName>,
+            Vec<LanguageServerName>,
+        ) = configured_language_servers.iter().partition_map(
+            |language_server| match language_server.strip_prefix('!') {
+                Some(disabled) => Either::Left(LanguageServerName(disabled.to_string().into())),
+                None => Either::Right(LanguageServerName(language_server.clone().into())),
+            },
+        );
 
         let rest = available_language_servers
             .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&available_language_server.0)
-                    && !enabled_language_servers.contains(&available_language_server.0)
+                !disabled_language_servers.contains(&available_language_server)
+                    && !enabled_language_servers.contains(&available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -160,10 +162,10 @@ impl LanguageSettings {
         enabled_language_servers
             .into_iter()
             .flat_map(|language_server| {
-                if language_server.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![LanguageServerName(language_server.clone())]
+                    vec![language_server.clone()]
                 }
             })
             .collect::<Vec<_>>()
@@ -204,7 +206,7 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
-    pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
+    pub languages: HashMap<LanguageName, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
@@ -295,7 +297,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     #[serde(default)]
-    pub language_servers: Option<Vec<Arc<str>>>,
+    pub language_servers: Option<Vec<String>>,
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
@@ -741,6 +743,14 @@ pub struct InlayHintSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub show_other_hints: bool,
+    /// Whether to show a background for inlay hints.
+    ///
+    /// If set to `true`, the background will use the `hint.background` color
+    /// from the current theme.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub show_background: bool,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.
@@ -791,7 +801,7 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&str>) -> &'a LanguageSettings {
+    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
             if let Some(overrides) = self.languages.get(name) {
                 return overrides;
@@ -821,7 +831,7 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()).as_deref())
+        self.language(language.map(|l| l.name()).as_ref())
             .show_inline_completions
     }
 }
@@ -1027,6 +1037,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     }
 
     merge(&mut settings.tab_size, src.tab_size);
+    settings.tab_size = settings
+        .tab_size
+        .clamp(NonZeroU32::new(1).unwrap(), NonZeroU32::new(16).unwrap());
+
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
@@ -1141,12 +1155,19 @@ mod tests {
     }
 
     #[test]
+    fn test_formatter_deserialization_invalid() {
+        let raw_auto = "{\"formatter\": {}}";
+        let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
+        assert!(result.is_err());
+    }
+
+    #[test]
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
                 .iter()
                 .copied()
-                .map(|name| LanguageServerName(name.into()))
+                .map(|name| LanguageServerName(name.to_string().into()))
                 .collect::<Vec<_>>()
         }
 

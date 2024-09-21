@@ -2256,14 +2256,8 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     );
                 });
             })
@@ -2379,14 +2373,8 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     )
                 });
             })
@@ -3448,6 +3436,7 @@ mod tests {
             tasks_ui::init(cx);
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
+            search::init(cx);
             app_state
         })
     }
@@ -3462,7 +3451,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -3476,7 +3465,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_md::language()),
+            Some(tree_sitter_md::LANGUAGE.into()),
         ))
     }
 

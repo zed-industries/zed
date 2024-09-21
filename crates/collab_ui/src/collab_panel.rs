@@ -2831,7 +2831,7 @@ impl Panel for CollabPanel {
     fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
-            .then_some(ui::IconName::Collab)
+            .then_some(ui::IconName::UserGroup)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

@@ -4,11 +4,12 @@ use std::{
 };
 
 use collections::{hash_map, HashMap, HashSet};
-use git::diff::{DiffHunk, DiffHunkStatus};
+use git::diff::DiffHunkStatus;
 use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Subscription, Task, View};
 use language::Buffer;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
+    MultiBufferSnapshot, ToPoint,
 };
 use settings::SettingsStore;
 use text::{BufferId, Point};
@@ -190,9 +191,9 @@ impl Editor {
             .buffer_snapshot
             .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
             .filter(|hunk| {
-                let hunk_display_row_range = Point::new(hunk.associated_range.start.0, 0)
+                let hunk_display_row_range = Point::new(hunk.row_range.start.0, 0)
                     .to_display_point(&snapshot.display_snapshot)
-                    ..Point::new(hunk.associated_range.end.0, 0)
+                    ..Point::new(hunk.row_range.end.0, 0)
                         .to_display_point(&snapshot.display_snapshot);
                 let row_range_end =
                     display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
@@ -203,7 +204,7 @@ impl Editor {
 
     fn toggle_hunks_expanded(
         &mut self,
-        hunks_to_toggle: Vec<DiffHunk<MultiBufferRow>>,
+        hunks_to_toggle: Vec<MultiBufferDiffHunk>,
         cx: &mut ViewContext<Self>,
     ) {
         let previous_toggle_task = self.expanded_hunks.hunk_update_tasks.remove(&None);
@@ -274,8 +275,8 @@ impl Editor {
                     });
                     for remaining_hunk in hunks_to_toggle {
                         let remaining_hunk_point_range =
-                            Point::new(remaining_hunk.associated_range.start.0, 0)
-                                ..Point::new(remaining_hunk.associated_range.end.0, 0);
+                            Point::new(remaining_hunk.row_range.start.0, 0)
+                                ..Point::new(remaining_hunk.row_range.end.0, 0);
                         hunks_to_expand.push(HoveredHunk {
                             status: hunk_status(&remaining_hunk),
                             multi_buffer_range: remaining_hunk_point_range
@@ -705,7 +706,7 @@ impl Editor {
 fn to_diff_hunk(
     hovered_hunk: &HoveredHunk,
     multi_buffer_snapshot: &MultiBufferSnapshot,
-) -> Option<DiffHunk<MultiBufferRow>> {
+) -> Option<MultiBufferDiffHunk> {
     let buffer_id = hovered_hunk
         .multi_buffer_range
         .start
@@ -716,9 +717,8 @@ fn to_diff_hunk(
     let point_range = hovered_hunk
         .multi_buffer_range
         .to_point(multi_buffer_snapshot);
-    Some(DiffHunk {
-        associated_range: MultiBufferRow(point_range.start.row)
-            ..MultiBufferRow(point_range.end.row),
+    Some(MultiBufferDiffHunk {
+        row_range: MultiBufferRow(point_range.start.row)..MultiBufferRow(point_range.end.row),
         buffer_id,
         buffer_range,
         diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
@@ -764,7 +764,7 @@ fn editor_with_deleted_text(
     let parent_editor = cx.view().downgrade();
     let editor = cx.new_view(|cx| {
         let multi_buffer =
-            cx.new_model(|_| MultiBuffer::without_headers(0, language::Capability::ReadOnly));
+            cx.new_model(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
         multi_buffer.update(cx, |multi_buffer, cx| {
             multi_buffer.push_excerpts(
                 diff_base_buffer,
@@ -868,7 +868,7 @@ fn editor_with_deleted_text(
 fn buffer_diff_hunk(
     buffer_snapshot: &MultiBufferSnapshot,
     row_range: Range<Point>,
-) -> Option<DiffHunk<MultiBufferRow>> {
+) -> Option<MultiBufferDiffHunk> {
     let mut hunks = buffer_snapshot.git_diff_hunks_in_range(
         MultiBufferRow(row_range.start.row)..MultiBufferRow(row_range.end.row),
     );

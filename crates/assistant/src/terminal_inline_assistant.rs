@@ -284,7 +284,7 @@ impl TerminalInlineAssistant {
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         })
     }
 
@@ -465,7 +465,8 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let buttons = match &self.codegen.read(cx).status {
+        let status = &self.codegen.read(cx).status;
+        let buttons = match status {
             CodegenStatus::Idle => {
                 vec![
                     IconButton::new("cancel", IconName::Close)
@@ -516,7 +517,8 @@ impl Render for PromptEditor {
                     .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                     .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)));
 
-                if self.edited_since_done {
+                let has_error = matches!(status, CodegenStatus::Error(_));
+                if has_error || self.edited_since_done {
                     vec![
                         cancel,
                         IconButton::new("restart", IconName::RotateCw)
@@ -568,7 +570,7 @@ impl Render for PromptEditor {
             .bg(cx.theme().colors().editor_background)
             .border_y_1()
             .border_color(cx.theme().status().info_border)
-            .py_1p5()
+            .py_2()
             .h_full()
             .w_full()
             .on_action(cx.listener(Self::confirm))
@@ -583,7 +585,7 @@ impl Render for PromptEditor {
                     .gap_2()
                     .child(ModelSelector::new(
                         self.fs.clone(),
-                        IconButton::new("context", IconName::SlidersAlt)
+                        IconButton::new("context", IconName::SettingsAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
@@ -947,12 +949,11 @@ impl PromptEditor {
             } else {
                 cx.theme().colors().text
             },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size.into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
         EditorElement::new(
@@ -988,7 +989,7 @@ impl TerminalTransaction {
 
     pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
         // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
-        let input = hunk.replace(CARRIAGE_RETURN, " ");
+        let input = Self::sanitize_input(hunk);
         self.terminal
             .update(cx, |terminal, _| terminal.input(input));
     }
@@ -1002,6 +1003,10 @@ impl TerminalTransaction {
         self.terminal.update(cx, |terminal, _| {
             terminal.input(CARRIAGE_RETURN.to_string())
         });
+    }
+
+    fn sanitize_input(input: String) -> String {
+        input.replace(['\r', '\n'], "")
     }
 }
 
@@ -1061,6 +1066,7 @@ impl Codegen {
                         telemetry.report_assistant_event(
                             None,
                             telemetry_events::AssistantKind::Inline,
+                            telemetry_events::AssistantPhase::Response,
                             model_telemetry_id,
                             response_latency,
                             error_message,

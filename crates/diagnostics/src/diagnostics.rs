@@ -156,12 +156,7 @@ impl ProjectDiagnosticsEditor {
         cx.on_focus_out(&focus_handle, |this, _event, cx| this.focus_out(cx))
             .detach();
 
-        let excerpts = cx.new_model(|cx| {
-            MultiBuffer::new(
-                project_handle.read(cx).replica_id(),
-                project_handle.read(cx).capability(),
-            )
-        });
+        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new_view(|cx| {
             let mut editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
@@ -645,37 +640,42 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        if self.summary.error_count == 0 && self.summary.warning_count == 0 {
-            Label::new("No problems")
-                .color(params.text_color())
-                .into_any_element()
-        } else {
-            h_flex()
-                .gap_1()
-                .when(self.summary.error_count > 0, |then| {
+        h_flex()
+            .gap_1()
+            .when(
+                self.summary.error_count == 0 && self.summary.warning_count == 0,
+                |then| {
                     then.child(
                         h_flex()
                             .gap_1()
-                            .child(Icon::new(IconName::XCircle).color(Color::Error))
-                            .child(
-                                Label::new(self.summary.error_count.to_string())
-                                    .color(params.text_color()),
-                            ),
+                            .child(Icon::new(IconName::Check).color(Color::Success))
+                            .child(Label::new("No problems").color(params.text_color())),
                     )
-                })
-                .when(self.summary.warning_count > 0, |then| {
-                    then.child(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
-                            .child(
-                                Label::new(self.summary.warning_count.to_string())
-                                    .color(params.text_color()),
-                            ),
-                    )
-                })
-                .into_any_element()
-        }
+                },
+            )
+            .when(self.summary.error_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::XCircle).color(Color::Error))
+                        .child(
+                            Label::new(self.summary.error_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .when(self.summary.warning_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Warning).color(Color::Warning))
+                        .child(
+                            Label::new(self.summary.warning_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -804,7 +804,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                         icon.path(IconName::XCircle.path())
                                             .text_color(Color::Error.color(cx))
                                     } else {
-                                        icon.path(IconName::ExclamationTriangle.path())
+                                        icon.path(IconName::Warning.path())
                                             .text_color(Color::Warning.color(cx))
                                     }
                                 }),

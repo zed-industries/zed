@@ -176,12 +176,11 @@ pub struct ProjectSearchBar {
 
 impl ProjectSearch {
     pub fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
-        let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
         Self {
             project,
-            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(capability)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -668,7 +667,9 @@ impl ProjectSearchView {
         let (mut options, filters_enabled) = if let Some(settings) = settings {
             (settings.search_options, settings.filters_enabled)
         } else {
-            (SearchOptions::NONE, false)
+            let search_options =
+                SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+            (search_options, false)
         };
 
         {
@@ -3537,7 +3538,7 @@ pub mod tests {
             editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
-            super::init(cx);
+            crate::init(cx);
         });
     }
 

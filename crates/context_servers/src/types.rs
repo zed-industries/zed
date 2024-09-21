@@ -239,7 +239,6 @@ pub struct Resource {
 pub struct ResourceContent {
     pub uri: Url,
     pub mime_type: Option<String>,
-    pub content_type: String,
     pub text: Option<String>,
     pub data: Option<String>,
 }

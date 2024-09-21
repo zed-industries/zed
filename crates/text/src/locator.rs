@@ -85,6 +85,10 @@ impl sum_tree::KeyedItem for Locator {
 impl sum_tree::Summary for Locator {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.assign(summary);
     }

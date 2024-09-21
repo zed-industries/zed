@@ -397,7 +397,7 @@ impl TerminalPanel {
 
         #[cfg(not(target_os = "windows"))]
         {
-            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+            spawn_task.command_label = format!("{shell} -i -c '{}'", spawn_task.command_label);
         }
         #[cfg(target_os = "windows")]
         {
@@ -405,14 +405,14 @@ impl TerminalPanel {
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
-                    spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} -C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Cmd => {
-                    spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} /C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Other => {
                     spawn_task.command_label =
-                        format!("{shell} -i -c `{}`", spawn_task.command_label)
+                        format!("{shell} -i -c '{}'", spawn_task.command_label)
                 }
             }
         }

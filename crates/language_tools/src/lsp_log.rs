@@ -236,7 +236,7 @@ impl LogStore {
                             ));
                         this.add_language_server(
                             LanguageServerKind::Global {
-                                name: LanguageServerName(Arc::from("copilot")),
+                                name: LanguageServerName::new_static("copilot"),
                             },
                             server.server_id(),
                             Some(server.clone()),
@@ -683,7 +683,7 @@ impl LspLogView {
                 self.project
                     .read(cx)
                     .supplementary_language_servers(cx)
-                    .filter_map(|(&server_id, name)| {
+                    .filter_map(|(server_id, name)| {
                         let state = log_store.language_servers.get(&server_id)?;
                         Some(LogMenuItem {
                             server_id,

@@ -728,7 +728,7 @@ impl DebugPanel {
                         h_flex()
                             .gap_1p5()
                             .items_center()
-                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Conflict))
+                            .child(Icon::new(IconName::Warning).color(Color::Conflict))
                             .child(Label::new(TITLE).weight(FontWeight::MEDIUM)),
                     )
                     .child(

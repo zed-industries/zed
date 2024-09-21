@@ -3,6 +3,7 @@ use crate::{
         ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
         WeakItemHandle,
     },
+    move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
@@ -149,6 +150,7 @@ actions!(
         GoBack,
         GoForward,
         JoinIntoNext,
+        JoinAll,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -156,6 +158,8 @@ actions!(
         SplitDown,
         SplitHorizontal,
         SplitVertical,
+        SwapItemLeft,
+        SwapItemRight,
         TogglePreviewTab,
         TogglePinTab,
     ]
@@ -188,6 +192,7 @@ pub enum Event {
         item: Box<dyn ItemHandle>,
     },
     Split(SplitDirection),
+    JoinAll,
     JoinIntoNext,
     ChangeItemTitle,
     Focus,
@@ -220,6 +225,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Split")
                 .field("direction", direction)
                 .finish(),
+            Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
             Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
             Event::Focus => f.write_str("Focus"),
@@ -690,6 +696,10 @@ impl Pane {
         cx.emit(Event::JoinIntoNext);
     }
 
+    fn join_all(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::JoinAll);
+    }
+
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
@@ -724,6 +734,14 @@ impl Pane {
         if PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = item_id;
         }
+    }
+
+    pub(crate) fn set_pinned_count(&mut self, count: usize) {
+        self.pinned_tab_count = count;
+    }
+
+    pub(crate) fn pinned_count(&self) -> usize {
+        self.pinned_tab_count
     }
 
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
@@ -824,13 +842,14 @@ impl Pane {
                 }
             }
         }
-        // If no destination index is specified, add or move the item after the active item.
+        // If no destination index is specified, add or move the item after the
+        // active item (or at the start of tab bar, if the active item is pinned)
         let mut insertion_index = {
             cmp::min(
                 if let Some(destination_index) = destination_index {
                     destination_index
                 } else {
-                    self.active_item_index + 1
+                    cmp::max(self.active_item_index + 1, self.pinned_count())
                 },
                 self.items.len(),
             )
@@ -1047,6 +1066,26 @@ impl Pane {
             index = 0;
         }
         self.activate_item(index, activate_pane, activate_pane, cx);
+    }
+
+    pub fn swap_item_left(&mut self, cx: &mut ViewContext<Self>) {
+        let index = self.active_item_index;
+        if index == 0 {
+            return;
+        }
+
+        self.items.swap(index, index - 1);
+        self.activate_item(index - 1, true, true, cx);
+    }
+
+    pub fn swap_item_right(&mut self, cx: &mut ViewContext<Self>) {
+        let index = self.active_item_index;
+        if index + 1 == self.items.len() {
+            return;
+        }
+
+        self.items.swap(index, index + 1);
+        self.activate_item(index + 1, true, true, cx);
     }
 
     pub fn close_active_item(
@@ -1375,6 +1414,9 @@ impl Pane {
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
+        if self.is_tab_pinned(item_index) {
+            self.pinned_tab_count -= 1;
+        }
         if item_index == self.active_item_index {
             let index_to_activate = self
                 .activation_history
@@ -1560,8 +1602,13 @@ impl Pane {
             }
 
             if can_save {
-                pane.update(cx, |_, cx| item.save(should_format, project, cx))?
-                    .await?;
+                pane.update(cx, |pane, cx| {
+                    if pane.is_active_preview_item(item.item_id()) {
+                        pane.set_preview_item_id(None, cx);
+                    }
+                    item.save(should_format, project, cx)
+                })?
+                .await?;
             } else if can_save_as {
                 let abs_path = pane.update(cx, |pane, cx| {
                     pane.workspace
@@ -1753,9 +1800,7 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |this, cx| {
-                        this.move_item(pane.clone(), pane, id, destination_index, cx)
-                    });
+                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
                 })
                 .ok()?;
 
@@ -1773,9 +1818,7 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |this, cx| {
-                        this.move_item(pane.clone(), pane, id, destination_index, cx)
-                    });
+                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
                 })
                 .ok()?;
 
@@ -2345,7 +2388,7 @@ impl Pane {
                             }
                         })
                     }
-                    workspace.move_item(from_pane.clone(), to_pane.clone(), item_id, ix, cx);
+                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                 });
             })
             .log_err();
@@ -2552,6 +2595,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
             .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
             .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
+            .on_action(cx.listener(|pane, _: &JoinAll, cx| pane.join_all(cx)))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
                 pane.activate_item(action.0, true, true, cx);
@@ -2565,6 +2609,8 @@ impl Render for Pane {
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
             }))
+            .on_action(cx.listener(|pane, _: &SwapItemLeft, cx| pane.swap_item_left(cx)))
+            .on_action(cx.listener(|pane, _: &SwapItemRight, cx| pane.swap_item_right(cx)))
             .on_action(cx.listener(|pane, action, cx| {
                 pane.toggle_pin_tab(action, cx);
             }))

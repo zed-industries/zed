@@ -1,14 +1,14 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use editor::{Direction, InlineCompletionProvider};
+use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, OffsetRangeExt, ToOffset,
 };
 use settings::Settings;
-use std::{ops::Range, path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -237,7 +237,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<(&'a str, Option<Range<language::Anchor>>)> {
+    ) -> Option<CompletionProposal> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -267,7 +267,14 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
-                Some((completion_text, None))
+                Some(CompletionProposal {
+                    inlays: vec![InlayProposal::Suggestion(
+                        cursor_position.bias_right(buffer),
+                        completion_text.into(),
+                    )],
+                    text: completion_text.into(),
+                    delete_range: None,
+                })
             }
         } else {
             None
@@ -760,7 +767,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local("c = 3\nd = 4\n", cx));
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [ExcerptRange {
@@ -1011,7 +1018,7 @@ mod tests {
             .unwrap();
 
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 private_buffer.clone(),
                 [ExcerptRange {

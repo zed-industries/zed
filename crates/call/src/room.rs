@@ -1200,6 +1200,7 @@ impl Room {
                 room_id: self.id(),
                 worktrees: vec![],
                 dev_server_project_id: Some(dev_server_project_id.0),
+                is_ssh_project: false,
             })
         } else {
             if let Some(project_id) = project.read(cx).remote_id() {
@@ -1210,6 +1211,7 @@ impl Room {
                 room_id: self.id(),
                 worktrees: project.read(cx).worktree_metadata_protos(cx),
                 dev_server_project_id: None,
+                is_ssh_project: project.read(cx).is_via_ssh(),
             })
         };
 
