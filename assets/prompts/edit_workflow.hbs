@@ -30,7 +30,6 @@ This tag should contain the new text to insert at the given location in the file
 ## Example 1
 
 <patch>
-
 <edit>
 <description>Add the age field</description>
 <path>src/person.rs</path>
@@ -56,7 +55,6 @@ fn age(&self) -> usize {
 }
 </new_text>
 </edit>
-
 </patch>
 
 <guidelines>
@@ -115,7 +113,6 @@ Update all shapes to store their origin as an (x, y) tuple and implement Display
 We'll need to update both the rectangle and circle modules.
 
 <patch>
-
 <edit>
 <description>Add the origin field to Rectangle</description>
 <path>src/shapes/rectangle.rs</path>
@@ -241,12 +238,9 @@ impl fmt::Display for Rectangle {
 }
 </new_text>
 </edit>
-
 </patch>
 
 </message>
 </example>
-
-You should think step by step. When possible, produce smaller, coherent logical steps as opposed to one big step that combines lots of heterogeneous edits.
 
 </task_description>

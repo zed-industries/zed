@@ -77,6 +77,16 @@ impl WorkflowSuggestion {
         }
     }
 
+    pub fn new_text(&self) -> String {
+        match self {
+            Self::Update { new_text, .. }
+            | Self::CreateFile { new_text, .. }
+            | Self::InsertBefore { new_text, .. }
+            | Self::InsertAfter { new_text, .. } => new_text.clone(),
+            Self::Delete { .. } => String::new(),
+        }
+    }
+
     pub fn description(&self) -> Option<&str> {
         match self {
             Self::Update { description, .. }

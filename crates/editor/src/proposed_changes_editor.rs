@@ -14,6 +14,7 @@ use workspace::Item;
 pub struct ProposedChangesEditor {
     editor: View<Editor>,
     _subscriptions: Vec<Subscription>,
+    buffer_entries: Vec<BufferEntry>,
     _recalculate_diffs_task: Task<Option<()>>,
     recalculate_diffs_tx: mpsc::UnboundedSender<Model<Buffer>>,
 }
@@ -23,17 +24,27 @@ pub struct ProposedChangesBuffer<T> {
     pub ranges: Vec<Range<T>>,
 }
 
+struct BufferEntry {
+    base: Model<Buffer>,
+    branch: Model<Buffer>,
+}
+
 impl ProposedChangesEditor {
     pub fn new<T: ToOffset>(
-        buffers: Vec<ProposedChangesBuffer<T>>,
+        changes_buffers: Vec<ProposedChangesBuffer<T>>,
         project: Option<Model<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let mut subscriptions = Vec::new();
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
 
-        for buffer in buffers {
+        let mut buffer_entries = Vec::new();
+        let mut subscriptions = Vec::new();
+        for buffer in changes_buffers {
             let branch_buffer = buffer.buffer.update(cx, |buffer, cx| buffer.branch(cx));
+            buffer_entries.push(BufferEntry {
+                branch: branch_buffer.clone(),
+                base: buffer.buffer.clone(),
+            });
             subscriptions.push(cx.subscribe(&branch_buffer, Self::on_buffer_event));
 
             multibuffer.update(cx, |multibuffer, cx| {
@@ -53,6 +64,7 @@ impl ProposedChangesEditor {
         Self {
             editor: cx
                 .new_view(|cx| Editor::for_multibuffer(multibuffer.clone(), project, true, cx)),
+            buffer_entries,
             recalculate_diffs_tx,
             _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
                 let mut buffers_to_diff = HashSet::default();
@@ -84,6 +96,16 @@ impl ProposedChangesEditor {
             }),
             _subscriptions: subscriptions,
         }
+    }
+
+    pub fn branch_buffer_for_base(&self, base_buffer: &Model<Buffer>) -> Option<Model<Buffer>> {
+        self.buffer_entries.iter().find_map(|entry| {
+            if &entry.base == base_buffer {
+                Some(entry.branch.clone())
+            } else {
+                None
+            }
+        })
     }
 
     fn on_buffer_event(

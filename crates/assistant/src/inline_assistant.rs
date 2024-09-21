@@ -99,12 +99,6 @@ pub enum AssistStatus {
     Finished,
 }
 
-impl AssistStatus {
-    pub fn is_done(&self) -> bool {
-        matches!(self, Self::Stopped | Self::Finished)
-    }
-}
-
 impl Global for InlineAssistant {}
 
 impl InlineAssistant {
@@ -1003,21 +997,6 @@ impl InlineAssistant {
         }
     }
 
-    pub fn assist_status(&self, assist_id: InlineAssistId, cx: &AppContext) -> InlineAssistStatus {
-        if let Some(assist) = self.assists.get(&assist_id) {
-            match assist.codegen.read(cx).status(cx) {
-                CodegenStatus::Idle => InlineAssistStatus::Idle,
-                CodegenStatus::Pending => InlineAssistStatus::Pending,
-                CodegenStatus::Done => InlineAssistStatus::Done,
-                CodegenStatus::Error(_) => InlineAssistStatus::Error,
-            }
-        } else if self.confirmed_assists.contains_key(&assist_id) {
-            InlineAssistStatus::Confirmed
-        } else {
-            InlineAssistStatus::Canceled
-        }
-    }
-
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
         let mut gutter_pending_ranges = Vec::new();
         let mut gutter_transformed_ranges = Vec::new();
@@ -1200,42 +1179,6 @@ impl InlineAssistant {
                 .into_iter()
                 .collect();
         })
-    }
-
-    pub fn observe_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-    ) -> async_watch::Receiver<AssistStatus> {
-        if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
-            rx.clone()
-        } else {
-            let (tx, rx) = async_watch::channel(AssistStatus::Idle);
-            self.assist_observations.insert(assist_id, (tx, rx.clone()));
-            rx
-        }
-    }
-}
-
-pub enum InlineAssistStatus {
-    Idle,
-    Pending,
-    Done,
-    Error,
-    Confirmed,
-    Canceled,
-}
-
-impl InlineAssistStatus {
-    pub(crate) fn is_pending(&self) -> bool {
-        matches!(self, Self::Pending)
-    }
-
-    pub(crate) fn is_confirmed(&self) -> bool {
-        matches!(self, Self::Confirmed)
-    }
-
-    pub(crate) fn is_done(&self) -> bool {
-        matches!(self, Self::Done)
     }
 }
 

@@ -13,10 +13,10 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, AssistantPatchResolution, CacheStatus, ConfirmCommand, Content, Context, ContextEvent,
     ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
-    DeployPromptLibrary, InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
-    Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
-    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
+    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -29,24 +29,24 @@ use editor::{
         BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseMetadata,
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
-    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
-    Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
+    scroll::{Autoscroll, AutoscrollStrategy},
+    Anchor, Editor, EditorEvent, ProposedChangesBuffer, ProposedChangesEditor, RowExt,
+    ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
-    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, Empty, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem, Empty,
+    Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusableView, FontWeight,
+    InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, BufferSnapshot, Capability, LanguageRegistry, LspAdapterDelegate,
-    ToOffset,
+    language_settings::SoftWrap, BufferSnapshot, LanguageRegistry, LspAdapterDelegate, ToOffset,
 };
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
@@ -1442,20 +1442,14 @@ struct PatchViewState {
     header_crease_id: CreaseId,
     footer_block_id: Option<CustomBlockId>,
     footer_crease_id: Option<CreaseId>,
-    assist: Option<WorkflowAssist>,
+    editor: Option<WeakView<ProposedChangesEditor>>,
+    applied: bool,
     resolution: Option<Arc<Result<AssistantPatchResolution>>>,
 }
 
 impl PatchViewState {
-    fn status(&self, cx: &AppContext) -> PatchStatus {
-        if let Some(assist) = &self.assist {
-            match assist.status(cx) {
-                WorkflowAssistStatus::Idle => PatchStatus::Idle,
-                WorkflowAssistStatus::Pending => PatchStatus::Pending,
-                WorkflowAssistStatus::Done => PatchStatus::Done,
-                WorkflowAssistStatus::Confirmed => PatchStatus::Confirmed,
-            }
-        } else if let Some(resolution) = self.resolution.as_deref() {
+    fn status(&self, _cx: &AppContext) -> PatchStatus {
+        if let Some(resolution) = self.resolution.as_deref() {
             match resolution {
                 Err(err) => PatchStatus::Error(err),
                 Ok(_) => PatchStatus::Idle,
@@ -1471,7 +1465,6 @@ enum PatchStatus<'a> {
     Resolving,
     Error(&'a anyhow::Error),
     Idle,
-    Pending,
     Done,
     Confirmed,
 }
@@ -1486,12 +1479,6 @@ impl<'a> PatchStatus<'a> {
 struct ActivePatch {
     range: Range<language::Anchor>,
     resolved: bool,
-}
-
-struct WorkflowAssist {
-    editor: WeakView<Editor>,
-    editor_was_open: bool,
-    assist_ids: Vec<InlineAssistId>,
 }
 
 type MessageHeader = MessageMetadata;
@@ -1628,38 +1615,21 @@ impl ContextEditor {
             return;
         }
 
-        if !self.apply_active_patch(cx) {
-            self.error_message = None;
-            self.send_to_model(cx);
-            cx.notify();
+        if self.apply_active_patch(cx) {
+            return;
         }
+
+        self.error_message = None;
+        self.send_to_model(cx);
+        cx.notify();
     }
 
     fn apply_patch(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
         self.show_patch(range.clone(), cx);
 
         if let Some(patch) = self.patches.get(&range) {
-            if let Some(assist) = patch.assist.as_ref() {
-                let assist_ids = assist.assist_ids.clone();
-                cx.spawn(|this, mut cx| async move {
-                    for assist_id in assist_ids {
-                        let mut receiver = this.update(&mut cx, |_, cx| {
-                            cx.window_context().defer(move |cx| {
-                                InlineAssistant::update_global(cx, |assistant, cx| {
-                                    assistant.start_assist(assist_id, cx);
-                                })
-                            });
-                            InlineAssistant::update_global(cx, |assistant, _| {
-                                assistant.observe_assist(assist_id)
-                            })
-                        })?;
-                        while !receiver.borrow().is_done() {
-                            let _ = receiver.changed().await;
-                        }
-                    }
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
+            if let Some(_editor) = patch.editor.as_ref() {
+                //
             }
         }
     }
@@ -1669,12 +1639,11 @@ impl ContextEditor {
             return false;
         };
 
-        if let Some(assist) = patch.assist.as_ref() {
-            match assist.status(cx) {
-                WorkflowAssistStatus::Pending => {}
-                WorkflowAssistStatus::Confirmed => return false,
-                WorkflowAssistStatus::Done => self.confirm_patch(range, cx),
-                WorkflowAssistStatus::Idle => self.apply_patch(range, cx),
+        if let Some(_editor) = patch.editor.as_ref() {
+            if patch.applied {
+                return false;
+            } else {
+                //
             }
         } else {
             match patch.resolution.as_deref() {
@@ -1692,64 +1661,26 @@ impl ContextEditor {
             .update(cx, |context, cx| context.resolve_patch(range, cx));
     }
 
-    fn stop_patch_application(
-        &mut self,
-        range: Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(workflow_patch) = self.patches.get(&range) {
-            if let Some(assist) = workflow_patch.assist.as_ref() {
-                let assist_ids = assist.assist_ids.clone();
-                cx.window_context().defer(|cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist_ids {
-                            assistant.stop_assist(assist_id, cx);
-                        }
-                    })
-                });
-            }
-        }
-    }
-
-    fn undo_patch(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+    fn undo_patch(&mut self, range: Range<language::Anchor>, _cx: &mut ViewContext<Self>) {
         if let Some(patch) = self.patches.get_mut(&range) {
-            if let Some(assist) = patch.assist.take() {
-                cx.window_context().defer(|cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist.assist_ids {
-                            assistant.undo_assist(assist_id, cx);
-                        }
-                    })
-                });
+            if let Some(_editor) = &patch.editor {
+                todo!()
             }
         }
     }
 
-    fn confirm_patch(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+    fn confirm_patch(&mut self, range: Range<language::Anchor>, _cx: &mut ViewContext<Self>) {
         if let Some(patch) = self.patches.get(&range) {
-            if let Some(assist) = patch.assist.as_ref() {
-                let assist_ids = assist.assist_ids.clone();
-                cx.window_context().defer(move |cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist_ids {
-                            assistant.finish_assist(assist_id, false, cx);
-                        }
-                    })
-                });
+            if let Some(_editor) = patch.editor.as_ref() {
+                todo!()
             }
         }
     }
 
-    fn reject_patch(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+    fn reject_patch(&mut self, range: Range<language::Anchor>, _cx: &mut ViewContext<Self>) {
         if let Some(patch) = self.patches.get_mut(&range) {
-            if let Some(assist) = patch.assist.take() {
-                cx.window_context().defer(move |cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist.assist_ids {
-                            assistant.finish_assist(assist_id, true, cx);
-                        }
-                    })
-                });
+            if let Some(_editor) = patch.editor.as_ref() {
+                todo!()
             }
         }
     }
@@ -1786,10 +1717,6 @@ impl ContextEditor {
 
         if let Some((range, active_patch)) = self.active_patch() {
             match active_patch.status(cx) {
-                PatchStatus::Pending => {
-                    self.stop_patch_application(range, cx);
-                    return;
-                }
                 PatchStatus::Done => {
                     self.reject_patch(range, cx);
                     return;
@@ -2458,7 +2385,8 @@ impl ContextEditor {
                     footer_block_id: block_ids.get(1).copied(),
                     footer_crease_id: new_crease_ids.get(1).copied(),
                     resolution,
-                    assist: None,
+                    applied: false,
+                    editor: None,
                 };
 
                 let mut folds_to_insert = [(header_range.clone(), header_placeholder)]
@@ -2503,8 +2431,8 @@ impl ContextEditor {
             editor.remove_blocks(removed_block_ids, None, cx);
         });
 
-        for (editor, editor_was_open) in editors_to_close {
-            self.close_workflow_editor(cx, editor, editor_was_open);
+        for editor in editors_to_close {
+            self.close_workflow_editor(cx, editor);
         }
 
         self.update_active_patch(cx);
@@ -2605,9 +2533,8 @@ impl ContextEditor {
 
         if new_patch.as_ref() != self.active_patch.as_ref() {
             let mut old_editor = None;
-            let mut old_editor_was_open = None;
             if let Some(old_patch) = self.active_patch.take() {
-                (old_editor, old_editor_was_open) = self.hide_patch(old_patch.range, cx).unzip();
+                old_editor = self.hide_patch(old_patch.range, cx);
             }
 
             let mut new_editor = None;
@@ -2617,9 +2544,8 @@ impl ContextEditor {
             }
 
             if new_editor != old_editor {
-                if let Some((old_editor, old_editor_was_open)) = old_editor.zip(old_editor_was_open)
-                {
-                    self.close_workflow_editor(cx, old_editor, old_editor_was_open)
+                if let Some(old_editor) = old_editor {
+                    self.close_workflow_editor(cx, old_editor)
                 }
             }
         }
@@ -2628,21 +2554,10 @@ impl ContextEditor {
     fn hide_patch(
         &mut self,
         patch_range: Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<(View<Editor>, bool)> {
+        _cx: &mut ViewContext<Self>,
+    ) -> Option<View<ProposedChangesEditor>> {
         if let Some(patch) = self.patches.get_mut(&patch_range) {
-            let assist = patch.assist.as_ref()?;
-            let editor = assist.editor.upgrade()?;
-
-            if matches!(patch.status(cx), PatchStatus::Idle) {
-                let assist = patch.assist.take().unwrap();
-                InlineAssistant::update_global(cx, |assistant, cx| {
-                    for assist_id in assist.assist_ids {
-                        assistant.finish_assist(assist_id, true, cx)
-                    }
-                });
-                return Some((editor, assist.editor_was_open));
-            }
+            return patch.editor.as_ref()?.upgrade();
         }
 
         None
@@ -2651,15 +2566,14 @@ impl ContextEditor {
     fn close_workflow_editor(
         &mut self,
         cx: &mut ViewContext<ContextEditor>,
-        editor: View<Editor>,
-        editor_was_open: bool,
+        editor: View<ProposedChangesEditor>,
     ) {
         self.workspace
             .update(cx, |workspace, cx| {
                 if let Some(pane) = workspace.pane_for(&editor) {
                     pane.update(cx, |pane, cx| {
                         let item_id = editor.entity_id();
-                        if !editor_was_open && !editor.read(cx).is_focused(cx) {
+                        if !editor.read(cx).focus_handle(cx).is_focused(cx) {
                             pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
                                 .detach_and_log_err(cx);
                         }
@@ -2673,186 +2587,53 @@ impl ContextEditor {
         &mut self,
         patch_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<View<Editor>> {
+    ) -> Option<View<ProposedChangesEditor>> {
         let patch = self.patches.get_mut(&patch_range)?;
-
-        let mut editor_to_return = None;
-        let mut scroll_to_assist_id = None;
-        match patch.status(cx) {
-            PatchStatus::Idle => {
-                if let Some(assist) = patch.assist.as_ref() {
-                    scroll_to_assist_id = assist.assist_ids.first().copied();
-                } else if let Some(Ok(resolved)) = patch.resolution.clone().as_deref() {
-                    patch.assist = Self::open_assists_for_patch(
-                        &resolved,
-                        &self.project,
-                        &self.assistant_panel,
-                        &self.workspace,
-                        cx,
-                    );
-                    editor_to_return = patch
-                        .assist
-                        .as_ref()
-                        .and_then(|assist| assist.editor.upgrade());
-                }
-            }
-            PatchStatus::Pending => {
-                if let Some(assist) = patch.assist.as_ref() {
-                    let assistant = InlineAssistant::global(cx);
-                    scroll_to_assist_id = assist
-                        .assist_ids
-                        .iter()
-                        .copied()
-                        .find(|assist_id| assistant.assist_status(*assist_id, cx).is_pending());
-                }
-            }
-            PatchStatus::Done => {
-                if let Some(assist) = patch.assist.as_ref() {
-                    scroll_to_assist_id = assist.assist_ids.first().copied();
-                }
-            }
-            _ => {}
+        if let Some(editor) = patch.editor.clone().and_then(|editor| editor.upgrade()) {
+            return Some(editor);
         }
 
-        if let Some(assist_id) = scroll_to_assist_id {
-            if let Some(assist_editor) = patch
-                .assist
-                .as_ref()
-                .and_then(|assists| assists.editor.upgrade())
-            {
-                editor_to_return = Some(assist_editor.clone());
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.activate_item(&assist_editor, false, false, cx);
+        let resolution = patch.resolution.as_ref()?.clone();
+        let resolution = resolution.as_ref().as_ref().ok()?;
+
+        let editor = cx.new_view(|cx| {
+            ProposedChangesEditor::new(
+                resolution
+                    .suggestion_groups
+                    .iter()
+                    .map(|(buffer, groups)| ProposedChangesBuffer {
+                        buffer: buffer.clone(),
+                        ranges: groups
+                            .iter()
+                            .map(|group| group.context_range.clone())
+                            .collect(),
                     })
-                    .ok();
-                InlineAssistant::update_global(cx, |assistant, cx| {
-                    assistant.scroll_to_assist(assist_id, cx)
-                });
-            }
-        }
+                    .collect(),
+                Some(self.project.clone()),
+                cx,
+            )
+        });
 
-        editor_to_return
-    }
-
-    fn open_assists_for_patch(
-        resolved_patch: &AssistantPatchResolution,
-        project: &Model<Project>,
-        assistant_panel: &WeakView<AssistantPanel>,
-        workspace: &WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<WorkflowAssist> {
-        let assistant_panel = assistant_panel.upgrade()?;
-        if resolved_patch.suggestion_groups.is_empty() {
-            return None;
-        }
-
-        let editor;
-        let mut editor_was_open = false;
-        let mut suggestion_groups = Vec::new();
-        if resolved_patch.suggestion_groups.len() == 1
-            && resolved_patch
-                .suggestion_groups
-                .values()
-                .next()
-                .unwrap()
-                .len()
-                == 1
-        {
-            // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, groups) = resolved_patch.suggestion_groups.iter().next().unwrap();
-            let group = groups.into_iter().next().unwrap();
-            editor = workspace
-                .update(cx, |workspace, cx| {
-                    let active_pane = workspace.active_pane().clone();
-                    editor_was_open =
-                        workspace.is_project_item_open::<Editor>(&active_pane, buffer, cx);
-                    workspace.open_project_item::<Editor>(
-                        active_pane,
-                        buffer.clone(),
-                        false,
-                        false,
-                        cx,
-                    )
-                })
-                .log_err()?;
-            let (&excerpt_id, _, _) = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .read(cx)
-                .as_singleton()
-                .unwrap();
-
-            // Scroll the editor to the suggested assist
-            editor.update(cx, |editor, cx| {
-                let multibuffer = editor.buffer().read(cx).snapshot(cx);
-                let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
-                let anchor = if group.context_range.start.to_offset(buffer) == 0 {
-                    Anchor::min()
-                } else {
-                    multibuffer
-                        .anchor_in_excerpt(excerpt_id, group.context_range.start)
-                        .unwrap()
-                };
-
-                editor.set_scroll_anchor(
-                    ScrollAnchor {
-                        offset: gpui::Point::default(),
-                        anchor,
-                    },
-                    cx,
-                );
-            });
-
-            suggestion_groups.push((excerpt_id, group));
-        } else {
-            // If there are multiple buffers or suggestion groups, create a multibuffer
-            let multibuffer = cx.new_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(Capability::ReadWrite)
-                    .with_title(resolved_patch.title.clone());
-                for (buffer, groups) in &resolved_patch.suggestion_groups {
-                    let excerpt_ids = multibuffer.push_excerpts(
-                        buffer.clone(),
-                        groups.iter().map(|suggestion_group| ExcerptRange {
-                            context: suggestion_group.context_range.clone(),
-                            primary: None,
-                        }),
-                        cx,
-                    );
-                    suggestion_groups.extend(excerpt_ids.into_iter().zip(groups));
+        for (buffer, groups) in &resolution.suggestion_groups {
+            let branch = editor.read(cx).branch_buffer_for_base(buffer).unwrap();
+            let mut edits = Vec::new();
+            for group in groups {
+                for suggestion in &group.suggestions {
+                    edits.push((suggestion.range(), suggestion.new_text()));
                 }
-                multibuffer
-            });
-
-            editor = cx.new_view(|cx| {
-                Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx)
-            });
-            workspace
-                .update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
-                })
-                .log_err()?;
-        }
-
-        let mut assist_ids = Vec::new();
-        for (excerpt_id, suggestion_group) in suggestion_groups {
-            for suggestion in &suggestion_group.suggestions {
-                assist_ids.extend(suggestion.show(
-                    &editor,
-                    excerpt_id,
-                    workspace,
-                    &assistant_panel,
-                    cx,
-                ));
             }
+            branch.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
         }
 
-        Some(WorkflowAssist {
-            assist_ids,
-            editor: editor.downgrade(),
-            editor_was_open,
-        })
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
+            })
+            .log_err()?;
+
+        Some(editor)
     }
 
     fn handle_editor_search_event(
@@ -3981,57 +3762,6 @@ impl ContextEditor {
                         }
                     })
             }
-            PatchStatus::Pending => h_flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    Label::new("Applying...")
-                        .size(LabelSize::Small)
-                        .with_animation(
-                            ("applying-patch-transformation-label", id),
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.4, 0.8)),
-                            |label, delta| label.alpha(delta),
-                        ),
-                )
-                .child(
-                    IconButton::new(("stop-transformation", id), IconName::Stop)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Error)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip({
-                            let patch_range = patch_range.clone();
-                            let editor = editor.clone();
-                            move |cx| {
-                                cx.new_view(|cx| {
-                                    let tooltip = Tooltip::new("Stop Transformation");
-                                    if display_keybind_in_tooltip(&patch_range, &editor, cx) {
-                                        tooltip.key_binding(KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                    } else {
-                                        tooltip
-                                    }
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            let patch_range = patch_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.stop_patch_application(patch_range.clone(), cx)
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
             PatchStatus::Done => h_flex()
                 .gap_1()
                 .child(
@@ -4225,7 +3955,6 @@ impl ContextEditor {
                 PatchStatus::Error(_) => "Retry Patch Resolution",
                 PatchStatus::Resolving => "Transform",
                 PatchStatus::Idle => "Transform",
-                PatchStatus::Pending => "Applying...",
                 PatchStatus::Done => "Accept",
                 PatchStatus::Confirmed => "Send",
             },
@@ -5078,33 +4807,6 @@ pub enum WorkflowAssistStatus {
     Confirmed,
     Done,
     Idle,
-}
-
-impl WorkflowAssist {
-    pub fn status(&self, cx: &AppContext) -> WorkflowAssistStatus {
-        let assistant = InlineAssistant::global(cx);
-        if self
-            .assist_ids
-            .iter()
-            .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
-        {
-            WorkflowAssistStatus::Pending
-        } else if self
-            .assist_ids
-            .iter()
-            .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
-        {
-            WorkflowAssistStatus::Confirmed
-        } else if self
-            .assist_ids
-            .iter()
-            .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
-        {
-            WorkflowAssistStatus::Done
-        } else {
-            WorkflowAssistStatus::Idle
-        }
-    }
 }
 
 impl Render for ContextHistory {
