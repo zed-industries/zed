@@ -16,7 +16,7 @@ use dap::{
     SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
     VariablesArguments,
 };
-use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
+use gpui::{EventEmitter, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -58,20 +58,7 @@ pub struct DapStore {
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
-struct GlobalDapStore(Model<DapStore>);
-
-impl Global for GlobalDapStore {}
-
-pub fn init(cx: &mut AppContext) {
-    let store = GlobalDapStore(cx.new_model(DapStore::new));
-    cx.set_global(store);
-}
-
 impl DapStore {
-    pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<GlobalDapStore>().0.clone()
-    }
-
     pub fn new(cx: &mut ModelContext<Self>) -> Self {
         cx.on_app_quit(Self::shutdown_clients).detach();
 

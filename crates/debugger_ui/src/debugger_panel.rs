@@ -134,7 +134,7 @@ impl DebugPanel {
                 pane,
                 size: px(300.),
                 _subscriptions,
-                dap_store: DapStore::global(cx),
+                dap_store: project.read(cx).dap_store(),
                 focus_handle: cx.focus_handle(),
                 show_did_not_stop_warning: false,
                 thread_states: Default::default(),

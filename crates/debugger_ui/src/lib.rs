@@ -2,7 +2,6 @@ use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::{DebugPanel, ToggleFocus};
 use debugger_panel_item::DebugPanelItem;
 use gpui::AppContext;
-use project::dap_store::{self};
 use settings::Settings;
 use ui::ViewContext;
 use workspace::{StartDebugger, Workspace};
@@ -14,7 +13,6 @@ mod variable_list;
 
 pub fn init(cx: &mut AppContext) {
     DebuggerSettings::register(cx);
-    dap_store::init(cx);
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
