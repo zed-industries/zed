@@ -194,9 +194,9 @@ impl DebugAdapter for CustomDebugAdapter {
 
     async fn connect(&self, cx: &mut AsyncAppContext) -> Result<TransportParams> {
         match &self.connection {
-            DebugConnectionType::STDIO => create_stdio_client(&self.start_command, &vec![].into()),
+            DebugConnectionType::STDIO => create_stdio_client(&self.start_command, &vec![]),
             DebugConnectionType::TCP(tcp_host) => {
-                create_tcp_client(tcp_host.clone(), &self.start_command, &vec![].into(), cx).await
+                create_tcp_client(tcp_host.clone(), &self.start_command, &vec![], cx).await
             }
         }
     }

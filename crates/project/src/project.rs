@@ -39,7 +39,7 @@ use debounced_delay::DebouncedDelay;
 pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
-    future::try_join_all,
+    future::{join_all, try_join_all},
     stream::FuturesUnordered,
     AsyncWriteExt, FutureExt, StreamExt,
 };
@@ -252,7 +252,6 @@ pub enum Event {
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
-    DebugClientStarted(DebugAdapterClientId),
     DebugClientStopped(DebugAdapterClientId),
     DebugClientEvent {
         client_id: DebugAdapterClientId,
@@ -644,6 +643,8 @@ impl Project {
         env: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
+        let dap_store = DapStore::global(cx);
+
         cx.new_model(|cx: &mut ModelContext<Self>| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
@@ -656,8 +657,6 @@ impl Project {
             let worktree_store = cx.new_model(|_| WorktreeStore::new(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
-
-            let dap_store = cx.new_model(DapStore::new);
 
             let buffer_store = cx.new_model(|cx| {
                 BufferStore::new(worktree_store.clone(), None, dap_store.clone(), cx)
@@ -849,7 +848,7 @@ impl Project {
             store
         })?;
 
-        let dap_store = cx.new_model(DapStore::new)?;
+        let dap_store = cx.update(|cx| DapStore::global(cx))?;
 
         let buffer_store = cx.new_model(|cx| {
             BufferStore::new(
@@ -1106,29 +1105,24 @@ impl Project {
 
     pub fn send_breakpoints(
         &self,
-        client: Arc<DebugAdapterClient>,
+        client_id: &DebugAdapterClientId,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        cx.spawn(|project, mut cx| async move {
-            let task = project.update(&mut cx, |project, cx| {
-                let mut tasks = Vec::new();
+    ) -> Task<()> {
+        let mut tasks = Vec::new();
 
-                for (abs_path, serialized_breakpoints) in project.all_breakpoints(true, cx) {
-                    let source_breakpoints = serialized_breakpoints
-                        .iter()
-                        .map(|bp| bp.to_source_breakpoint())
-                        .collect::<Vec<_>>();
+        for (abs_path, serialized_breakpoints) in self.all_breakpoints(true, cx) {
+            let source_breakpoints = serialized_breakpoints
+                .iter()
+                .map(|bp| bp.to_source_breakpoint())
+                .collect::<Vec<_>>();
 
-                    tasks
-                        .push(client.set_breakpoints(abs_path.clone(), source_breakpoints.clone()));
-                }
+            tasks.push(self.dap_store.update(cx, |store, cx| {
+                store.send_breakpoints(client_id, abs_path, source_breakpoints, cx)
+            }));
+        }
 
-                try_join_all(tasks)
-            })?;
-
-            task.await?;
-
-            Ok(())
+        cx.background_executor().spawn(async move {
+            join_all(tasks).await;
         })
     }
 
@@ -2314,7 +2308,9 @@ impl Project {
     ) {
         match event {
             DapStoreEvent::DebugClientStarted(client_id) => {
-                cx.emit(Event::DebugClientStarted(*client_id));
+                self.dap_store.update(cx, |store, cx| {
+                    store.initialize(client_id, cx).detach_and_log_err(cx)
+                });
             }
             DapStoreEvent::DebugClientStopped(client_id) => {
                 cx.emit(Event::DebugClientStopped(*client_id));
