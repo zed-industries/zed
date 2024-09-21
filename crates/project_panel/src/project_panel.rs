@@ -2234,7 +2234,7 @@ impl ProjectPanel {
             .diagnostic_error_colors
             .get(&details.path.to_path_buf())
         {
-            color.clone()
+            *color
         } else {
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked)
         };
