@@ -17,7 +17,7 @@
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 <!-- - [Fonts](./fonts.md) -->
-- [Configuring Vim Mode](./vim-configuration.md)
+- [Vim Mode](./vim.md)
 
 # Using Zed
 
@@ -29,7 +29,6 @@
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [REPL](./repl.md)
-- [Vim Mode](./vim.md)
 
 # Assistant
 
