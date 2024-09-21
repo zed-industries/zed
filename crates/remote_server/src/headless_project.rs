@@ -43,7 +43,6 @@ impl HeadlessProject {
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let dap_store = DapStore::global(cx);
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
         let worktree_store = cx.new_model(|cx| {
@@ -51,6 +50,8 @@ impl HeadlessProject {
             store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             store
         });
+
+        let dap_store = cx.new_model(DapStore::new);
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store = BufferStore::new(
                 worktree_store.clone(),
