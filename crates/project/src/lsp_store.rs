@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use client::{proto, TypedEnvelope};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use futures::{
-    future::{join_all, BoxFuture, Shared},
+    future::{join_all, Shared},
     select,
     stream::FuturesUnordered,
     Future, FutureExt, StreamExt,
@@ -26,7 +26,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, PromptLevel,
     Task, WeakModel,
 };
-use http_client::{AsyncBody, HttpClient, Request, Response, Uri};
+use http_client::{BlockedHttpClient, HttpClient};
 use language::{
     language_settings::{
         all_language_settings, language_settings, AllLanguageSettings, LanguageSettings,
@@ -7331,35 +7331,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             return Err(anyhow!("no such path {path:?}"));
         };
         self.fs.load(&path).await
-    }
-}
-
-struct BlockedHttpClient;
-
-impl HttpClient for BlockedHttpClient {
-    fn send(
-        &self,
-        _req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        Box::pin(async {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "ssh host blocked http connection",
-            )
-            .into())
-        })
-    }
-
-    fn proxy(&self) -> Option<&Uri> {
-        None
-    }
-
-    fn send_with_redirect_policy(
-        &self,
-        req: Request<AsyncBody>,
-        _: bool,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        self.send(req)
     }
 }
 

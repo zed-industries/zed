@@ -29,7 +29,7 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
-use node_runtime::RealNodeRuntime;
+use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
@@ -477,7 +477,18 @@ fn main() {
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
-        let node_runtime = RealNodeRuntime::new(client.http_client());
+        let (tx, rx) = async_watch::channel(None);
+        cx.observe_global::<SettingsStore>(move |_| {
+            // todo!
+            tx.send(Some(NodeBinaryOptions {
+                use_paths: None,
+                allow_path_lookup: true,
+                allow_binary_download: true,
+            }))
+            .ok();
+        })
+        .detach();
+        let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
-use node_runtime::DummyNodeRuntime;
+use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
@@ -57,7 +57,7 @@ impl HeadlessProject {
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                DummyNodeRuntime::new(),
+                NodeRuntime::unavailable(),
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),

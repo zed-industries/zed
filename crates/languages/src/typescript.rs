@@ -65,7 +65,7 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct TypeScriptLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl TypeScriptLspAdapter {
@@ -73,7 +73,7 @@ impl TypeScriptLspAdapter {
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
     }
     async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
@@ -161,14 +161,14 @@ impl LspAdapter for TypeScriptLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -264,7 +264,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
 async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);
@@ -293,7 +293,7 @@ async fn get_cached_ts_server_binary(
 }
 
 pub struct EsLintLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl EsLintLspAdapter {
@@ -310,7 +310,7 @@ impl EsLintLspAdapter {
     const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
         &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         EsLintLspAdapter { node }
     }
 }
@@ -476,11 +476,11 @@ impl LspAdapter for EsLintLspAdapter {
             }
 
             self.node
-                .run_npm_subcommand(Some(&repo_root), "install", &[])
+                .run_npm_subcommand(&repo_root, "install", &[])
                 .await?;
 
             self.node
-                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
+                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
                 .await?;
         }
 
@@ -496,20 +496,20 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_eslint_server_binary(container_dir, &*self.node).await
+        get_cached_eslint_server_binary(container_dir, &self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_eslint_server_binary(container_dir, &*self.node).await
+        get_cached_eslint_server_binary(container_dir, &self.node).await
     }
 }
 
 async fn get_cached_eslint_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         // This is unfortunate but we don't know what the version is to build a path directly
