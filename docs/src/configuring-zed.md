@@ -857,7 +857,50 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-### Indent Guides
+### Inline Git Blame
+
+- Description: Whether or not to show git blame information inline, on the currently focused line.
+- Setting: `inline_blame`
+- Default:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Options**
+
+1. Disable inline git blame:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  }
+}
+```
+
+2. Only show inline git blame after a delay (that starts after cursor stops moving):
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "delay_ms": 500
+    }
+  }
+}
+```
+
+## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
@@ -922,49 +965,6 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "enabled": true,
     "coloring": "indent_aware",
     "background_coloring": "indent_aware"
-  }
-}
-```
-
-### Inline Git Blame
-
-- Description: Whether or not to show git blame information inline, on the currently focused line.
-- Setting: `inline_blame`
-- Default:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true
-    }
-  }
-}
-```
-
-**Options**
-
-1. Disable inline git blame:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": false
-    }
-  }
-}
-```
-
-2. Only show inline git blame after a delay (that starts after cursor stops moving):
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true,
-      "delay_ms": 500
-    }
   }
 }
 ```
