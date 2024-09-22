@@ -215,7 +215,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values
+`integer` values from `6` to `100` pixels (inclusive)
 
 ## Buffer Font Weight
 
@@ -2183,6 +2183,16 @@ Float values between `0.0` and `0.9`, where:
   "unnecessary_code_fade": 0.5
 }
 ```
+
+## UI Font Size
+
+- Description: The default font size for text in the UI.
+- Setting: `ui_font_size`
+- Default: `16`
+
+**Options**
+
+`integer` values from `6` to `100` pixels (inclusive)
 
 ## An example configuration:
 
