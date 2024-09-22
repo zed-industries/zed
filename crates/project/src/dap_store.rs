@@ -1,3 +1,4 @@
+use crate::ProjectPath;
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
@@ -20,9 +21,14 @@ use gpui::{EventEmitter, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
 use serde_json::Value;
 use settings::WorktreeId;
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 use std::{
     collections::BTreeMap,
     future::Future,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -32,8 +38,6 @@ use std::{
 use task::{DebugAdapterConfig, DebugRequestType};
 use text::Point;
 use util::ResultExt as _;
-
-use crate::ProjectPath;
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
@@ -139,6 +143,7 @@ impl DapStore {
                 .insert(Breakpoint {
                     active_position: None,
                     cache_position: serialize_breakpoint.position.saturating_sub(1u32),
+                    kind: serialize_breakpoint.kind,
                 });
         }
     }
@@ -678,7 +683,11 @@ impl DapStore {
     ) {
         let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
 
-        if !breakpoint_set.remove(&breakpoint) {
+        if let Some(gotten_breakpoint) = breakpoint_set.take(&breakpoint) {
+            if gotten_breakpoint.kind != breakpoint.kind {
+                breakpoint_set.insert(breakpoint);
+            }
+        } else {
             breakpoint_set.insert(breakpoint);
         }
 
@@ -757,11 +766,81 @@ impl DapStore {
         })
     }
 }
+type LogMessage = Arc<str>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum BreakpointKind {
+    Standard,
+    Log(LogMessage),
+}
+
+impl BreakpointKind {
+    fn to_int(&self) -> i32 {
+        match self {
+            BreakpointKind::Standard => 0,
+            BreakpointKind::Log(_) => 1,
+        }
+    }
+}
+
+impl StaticColumnCount for BreakpointKind {
+    fn column_count() -> usize {
+        2
+    }
+}
+
+impl Bind for BreakpointKind {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        let next_index = statement.bind(&self.to_int(), start_index)?;
+
+        match self {
+            BreakpointKind::Standard => {
+                statement.bind_null(next_index)?;
+                Ok(next_index + 1)
+            }
+            BreakpointKind::Log(message) => statement.bind(message, next_index),
+        }
+    }
+}
+
+impl Column for BreakpointKind {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let kind = statement.column_int(start_index)?;
+        match kind {
+            0 => Ok((BreakpointKind::Standard, start_index + 2)),
+            1 => {
+                let message = statement.column_text(start_index + 1)?.to_string();
+                Ok((BreakpointKind::Log(message.into()), start_index + 2))
+            }
+            _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Breakpoint {
     pub active_position: Option<text::Anchor>,
     pub cache_position: u32,
+    pub kind: BreakpointKind,
+}
+
+// Custom implementation for PartialEq, Eq, and Hash is done
+// to get toggle breakpoint to solely be based on a breakpoint's
+// location. Otherwise, a user can get in situation's where there's
+// overlapping breakpoint's with them being aware.
+impl PartialEq for Breakpoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.active_position == other.active_position && self.cache_position == other.cache_position
+    }
+}
+
+impl Eq for Breakpoint {}
+
+impl Hash for Breakpoint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.active_position.hash(state);
+        self.cache_position.hash(state);
+    }
 }
 
 impl Breakpoint {
@@ -813,11 +892,16 @@ impl Breakpoint {
             .unwrap_or(self.cache_position) as u64
             + 1u64;
 
+        let log_message = match &self.kind {
+            BreakpointKind::Standard => None,
+            BreakpointKind::Log(log_message) => Some(log_message.clone().to_string()),
+        };
+
         SourceBreakpoint {
             line,
             condition: None,
             hit_condition: None,
-            log_message: None,
+            log_message,
             column: None,
             mode: None,
         }
@@ -831,10 +915,12 @@ impl Breakpoint {
                     .map(|position| buffer.summary_for_anchor::<Point>(&position).row + 1u32)
                     .unwrap_or(self.cache_position + 1u32),
                 path,
+                kind: self.kind.clone(),
             },
             None => SerializedBreakpoint {
                 position: self.cache_position + 1u32,
                 path,
+                kind: self.kind.clone(),
             },
         }
     }
@@ -844,15 +930,21 @@ impl Breakpoint {
 pub struct SerializedBreakpoint {
     pub position: u32,
     pub path: Arc<Path>,
+    pub kind: BreakpointKind,
 }
 
 impl SerializedBreakpoint {
     pub fn to_source_breakpoint(&self) -> SourceBreakpoint {
+        let log_message = match &self.kind {
+            BreakpointKind::Standard => None,
+            BreakpointKind::Log(message) => Some(message.clone().to_string()),
+        };
+
         SourceBreakpoint {
             line: self.position as u64,
             condition: None,
             hit_condition: None,
-            log_message: None,
+            log_message,
             column: None,
             mode: None,
         }

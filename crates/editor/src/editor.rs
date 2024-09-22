@@ -74,13 +74,13 @@ use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
-    ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle,
-    FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
-    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
-    VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClickEvent,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter,
+    FocusHandle, FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla,
+    InteractiveText, KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement,
+    Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task,
+    TextStyle, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -122,7 +122,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
-    dap_store::{Breakpoint, DapStore},
+    dap_store::{Breakpoint, BreakpointKind, DapStore},
     CodeAction, Completion, CompletionIntent, FormatTrigger, Item, Location, Project, ProjectPath,
     ProjectTransaction, TaskSourceKind,
 };
@@ -5322,8 +5322,11 @@ impl Editor {
     /// This function is used to handle overlaps between breakpoints and Code action/runner symbol.
     /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
     /// TODO debugger: Use this function to color toggle symbols that house nested breakpoints
-    fn active_breakpoint_points(&mut self, cx: &mut ViewContext<Self>) -> HashSet<DisplayPoint> {
-        let mut breakpoint_display_points = HashSet::default();
+    fn active_breakpoint_points(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> HashMap<DisplayPoint, BreakpointKind> {
+        let mut breakpoint_display_points = HashMap::default();
 
         let Some(dap_store) = self.dap_store.clone() else {
             return breakpoint_display_points;
@@ -5341,7 +5344,8 @@ impl Editor {
                     for breakpoint in breakpoints {
                         let point = breakpoint.point_for_buffer(&buffer);
 
-                        breakpoint_display_points.insert(point.to_display_point(&snapshot));
+                        breakpoint_display_points
+                            .insert(point.to_display_point(&snapshot), breakpoint.kind.clone());
                     }
                 };
             };
@@ -5397,7 +5401,7 @@ impl Editor {
 
                             let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
 
-                            breakpoint_display_points.insert(position);
+                            breakpoint_display_points.insert(position, breakpoint.kind.clone());
                         }
                     }
                 };
@@ -5409,8 +5413,9 @@ impl Editor {
 
     fn render_breakpoint(
         &self,
-        anchor: text::Anchor,
+        position: text::Anchor,
         row: DisplayRow,
+        kind: &BreakpointKind,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         let color = if self
@@ -5422,18 +5427,69 @@ impl Editor {
             Color::Debugger
         };
 
-        IconButton::new(
-            ("breakpoint_indicator", row.0 as usize),
-            ui::IconName::DebugBreakpoint,
-        )
-        .icon_size(IconSize::XSmall)
-        .size(ui::ButtonSize::None)
-        .icon_color(color)
-        .style(ButtonStyle::Transparent)
-        .on_click(cx.listener(move |editor, _e, cx| {
-            editor.focus(cx);
-            editor.toggle_breakpoint_at_anchor(anchor, cx);
-        }))
+        let icon = match &kind {
+            BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
+            BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
+        };
+        let arc_kind = Arc::new(kind.clone());
+
+        IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(color)
+            .style(ButtonStyle::Transparent)
+            .on_click(cx.listener(move |editor, _e, cx| {
+                editor.focus(cx);
+                editor.toggle_breakpoint_at_anchor(position, (*arc_kind).clone(), cx);
+            }))
+            .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
+                let source = editor
+                    .buffer
+                    .read(cx)
+                    .snapshot(cx)
+                    .anchor_at(Point::new(row.0, 0u32), Bias::Left);
+
+                let clicked_point = event.down.position;
+                let focus_handle = editor.focus_handle.clone();
+                let editor_weak = cx.view().downgrade();
+                let second_weak = editor_weak.clone();
+
+                let context_menu = ui::ContextMenu::build(cx, move |menu, _cx| {
+                    let anchor = position;
+                    menu.on_blur_subscription(Subscription::new(|| {}))
+                        .context(focus_handle)
+                        .entry("Toggle Breakpoint", None, move |cx| {
+                            if let Some(editor) = editor_weak.upgrade() {
+                                editor.update(cx, |this, cx| {
+                                    this.toggle_breakpoint_at_anchor(
+                                        anchor,
+                                        BreakpointKind::Standard,
+                                        cx,
+                                    );
+                                })
+                            }
+                        })
+                        .entry("Toggle Log Breakpoint", None, move |cx| {
+                            if let Some(editor) = second_weak.clone().upgrade() {
+                                editor.update(cx, |this, cx| {
+                                    this.toggle_breakpoint_at_anchor(
+                                        anchor,
+                                        BreakpointKind::Log("Log breakpoint".into()),
+                                        cx,
+                                    );
+                                })
+                            }
+                        })
+                });
+
+                editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+                    editor,
+                    source,
+                    clicked_point,
+                    context_menu,
+                    cx,
+                )
+            }))
     }
 
     fn render_run_indicator(
@@ -6300,12 +6356,13 @@ impl Editor {
             .anchor_at(Point::new(cursor_position.row, 0), bias)
             .text_anchor;
 
-        self.toggle_breakpoint_at_anchor(breakpoint_position, cx);
+        self.toggle_breakpoint_at_anchor(breakpoint_position, BreakpointKind::Standard, cx);
     }
 
     pub fn toggle_breakpoint_at_anchor(
         &mut self,
         breakpoint_position: text::Anchor,
+        kind: BreakpointKind,
         cx: &mut ViewContext<Self>,
     ) {
         let Some(project) = &self.project else {
@@ -6337,6 +6394,7 @@ impl Editor {
                 Breakpoint {
                     cache_position,
                     active_position: Some(breakpoint_position),
+                    kind,
                 },
                 cx,
             );

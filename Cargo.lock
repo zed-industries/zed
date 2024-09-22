@@ -8531,6 +8531,7 @@ dependencies = [
  "smol",
  "snippet",
  "snippet_provider",
+ "sqlez",
  "task",
  "tempfile",
  "terminal",

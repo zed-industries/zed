@@ -177,6 +177,7 @@ pub enum IconName {
     Debug,
     DebugStop,
     DebugDisconnect,
+    DebugLogBreakpoint,
     DatabaseZap,
     Delete,
     Disconnected,

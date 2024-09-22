@@ -56,6 +56,14 @@ impl IconButton {
         self.selected_icon = icon.into();
         self
     }
+
+    pub fn on_right_click(
+        mut self,
+        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.base = self.base.on_right_click(handler);
+        self
+    }
 }
 
 impl Disableable for IconButton {
