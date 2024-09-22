@@ -325,11 +325,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_auto_surround: Option<bool>,
-    // Controls how the editor handles the autoclosed characters.
-    // When set to `false`(default), skipping over and auto-removing of the closing characters
-    // happen only for auto-inserted characters.
-    // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
-    // no matter how they were inserted.
+    /// Controls how the editor handles the autoclosed characters.
+    /// When set to `false`(default), skipping over and auto-removing of the closing characters
+    /// happen only for auto-inserted characters.
+    /// Otherwise(when `true`), the closing characters are always skipped over and auto-removed
+    /// no matter how they were inserted.
     ///
     /// Default: false
     pub always_treat_brackets_as_autoclosed: Option<bool>,
