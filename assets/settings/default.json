@@ -15,9 +15,11 @@
   // text editor:
   //
   // 1. "VSCode"
-  // 2. "JetBrains"
-  // 3. "SublimeText"
-  // 4. "Atom"
+  // 2. "Atom"
+  // 3. "JetBrains"
+  // 4. "None"
+  // 5. "SublimeText"
+  // 6. "TextMate"
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
