@@ -2006,7 +2006,7 @@ impl Project {
                 cx.emit(Event::LanguageServerAdded(*language_server_id))
             }
             LspStoreEvent::LanguageServerRemoved(language_server_id) => {
-                cx.emit(Event::LanguageServerAdded(*language_server_id))
+                cx.emit(Event::LanguageServerRemoved(*language_server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
