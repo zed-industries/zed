@@ -126,6 +126,11 @@ pub struct RemoveWorktreeFromProject(pub WorktreeId);
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
+    debugger,
+    [Start, Continue, Disconnect, Pause, Restart, StepInto, StepOver, StepOut, Stop]
+);
+
+actions!(
     workspace,
     [
         ActivateNextPane,
@@ -150,7 +155,6 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
-        StartDebugger,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,

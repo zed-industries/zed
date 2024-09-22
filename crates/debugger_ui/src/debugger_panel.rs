@@ -27,13 +27,15 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-use workspace::{pane, Pane, StartDebugger};
+use workspace::{pane, Pane, Start};
 
 enum DebugCurrentRowHighlight {}
 
 pub enum DebugPanelEvent {
+    Exited(DebugAdapterClientId),
     Stopped((DebugAdapterClientId, StoppedEvent)),
     Thread((DebugAdapterClientId, ThreadEvent)),
+    Continued((DebugAdapterClientId, ContinuedEvent)),
     Output((DebugAdapterClientId, OutputEvent)),
     ClientStopped(DebugAdapterClientId),
 }
@@ -152,36 +154,14 @@ impl DebugPanel {
         })
     }
 
-    pub fn update_thread_state_status(
-        &mut self,
-        client_id: &DebugAdapterClientId,
-        thread_id: Option<u64>,
-        status: ThreadStatus,
-        all_threads_continued: Option<bool>,
+    pub fn active_debug_panel_item(
+        &self,
         cx: &mut ViewContext<Self>,
-    ) {
-        if all_threads_continued.unwrap_or(false) {
-            for (_, thread_state) in self
-                .thread_states
-                .range_mut((*client_id, u64::MIN)..(*client_id, u64::MAX))
-            {
-                thread_state.update(cx, |thread_state, cx| {
-                    thread_state.status = status;
-
-                    cx.notify();
-                });
-            }
-        } else if let Some(thread_state) =
-            thread_id.and_then(|thread_id| self.thread_states.get_mut(&(*client_id, thread_id)))
-        {
-            thread_state.update(cx, |thread_state, cx| {
-                thread_state.status = ThreadStatus::Running;
-
-                cx.notify();
-            });
-        }
-
-        cx.notify();
+    ) -> Option<View<DebugPanelItem>> {
+        self.pane
+            .read(cx)
+            .active_item()
+            .and_then(|panel| panel.downcast::<DebugPanelItem>())
     }
 
     fn debug_client_by_id(
@@ -440,13 +420,7 @@ impl DebugPanel {
         event: &ContinuedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        self.update_thread_state_status(
-            client_id,
-            Some(event.thread_id),
-            ThreadStatus::Running,
-            event.all_threads_continued,
-            cx,
-        );
+        cx.emit(DebugPanelEvent::Continued((*client_id, event.clone())));
     }
 
     fn handle_stopped_event(
@@ -643,14 +617,6 @@ impl DebugPanel {
                 cx.new_model(|_| ThreadState::default()),
             );
         } else {
-            self.update_thread_state_status(
-                client_id,
-                Some(thread_id),
-                ThreadStatus::Ended,
-                None,
-                cx,
-            );
-
             // TODO debugger: we want to figure out for witch clients/threads we should remove the highlights
             // cx.spawn({
             //     let client = client.clone();
@@ -674,7 +640,7 @@ impl DebugPanel {
         _: &ExitedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        self.update_thread_state_status(client_id, None, ThreadStatus::Exited, Some(true), cx);
+        cx.emit(DebugPanelEvent::Exited(*client_id));
     }
 
     fn handle_terminated_event(
@@ -835,7 +801,7 @@ impl Render for DebugPanel {
                                         )
                                         .label_size(LabelSize::Small)
                                         .on_click(move |_, cx| {
-                                            cx.dispatch_action(StartDebugger.boxed_clone());
+                                            cx.dispatch_action(Start.boxed_clone());
                                         })
                                     ),
                                 ),
