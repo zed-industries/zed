@@ -2813,7 +2813,7 @@ impl Panel for CollabPanel {
         settings::update_settings_file::<CollaborationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings, _| settings.dock = position,
+            move |settings, _| settings.dock = Some(position),
         );
     }
 
@@ -2831,7 +2831,7 @@ impl Panel for CollabPanel {
     fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
-            .then_some(ui::IconName::Collab)
+            .then_some(ui::IconName::UserGroup)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

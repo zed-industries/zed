@@ -22,7 +22,6 @@ use gpui::{actions, AppContext, AsyncAppContext, Global, Model, Task, WeakModel}
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
-use proto::{AnyProtoClient, EntityMessageSubscriber, ProtoClient, ProtoMessageHandlerSet};
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
@@ -99,26 +98,20 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(client, [SignIn, SignOut, Reconnect]);
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct ClientSettings {
-    /// The server to connect to. If the environment variable
-    /// ZED_SERVER_URL is set, it will override this setting.
-    pub server_url: String,
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ClientSettingsContent {
+    server_url: Option<String>,
 }
 
-impl Default for ClientSettings {
-    fn default() -> Self {
-        Self {
-            server_url: "https://zed.dev".to_owned(),
-        }
-    }
+#[derive(Deserialize)]
+pub struct ClientSettings {
+    pub server_url: String,
 }
 
 impl Settings for ClientSettings {
     const KEY: Option<&'static str> = None;
 
-    type FileContent = Self;
+    type FileContent = ClientSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
@@ -130,37 +123,19 @@ impl Settings for ClientSettings {
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct ProxySettings {
-    /// Set a proxy to use. The proxy protocol is specified by the URI scheme.
-    ///
-    /// Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
-    /// `socks5h`. `http` will be used when no scheme is specified.
-    ///
-    /// By default no proxy will be used, or Zed will try get proxy settings from
-    /// environment variables.
-    ///
-    /// Examples:
-    ///   - "proxy": "socks5://localhost:10808"
-    ///   - "proxy": "http://127.0.0.1:10809"
-    #[schemars(example = "Self::example_1")]
-    #[schemars(example = "Self::example_2")]
-    pub proxy: Option<String>,
+pub struct ProxySettingsContent {
+    proxy: Option<String>,
 }
 
-impl ProxySettings {
-    fn example_1() -> String {
-        "http://127.0.0.1:10809".to_owned()
-    }
-    fn example_2() -> String {
-        "socks5://localhost:10808".to_owned()
-    }
+#[derive(Deserialize, Default)]
+pub struct ProxySettings {
+    pub proxy: Option<String>,
 }
 
 impl Settings for ProxySettings {
     const KEY: Option<&'static str> = None;
 
-    type FileContent = Self;
+    type FileContent = ProxySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self {
@@ -264,8 +239,6 @@ pub enum EstablishConnectionError {
     Unauthorized,
     #[error("{0}")]
     Other(#[from] anyhow::Error),
-    #[error("{0}")]
-    Http(#[from] http_client::Error),
     #[error("{0}")]
     InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
@@ -554,19 +527,13 @@ impl Client {
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
-        let user_agent = format!(
-            "Zed/{} ({}; {})",
-            AppVersion::global(cx),
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
         let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new(
+        let http = Arc::new(HttpClientWithUrl::new_uri(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
-            Some(user_agent),
-            ProxySettings::get_global(cx).proxy.clone(),
+            cx.http_client().proxy().cloned(),
         ));
-        Self::new(clock, http.clone(), cx)
+        Self::new(clock, http, cx)
     }
 
     pub fn id(&self) -> u64 {
@@ -1170,8 +1137,32 @@ impl Client {
 
             match url_scheme {
                 Https => {
+                    let client_config = {
+                        let mut root_store = rustls::RootCertStore::empty();
+
+                        let root_certs = rustls_native_certs::load_native_certs();
+                        for error in root_certs.errors {
+                            log::warn!("error loading native certs: {:?}", error);
+                        }
+                        root_store.add_parsable_certificates(
+                            &root_certs
+                                .certs
+                                .into_iter()
+                                .map(|cert| cert.as_ref().to_owned())
+                                .collect::<Vec<_>>(),
+                        );
+                        rustls::ClientConfig::builder()
+                            .with_safe_defaults()
+                            .with_root_certificates(root_store)
+                            .with_no_client_auth()
+                    };
                     let (stream, _) =
-                        async_tungstenite::async_std::client_async_tls(request, stream).await?;
+                        async_tungstenite::async_tls::client_async_tls_with_connector(
+                            request,
+                            stream,
+                            Some(client_config.into()),
+                        )
+                        .await?;
                     Ok(Connection::new(
                         stream
                             .map_err(|error| anyhow!(error))
@@ -1629,6 +1620,10 @@ impl ProtoClient for Client {
 
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
         &self.handler_set
+    }
+
+    fn is_via_collab(&self) -> bool {
+        true
     }
 }
 

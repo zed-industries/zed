@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.154.0"
+version = "0.155.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -57,6 +57,7 @@ image_viewer.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
 isahc.workspace = true
+isahc_http_client.workspace = true
 journal.workspace = true
 language.workspace = true
 language_model.workspace = true
@@ -134,7 +135,7 @@ tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
-icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
+icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
 identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"

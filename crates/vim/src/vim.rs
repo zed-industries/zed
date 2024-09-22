@@ -6,12 +6,14 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod indent;
 mod insert;
 mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
 mod replace;
+mod rewrap;
 mod state;
 mod surrounds;
 mod visual;
@@ -24,7 +26,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, View, ViewContext, WeakView,
+    Render, Subscription, View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -46,8 +48,6 @@ use crate::state::ReplayableAction;
 /// Whether or not to enable Vim mode.
 ///
 /// Default: false
-#[derive(Copy, Clone, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(default, transparent)]
 pub struct VimModeSetting(pub bool);
 
 /// An Action to Switch between modes
@@ -101,7 +101,7 @@ pub fn init(cx: &mut AppContext) {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
-                *setting = VimModeSetting(!currently_enabled);
+                *setting = Some(!currently_enabled)
             })
         });
 
@@ -168,6 +168,8 @@ pub(crate) struct Vim {
     pub search: SearchState,
 
     editor: WeakView<Editor>,
+
+    _subscriptions: Vec<Subscription>,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -191,36 +193,32 @@ impl Vim {
     pub fn new(cx: &mut ViewContext<Editor>) -> View<Self> {
         let editor = cx.view().clone();
 
-        cx.new_view(|cx: &mut ViewContext<Vim>| {
-            cx.subscribe(&editor, |vim, _, event, cx| {
-                vim.handle_editor_event(event, cx)
-            })
-            .detach();
+        cx.new_view(|cx| Vim {
+            mode: Mode::Normal,
+            last_mode: Mode::Normal,
+            pre_count: None,
+            post_count: None,
+            operator_stack: Vec::new(),
+            replacements: Vec::new(),
 
-            let listener = cx.listener(Vim::observe_keystrokes);
-            cx.observe_keystrokes(listener).detach();
+            marks: HashMap::default(),
+            stored_visual_mode: None,
+            change_list: Vec::new(),
+            change_list_position: None,
+            current_tx: None,
+            current_anchor: None,
+            undo_modes: HashMap::default(),
 
-            Vim {
-                mode: Mode::Normal,
-                last_mode: Mode::Normal,
-                pre_count: None,
-                post_count: None,
-                operator_stack: Vec::new(),
-                replacements: Vec::new(),
+            selected_register: None,
+            search: SearchState::default(),
 
-                marks: HashMap::default(),
-                stored_visual_mode: None,
-                change_list: Vec::new(),
-                change_list_position: None,
-                current_tx: None,
-                current_anchor: None,
-                undo_modes: HashMap::default(),
-
-                selected_register: None,
-                search: SearchState::default(),
-
-                editor: editor.downgrade(),
-            }
+            editor: editor.downgrade(),
+            _subscriptions: vec![
+                cx.observe_keystrokes(Self::observe_keystrokes),
+                cx.subscribe(&editor, |this, _, event, cx| {
+                    this.handle_editor_event(event, cx)
+                }),
+            ],
         })
     }
 
@@ -293,6 +291,8 @@ impl Vim {
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);
+            indent::register(editor, cx);
+            rewrap::register(editor, cx);
             object::register(editor, cx);
             visual::register(editor, cx);
             change_list::register(editor, cx);
@@ -1070,10 +1070,12 @@ impl Vim {
 impl Settings for VimModeSetting {
     const KEY: Option<&'static str> = Some("vim_mode");
 
-    type FileContent = Self;
+    type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(sources.user.copied().unwrap_or(*sources.default))
+        Ok(Self(sources.user.copied().flatten().unwrap_or(
+            sources.default.ok_or_else(Self::missing_default)?,
+        )))
     }
 }
 
@@ -1089,8 +1091,7 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[derive(Deserialize)]
 struct VimSettings {
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
@@ -1099,22 +1100,19 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
 }
 
-impl Default for VimSettings {
-    fn default() -> Self {
-        Self {
-            toggle_relative_line_numbers: false,
-            use_system_clipboard: UseSystemClipboard::Always,
-            use_multiline_find: false,
-            use_smartcase_find: false,
-            custom_digraphs: Default::default(),
-        }
-    }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+struct VimSettingsContent {
+    pub toggle_relative_line_numbers: Option<bool>,
+    pub use_system_clipboard: Option<UseSystemClipboard>,
+    pub use_multiline_find: Option<bool>,
+    pub use_smartcase_find: Option<bool>,
+    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
 }
 
 impl Settings for VimSettings {
     const KEY: Option<&'static str> = Some("vim");
 
-    type FileContent = Self;
+    type FileContent = VimSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()

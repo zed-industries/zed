@@ -216,6 +216,7 @@ impl EditorElement {
         register_action(view, cx, Editor::move_line_up);
         register_action(view, cx, Editor::move_line_down);
         register_action(view, cx, Editor::transpose);
+        register_action(view, cx, Editor::rewrap);
         register_action(view, cx, Editor::cut);
         register_action(view, cx, Editor::copy);
         register_action(view, cx, Editor::paste);
@@ -345,6 +346,7 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
         register_action(view, cx, Editor::open_excerpts_in_split);
+        register_action(view, cx, Editor::open_proposed_changes_editor);
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_tab_bar);
         register_action(view, cx, Editor::toggle_line_numbers);
@@ -1283,7 +1285,10 @@ impl EditorElement {
                 .row,
         );
 
-        let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
+        let git_gutter_setting = ProjectSettings::get_global(cx)
+            .git
+            .git_gutter
+            .unwrap_or_default();
         let display_hunks = buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
@@ -1363,10 +1368,12 @@ impl EditorElement {
             };
             let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
 
-            let min_column_in_pixels = self.column_pixels(
-                ProjectSettings::get_global(cx).git.inline_blame.min_column as usize,
-                cx,
-            );
+            let min_column_in_pixels = ProjectSettings::get_global(cx)
+                .git
+                .inline_blame
+                .and_then(|settings| settings.min_column)
+                .map(|col| self.column_pixels(col as usize, cx))
+                .unwrap_or(px(0.));
             let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
 
             cmp::max(padded_line_end, min_start)
@@ -2073,13 +2080,13 @@ impl EditorElement {
                         .id(("path excerpt header", EntityId::from(block_id)))
                         .w_full()
                         .px(header_padding)
+                        .pt(header_padding)
                         .child(
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                                 .id("path header block")
                                 .h(2. * cx.line_height())
-                                .pl(gpui::px(12.))
-                                .pr(gpui::px(8.))
+                                .px(gpui::px(12.))
                                 .rounded_md()
                                 .shadow_md()
                                 .border_1()
@@ -3326,7 +3333,7 @@ impl EditorElement {
             .unwrap_or_else(|| {
                 matches!(
                     ProjectSettings::get_global(cx).git.git_gutter,
-                    GitGutterSetting::TrackedFiles
+                    Some(GitGutterSetting::TrackedFiles)
                 )
             });
         if show_git_gutter {
@@ -3704,11 +3711,11 @@ impl EditorElement {
                                     )
                                     .map(|hunk| {
                                         let start_display_row =
-                                            MultiBufferPoint::new(hunk.associated_range.start.0, 0)
+                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         let mut end_display_row =
-                                            MultiBufferPoint::new(hunk.associated_range.end.0, 0)
+                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         if end_display_row != start_display_row {

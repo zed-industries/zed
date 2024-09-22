@@ -1,13 +1,14 @@
-use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
+use super::{diagnostics_command::collect_buffer_diagnostics, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::Write,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
@@ -175,6 +176,8 @@ impl SlashCommand for FileSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -187,54 +190,15 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("missing path")));
         };
 
-        let task = collect_files(workspace.read(cx).project().clone(), arguments, cx);
-
-        cx.foreground_executor().spawn(async move {
-            let output = task.await?;
-            Ok(SlashCommandOutput {
-                text: output.completion_text,
-                sections: output
-                    .files
-                    .into_iter()
-                    .map(|file| {
-                        build_entry_output_section(
-                            file.range_in_text,
-                            Some(&file.path),
-                            file.entry_type == EntryType::Directory,
-                            None,
-                        )
-                    })
-                    .collect(),
-                run_commands_in_text: true,
-            })
-        })
+        collect_files(workspace.read(cx).project().clone(), arguments, cx)
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum EntryType {
-    File,
-    Directory,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-struct FileCommandOutput {
-    completion_text: String,
-    files: Vec<OutputFile>,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-struct OutputFile {
-    range_in_text: Range<usize>,
-    path: PathBuf,
-    entry_type: EntryType,
 }
 
 fn collect_files(
     project: Model<Project>,
     glob_inputs: &[String],
     cx: &mut AppContext,
-) -> Task<Result<FileCommandOutput>> {
+) -> Task<Result<SlashCommandOutput>> {
     let Ok(matchers) = glob_inputs
         .into_iter()
         .map(|glob_input| {
@@ -254,8 +218,7 @@ fn collect_files(
         .collect::<Vec<_>>();
 
     cx.spawn(|mut cx| async move {
-        let mut text = String::new();
-        let mut ranges = Vec::new();
+        let mut output = SlashCommandOutput::default();
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
             let mut directory_stack: Vec<(Arc<Path>, String, usize)> = Vec::new();
@@ -279,11 +242,12 @@ fn collect_files(
                         break;
                     }
                     let (_, entry_name, start) = directory_stack.pop().unwrap();
-                    ranges.push(OutputFile {
-                        range_in_text: start..text.len().saturating_sub(1),
-                        path: PathBuf::from(entry_name),
-                        entry_type: EntryType::Directory,
-                    });
+                    output.sections.push(build_entry_output_section(
+                        start..output.text.len().saturating_sub(1),
+                        Some(&PathBuf::from(entry_name)),
+                        true,
+                        None,
+                    ));
                 }
 
                 let filename = entry
@@ -315,21 +279,23 @@ fn collect_files(
                         continue;
                     }
                     let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
-                    let entry_start = text.len();
+                    let entry_start = output.text.len();
                     if prefix_paths.is_empty() {
                         if is_top_level_directory {
-                            text.push_str(&path_including_worktree_name.to_string_lossy());
+                            output
+                                .text
+                                .push_str(&path_including_worktree_name.to_string_lossy());
                             is_top_level_directory = false;
                         } else {
-                            text.push_str(&filename);
+                            output.text.push_str(&filename);
                         }
                         directory_stack.push((entry.path.clone(), filename, entry_start));
                     } else {
                         let entry_name = format!("{}/{}", prefix_paths, &filename);
-                        text.push_str(&entry_name);
+                        output.text.push_str(&entry_name);
                         directory_stack.push((entry.path.clone(), entry_name, entry_start));
                     }
-                    text.push('\n');
+                    output.text.push('\n');
                 } else if entry.is_file() {
                     let Some(open_buffer_task) = project_handle
                         .update(&mut cx, |project, cx| {
@@ -340,28 +306,13 @@ fn collect_files(
                         continue;
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
-                        let buffer_snapshot =
-                            cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
-                        let prev_len = text.len();
-                        collect_file_content(
-                            &mut text,
-                            &buffer_snapshot,
-                            path_including_worktree_name.to_string_lossy().to_string(),
-                        );
-                        text.push('\n');
-                        if !write_single_file_diagnostics(
-                            &mut text,
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                        append_buffer_to_output(
+                            &snapshot,
                             Some(&path_including_worktree_name),
-                            &buffer_snapshot,
-                        ) {
-                            text.pop();
-                        }
-                        ranges.push(OutputFile {
-                            range_in_text: prev_len..text.len(),
-                            path: path_including_worktree_name,
-                            entry_type: EntryType::File,
-                        });
-                        text.push('\n');
+                            &mut output,
+                        )
+                        .log_err();
                     }
                 }
             }
@@ -371,43 +322,30 @@ fn collect_files(
                     let mut root_path = PathBuf::new();
                     root_path.push(snapshot.root_name());
                     root_path.push(&dir);
-                    ranges.push(OutputFile {
-                        range_in_text: start..text.len(),
-                        path: root_path,
-                        entry_type: EntryType::Directory,
-                    });
+                    output.sections.push(build_entry_output_section(
+                        start..output.text.len(),
+                        Some(&root_path),
+                        true,
+                        None,
+                    ));
                 } else {
-                    ranges.push(OutputFile {
-                        range_in_text: start..text.len(),
-                        path: PathBuf::from(entry.as_str()),
-                        entry_type: EntryType::Directory,
-                    });
+                    output.sections.push(build_entry_output_section(
+                        start..output.text.len(),
+                        Some(&PathBuf::from(entry.as_str())),
+                        true,
+                        None,
+                    ));
                 }
             }
         }
-        Ok(FileCommandOutput {
-            completion_text: text,
-            files: ranges,
-        })
+        Ok(output)
     })
 }
 
-fn collect_file_content(buffer: &mut String, snapshot: &BufferSnapshot, filename: String) {
-    let mut content = snapshot.text();
-    LineEnding::normalize(&mut content);
-    buffer.reserve(filename.len() + content.len() + 9);
-    buffer.push_str(&codeblock_fence_for_path(
-        Some(&PathBuf::from(filename)),
-        None,
-    ));
-    buffer.push_str(&content);
-    if !buffer.ends_with('\n') {
-        buffer.push('\n');
-    }
-    buffer.push_str("```");
-}
-
-pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32>>) -> String {
+pub fn codeblock_fence_for_path(
+    path: Option<&Path>,
+    row_range: Option<RangeInclusive<u32>>,
+) -> String {
     let mut text = String::new();
     write!(text, "```").unwrap();
 
@@ -422,11 +360,16 @@ pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32
     }
 
     if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start + 1, row_range.end + 1).unwrap();
+        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
     }
 
     text.push('\n');
     text
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FileCommandMetadata {
+    pub path: String,
 }
 
 pub fn build_entry_output_section(
@@ -454,6 +397,16 @@ pub fn build_entry_output_section(
         range,
         icon,
         label: label.into(),
+        metadata: if is_directory {
+            None
+        } else {
+            path.and_then(|path| {
+                serde_json::to_value(FileCommandMetadata {
+                    path: path.to_string_lossy().to_string(),
+                })
+                .ok()
+            })
+        },
     }
 }
 
@@ -539,6 +492,36 @@ mod custom_path_matcher {
     }
 }
 
+pub fn append_buffer_to_output(
+    buffer: &BufferSnapshot,
+    path: Option<&Path>,
+    output: &mut SlashCommandOutput,
+) -> Result<()> {
+    let prev_len = output.text.len();
+
+    let mut content = buffer.text();
+    LineEnding::normalize(&mut content);
+    output.text.push_str(&codeblock_fence_for_path(path, None));
+    output.text.push_str(&content);
+    if !output.text.ends_with('\n') {
+        output.text.push('\n');
+    }
+    output.text.push_str("```");
+    output.text.push('\n');
+
+    let section_ix = output.sections.len();
+    collect_buffer_diagnostics(output, buffer, false);
+
+    output.sections.insert(
+        section_ix,
+        build_entry_output_section(prev_len..output.text.len(), path, false, None),
+    );
+
+    output.text.push('\n');
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use fs::FakeFs;
@@ -591,9 +574,9 @@ mod test {
             .await
             .unwrap();
 
-        assert!(result_1.completion_text.starts_with("root/dir"));
+        assert!(result_1.text.starts_with("root/dir"));
         // 4 files + 2 directories
-        assert_eq!(6, result_1.files.len());
+        assert_eq!(result_1.sections.len(), 6);
 
         let result_2 = cx
             .update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx))
@@ -607,9 +590,9 @@ mod test {
             .await
             .unwrap();
 
-        assert!(result.completion_text.starts_with("root/dir"));
+        assert!(result.text.starts_with("root/dir"));
         // 5 files + 2 directories
-        assert_eq!(7, result.files.len());
+        assert_eq!(result.sections.len(), 7);
 
         // Ensure that the project lasts until after the last await
         drop(project);
@@ -654,36 +637,27 @@ mod test {
             .unwrap();
 
         // Sanity check
-        assert!(result.completion_text.starts_with("zed/assets/themes\n"));
-        assert_eq!(7, result.files.len());
+        assert!(result.text.starts_with("zed/assets/themes\n"));
+        assert_eq!(result.sections.len(), 7);
 
         // Ensure that full file paths are included in the real output
-        assert!(result
-            .completion_text
-            .contains("zed/assets/themes/andromeda/LICENSE"));
-        assert!(result
-            .completion_text
-            .contains("zed/assets/themes/ayu/LICENSE"));
-        assert!(result
-            .completion_text
-            .contains("zed/assets/themes/summercamp/LICENSE"));
+        assert!(result.text.contains("zed/assets/themes/andromeda/LICENSE"));
+        assert!(result.text.contains("zed/assets/themes/ayu/LICENSE"));
+        assert!(result.text.contains("zed/assets/themes/summercamp/LICENSE"));
 
-        assert_eq!("summercamp", result.files[5].path.to_string_lossy());
+        assert_eq!(result.sections[5].label, "summercamp");
 
         // Ensure that things are in descending order, with properly relativized paths
         assert_eq!(
-            "zed/assets/themes/andromeda/LICENSE",
-            result.files[0].path.to_string_lossy()
+            result.sections[0].label,
+            "zed/assets/themes/andromeda/LICENSE"
         );
-        assert_eq!("andromeda", result.files[1].path.to_string_lossy());
+        assert_eq!(result.sections[1].label, "andromeda");
+        assert_eq!(result.sections[2].label, "zed/assets/themes/ayu/LICENSE");
+        assert_eq!(result.sections[3].label, "ayu");
         assert_eq!(
-            "zed/assets/themes/ayu/LICENSE",
-            result.files[2].path.to_string_lossy()
-        );
-        assert_eq!("ayu", result.files[3].path.to_string_lossy());
-        assert_eq!(
-            "zed/assets/themes/summercamp/LICENSE",
-            result.files[4].path.to_string_lossy()
+            result.sections[4].label,
+            "zed/assets/themes/summercamp/LICENSE"
         );
 
         // Ensure that the project lasts until after the last await
@@ -723,27 +697,24 @@ mod test {
             .await
             .unwrap();
 
-        assert!(result.completion_text.starts_with("zed/assets/themes\n"));
+        assert!(result.text.starts_with("zed/assets/themes\n"));
+        assert_eq!(result.sections[0].label, "zed/assets/themes/LICENSE");
         assert_eq!(
-            "zed/assets/themes/LICENSE",
-            result.files[0].path.to_string_lossy()
+            result.sections[1].label,
+            "zed/assets/themes/summercamp/LICENSE"
         );
         assert_eq!(
-            "zed/assets/themes/summercamp/LICENSE",
-            result.files[1].path.to_string_lossy()
+            result.sections[2].label,
+            "zed/assets/themes/summercamp/subdir/LICENSE"
         );
         assert_eq!(
-            "zed/assets/themes/summercamp/subdir/LICENSE",
-            result.files[2].path.to_string_lossy()
+            result.sections[3].label,
+            "zed/assets/themes/summercamp/subdir/subsubdir/LICENSE"
         );
-        assert_eq!(
-            "zed/assets/themes/summercamp/subdir/subsubdir/LICENSE",
-            result.files[3].path.to_string_lossy()
-        );
-        assert_eq!("subsubdir", result.files[4].path.to_string_lossy());
-        assert_eq!("subdir", result.files[5].path.to_string_lossy());
-        assert_eq!("summercamp", result.files[6].path.to_string_lossy());
-        assert_eq!("zed/assets/themes", result.files[7].path.to_string_lossy());
+        assert_eq!(result.sections[4].label, "subsubdir");
+        assert_eq!(result.sections[5].label, "subdir");
+        assert_eq!(result.sections[6].label, "summercamp");
+        assert_eq!(result.sections[7].label, "zed/assets/themes");
 
         // Ensure that the project lasts until after the last await
         drop(project);

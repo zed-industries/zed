@@ -1596,7 +1596,7 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         }
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
-    let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
+    let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");
     (success, task_line, command_line)
 }
 
@@ -1619,7 +1619,7 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
 ///   the cursor's `point` is not updated to the new line and column values
 ///
 /// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.
-///   Still, concequent `append_text_to_term` invocations are possible and display the contents correctly.
+///   Still, subsequent `append_text_to_term` invocations are possible and display the contents correctly.
 ///
 /// Despite the quirks, this is the simplest approach to appending text to the terminal: its alternative, `grid_mut` manipulations,
 /// do not properly set the scrolling state and display odd text after appending; also those manipulations are more tedious and error-prone.

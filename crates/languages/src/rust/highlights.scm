@@ -139,7 +139,6 @@
 ] @comment.doc
 
 [
-  "!"
   "!="
   "%"
   "%="
@@ -159,7 +158,6 @@
   ".."
   "..="
   "..."
-  "/"
   "/="
   ":"
   ";"
@@ -182,6 +180,10 @@
   "||"
   "?"
 ] @operator
+
+; Avoid highlighting these as operators when used in doc comments.
+(unary_expression "!" @operator)
+operator: "/" @operator
 
 (lifetime) @lifetime
 

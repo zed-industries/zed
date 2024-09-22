@@ -1996,7 +1996,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                     project_settings.file_scan_exclusions =
-                        vec!["excluded_dir".to_string(), "**/.git".to_string()];
+                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
                 });
             });
         });
@@ -3445,7 +3445,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -3459,7 +3459,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_md::language()),
+            Some(tree_sitter_md::LANGUAGE.into()),
         ))
     }
 

@@ -378,6 +378,9 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
+                .when_some(tab_match.item.tab_icon(cx), |el, icon| {
+                    el.start_slot(div().child(icon))
+                })
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)

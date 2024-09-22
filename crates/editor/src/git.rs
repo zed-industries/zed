@@ -2,9 +2,9 @@ pub mod blame;
 
 use std::ops::Range;
 
-use git::diff::{DiffHunk, DiffHunkStatus};
+use git::diff::DiffHunkStatus;
 use language::Point;
-use multi_buffer::{Anchor, MultiBufferRow};
+use multi_buffer::{Anchor, MultiBufferDiffHunk};
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
@@ -49,25 +49,25 @@ impl DisplayDiffHunk {
 }
 
 pub fn diff_hunk_to_display(
-    hunk: &DiffHunk<MultiBufferRow>,
+    hunk: &MultiBufferDiffHunk,
     snapshot: &DisplaySnapshot,
 ) -> DisplayDiffHunk {
-    let hunk_start_point = Point::new(hunk.associated_range.start.0, 0);
-    let hunk_start_point_sub = Point::new(hunk.associated_range.start.0.saturating_sub(1), 0);
+    let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
+    let hunk_start_point_sub = Point::new(hunk.row_range.start.0.saturating_sub(1), 0);
     let hunk_end_point_sub = Point::new(
-        hunk.associated_range
+        hunk.row_range
             .end
             .0
             .saturating_sub(1)
-            .max(hunk.associated_range.start.0),
+            .max(hunk.row_range.start.0),
         0,
     );
 
     let status = hunk_status(hunk);
     let is_removal = status == DiffHunkStatus::Removed;
 
-    let folds_start = Point::new(hunk.associated_range.start.0.saturating_sub(2), 0);
-    let folds_end = Point::new(hunk.associated_range.end.0 + 2, 0);
+    let folds_start = Point::new(hunk.row_range.start.0.saturating_sub(2), 0);
+    let folds_end = Point::new(hunk.row_range.end.0 + 2, 0);
     let folds_range = folds_start..folds_end;
 
     let containing_fold = snapshot.folds_in_range(folds_range).find(|fold| {
@@ -87,7 +87,7 @@ pub fn diff_hunk_to_display(
     } else {
         let start = hunk_start_point.to_display_point(snapshot).row();
 
-        let hunk_end_row = hunk.associated_range.end.max(hunk.associated_range.start);
+        let hunk_end_row = hunk.row_range.end.max(hunk.row_range.start);
         let hunk_end_point = Point::new(hunk_end_row.0, 0);
 
         let multi_buffer_start = snapshot.buffer_snapshot.anchor_after(hunk_start_point);
@@ -195,7 +195,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+            let mut multibuffer = MultiBuffer::new(ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .git_diff_hunks_in_range(MultiBufferRow(0)..MultiBufferRow(12))
-                .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
+                .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),
             &expected,
         );
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .git_diff_hunks_in_range_rev(MultiBufferRow(0)..MultiBufferRow(12))
-                .map(|hunk| (hunk_status(&hunk), hunk.associated_range))
+                .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),
             expected
                 .iter()

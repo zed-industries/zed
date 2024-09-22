@@ -59,6 +59,7 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: LanguageModelSelection,
+    pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
 }
 
@@ -163,11 +164,13 @@ impl AssistantSettingsContent {
                                                     display_name,
                                                     max_tokens,
                                                     max_output_tokens,
+                                                    max_completion_tokens: None,
                                                 } => Some(open_ai::AvailableModel {
                                                     name,
                                                     display_name,
                                                     max_tokens,
                                                     max_output_tokens,
+                                                    max_completion_tokens: None,
                                                 }),
                                                 _ => None,
                                             })
@@ -234,6 +237,7 @@ impl AssistantSettingsContent {
                                 })
                             }
                         }),
+                    inline_alternatives: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -252,6 +256,7 @@ impl AssistantSettingsContent {
                         .id()
                         .to_string(),
                 }),
+                inline_alternatives: None,
             },
         }
     }
@@ -367,6 +372,7 @@ impl Default for VersionedAssistantSettingsContent {
             default_width: None,
             default_height: None,
             default_model: None,
+            inline_alternatives: None,
         })
     }
 }
@@ -395,6 +401,8 @@ pub struct AssistantSettingsContentV2 {
     default_height: Option<f32>,
     /// The default model to use when creating new contexts.
     default_model: Option<LanguageModelSelection>,
+    /// Additional models with which to generate alternatives when performing inline assists.
+    inline_alternatives: Option<Vec<LanguageModelSelection>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -515,10 +523,9 @@ impl Settings for AssistantSettings {
                 &mut settings.default_height,
                 value.default_height.map(Into::into),
             );
-            merge(
-                &mut settings.default_model,
-                value.default_model.map(Into::into),
-            );
+            merge(&mut settings.default_model, value.default_model);
+            merge(&mut settings.inline_alternatives, value.inline_alternatives);
+            // merge(&mut settings.infer_context, value.infer_context); TODO re-enable this once we ship context inference
         }
 
         Ok(settings)
@@ -571,6 +578,7 @@ mod tests {
                                 provider: "test-provider".into(),
                                 model: "gpt-99".into(),
                             }),
+                            inline_alternatives: None,
                             enabled: None,
                             button: None,
                             dock: None,

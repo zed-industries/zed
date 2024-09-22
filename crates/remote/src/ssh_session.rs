@@ -13,9 +13,9 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion};
 use parking_lot::Mutex;
-use rpc::proto::{
-    self, build_typed_envelope, EntityMessageSubscriber, Envelope, EnvelopedMessage, PeerId,
-    ProtoClient, ProtoMessageHandlerSet, RequestMessage,
+use rpc::{
+    proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
+    EntityMessageSubscriber, ProtoClient, ProtoMessageHandlerSet, RpcError,
 };
 use smol::{
     fs,
@@ -32,6 +32,11 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
+
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
+pub struct SshProjectId(pub u64);
 
 #[derive(Clone)]
 pub struct SshSocket {
@@ -157,8 +162,9 @@ impl SshSession {
 
         let mut remote_server_child = socket
             .ssh_command(format!(
-                "RUST_LOG={} {:?} run",
+                "RUST_LOG={} RUST_BACKTRACE={} {:?} run",
                 std::env::var("RUST_LOG").unwrap_or_default(),
+                std::env::var("RUST_BACKTRACE").unwrap_or_default(),
                 remote_binary_path,
             ))
             .spawn()
@@ -241,7 +247,8 @@ impl SshSession {
                                     let line_ix = start_ix + ix;
                                     let content = &stderr_buffer[start_ix..line_ix];
                                     start_ix = line_ix + 1;
-                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
+                                    if let Ok(mut record) = serde_json::from_slice::<LogRecord>(content) {
+                                        record.message = format!("(remote) {}", record.message);
                                         record.log(log::logger())
                                     } else {
                                         eprintln!("(remote) {}", String::from_utf8_lossy(content));
@@ -349,7 +356,7 @@ impl SshSession {
                                 }
                                 Err(error) => {
                                     log::error!(
-                                        "error handling message. type:{type_name}, error:{error:?}",
+                                        "error handling message. type:{type_name}, error:{error}",
                                     );
                                 }
                             }
@@ -371,7 +378,7 @@ impl SshSession {
         payload: T,
     ) -> impl 'static + Future<Output = Result<T::Response>> {
         log::debug!("ssh request start. name:{}", T::NAME);
-        let response = self.request_dynamic(payload.into_envelope(0, None, None), "");
+        let response = self.request_dynamic(payload.into_envelope(0, None, None), T::NAME);
         async move {
             let response = response.await?;
             log::debug!("ssh request finish. name:{}", T::NAME);
@@ -388,7 +395,7 @@ impl SshSession {
     pub fn request_dynamic(
         &self,
         mut envelope: proto::Envelope,
-        _request_type: &'static str,
+        type_name: &'static str,
     ) -> impl 'static + Future<Output = Result<proto::Envelope>> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         let (tx, rx) = oneshot::channel();
@@ -396,7 +403,13 @@ impl SshSession {
         response_channels_lock.insert(MessageId(envelope.id), tx);
         drop(response_channels_lock);
         self.outgoing_tx.unbounded_send(envelope).ok();
-        async move { Ok(rx.await.context("connection lost")?.0) }
+        async move {
+            let response = rx.await.context("connection lost")?.0;
+            if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
+                return Err(RpcError::from_proto(error, type_name));
+            }
+            Ok(response)
+        }
     }
 
     pub fn send_dynamic(&self, mut envelope: proto::Envelope) -> Result<()> {
@@ -456,6 +469,10 @@ impl ProtoClient for SshSession {
 
     fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
         &self.state
+    }
+
+    fn is_via_collab(&self) -> bool {
+        false
     }
 }
 

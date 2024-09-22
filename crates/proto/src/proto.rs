@@ -2,11 +2,9 @@
 
 pub mod error;
 mod macros;
-mod proto_client;
 mod typed_envelope;
 
 pub use error::*;
-pub use proto_client::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;
@@ -372,6 +370,9 @@ messages!(
     (WhichCommandResponse, Foreground),
     (ShellEnv, Foreground),
     (ShellEnvResponse, Foreground),
+    (TryExec, Foreground),
+    (ReadTextFile, Foreground),
+    (ReadTextFileResponse, Foreground)
 );
 
 request_messages!(
@@ -497,7 +498,9 @@ request_messages!(
     (AddWorktree, AddWorktreeResponse),
     (CreateLanguageServer, Ack),
     (WhichCommand, WhichCommandResponse),
-    (ShellEnv, ShellEnvResponse)
+    (ShellEnv, ShellEnvResponse),
+    (ReadTextFile, ReadTextFileResponse),
+    (TryExec, Ack),
 );
 
 entity_messages!(
@@ -573,7 +576,9 @@ entity_messages!(
     UpdateUserSettings,
     CreateLanguageServer,
     WhichCommand,
-    ShellEnv
+    ShellEnv,
+    TryExec,
+    ReadTextFile
 );
 
 entity_messages!(

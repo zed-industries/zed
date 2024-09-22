@@ -24,7 +24,6 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
-    env::set_var("RUST_BACKTRACE", "1");
     env_logger::builder()
         .format(|buf, record| {
             serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;

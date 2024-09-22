@@ -132,7 +132,7 @@ mod test {
                 let mut custom_digraphs = HashMap::default();
                 custom_digraphs.insert("|-".into(), "⊢".into());
                 custom_digraphs.insert(":)".into(), "👨‍💻".into());
-                s.custom_digraphs = custom_digraphs;
+                s.custom_digraphs = Some(custom_digraphs);
             });
         });
 

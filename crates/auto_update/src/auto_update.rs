@@ -9,7 +9,6 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
     SemanticVersion, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use isahc::AsyncBody;
 
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use schemars::JsonSchema;
@@ -20,7 +19,7 @@ use smol::{fs, io::AsyncReadExt};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
-use http_client::{HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::{
@@ -116,30 +115,27 @@ impl Drop for MacOsUnmounter {
     }
 }
 
-/// Whether or not to automatically check for updates.
-#[derive(Clone, Copy, JsonSchema, Deserialize, Serialize)]
-#[serde(default)]
-#[serde(transparent)]
 struct AutoUpdateSetting(bool);
 
-impl Default for AutoUpdateSetting {
-    fn default() -> Self {
-        Self(true)
-    }
-}
+/// Whether or not to automatically check for updates.
+///
+/// Default: true
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
+#[serde(transparent)]
+struct AutoUpdateSettingContent(bool);
 
 impl Settings for AutoUpdateSetting {
     const KEY: Option<&'static str> = Some("auto_update");
 
-    type FileContent = Self;
+    type FileContent = Option<AutoUpdateSettingContent>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let auto_update = [sources.release_channel, sources.user]
             .into_iter()
-            .find_map(|value| value.copied())
-            .unwrap_or(*sources.default);
+            .find_map(|value| value.copied().flatten())
+            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
-        Ok(auto_update)
+        Ok(Self(auto_update.0))
     }
 }
 
@@ -247,19 +243,22 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
     let auto_updater = AutoUpdater::get(cx)?;
     let release_channel = ReleaseChannel::try_global(cx)?;
 
-    if matches!(
-        release_channel,
-        ReleaseChannel::Stable | ReleaseChannel::Preview
-    ) {
-        let auto_updater = auto_updater.read(cx);
-        let release_channel = release_channel.dev_name();
-        let current_version = auto_updater.current_version;
-        let url = &auto_updater
-            .http_client
-            .build_url(&format!("/releases/{release_channel}/{current_version}"));
-        cx.open_url(url);
+    match release_channel {
+        ReleaseChannel::Stable | ReleaseChannel::Preview => {
+            let auto_updater = auto_updater.read(cx);
+            let current_version = auto_updater.current_version;
+            let release_channel = release_channel.dev_name();
+            let path = format!("/releases/{release_channel}/{current_version}");
+            let url = &auto_updater.http_client.build_url(&path);
+            cx.open_url(url);
+        }
+        ReleaseChannel::Nightly => {
+            cx.open_url("https://github.com/zed-industries/zed/commits/nightly/");
+        }
+        ReleaseChannel::Dev => {
+            cx.open_url("https://github.com/zed-industries/zed/commits/main/");
+        }
     }
-
     None
 }
 
@@ -269,7 +268,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
 
     let client = client::Client::global(cx).http_client();
     let url = client.build_url(&format!(
-        "/api/release_notes/{}/{}",
+        "/api/release_notes/v2/{}/{}",
         release_channel.dev_name(),
         version
     ));

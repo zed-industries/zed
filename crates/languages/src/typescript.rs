@@ -8,10 +8,9 @@ use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
-use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
@@ -72,7 +71,8 @@ pub struct TypeScriptLspAdapter {
 impl TypeScriptLspAdapter {
     const OLD_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
-    const SERVER_NAME: &'static str = "typescript-language-server";
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static("typescript-language-server");
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         TypeScriptLspAdapter { node }
     }
@@ -98,7 +98,7 @@ struct TypeScriptVersions {
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -236,14 +236,12 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.initialization_options.clone())
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
         })?;
         if let Some(options) = override_options {
             return Ok(options);
@@ -307,7 +305,7 @@ impl EsLintLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
 
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
-    const SERVER_NAME: &'static str = "eslint";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("eslint");
 
     const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
         &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
@@ -334,9 +332,7 @@ impl LspAdapter for EsLintLspAdapter {
         let workspace_root = delegate.worktree_root_path();
 
         let eslint_user_settings = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;
@@ -408,7 +404,7 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -560,7 +556,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::language("typescript", tree_sitter_typescript::language_typescript());
+        let language = crate::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
 
         let text = r#"
             function a() {

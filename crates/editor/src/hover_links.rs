@@ -713,17 +713,42 @@ pub(crate) async fn find_file(
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
-
+    let scope = snapshot.language_scope_at(position);
     let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
 
-    let existing_path = project
-        .update(cx, |project, cx| {
-            project.resolve_existing_file_path(&candidate_file_path, buffer, cx)
-        })
-        .ok()?
-        .await?;
+    async fn check_path(
+        candidate_file_path: &str,
+        project: &Model<Project>,
+        buffer: &Model<language::Buffer>,
+        cx: &mut AsyncWindowContext,
+    ) -> Option<ResolvedPath> {
+        project
+            .update(cx, |project, cx| {
+                project.resolve_existing_file_path(&candidate_file_path, buffer, cx)
+            })
+            .ok()?
+            .await
+    }
 
-    Some((range, existing_path))
+    if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, cx).await {
+        return Some((range, existing_path));
+    }
+
+    if let Some(scope) = scope {
+        for suffix in scope.path_suffixes() {
+            if candidate_file_path.ends_with(format!(".{suffix}").as_str()) {
+                continue;
+            }
+
+            let suffixed_candidate = format!("{candidate_file_path}.{suffix}");
+            if let Some(existing_path) = check_path(&suffixed_candidate, &project, buffer, cx).await
+            {
+                return Some((range, existing_path));
+            }
+        }
+    }
+
+    None
 }
 
 fn surrounding_filename(
@@ -1180,6 +1205,7 @@ mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1490,7 +1516,8 @@ mod tests {
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.ˇ
+            Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.ˇ
         "});
 
         // File does not exist
@@ -1499,6 +1526,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         // No highlight
@@ -1517,6 +1545,7 @@ mod tests {
             Go to fˇile2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
@@ -1525,6 +1554,7 @@ mod tests {
             Go to «file2.rsˇ» if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         // Moving the mouse over a relative path that does exist should highlight it
@@ -1533,6 +1563,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/fˇile2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
@@ -1541,6 +1572,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to «../dir/file2.rsˇ» if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         // Moving the mouse over an absolute path that does exist should highlight it
@@ -1549,6 +1581,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/diˇr/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
@@ -1557,6 +1590,25 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to «/root/dir/file2.rsˇ» if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
+        "});
+
+        // Moving the mouse over a path that exists, if we add the language-specific suffix, it should highlight it
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/diˇr/file2 if this is a Rust file.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+            Or go to «/root/dir/file2ˇ» if this is a Rust file.
         "});
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());

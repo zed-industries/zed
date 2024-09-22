@@ -1,14 +1,12 @@
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use language::LanguageServerName;
 use paths::local_settings_file_relative_path;
-use rpc::{
-    proto::{self, AnyProtoClient},
-    TypedEnvelope,
-};
+use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
+use settings::{InvalidSettingsError, Settings, SettingsSources, SettingsStore};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -20,7 +18,6 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -31,7 +28,7 @@ pub struct ProjectSettings {
     /// name to the lsp value.
     /// Default: null
     #[serde(default)]
-    pub lsp: HashMap<Arc<str>, LspSettings>,
+    pub lsp: HashMap<LanguageServerName, LspSettings>,
 
     /// Configuration for Git-related features
     #[serde(default)]
@@ -42,6 +39,7 @@ pub struct ProjectSettings {
     pub load_direnv: DirenvSettings,
 
     /// Configuration for session-related features
+    #[serde(default)]
     pub session: SessionSettings,
 }
 
@@ -59,31 +57,36 @@ pub enum DirenvSettings {
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
-    pub git_gutter: GitGutterSetting,
+    pub git_gutter: Option<GitGutterSetting>,
     pub gutter_debounce: Option<u64>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: on
-    pub inline_blame: InlineBlameSettings,
+    pub inline_blame: Option<InlineBlameSettings>,
 }
 
 impl GitSettings {
     pub fn inline_blame_enabled(&self) -> bool {
         #[allow(unknown_lints, clippy::manual_unwrap_or_default)]
-        self.inline_blame.enabled
+        match self.inline_blame {
+            Some(InlineBlameSettings { enabled, .. }) => enabled,
+            _ => false,
+        }
     }
 
     pub fn inline_blame_delay(&self) -> Option<Duration> {
-        self.inline_blame
-            .delay_ms
-            .gt(&0)
-            .then(|| Duration::from_millis(self.inline_blame.delay_ms))
+        match self.inline_blame {
+            Some(InlineBlameSettings {
+                delay_ms: Some(delay_ms),
+                ..
+            }) if delay_ms > 0 => Some(Duration::from_millis(delay_ms)),
+            _ => None,
+        }
     }
 }
 
@@ -97,34 +100,28 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-#[serde(default)]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: true
+    #[serde(default = "true_value")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: u64,
+    pub delay_ms: Option<u64>,
     /// The minimum column number to show the inline blame information at
     ///
     /// Default: 0
-    pub min_column: u32,
+    pub min_column: Option<u32>,
 }
 
-impl Default for InlineBlameSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            delay_ms: 0,
-            min_column: 0,
-        }
-    }
+const fn true_value() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -179,6 +176,13 @@ pub enum SettingsObserverMode {
     Ssh(AnyProtoClient),
     Remote,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SettingsObserverEvent {
+    LocalSettingsUpdated(Result<(), InvalidSettingsError>),
+}
+
+impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
 
 pub struct SettingsObserver {
     mode: SettingsObserverMode,
@@ -419,11 +423,16 @@ impl SettingsObserver {
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+
+        let result = cx.update_global::<SettingsStore, anyhow::Result<()>>(|store, cx| {
             for (directory, file_content) in settings_contents {
-                store
-                    .set_local_settings(worktree_id, directory.clone(), file_content.as_deref(), cx)
-                    .log_err();
+                store.set_local_settings(
+                    worktree_id,
+                    directory.clone(),
+                    file_content.as_deref(),
+                    cx,
+                )?;
+
                 if let Some(downstream_client) = &self.downstream_client {
                     downstream_client
                         .send(proto::UpdateWorktreeSettings {
@@ -435,6 +444,25 @@ impl SettingsObserver {
                         .log_err();
                 }
             }
-        })
+            anyhow::Ok(())
+        });
+
+        match result {
+            Err(error) => {
+                if let Ok(error) = error.downcast::<InvalidSettingsError>() {
+                    if let InvalidSettingsError::LocalSettings {
+                        ref path,
+                        ref message,
+                    } = error
+                    {
+                        log::error!("Failed to set local settings in {:?}: {:?}", path, message);
+                        cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(error)));
+                    }
+                }
+            }
+            Ok(()) => {
+                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
+            }
+        }
     }
 }

@@ -113,7 +113,9 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
             editor.set_auto_replace_emoji_shortcode(
-                MessageEditorSettings::get_global(cx).auto_replace_emoji_shortcode,
+                MessageEditorSettings::get_global(cx)
+                    .auto_replace_emoji_shortcode
+                    .unwrap_or_default(),
             );
         });
 
@@ -128,7 +130,9 @@ impl MessageEditor {
         cx.observe_global::<settings::SettingsStore>(|view, cx| {
             view.editor.update(cx, |editor, cx| {
                 editor.set_auto_replace_emoji_shortcode(
-                    MessageEditorSettings::get_global(cx).auto_replace_emoji_shortcode,
+                    MessageEditorSettings::get_global(cx)
+                        .auto_replace_emoji_shortcode
+                        .unwrap_or_default(),
                 )
             })
         })
@@ -224,10 +228,10 @@ impl MessageEditor {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let language::Event::Reparsed | language::Event::Edited = event {
+        if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let buffer = buffer.read(cx).snapshot();
             self.mentions_task = Some(cx.spawn(|this, cx| async move {
                 cx.background_executor()

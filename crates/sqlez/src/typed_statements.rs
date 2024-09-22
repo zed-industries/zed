@@ -74,7 +74,7 @@ impl Connection {
     }
 
     /// Prepare a statement which takes a binding and selects a single row
-    /// from the database. WIll return none if no rows are returned and will
+    /// from the database. Will return none if no rows are returned and will
     /// error if more than 1 row is returned.
     ///
     /// Note: If there are multiple statements that depend upon each other
