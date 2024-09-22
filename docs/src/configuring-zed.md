@@ -159,7 +159,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values
+`integer` values between `6` and `100`
 
 ## Buffer Font Weight
 
@@ -2136,7 +2136,7 @@ Float values between `0.0` and `0.9`, where:
 
 **Options**
 
-`integer` values
+`integer` values between `6` and `100`
 
 ## An example configuration:
 
