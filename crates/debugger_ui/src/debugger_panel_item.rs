@@ -204,7 +204,7 @@ impl DebugPanelItem {
             return;
         }
 
-        self.update_thread_state_status(ThreadStatus::Ended, cx);
+        self.update_thread_state_status(ThreadStatus::Running, cx);
     }
 
     fn handle_output_event(
