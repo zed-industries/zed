@@ -325,6 +325,8 @@ pre > .playground {
 pre > code {
   display: block;
   padding: 1rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* FIXME: ACE editors overlap their buttons because ACE does absolute
