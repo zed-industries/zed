@@ -438,7 +438,7 @@ async fn run_eval_project(
             loop {
                 match cx.update(|cx| {
                     let project_index = project_index.read(cx);
-                    project_index.search(query.query.clone(), SEARCH_RESULT_LIMIT, cx)
+                    project_index.search(vec![query.query.clone()], SEARCH_RESULT_LIMIT, cx)
                 }) {
                     Ok(task) => match task.await {
                         Ok(answer) => {

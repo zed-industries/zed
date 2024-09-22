@@ -7056,7 +7056,6 @@ dependencies = [
  "ctor",
  "env_logger",
  "futures 0.3.30",
- "git",
  "gpui",
  "itertools 0.13.0",
  "language",

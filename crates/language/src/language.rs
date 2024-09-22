@@ -139,11 +139,52 @@ pub trait ToLspPosition {
 
 /// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-pub struct LanguageServerName(pub Arc<str>);
+pub struct LanguageServerName(pub SharedString);
 
+impl std::fmt::Display for LanguageServerName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl AsRef<str> for LanguageServerName {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<OsStr> for LanguageServerName {
+    fn as_ref(&self) -> &OsStr {
+        self.0.as_ref().as_ref()
+    }
+}
+
+impl JsonSchema for LanguageServerName {
+    fn schema_name() -> String {
+        "LanguageServerName".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            ..Default::default()
+        }
+        .into()
+    }
+}
 impl LanguageServerName {
+    pub const fn new_static(s: &'static str) -> Self {
+        Self(SharedString::new_static(s))
+    }
+
     pub fn from_proto(s: String) -> Self {
-        Self(Arc::from(s))
+        Self(s.into())
+    }
+}
+
+impl<'a> From<&'a str> for LanguageServerName {
+    fn from(str: &'a str) -> LanguageServerName {
+        LanguageServerName(str.to_string().into())
     }
 }
 
@@ -202,8 +243,8 @@ impl CachedLspAdapter {
         })
     }
 
-    pub fn name(&self) -> Arc<str> {
-        self.adapter.name().0.clone()
+    pub fn name(&self) -> LanguageServerName {
+        self.adapter.name().clone()
     }
 
     pub async fn get_language_server_command(
@@ -594,7 +635,7 @@ pub struct LanguageConfig {
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     /// A list of language servers that are allowed to run on subranges of a given language.
     #[serde(default)]
-    pub scope_opt_in_language_servers: Vec<String>,
+    pub scope_opt_in_language_servers: Vec<LanguageServerName>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
     /// A list of characters that Zed should treat as word characters for the
@@ -658,7 +699,7 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
     #[serde(default)]
-    pub opt_into_language_servers: Vec<String>,
+    pub opt_into_language_servers: Vec<LanguageServerName>,
 }
 
 #[derive(Clone, Deserialize, Debug, Serialize, JsonSchema)]
@@ -1479,9 +1520,9 @@ impl LanguageScope {
     pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
         let config = &self.language.config;
         let opt_in_servers = &config.scope_opt_in_language_servers;
-        if opt_in_servers.iter().any(|o| *o == *name.0) {
+        if opt_in_servers.iter().any(|o| *o == *name) {
             if let Some(over) = self.config_override() {
-                over.opt_into_language_servers.iter().any(|o| *o == *name.0)
+                over.opt_into_language_servers.iter().any(|o| *o == *name)
             } else {
                 false
             }

@@ -1,6 +1,7 @@
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use language::LanguageServerName;
 use paths::local_settings_file_relative_path;
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
@@ -27,7 +28,7 @@ pub struct ProjectSettings {
     /// name to the lsp value.
     /// Default: null
     #[serde(default)]
-    pub lsp: HashMap<Arc<str>, LspSettings>,
+    pub lsp: HashMap<LanguageServerName, LspSettings>,
 
     /// Configuration for Git-related features
     #[serde(default)]

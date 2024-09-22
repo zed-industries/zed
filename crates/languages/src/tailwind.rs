@@ -32,7 +32,8 @@ pub struct TailwindLspAdapter {
 }
 
 impl TailwindLspAdapter {
-    const SERVER_NAME: &'static str = "tailwindcss-language-server";
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static("tailwindcss-language-server");
 
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         TailwindLspAdapter { node }
@@ -42,7 +43,7 @@ impl TailwindLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn check_if_user_installed(
@@ -52,7 +53,7 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let configured_binary = cx
             .update(|cx| {
-                language_server_settings(delegate, Self::SERVER_NAME, cx)
+                language_server_settings(delegate, &Self::SERVER_NAME, cx)
                     .and_then(|s| s.binary.clone())
             })
             .ok()??;
@@ -152,7 +153,7 @@ impl LspAdapter for TailwindLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let tailwind_user_settings = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), Self::SERVER_NAME, cx)
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;

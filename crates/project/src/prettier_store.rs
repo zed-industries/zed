@@ -338,7 +338,7 @@ impl PrettierStore {
             prettier_store
                 .update(cx, |prettier_store, cx| {
                     let name = if is_default {
-                        LanguageServerName(Arc::from("prettier (default)"))
+                        LanguageServerName("prettier (default)".to_string().into())
                     } else {
                         let worktree_path = worktree_id
                             .and_then(|id| {
@@ -366,7 +366,7 @@ impl PrettierStore {
                             }
                             None => format!("prettier ({})", prettier_dir.display()),
                         };
-                        LanguageServerName(Arc::from(name))
+                        LanguageServerName(name.into())
                     };
                     cx.emit(PrettierStoreEvent::LanguageServerAdded {
                         new_server_id,

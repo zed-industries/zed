@@ -175,7 +175,10 @@ impl ChannelBuffer {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::BufferEvent::Operation(operation) => {
+            language::BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => {
                 if *ZED_ALWAYS_ACTIVE {
                     if let language::Operation::UpdateSelections { selections, .. } = operation {
                         if selections.is_empty() {

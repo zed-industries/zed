@@ -2006,7 +2006,7 @@ impl Project {
                 cx.emit(Event::LanguageServerAdded(*language_server_id))
             }
             LspStoreEvent::LanguageServerRemoved(language_server_id) => {
-                cx.emit(Event::LanguageServerAdded(*language_server_id))
+                cx.emit(Event::LanguageServerRemoved(*language_server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
@@ -2182,7 +2182,10 @@ impl Project {
 
         let buffer_id = buffer.read(cx).remote_id();
         match event {
-            BufferEvent::Operation(operation) => {
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => {
                 let operation = language::proto::serialize_operation(operation);
 
                 if let Some(ssh) = &self.ssh_session {
@@ -2267,7 +2270,7 @@ impl Project {
                 .filter_map(|buffer| {
                     let buffer = buffer.upgrade()?;
                     buffer
-                        .update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx))
+                        .update(&mut cx, |buffer, cx| buffer.recalculate_diff(cx))
                         .ok()
                         .flatten()
                 })
