@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use smallvec::SmallVec;
-use std::{collections::BTreeMap, default, ops::Range};
+use std::{collections::BTreeMap, ops::Range};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snippet {
@@ -13,7 +13,6 @@ pub struct TabStop {
     pub ranges: SmallVec<[Range<isize>; 2]>,
     pub choices: Option<Vec<String>>,
 }
-// type TabStop = SmallVec<[Range<isize>; 2]>;
 
 impl Snippet {
     pub fn parse(source: &str) -> Result<Self> {

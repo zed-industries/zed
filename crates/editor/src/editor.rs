@@ -984,6 +984,7 @@ struct CompletionsMenu {
 impl CompletionsMenu {
     fn new(
         id: CompletionId,
+        sort_completions: bool,
         initial_position: Anchor,
         buffer: Model<Buffer>,
         completions: Box<[Completion]>,
@@ -998,6 +999,7 @@ impl CompletionsMenu {
 
         Self {
             id,
+            sort_completions,
             initial_position,
             buffer,
             completions: Arc::new(RwLock::new(completions)),
@@ -1013,6 +1015,7 @@ impl CompletionsMenu {
 
     fn new_snippet_choices(
         id: CompletionId,
+        sort_completions: bool,
         choices: &Vec<String>,
         selection: Range<Anchor>,
         buffer: Model<Buffer>,
@@ -1031,7 +1034,6 @@ impl CompletionsMenu {
                 documentation: None,
                 lsp_completion: Default::default(),
                 confirm: None,
-                show_new_completions_on_confirm: false,
             })
             .collect();
 
@@ -1052,6 +1054,7 @@ impl CompletionsMenu {
             .collect();
         Self {
             id,
+            sort_completions,
             initial_position: selection.start,
             buffer,
             completions: Arc::new(RwLock::new(completions)),
@@ -4292,6 +4295,10 @@ impl Editor {
             return;
         };
 
+        if !self.snippet_stack.is_empty() && self.context_menu.read().as_ref().is_some() {
+            return;
+        }
+
         let position = self.selections.newest_anchor().head();
         let (buffer, buffer_position) =
             if let Some(output) = self.buffer.read(cx).text_anchor_for_position(position, cx) {
@@ -4337,34 +4344,13 @@ impl Editor {
                 })?;
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
-                    let mut menu =
-                        CompletionsMenu::new(id, position, buffer.clone(), completions.into());
-                    // =======
-                    //                     let mut menu = CompletionsMenu {
-                    //                         id,
-                    //                         sort_completions,
-                    //                         initial_position: position,
-                    //                         match_candidates: completions
-                    //                             .iter()
-                    //                             .enumerate()
-                    //                             .map(|(id, completion)| {
-                    //                                 StringMatchCandidate::new(
-                    //                                     id,
-                    //                                     completion.label.text[completion.label.filter_range.clone()]
-                    //                                         .into(),
-                    //                                 )
-                    //                             })
-                    //                             .collect(),
-                    //                         buffer: buffer.clone(),
-                    //                         completions: Arc::new(RwLock::new(completions.into())),
-                    //                         matches: Vec::new().into(),
-                    //                         selected_item: 0,
-                    //                         scroll_handle: UniformListScrollHandle::new(),
-                    //                         selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
-                    //                             DebouncedDelay::new(),
-                    //                         )),
-                    //                     };
-                    // >>>>>>> main
+                    let mut menu = CompletionsMenu::new(
+                        id,
+                        sort_completions,
+                        position,
+                        buffer.clone(),
+                        completions.into(),
+                    );
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
@@ -5496,16 +5482,12 @@ impl Editor {
         }
         let buffer_id = selection.start.buffer_id.unwrap();
         let buffer = self.buffer().read(cx).buffer(buffer_id);
+        let id = post_inc(&mut self.next_completion_id);
 
         if let Some(buffer) = buffer {
             *self.context_menu.write() = Some(ContextMenu::Completions(
-                CompletionsMenu::new_snippet_choices(
-                    post_inc(&mut self.next_completion_id),
-                    choices,
-                    selection,
-                    buffer,
-                )
-                .suppress_documentation_resolution(),
+                CompletionsMenu::new_snippet_choices(id, true, choices, selection, buffer)
+                    .suppress_documentation_resolution(),
             ));
         }
     }
@@ -5673,7 +5655,6 @@ impl Editor {
                     s.select_anchor_ranges(current_ranges.iter().cloned())
                 });
 
-                // TODO: Finishing implementing the below lines
                 if let Some(choices) = &snippet.choices[snippet.active_index] {
                     if let Some(selection) = current_ranges.first() {
                         self.show_snippet_choices(&choices, selection.clone(), cx);

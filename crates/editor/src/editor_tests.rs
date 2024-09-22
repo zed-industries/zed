@@ -6465,36 +6465,7 @@ async fn test_snippet_placeholder_choices(cx: &mut gpui::TestAppContext) {
             "},
         );
 
-        editor.manipulate_text(cx, {
-            |text| {
-                let mut text = text.to_string();
-                text.clear();
-                text.push_str("u");
-                text
-            }
-        });
-
-        // assert(
-        //     editor,
-        //     cx,
-        //     indoc! {"
-        //     type «u» =•
-        //     "},
-        // );
-        //
-        
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
-            dbg!(menu);
-        } else {
-            panic!("Expected completion menu to be set due to snippet choices")
-        };
-
-        editor.show_completions(&ShowCompletions, cx);
-
-        assert!(
-            editor.context_menu_visible(),
-            "There should be a match for u32"
-        );
+        assert!(editor.context_menu_visible(), "There should be a matches");
     });
 }
 
