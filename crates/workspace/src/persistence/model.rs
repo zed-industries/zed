@@ -13,6 +13,7 @@ use db::sqlez::{
 use gpui::{AsyncWindowContext, Model, View, WeakView};
 use project::dap_store::SerializedBreakpoint;
 use project::Project;
+use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -21,6 +22,69 @@ use std::{
 use ui::SharedString;
 use util::ResultExt;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SerializedSshProject {
+    pub id: SshProjectId,
+    pub host: String,
+    pub port: Option<u16>,
+    pub path: String,
+    pub user: Option<String>,
+}
+
+impl SerializedSshProject {
+    pub fn ssh_url(&self) -> String {
+        let mut result = String::from("ssh://");
+        if let Some(user) = &self.user {
+            result.push_str(user);
+            result.push('@');
+        }
+        result.push_str(&self.host);
+        if let Some(port) = &self.port {
+            result.push(':');
+            result.push_str(&port.to_string());
+        }
+        result.push_str(&self.path);
+        result
+    }
+}
+
+impl StaticColumnCount for SerializedSshProject {
+    fn column_count() -> usize {
+        5
+    }
+}
+
+impl Bind for &SerializedSshProject {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.id.0, start_index)?;
+        let next_index = statement.bind(&self.host, next_index)?;
+        let next_index = statement.bind(&self.port, next_index)?;
+        let next_index = statement.bind(&self.path, next_index)?;
+        statement.bind(&self.user, next_index)
+    }
+}
+
+impl Column for SerializedSshProject {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let id = statement.column_int64(start_index)?;
+        let host = statement.column_text(start_index + 1)?.to_string();
+        let (port, _) = Option::<u16>::column(statement, start_index + 2)?;
+        let path = statement.column_text(start_index + 3)?.to_string();
+        let (user, _) = Option::<String>::column(statement, start_index + 4)?;
+
+        Ok((
+            Self {
+                id: SshProjectId(id as u64),
+                host,
+                port,
+                path,
+                user,
+            },
+            start_index + 5,
+        ))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SerializedDevServerProject {
@@ -60,7 +124,6 @@ impl Column for LocalPaths {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let path_blob = statement.column_blob(start_index)?;
         let paths: Arc<Vec<PathBuf>> = if path_blob.is_empty() {
-            println!("path blog is empty");
             Default::default()
         } else {
             bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?
@@ -148,6 +211,7 @@ impl Column for SerializedDevServerProject {
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local(LocalPaths, LocalPathsOrder),
+    Ssh(SerializedSshProject),
     DevServer(SerializedDevServerProject),
 }
 
@@ -301,6 +365,7 @@ impl Default for SerializedPaneGroup {
         Self::Pane(SerializedPane {
             children: vec![SerializedItem::default()],
             active: false,
+            pinned_count: 0,
         })
     }
 }
@@ -383,11 +448,16 @@ impl SerializedPaneGroup {
 pub struct SerializedPane {
     pub(crate) active: bool,
     pub(crate) children: Vec<SerializedItem>,
+    pub(crate) pinned_count: usize,
 }
 
 impl SerializedPane {
-    pub fn new(children: Vec<SerializedItem>, active: bool) -> Self {
-        SerializedPane { children, active }
+    pub fn new(children: Vec<SerializedItem>, active: bool, pinned_count: usize) -> Self {
+        SerializedPane {
+            children,
+            active,
+            pinned_count,
+        }
     }
 
     pub async fn deserialize_to(
@@ -446,6 +516,9 @@ impl SerializedPane {
                 }
             })?;
         }
+        pane.update(cx, |pane, _| {
+            pane.set_pinned_count(self.pinned_count);
+        })?;
 
         anyhow::Ok(items)
     }

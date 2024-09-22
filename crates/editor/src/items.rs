@@ -68,7 +68,6 @@ impl FollowableItem for Editor {
             unreachable!()
         };
 
-        let replica_id = project.read(cx).replica_id();
         let buffer_ids = state
             .excerpts
             .iter()
@@ -92,7 +91,7 @@ impl FollowableItem for Editor {
                     if state.singleton && buffers.len() == 1 {
                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
-                        multibuffer = MultiBuffer::new(replica_id, project.read(cx).capability());
+                        multibuffer = MultiBuffer::new(project.read(cx).capability());
                         let mut excerpts = state.excerpts.into_iter().peekable();
                         while let Some(excerpt) = excerpts.peek() {
                             let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
@@ -1086,10 +1085,14 @@ impl SerializableItem for Editor {
         let workspace_id = workspace.database_id()?;
 
         let buffer = self.buffer().read(cx).as_singleton()?;
+        let path = buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx))
+            .and_then(|full_path| project.read(cx).find_project_path(&full_path, cx))
+            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx));
 
         let is_dirty = buffer.read(cx).is_dirty();
-        let local_file = buffer.read(cx).file().and_then(|file| file.as_local());
-        let path = local_file.map(|file| file.abs_path(cx));
         let mtime = buffer.read(cx).saved_mtime();
 
         let snapshot = buffer.read(cx).snapshot();
@@ -1598,7 +1601,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -1704,8 +1707,8 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert_eq!(
-                    buffer.language().map(|lang| lang.name()).as_deref(),
-                    Some("Rust")
+                    buffer.language().map(|lang| lang.name()),
+                    Some("Rust".into())
                 ); // Language should be set to Rust
                 assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });

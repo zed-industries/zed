@@ -1,19 +1,19 @@
 use crate::console::Console;
-use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
+use crate::debugger_panel::{DebugPanel, DebugPanelEvent, ThreadState};
 use crate::variable_list::VariableList;
 
-use anyhow::Result;
-use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
+use dap::client::{DebugAdapterClientId, ThreadStatus};
 use dap::debugger_settings::DebuggerSettings;
-use dap::{OutputEvent, OutputEventCategory, StackFrame, StoppedEvent, ThreadEvent};
+use dap::{Capabilities, OutputEvent, OutputEventCategory, StackFrame, StoppedEvent, ThreadEvent};
 use editor::Editor;
 use gpui::{
-    impl_actions, list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, ListState, Subscription, View, WeakView,
+    impl_actions, list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    ListState, Model, Subscription, View, WeakView,
 };
+use project::dap_store::DapStore;
 use serde::Deserialize;
 use settings::Settings;
-use std::sync::Arc;
+use task::DebugAdapterKind;
 use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
 use workspace::dock::Panel;
@@ -35,12 +35,16 @@ pub struct DebugPanelItem {
     thread_id: u64,
     console: View<Console>,
     focus_handle: FocusHandle,
+    dap_store: Model<DapStore>,
     stack_frame_list: ListState,
     output_editor: View<Editor>,
     current_stack_frame_id: u64,
+    client_kind: DebugAdapterKind,
+    debug_panel: View<DebugPanel>,
     active_thread_item: ThreadItem,
     workspace: WeakView<Workspace>,
-    client: Arc<DebugAdapterClient>,
+    client_id: DebugAdapterClientId,
+    thread_state: Model<ThreadState>,
     variable_list: View<VariableList>,
     _subscriptions: Vec<Subscription>,
 }
@@ -70,18 +74,32 @@ enum DebugPanelItemActionKind {
 }
 
 impl DebugPanelItem {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         debug_panel: View<DebugPanel>,
         workspace: WeakView<Workspace>,
-        client: Arc<DebugAdapterClient>,
+        dap_store: Model<DapStore>,
+        thread_state: Model<ThreadState>,
+        client_id: &DebugAdapterClientId,
+        client_kind: &DebugAdapterKind,
         thread_id: u64,
         current_stack_frame_id: u64,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let model = cx.model().clone();
-        let variable_list = cx.new_view(|cx| VariableList::new(model, cx));
+        let capabilities = dap_store.read(cx).capabilities_by_id(&client_id);
+
+        let variable_list = cx.new_view(|cx| {
+            VariableList::new(
+                dap_store.clone(),
+                &client_id,
+                &thread_state,
+                &capabilities,
+                current_stack_frame_id,
+                cx,
+            )
+        });
         let console = cx.new_view(Console::new);
 
         let weakview = cx.view().downgrade();
@@ -130,16 +148,20 @@ impl DebugPanelItem {
         });
 
         Self {
-            client,
-            thread_id,
-            workspace,
-            focus_handle,
-            variable_list,
             console,
+            thread_id,
+            dap_store,
+            workspace,
+            debug_panel,
+            thread_state,
+            focus_handle,
             output_editor,
+            variable_list,
             _subscriptions,
             stack_frame_list,
+            client_id: *client_id,
             current_stack_frame_id,
+            client_kind: client_kind.clone(),
             active_thread_item: ThreadItem::Variables,
         }
     }
@@ -149,7 +171,7 @@ impl DebugPanelItem {
         client_id: &DebugAdapterClientId,
         thread_id: u64,
     ) -> bool {
-        thread_id != this.thread_id || *client_id != this.client.id()
+        thread_id != this.thread_id || *client_id != this.client_id
     }
 
     fn handle_stopped_event(
@@ -158,11 +180,11 @@ impl DebugPanelItem {
         event: &StoppedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if Self::should_skip_event(this, client_id, event.thread_id.unwrap_or_default()) {
+        if Self::should_skip_event(this, client_id, event.thread_id.unwrap_or(this.thread_id)) {
             return;
         }
 
-        let thread_state = this.current_thread_state();
+        let thread_state = this.thread_state.read(cx);
 
         this.stack_frame_list.reset(thread_state.stack_frames.len());
         if let Some(stack_frame) = thread_state.stack_frames.first() {
@@ -182,7 +204,7 @@ impl DebugPanelItem {
             return;
         }
 
-        // TODO: handle thread event
+        // TODO debugger: handle thread event
     }
 
     fn handle_output_event(
@@ -244,34 +266,31 @@ impl DebugPanelItem {
             return;
         }
 
+        this.stack_frame_list.reset(0);
+
+        cx.notify();
+
         cx.emit(Event::Close);
     }
 
-    pub fn client(&self) -> Arc<DebugAdapterClient> {
-        self.client.clone()
+    pub fn client_id(&self) -> DebugAdapterClientId {
+        self.client_id
     }
 
     pub fn thread_id(&self) -> u64 {
         self.thread_id
     }
 
-    pub fn current_stack_frame_id(&self) -> u64 {
-        self.current_stack_frame_id
+    pub fn capabilities(&self, cx: &mut ViewContext<Self>) -> Capabilities {
+        self.dap_store
+            .read_with(cx, |store, _| store.capabilities_by_id(&self.client_id))
     }
 
-    fn stack_frame_for_index(&self, ix: usize) -> StackFrame {
-        self.client
-            .thread_state_by_id(self.thread_id)
+    fn stack_frame_for_index(&self, ix: usize, cx: &mut ViewContext<Self>) -> StackFrame {
+        self.thread_state
+            .read(cx)
             .stack_frames
             .get(ix)
-            .cloned()
-            .unwrap()
-    }
-
-    pub fn current_thread_state(&self) -> ThreadState {
-        self.client
-            .thread_states()
-            .get(&self.thread_id)
             .cloned()
             .unwrap()
     }
@@ -279,23 +298,23 @@ impl DebugPanelItem {
     fn update_stack_frame_id(&mut self, stack_frame_id: u64, cx: &mut ViewContext<Self>) {
         self.current_stack_frame_id = stack_frame_id;
 
-        let thread_state = self.current_thread_state();
-
-        self.variable_list.update(cx, |variable_list, _| {
-            variable_list.build_entries(thread_state, stack_frame_id, true, false);
+        self.variable_list.update(cx, |variable_list, cx| {
+            variable_list.update_stack_frame_id(stack_frame_id, cx);
+            variable_list.build_entries(true, false, cx);
         });
+
+        cx.notify();
     }
 
     fn render_stack_frames(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .gap_3()
             .size_full()
             .child(list(self.stack_frame_list.clone()).size_full())
             .into_any()
     }
 
     fn render_stack_frame(&self, ix: usize, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let stack_frame = self.stack_frame_for_index(ix);
+        let stack_frame = self.stack_frame_for_index(ix, cx);
 
         let source = stack_frame.source.clone();
         let is_selected_frame = stack_frame.id == self.current_stack_frame_id;
@@ -352,31 +371,6 @@ impl DebugPanelItem {
             .into_any()
     }
 
-    // if the debug adapter does not send the continued event,
-    // and the status of the thread did not change we have to assume the thread is running
-    // so we have to update the thread state status to running
-    fn update_thread_state(
-        this: WeakView<Self>,
-        previous_status: ThreadStatus,
-        all_threads_continued: Option<bool>,
-        mut cx: AsyncWindowContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            if previous_status == this.current_thread_state().status {
-                if all_threads_continued.unwrap_or(false) {
-                    for thread in this.client.thread_states().values_mut() {
-                        thread.status = ThreadStatus::Running;
-                    }
-                } else {
-                    this.client
-                        .update_thread_state_status(this.thread_id, ThreadStatus::Running);
-                }
-
-                cx.notify();
-            }
-        })
-    }
-
     /// Actions that should be handled even when Debug Panel is not in focus
     pub fn workspace_action_handler(
         workspace: &mut Workspace,
@@ -417,90 +411,113 @@ impl DebugPanelItem {
     }
 
     fn handle_continue_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        let thread_id = self.thread_id;
-        let previous_status = self.current_thread_state().status;
+        self.debug_panel.update(cx, |panel, cx| {
+            panel.update_thread_state_status(
+                &self.client_id,
+                Some(self.thread_id),
+                ThreadStatus::Running,
+                None,
+                cx,
+            );
+        });
 
-        cx.spawn(|this, cx| async move {
-            let response = client.resume(thread_id).await?;
-
-            Self::update_thread_state(this, previous_status, response.all_threads_continued, cx)
-        })
-        .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .continue_thread(&self.client_id, self.thread_id, cx)
+                .detach_and_log_err(cx);
+        });
     }
 
     fn handle_step_over_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        let thread_id = self.thread_id;
-        let previous_status = self.current_thread_state().status;
+        self.debug_panel.update(cx, |panel, cx| {
+            panel.update_thread_state_status(
+                &self.client_id,
+                Some(self.thread_id),
+                ThreadStatus::Running,
+                None,
+                cx,
+            );
+        });
+
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
 
-        cx.spawn(|this, cx| async move {
-            client.step_over(thread_id, granularity).await?;
-
-            Self::update_thread_state(this, previous_status, None, cx)
-        })
-        .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .step_over(&self.client_id, self.thread_id, granularity, cx)
+                .detach_and_log_err(cx);
+        });
     }
 
     fn handle_step_in_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        let thread_id = self.thread_id;
-        let previous_status = self.current_thread_state().status;
+        self.debug_panel.update(cx, |panel, cx| {
+            panel.update_thread_state_status(
+                &self.client_id,
+                Some(self.thread_id),
+                ThreadStatus::Running,
+                None,
+                cx,
+            );
+        });
+
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
 
-        cx.spawn(|this, cx| async move {
-            client.step_in(thread_id, granularity).await?;
-
-            Self::update_thread_state(this, previous_status, None, cx)
-        })
-        .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .step_in(&self.client_id, self.thread_id, granularity, cx)
+                .detach_and_log_err(cx);
+        });
     }
 
     fn handle_step_out_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        let thread_id = self.thread_id;
-        let previous_status = self.current_thread_state().status;
+        self.debug_panel.update(cx, |panel, cx| {
+            panel.update_thread_state_status(
+                &self.client_id,
+                Some(self.thread_id),
+                ThreadStatus::Running,
+                None,
+                cx,
+            );
+        });
+
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
 
-        cx.spawn(|this, cx| async move {
-            client.step_out(thread_id, granularity).await?;
-
-            Self::update_thread_state(this, previous_status, None, cx)
-        })
-        .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .step_out(&self.client_id, self.thread_id, granularity, cx)
+                .detach_and_log_err(cx);
+        });
     }
 
     fn handle_restart_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-
-        cx.background_executor()
-            .spawn(async move { client.restart().await })
-            .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .restart(&self.client_id, None, cx)
+                .detach_and_log_err(cx);
+        });
     }
 
     fn handle_pause_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        let thread_id = self.thread_id;
-        cx.background_executor()
-            .spawn(async move { client.pause(thread_id).await })
-            .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .pause_thread(&self.client_id, self.thread_id, cx)
+                .detach_and_log_err(cx)
+        });
     }
 
     fn handle_stop_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        let thread_ids = vec![self.thread_id; 1];
-
-        cx.background_executor()
-            .spawn(async move { client.terminate_threads(Some(thread_ids)).await })
-            .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .terminate_threads(&self.client_id, Some(vec![self.thread_id; 1]), cx)
+                .detach_and_log_err(cx)
+        });
     }
 
     fn handle_disconnect_action(&mut self, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        cx.background_executor()
-            .spawn(async move { client.disconnect(None, Some(true), None).await })
-            .detach_and_log_err(cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .disconnect_client(&self.client_id, cx)
+                .detach_and_log_err(cx);
+        });
     }
 }
 
@@ -522,8 +539,7 @@ impl Item for DebugPanelItem {
     ) -> AnyElement {
         Label::new(format!(
             "{:?} - Thread {}",
-            self.client.config().kind,
-            self.thread_id
+            self.client_kind, self.thread_id
         ))
         .color(if params.selected {
             Color::Default
@@ -533,12 +549,12 @@ impl Item for DebugPanelItem {
         .into_any_element()
     }
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         Some(SharedString::from(format!(
             "{:?} Thread {} - {:?}",
-            self.client.config().kind,
+            self.client_kind,
             self.thread_id,
-            self.current_thread_state().status
+            self.thread_state.read(cx).status,
         )))
     }
 
@@ -551,8 +567,10 @@ impl Item for DebugPanelItem {
 
 impl Render for DebugPanelItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let thread_status = self.current_thread_state().status;
+        let thread_status = self.thread_state.read(cx).status;
         let active_thread_item = &self.active_thread_item;
+
+        let capabilities = self.capabilities(cx);
 
         h_flex()
             .key_context("DebugPanelItem")
@@ -640,11 +658,7 @@ impl Render for DebugPanelItem {
                                         }))
                                     }))
                                     .disabled(
-                                        !self
-                                            .client
-                                            .capabilities()
-                                            .supports_restart_request
-                                            .unwrap_or_default(),
+                                        !capabilities.supports_restart_request.unwrap_or_default(),
                                     )
                                     .tooltip(move |cx| Tooltip::text("Restart", cx)),
                             )

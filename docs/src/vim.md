@@ -12,7 +12,7 @@ So, Zed's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal 
 
 ## Enabling and disabling vim mode
 
-When you first open Zed, a checkbox will appear on the welcome screen, allowing you to enable vim mode.
+When you first open Zed, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
 
 If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
 
@@ -83,7 +83,7 @@ ctrl-x ctrl-z  Hides all suggestions
 :Ext[ensions] Open the extensions window
 ```
 
-Vim mode uses Zed to define concepts like "brackets" (for the `%` key) and "words" (for motions like `w` and `e`). This does lead to some differences, but they are mostly positive. For example `%` considers `|` to be a bracket in languages like Rust; and `w` considers `$` to be a word-character in languages like Javascript.
+Vim mode uses Zed to define concepts like "brackets" (for the `%` key) and "words" (for motions like `w` and `e`). This does lead to some differences, but they are mostly positive. For example `%` considers `|` to be a bracket in languages like Rust; and `w` considers `$` to be a word-character in languages like JavaScript.
 
 Vim mode emulates visual block mode using Zed's multiple cursor support. This again leads to some differences, but is much more powerful.
 
@@ -96,14 +96,18 @@ Finally, vim mode's search and replace functionality is backed by Zed's. This me
 You can edit your personal key bindings with `:keymap`.
 For vim-specific shortcuts, you may find the following template a good place to start.
 
-> **Note:** We made some breaking changes in Zed version `0.145.0`. For older versions, see [the previous version of this document](https://github.com/zed-industries/zed/blob/c67aeaa9c58619a58708722ac7d7a78c75c29336/docs/src/vim.md#L90).
-
 ```json
 [
   {
     "context": "VimControl && !menu",
     "bindings": {
       // put key-bindings here if you want them to work in normal & visual mode
+    }
+  },
+  {
+    "context": "vim_mode == normal && !menu",
+    "bindings": {
+      // "shift-y": ["workspace::SendKeystrokes", "y $"] // use nvim's Y behavior
     }
   },
   {
@@ -125,11 +129,13 @@ For vim-specific shortcuts, you may find the following template a good place to 
 
 If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) action in the correct context.
 
-You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
+Check out the [bindings that are enabled by default in vim mode](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
 ### Contexts
 
-Zed's keyboard bindings are evaluated only when the `"context"` matches the location you are in on the screen. Locations are nested, so when you're editing you're in the `"Workspace"` location is at the top, containing a `"Pane"` which contains an `"Editor"`. Contexts are matched only on one level at a time. So it is possible to combine `Editor && vim_mode == normal`, but `Workspace && vim_mode == normal` will never match because we set the vim context at the `Editor` level.
+Zed's keyboard bindings are evaluated only when the `"context"` matches the location you are in on the screen. Locations are nested, so when you're editing, you're in the `"Workspace"` location, which is at the top, containing a `"Pane"` that contains an `"Editor"`.
+
+Contexts are matched only on one level at a time. So, it is possible to combine `Editor && vim_mode == normal`, but `Workspace && vim_mode == normal` will never match because we set the vim context at the `Editor` level.
 
 Vim mode adds several contexts to the `Editor`:
 
@@ -160,13 +166,13 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 
 Vim mode allows you to enable Zed’s command palette with `:`. This means that you can use vim's command palette to run any action that Zed supports.
 
-Additionally vim mode contains a number of aliases for popular vim commands to ensure that muscle memory works. For example `:w<enter>` will save the file.
+Additionally, vim mode contains a number of aliases for popular Vim commands to ensure that muscle memory works. For example, `:w<enter>` will save the file.
 
-We do not (yet) emulate the full power of vim’s command line, in particular we special case specific patterns instead of using vim's range selection syntax, and we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+We do not (yet) emulate the full power of Vim’s command line, in particular, we do not support arguments to commands yet. Please [file issues on GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
 
 As mentioned above, one thing to be aware of is that the regex engine is slightly different from vim's in `:%s/a/b`.
 
-Currently supported vim-specific commands:
+Currently supported Vim-specific commands:
 
 ```
 # window management
@@ -191,6 +197,12 @@ Currently supported vim-specific commands:
 :cc, :ll
     to open the errors page
 
+# handling git diff
+:dif[fupdate]
+    to view the diff under the cursor ("d o" in normal mode)
+:rev[ert]
+    to revert the diff under the cursor ("d p" in normal mode)
+
 # jump to position
 :<number>
     to jump to a line number
@@ -200,11 +212,8 @@ Currently supported vim-specific commands:
     to jump to next/prev line matching foo
 
 # replacement (/g is always assumed and Zed uses different regex syntax to vim)
-:%s/foo/bar/
+:[range]s/foo/bar/
   to replace instances of foo with bar
-:X,Ys/foo/bar/
-    to limit replacement between line X and Y
-    other ranges are not yet implemented
 
 # editing
 :j[oin]
@@ -213,18 +222,18 @@ Currently supported vim-specific commands:
     to delete the current line (no range is yet supported)
 :s[ort] [i]
     to sort the current selection (with i, case-insensitively)
+:y[ank]
 ```
 
 As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
 
 ```
-:diff   Toggle Hunk [Diff]
 :diffs  Toggle all Hunk [Diffs]
-:revert Revert Selected Hunks
 :cpp    [C]o[p]y [P]ath to file
 :crp    [C]opy [r]elative [P]ath
 :reveal [Reveal] in finder
 :zlog   Open [Z]ed Log
+:clank  [C]ancel [lan]guage server work[k]
 ```
 
 ## Settings
@@ -289,7 +298,7 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
 }
 ```
 
-If you want to navigate between the editor and docks (terminal, project panel, AI assistant, ...) just like you navigate between splits you can use the following key bindings:
+If you want to navigate between the editor and docks (terminal, project panel, AI assistant panel, etc...), just like you navigate between splits, you can use the following key bindings:
 
 ```json
 {
@@ -359,4 +368,4 @@ Notably:
 
 To help with the transition, the command palette will fix parentheses and replace groups for you when you run `:%s//`. So `%s:/\(a\)(b)/\1/` will be converted into a search for "(a)\(b\)" and a replacement of "$1".
 
-For the full syntax supported by Zed's regex engine see the [regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).
+For the full syntax supported by Zed's regex engine [see the regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).

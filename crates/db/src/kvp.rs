@@ -60,3 +60,33 @@ mod tests {
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
     }
 }
+
+define_connection!(pub static ref GLOBAL_KEY_VALUE_STORE: GlobalKeyValueStore<()> =
+    &[sql!(
+        CREATE TABLE IF NOT EXISTS kv_store(
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        ) STRICT;
+    )];
+    global
+);
+
+impl GlobalKeyValueStore {
+    query! {
+        pub fn read_kvp(key: &str) -> Result<Option<String>> {
+            SELECT value FROM kv_store WHERE key = (?)
+        }
+    }
+
+    query! {
+        pub async fn write_kvp(key: String, value: String) -> Result<()> {
+            INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))
+        }
+    }
+
+    query! {
+        pub async fn delete_kvp(key: String) -> Result<()> {
+            DELETE FROM kv_store WHERE key = (?)
+        }
+    }
+}

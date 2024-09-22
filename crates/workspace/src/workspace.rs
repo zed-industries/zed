@@ -49,18 +49,22 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{model::SerializedWorkspace, SerializedWindowBounds, DB};
 pub use persistence::{
     model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
+};
+use persistence::{
+    model::{SerializedSshProject, SerializedWorkspace},
+    SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
+use remote::{SshConnectionOptions, SshSession};
 use serde::Deserialize;
 use session::AppSession;
-use settings::Settings;
+use settings::{InvalidSettingsError, Settings};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -757,6 +761,7 @@ pub struct Workspace {
     render_disconnected_overlay:
         Option<Box<dyn Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
+    serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
 }
@@ -825,6 +830,23 @@ impl Workspace {
                         pane.update(cx, |pane, cx| {
                             pane.handle_deleted_project_item(*entry_id, cx)
                         });
+                    }
+                }
+
+                project::Event::LocalSettingsUpdated(result) => {
+                    struct LocalSettingsUpdated;
+                    let id = NotificationId::unique::<LocalSettingsUpdated>();
+
+                    match result {
+                        Err(InvalidSettingsError::LocalSettings { message, path }) => {
+                            let full_message =
+                                format!("Failed to set local settings in {:?}:\n{}", path, message);
+                            this.show_notification(id, cx, |cx| {
+                                cx.new_view(|_| MessageNotification::new(full_message.clone()))
+                            })
+                        }
+                        Err(_) => {}
+                        Ok(_) => this.dismiss_notification(&id, cx),
                     }
                 }
 
@@ -1055,6 +1077,7 @@ impl Workspace {
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
+            serialized_ssh_project: None,
         }
     }
 
@@ -1109,19 +1132,17 @@ impl Workspace {
             }
 
             // Get project paths for all of the abs_paths
-            let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
 
             for path in paths_to_open.into_iter() {
-                if let Some((worktree, project_entry)) = cx
+                if let Some((_, project_entry)) = cx
                     .update(|cx| {
                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
                     })?
                     .await
                     .log_err()
                 {
-                    worktree_roots.extend(worktree.update(&mut cx, |tree, _| tree.abs_path()).ok());
                     project_paths.push((path, Some(project_entry)));
                 } else {
                     project_paths.push((path, None));
@@ -1442,6 +1463,10 @@ impl Workspace {
         self.on_prompt_for_open_path = Some(prompt)
     }
 
+    pub fn set_serialized_ssh_project(&mut self, serialized_ssh_project: SerializedSshProject) {
+        self.serialized_ssh_project = Some(serialized_ssh_project);
+    }
+
     pub fn set_render_disconnected_overlay(
         &mut self,
         render: impl Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement + 'static,
@@ -1580,7 +1605,7 @@ impl Workspace {
         T: 'static,
         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
-        if self.project.read(cx).is_local_or_ssh() {
+        if self.project.read(cx).is_local() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
@@ -2967,6 +2992,7 @@ impl Workspace {
                 self.split_and_clone(pane, *direction, cx);
             }
             pane::Event::JoinIntoNext => self.join_pane_into_next(pane, cx),
+            pane::Event::JoinAll => self.join_all_panes(cx),
             pane::Event::Remove { focus_on_pane } => {
                 self.remove_pane(pane, focus_on_pane.clone(), cx)
             }
@@ -3096,7 +3122,7 @@ impl Workspace {
         };
 
         let new_pane = self.add_pane(cx);
-        self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
+        move_item(&from, &new_pane, item_id_to_move, 0, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -3124,6 +3150,17 @@ impl Workspace {
         }))
     }
 
+    pub fn join_all_panes(&mut self, cx: &mut ViewContext<Self>) {
+        let active_item = self.active_pane.read(cx).active_item();
+        for pane in &self.panes {
+            join_pane_into_active(&self.active_pane, pane, cx);
+        }
+        if let Some(active_item) = active_item {
+            self.activate_item(active_item.as_ref(), true, true, cx);
+        }
+        cx.notify();
+    }
+
     pub fn join_pane_into_next(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
         let next_pane = self
             .find_pane_in_direction(SplitDirection::Right, cx)
@@ -3133,46 +3170,8 @@ impl Workspace {
         let Some(next_pane) = next_pane else {
             return;
         };
-
-        let item_ids: Vec<EntityId> = pane.read(cx).items().map(|item| item.item_id()).collect();
-        for item_id in item_ids {
-            self.move_item(pane.clone(), next_pane.clone(), item_id, 0, cx);
-        }
+        move_all_items(&pane, &next_pane, cx);
         cx.notify();
-    }
-
-    pub fn move_item(
-        &mut self,
-        source: View<Pane>,
-        destination: View<Pane>,
-        item_id_to_move: EntityId,
-        destination_index: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let Some((item_ix, item_handle)) = source
-            .read(cx)
-            .items()
-            .enumerate()
-            .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
-        else {
-            // Tab was closed during drag
-            return;
-        };
-
-        let item_handle = item_handle.clone();
-
-        if source != destination {
-            // Close item from previous pane
-            source.update(cx, |source, cx| {
-                source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), cx);
-            });
-        }
-
-        // This automatically removes duplicate items in the pane
-        destination.update(cx, |destination, cx| {
-            destination.add_item(item_handle, true, true, Some(destination_index), cx);
-            destination.focus(cx)
-        });
     }
 
     fn remove_pane(
@@ -4027,7 +4026,7 @@ impl Workspace {
         };
 
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
-            let (items, active) = {
+            let (items, active, pinned_count) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
@@ -4044,10 +4043,11 @@ impl Workspace {
                         })
                         .collect::<Vec<_>>(),
                     pane.has_focus(cx),
+                    pane.pinned_count(),
                 )
             };
 
-            SerializedPane::new(items, active)
+            SerializedPane::new(items, active, pinned_count)
         }
 
         fn build_serialized_pane_group(
@@ -4124,7 +4124,9 @@ impl Workspace {
             }
         }
 
-        let location = if let Some(local_paths) = self.local_paths(cx) {
+        let location = if let Some(ssh_project) = &self.serialized_ssh_project {
+            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
+        } else if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
                 Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
             } else {
@@ -4694,7 +4696,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     |cx| {
                         cx.new_view(|_| {
                             MessageNotification::new("Failed to load the database file.")
-                                .with_click_message("Click to let us know about this error")
+                                .with_click_message("File an issue")
                                 .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
                         })
                     },
@@ -5526,6 +5528,79 @@ pub fn join_hosted_project(
     })
 }
 
+pub fn open_ssh_project(
+    window: WindowHandle<Workspace>,
+    connection_options: SshConnectionOptions,
+    session: Arc<SshSession>,
+    app_state: Arc<AppState>,
+    paths: Vec<PathBuf>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    cx.spawn(|mut cx| async move {
+        // TODO: Handle multiple paths
+        let path = paths.iter().next().cloned().unwrap_or_default();
+
+        let serialized_ssh_project = persistence::DB
+            .get_or_create_ssh_project(
+                connection_options.host.clone(),
+                connection_options.port,
+                path.to_string_lossy().to_string(),
+                connection_options.username.clone(),
+            )
+            .await?;
+
+        let project = cx.update(|cx| {
+            project::Project::ssh(
+                session,
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            )
+        })?;
+
+        for path in paths {
+            project
+                .update(&mut cx, |project, cx| {
+                    project.find_or_create_worktree(&path, true, cx)
+                })?
+                .await?;
+        }
+
+        let serialized_workspace =
+            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+
+        let workspace_id = if let Some(workspace_id) =
+            serialized_workspace.as_ref().map(|workspace| workspace.id)
+        {
+            workspace_id
+        } else {
+            persistence::DB.next_id().await?
+        };
+
+        cx.update_window(window.into(), |_, cx| {
+            cx.replace_root_view(|cx| {
+                let mut workspace =
+                    Workspace::new(Some(workspace_id), project, app_state.clone(), cx);
+                workspace.set_serialized_ssh_project(serialized_ssh_project);
+                workspace
+            });
+        })?;
+
+        window
+            .update(&mut cx, |_, cx| {
+                cx.activate_window();
+
+                open_items(serialized_workspace, vec![], app_state, cx)
+            })?
+            .await?;
+
+        Ok(())
+    })
+}
+
 pub fn join_dev_server_project(
     dev_server_project_id: DevServerProjectId,
     project_id: ProjectId,
@@ -5966,6 +6041,79 @@ fn resize_edge(
     } else {
         None
     }
+}
+
+fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut WindowContext<'_>) {
+    if pane == active_pane {
+        return;
+    } else if pane.read(cx).items_len() == 0 {
+        pane.update(cx, |_, cx| {
+            cx.emit(pane::Event::Remove {
+                focus_on_pane: None,
+            });
+        })
+    } else {
+        move_all_items(pane, active_pane, cx);
+    }
+}
+
+fn move_all_items(from_pane: &View<Pane>, to_pane: &View<Pane>, cx: &mut WindowContext<'_>) {
+    let destination_is_different = from_pane != to_pane;
+    let mut moved_items = 0;
+    for (item_ix, item_handle) in from_pane
+        .read(cx)
+        .items()
+        .enumerate()
+        .map(|(ix, item)| (ix, item.clone()))
+        .collect::<Vec<_>>()
+    {
+        let ix = item_ix - moved_items;
+        if destination_is_different {
+            // Close item from previous pane
+            from_pane.update(cx, |source, cx| {
+                source.remove_item_and_focus_on_pane(ix, false, to_pane.clone(), cx);
+            });
+            moved_items += 1;
+        }
+
+        // This automatically removes duplicate items in the pane
+        to_pane.update(cx, |destination, cx| {
+            destination.add_item(item_handle, true, true, None, cx);
+            destination.focus(cx)
+        });
+    }
+}
+
+pub fn move_item(
+    source: &View<Pane>,
+    destination: &View<Pane>,
+    item_id_to_move: EntityId,
+    destination_index: usize,
+    cx: &mut WindowContext<'_>,
+) {
+    let Some((item_ix, item_handle)) = source
+        .read(cx)
+        .items()
+        .enumerate()
+        .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
+        .map(|(ix, item)| (ix, item.clone()))
+    else {
+        // Tab was closed during drag
+        return;
+    };
+
+    if source != destination {
+        // Close item from previous pane
+        source.update(cx, |source, cx| {
+            source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), cx);
+        });
+    }
+
+    // This automatically removes duplicate items in the pane
+    destination.update(cx, |destination, cx| {
+        destination.add_item(item_handle, true, true, Some(destination_index), cx);
+        destination.focus(cx)
+    });
 }
 
 #[cfg(test)]
@@ -6879,6 +7027,80 @@ mod tests {
         });
     }
 
+    fn add_an_item_to_active_pane(
+        cx: &mut VisualTestContext,
+        workspace: &View<Workspace>,
+        item_id: u64,
+    ) -> View<TestItem> {
+        let item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(
+                item_id,
+                "item{item_id}.txt",
+                cx,
+            )])
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, false, cx);
+        });
+        return item;
+    }
+
+    fn split_pane(cx: &mut VisualTestContext, workspace: &View<Workspace>) -> View<Pane> {
+        return workspace.update(cx, |workspace, cx| {
+            let new_pane =
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+            new_pane
+        });
+    }
+
+    #[gpui::test]
+    async fn test_join_all_panes(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        add_an_item_to_active_pane(cx, &workspace, 1);
+        split_pane(cx, &workspace);
+        add_an_item_to_active_pane(cx, &workspace, 2);
+        split_pane(cx, &workspace); // empty pane
+        split_pane(cx, &workspace);
+        let last_item = add_an_item_to_active_pane(cx, &workspace, 3);
+
+        cx.executor().run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            let num_panes = workspace.panes().len();
+            let num_items_in_current_pane = workspace.active_pane().read(cx).items().count();
+            let active_item = workspace
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .expect("item is in focus");
+
+            assert_eq!(num_panes, 4);
+            assert_eq!(num_items_in_current_pane, 1);
+            assert_eq!(active_item.item_id(), last_item.item_id());
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.join_all_panes(cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let num_panes = workspace.panes().len();
+            let num_items_in_current_pane = workspace.active_pane().read(cx).items().count();
+            let active_item = workspace
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .expect("item is in focus");
+
+            assert_eq!(num_panes, 1);
+            assert_eq!(num_items_in_current_pane, 3);
+            assert_eq!(active_item.item_id(), last_item.item_id());
+        });
+    }
     struct TestModal(FocusHandle);
 
     impl TestModal {

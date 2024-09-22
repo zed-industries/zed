@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{btree_map, BTreeMap, VecDeque};
+use collections::{btree_map, BTreeMap, HashMap, VecDeque};
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
@@ -161,7 +161,7 @@ impl Inventory {
         cx: &AppContext,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name(),
+            name: language.name().0,
         });
         let language_tasks = language
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
@@ -207,7 +207,7 @@ impl Inventory {
             .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name(),
+            name: language.name().0,
         });
         let file = location
             .as_ref()
@@ -543,6 +543,7 @@ impl ContextProvider for BasicContextProvider {
         &self,
         _: &TaskVariables,
         location: &Location,
+        _: Option<&HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Result<TaskVariables> {
         let buffer = location.buffer.read(cx);

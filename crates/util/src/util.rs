@@ -644,27 +644,27 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
 /// This is useful for turning regular alphanumerically sorted sequences as `1-abc, 10, 11-def, .., 2, 21-abc`
 /// into `1-abc, 2, 10, 11-def, .., 21-abc`
 #[derive(Debug, PartialEq, Eq)]
-pub struct NumericPrefixWithSuffix<'a>(i32, &'a str);
+pub struct NumericPrefixWithSuffix<'a>(Option<u64>, &'a str);
 
 impl<'a> NumericPrefixWithSuffix<'a> {
-    pub fn from_numeric_prefixed_str(str: &'a str) -> Option<Self> {
+    pub fn from_numeric_prefixed_str(str: &'a str) -> Self {
         let i = str.chars().take_while(|c| c.is_ascii_digit()).count();
         let (prefix, remainder) = str.split_at(i);
 
-        match prefix.parse::<i32>() {
-            Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
-            Err(_) => None,
-        }
+        let prefix = prefix.parse().ok();
+        Self(prefix, remainder)
     }
 }
-
 impl Ord for NumericPrefixWithSuffix<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let NumericPrefixWithSuffix(num_a, remainder_a) = self;
-        let NumericPrefixWithSuffix(num_b, remainder_b) = other;
-        num_a
-            .cmp(num_b)
-            .then_with(|| UniCase::new(remainder_a).cmp(&UniCase::new(remainder_b)))
+        match (self.0, other.0) {
+            (None, None) => UniCase::new(self.1).cmp(&UniCase::new(other.1)),
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(a), Some(b)) => a
+                .cmp(&b)
+                .then_with(|| UniCase::new(self.1).cmp(&UniCase::new(other.1))),
+        }
     }
 }
 
@@ -737,66 +737,62 @@ mod tests {
         let target = "1a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, "a"))
+            NumericPrefixWithSuffix(Some(1), "a")
         );
 
         let target = "12ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "ab"))
+            NumericPrefixWithSuffix(Some(12), "ab")
         );
 
         let target = "12_ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "_ab"))
+            NumericPrefixWithSuffix(Some(12), "_ab")
         );
 
         let target = "1_2ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, "_2ab"))
+            NumericPrefixWithSuffix(Some(1), "_2ab")
         );
 
         let target = "1.2";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, ".2"))
+            NumericPrefixWithSuffix(Some(1), ".2")
         );
 
         let target = "1.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, ".2_a"))
+            NumericPrefixWithSuffix(Some(1), ".2_a")
         );
 
         let target = "12.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, ".2_a"))
+            NumericPrefixWithSuffix(Some(12), ".2_a")
         );
 
         let target = "12a.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "a.2_a"))
+            NumericPrefixWithSuffix(Some(12), "a.2_a")
         );
     }
 
     #[test]
     fn test_numeric_prefix_with_suffix() {
         let mut sorted = vec!["1-abc", "10", "11def", "2", "21-abc"];
-        sorted.sort_by_key(|s| {
-            NumericPrefixWithSuffix::from_numeric_prefixed_str(s).unwrap_or_else(|| {
-                panic!("Cannot convert string `{s}` into NumericPrefixWithSuffix")
-            })
-        });
+        sorted.sort_by_key(|s| NumericPrefixWithSuffix::from_numeric_prefixed_str(s));
         assert_eq!(sorted, ["1-abc", "2", "10", "11def", "21-abc"]);
 
         for numeric_prefix_less in ["numeric_prefix_less", "aaa", "~™£"] {
             assert_eq!(
                 NumericPrefixWithSuffix::from_numeric_prefixed_str(numeric_prefix_less),
-                None,
+                NumericPrefixWithSuffix(None, numeric_prefix_less),
                 "String without numeric prefix `{numeric_prefix_less}` should not be converted into NumericPrefixWithSuffix"
             )
         }

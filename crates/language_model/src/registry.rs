@@ -76,6 +76,7 @@ impl Global for GlobalLanguageModelRegistry {}
 pub struct LanguageModelRegistry {
     active_model: Option<ActiveModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
+    inline_alternatives: Vec<Arc<dyn LanguageModel>>,
 }
 
 pub struct ActiveModel {
@@ -159,11 +160,13 @@ impl LanguageModelRegistry {
         providers
     }
 
-    pub fn available_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    pub fn available_models<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
             .flat_map(|provider| provider.provided_models(cx))
-            .collect()
     }
 
     pub fn provider(&self, id: &LanguageModelProviderId) -> Option<Arc<dyn LanguageModelProvider>> {
@@ -226,6 +229,37 @@ impl LanguageModelRegistry {
 
     pub fn active_model(&self) -> Option<Arc<dyn LanguageModel>> {
         self.active_model.as_ref()?.model.clone()
+    }
+
+    /// Selects and sets the inline alternatives for language models based on
+    /// provider name and id.
+    pub fn select_inline_alternative_models(
+        &mut self,
+        alternatives: impl IntoIterator<Item = (LanguageModelProviderId, LanguageModelId)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let mut selected_alternatives = Vec::new();
+
+        for (provider_id, model_id) in alternatives {
+            if let Some(provider) = self.providers.get(&provider_id) {
+                if let Some(model) = provider
+                    .provided_models(cx)
+                    .iter()
+                    .find(|m| m.id() == model_id)
+                {
+                    selected_alternatives.push(model.clone());
+                }
+            }
+        }
+
+        self.inline_alternatives = selected_alternatives;
+    }
+
+    /// The models to use for inline assists. Returns the union of the active
+    /// model and all inline alternatives. When there are multiple models, the
+    /// user will be able to cycle through results.
+    pub fn inline_alternative_models(&self) -> &[Arc<dyn LanguageModel>] {
+        &self.inline_alternatives
     }
 }
 

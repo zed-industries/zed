@@ -60,11 +60,15 @@ pub struct ProjectPanel {
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
+    /// Maps from leaf project entry ID to the currently selected ancestor.
+    /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
+    /// project entries (and all non-leaf nodes are guaranteed to be directories).
+    ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
-    // Currently selected entry in a file tree
+    // Currently selected leaf entry (see auto-folding for a definition of that) in a file tree
     selection: Option<SelectedEntry>,
     marked_entries: BTreeSet<SelectedEntry>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -96,7 +100,7 @@ enum ClipboardEntry {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct EntryDetails {
+struct EntryDetails {
     filename: String,
     icon: Option<SharedString>,
     path: Arc<Path>,
@@ -116,13 +120,13 @@ pub struct EntryDetails {
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
-pub struct Delete {
+struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
-pub struct Trash {
+struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
 }
@@ -142,6 +146,7 @@ actions!(
         CopyRelativePath,
         Duplicate,
         RevealInFileManager,
+        OpenWithSystem,
         Cut,
         Paste,
         Rename,
@@ -154,6 +159,18 @@ actions!(
         SelectParent,
     ]
 );
+
+#[derive(Debug, Default)]
+struct FoldedAncestors {
+    current_ancestor_depth: usize,
+    ancestors: Vec<ProjectEntryId>,
+}
+
+impl FoldedAncestors {
+    fn max_ancestor_depth(&self) -> usize {
+        self.ancestors.len()
+    }
+}
 
 pub fn init_settings(cx: &mut AppContext) {
     ProjectPanelSettings::register(cx);
@@ -277,6 +294,7 @@ impl ProjectPanel {
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
+                ancestors: Default::default(),
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
                 expanded_dir_ids: Default::default(),
@@ -457,7 +475,7 @@ impl ProjectPanel {
             entry_id,
         });
 
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let auto_fold_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
@@ -483,6 +501,7 @@ impl ProjectPanel {
                             .when(cfg!(not(target_os = "macos")), |menu| {
                                 menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
                             })
+                            .action("Open in Default App", Box::new(OpenWithSystem))
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -583,6 +602,13 @@ impl ProjectPanel {
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
+            if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
+                if folded_ancestors.current_ancestor_depth > 0 {
+                    folded_ancestors.current_ancestor_depth -= 1;
+                    cx.notify();
+                    return;
+                }
+            }
             if entry.is_dir() {
                 let worktree_id = worktree.id();
                 let entry_id = entry.id;
@@ -611,6 +637,15 @@ impl ProjectPanel {
 
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, mut entry)) = self.selected_entry(cx) {
+            if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
+                if folded_ancestors.current_ancestor_depth + 1
+                    < folded_ancestors.max_ancestor_depth()
+                {
+                    folded_ancestors.current_ancestor_depth += 1;
+                    cx.notify();
+                    return;
+                }
+            }
             let worktree_id = worktree.id();
             let expanded_dir_ids =
                 if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
@@ -943,6 +978,17 @@ impl ProjectPanel {
         }
     }
 
+    fn unflatten_entry_id(&self, leaf_entry_id: ProjectEntryId) -> ProjectEntryId {
+        if let Some(ancestors) = self.ancestors.get(&leaf_entry_id) {
+            ancestors
+                .ancestors
+                .get(ancestors.current_ancestor_depth)
+                .copied()
+                .unwrap_or(leaf_entry_id)
+        } else {
+            leaf_entry_id
+        }
+    }
     fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
         if let Some(SelectedEntry {
             worktree_id,
@@ -950,6 +996,7 @@ impl ProjectPanel {
         }) = self.selection
         {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
+                let entry_id = self.unflatten_entry_id(entry_id);
                 if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                     self.edit_state = Some(EditState {
                         worktree_id,
@@ -1161,7 +1208,7 @@ impl ProjectPanel {
     }
 
     fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             if let Some(parent) = entry.path.parent() {
                 if let Some(parent_entry) = worktree.entry_for_path(parent) {
                     self.selection = Some(SelectedEntry {
@@ -1447,13 +1494,20 @@ impl ProjectPanel {
     }
 
     fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             cx.reveal_path(&worktree.abs_path().join(&entry.path));
         }
     }
 
-    fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+    fn open_system(&mut self, _: &OpenWithSystem, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let abs_path = worktree.abs_path().join(&entry.path);
+            cx.open_with_system(&abs_path);
+        }
+    }
+
+    fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let abs_path = worktree.abs_path().join(&entry.path);
             let working_directory = if entry.is_dir() {
                 Some(abs_path)
@@ -1476,7 +1530,7 @@ impl ProjectPanel {
         _: &NewSearchInDirectory,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             if entry.is_dir() {
                 let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
                 let dir_path = if include_root {
@@ -1596,14 +1650,35 @@ impl ProjectPanel {
     // Returns list of entries that should be affected by an operation.
     // When currently selected entry is not marked, it's treated as the only marked entry.
     fn marked_entries(&self) -> BTreeSet<SelectedEntry> {
-        let Some(selection) = self.selection else {
+        let Some(mut selection) = self.selection else {
             return Default::default();
         };
         if self.marked_entries.contains(&selection) {
-            self.marked_entries.clone()
+            self.marked_entries
+                .iter()
+                .copied()
+                .map(|mut entry| {
+                    entry.entry_id = self.resolve_entry(entry.entry_id);
+                    entry
+                })
+                .collect()
         } else {
+            selection.entry_id = self.resolve_entry(selection.entry_id);
             BTreeSet::from_iter([selection])
         }
+    }
+
+    fn resolve_entry(&self, id: ProjectEntryId) -> ProjectEntryId {
+        self.ancestors
+            .get(&id)
+            .and_then(|ancestors| {
+                if ancestors.current_ancestor_depth == 0 {
+                    return None;
+                }
+                ancestors.ancestors.get(ancestors.current_ancestor_depth)
+            })
+            .copied()
+            .unwrap_or(id)
     }
     pub fn selected_entry<'a>(
         &self,
@@ -1613,6 +1688,21 @@ impl ProjectPanel {
         Some((worktree.read(cx), entry))
     }
 
+    /// Compared to selected_entry, this function resolves to the currently
+    /// selected subentry if dir auto-folding is enabled.
+    fn selected_sub_entry<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> Option<(&'a Worktree, &'a project::Entry)> {
+        let (worktree, mut entry) = self.selected_entry_handle(cx)?;
+
+        let worktree = worktree.read(cx);
+        let resolved_id = self.resolve_entry(entry.id);
+        if resolved_id != entry.id {
+            entry = worktree.entry_for_id(resolved_id)?;
+        }
+        Some((worktree, entry))
+    }
     fn selected_entry_handle<'a>(
         &self,
         cx: &'a AppContext,
@@ -1655,6 +1745,7 @@ impl ProjectPanel {
             .and_then(|worktree| worktree.read(cx).root_entry())
             .map(|entry| entry.id);
 
+        let old_ancestors = std::mem::take(&mut self.ancestors);
         self.visible_entries.clear();
         for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
@@ -1688,25 +1779,42 @@ impl ProjectPanel {
 
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true, 0);
+            let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
-                if auto_collapse_dirs
-                    && entry.kind.is_dir()
-                    && !self.unfolded_dir_ids.contains(&entry.id)
-                {
-                    if let Some(root_path) = snapshot.root_entry() {
-                        let mut child_entries = snapshot.child_entries(&entry.path);
-                        if let Some(child) = child_entries.next() {
-                            if entry.path != root_path.path
-                                && child_entries.next().is_none()
-                                && child.kind.is_dir()
-                            {
-                                entry_iter.advance();
-                                continue;
+                if auto_collapse_dirs && entry.kind.is_dir() {
+                    auto_folded_ancestors.push(entry.id);
+                    if !self.unfolded_dir_ids.contains(&entry.id) {
+                        if let Some(root_path) = snapshot.root_entry() {
+                            let mut child_entries = snapshot.child_entries(&entry.path);
+                            if let Some(child) = child_entries.next() {
+                                if entry.path != root_path.path
+                                    && child_entries.next().is_none()
+                                    && child.kind.is_dir()
+                                {
+                                    entry_iter.advance();
+
+                                    continue;
+                                }
                             }
                         }
                     }
+                    let depth = old_ancestors
+                        .get(&entry.id)
+                        .map(|ancestor| ancestor.current_ancestor_depth)
+                        .unwrap_or_default();
+                    let mut ancestors = std::mem::take(&mut auto_folded_ancestors);
+                    if ancestors.len() > 1 {
+                        ancestors.reverse();
+                        self.ancestors.insert(
+                            entry.id,
+                            FoldedAncestors {
+                                current_ancestor_depth: depth,
+                                ancestors,
+                            },
+                        );
+                    }
                 }
-
+                auto_folded_ancestors.clear();
                 visible_worktree_entries.push(entry.clone());
                 if Some(entry.id) == new_entry_parent_id {
                     visible_worktree_entries.push(Entry {
@@ -1715,6 +1823,7 @@ impl ProjectPanel {
                         path: entry.path.join("\0").into(),
                         inode: 0,
                         mtime: entry.mtime,
+                        size: entry.size,
                         is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,
@@ -2008,6 +2117,15 @@ impl ProjectPanel {
                             entry.id == NEW_ENTRY_ID
                         } else {
                             entry.id == edit_state.entry_id
+                                || self
+                                    .ancestors
+                                    .get(&entry.id)
+                                    .is_some_and(|auto_folded_dirs| {
+                                        auto_folded_dirs
+                                            .ancestors
+                                            .iter()
+                                            .any(|entry_id| *entry_id == edit_state.entry_id)
+                                    })
                         };
 
                         if is_edited_entry {
@@ -2180,7 +2298,7 @@ impl ProjectPanel {
                                 .id("symlink_icon")
                                 .pr_3()
                                 .tooltip(move |cx| {
-                                    Tooltip::text(format!("{path} • Symbolic Link"), cx)
+                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
                                 })
                                 .child(
                                     Icon::new(IconName::ArrowUpRight)
@@ -2202,11 +2320,79 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            h_flex().h_6().child(
-                                Label::new(file_name)
-                                    .single_line()
-                                    .color(filename_text_color),
-                            )
+                            h_flex().h_6().map(|this| {
+                                if let Some(folded_ancestors) =
+                                    is_active.then(|| self.ancestors.get(&entry_id)).flatten()
+                                {
+                                    let Some(part_to_highlight) = Path::new(&file_name)
+                                        .ancestors()
+                                        .nth(folded_ancestors.current_ancestor_depth)
+                                    else {
+                                        return this;
+                                    };
+
+                                    let suffix = Path::new(&file_name)
+                                        .strip_prefix(part_to_highlight)
+                                        .ok()
+                                        .filter(|suffix| !suffix.as_os_str().is_empty());
+                                    let prefix = part_to_highlight
+                                        .parent()
+                                        .filter(|prefix| !prefix.as_os_str().is_empty());
+                                    let Some(part_to_highlight) = part_to_highlight
+                                        .file_name()
+                                        .and_then(|name| name.to_str().map(String::from))
+                                    else {
+                                        return this;
+                                    };
+
+                                    this.children(prefix.and_then(|prefix| {
+                                        Some(
+                                            h_flex()
+                                                .child(
+                                                    Label::new(prefix.to_str().map(String::from)?)
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                )
+                                                .child(
+                                                    Label::new(std::path::MAIN_SEPARATOR_STR)
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                ),
+                                        )
+                                    }))
+                                    .child(
+                                        Label::new(part_to_highlight)
+                                            .single_line()
+                                            .color(filename_text_color)
+                                            .underline(true),
+                                    )
+                                    .children(
+                                        suffix.and_then(|suffix| {
+                                            Some(
+                                                h_flex()
+                                                    .child(
+                                                        Label::new(std::path::MAIN_SEPARATOR_STR)
+                                                            .single_line()
+                                                            .color(filename_text_color),
+                                                    )
+                                                    .child(
+                                                        Label::new(
+                                                            suffix.to_str().map(String::from)?,
+                                                        )
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                    ),
+                                            )
+                                        }),
+                                    )
+                                } else {
+                                    this.child(
+                                        Label::new(file_name)
+                                            .single_line()
+                                            .color(filename_text_color),
+                                    )
+                                }
+                            })
                         }
                         .ml_1(),
                     )
@@ -2535,6 +2721,7 @@ impl Render for ProjectPanel {
                 })
                 .when(project.is_local_or_ssh(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
+                        .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(
@@ -2551,7 +2738,7 @@ impl Render for ProjectPanel {
                 .child(
                     uniform_list(cx.view().clone(), "entries", items_count, {
                         |this, range, cx| {
-                            let mut items = Vec::new();
+                            let mut items = Vec::with_capacity(range.end - range.start);
                             this.for_each_visible_entry(range, cx, |id, details, cx| {
                                 items.push(this.render_entry(id, details, cx));
                             });
@@ -2580,7 +2767,6 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle)
                 .child(
                     Button::new("open_project", "Open a project")
-                        .style(ButtonStyle::Filled)
                         .full_width()
                         .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(cx.listener(|this, _, cx| {
@@ -3341,9 +3527,9 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > [EDITOR: '']  <== selected",
                 "        > 3",
                 "        > 4",
+                "        > [EDITOR: '']  <== selected",
                 "          a-different-filename.tar.gz",
                 "    > C",
                 "      .dockerignore",
@@ -3364,10 +3550,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > [PROCESSING: 'new-dir']",
-                "        > 3  <== selected",
+                "        > 3",
                 "        > 4",
-                "          a-different-filename.tar.gz",
+                "        > [PROCESSING: 'new-dir']",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3381,10 +3567,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > 3  <== selected",
+                "        > 3",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3398,10 +3584,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > [EDITOR: '3']  <== selected",
+                "        > 3",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz",
+                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3416,10 +3602,10 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    v b",
-                "        > 3  <== selected",
+                "        > 3",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz",
+                "          a-different-filename.tar.gz  <== selected",
                 "    > C",
                 "      .dockerignore",
             ]
@@ -3666,8 +3852,8 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two.txt  <== selected",
-                "      one.txt",
+                "      one.txt  <== selected",
+                "      one.two.txt",
             ]
         );
 
@@ -3684,9 +3870,9 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy.txt  <== selected",
-                "      one.two.txt",
                 "      one.txt",
+                "      one copy.txt  <== selected",
+                "      one.two.txt",
             ]
         );
 
@@ -3700,10 +3886,10 @@ mod tests {
             &[
                 //
                 "v root1",
-                "      one.two copy 1.txt  <== selected",
-                "      one.two copy.txt",
-                "      one.two.txt",
                 "      one.txt",
+                "      one copy.txt",
+                "      one copy 1.txt  <== selected",
+                "      one.two.txt",
             ]
         );
     }
@@ -3896,8 +4082,8 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three copy.txt  <== selected",
                 "      three.txt",
+                "      three copy.txt  <== selected",
                 "      two.txt",
             ]
         );
@@ -3927,8 +4113,8 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three copy.txt",
                 "      three.txt",
+                "      three copy.txt",
                 "      two.txt",
             ]
         );

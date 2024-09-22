@@ -1,6 +1,7 @@
-use crate::{motion::Motion, object::Object, Vim};
+use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, Bias};
+use editor::{display_map::ToDisplayPoint, Bias, Editor};
+use gpui::actions;
 use language::SelectionGoal;
 use ui::ViewContext;
 
@@ -8,6 +9,46 @@ use ui::ViewContext;
 pub(crate) enum IndentDirection {
     In,
     Out,
+}
+
+actions!(vim, [Indent, Outdent,]);
+
+pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &Indent, cx| {
+        vim.record_current_action(cx);
+        let count = vim.take_count(cx).unwrap_or(1);
+        vim.store_visual_marks(cx);
+        vim.update_editor(cx, |vim, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let mut original_positions = vim.save_selection_starts(editor, cx);
+                for _ in 0..count {
+                    editor.indent(&Default::default(), cx);
+                }
+                vim.restore_selection_cursors(editor, cx, &mut original_positions);
+            });
+        });
+        if vim.mode.is_visual() {
+            vim.switch_mode(Mode::Normal, true, cx)
+        }
+    });
+
+    Vim::action(editor, cx, |vim, _: &Outdent, cx| {
+        vim.record_current_action(cx);
+        let count = vim.take_count(cx).unwrap_or(1);
+        vim.store_visual_marks(cx);
+        vim.update_editor(cx, |vim, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let mut original_positions = vim.save_selection_starts(editor, cx);
+                for _ in 0..count {
+                    editor.outdent(&Default::default(), cx);
+                }
+                vim.restore_selection_cursors(editor, cx, &mut original_positions);
+            });
+        });
+        if vim.mode.is_visual() {
+            vim.switch_mode(Mode::Normal, true, cx)
+        }
+    });
 }
 
 impl Vim {
@@ -76,5 +117,22 @@ impl Vim {
                 });
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::test::NeovimBackedTestContext;
+
+    #[gpui::test]
+    async fn test_indent_gv(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_neovim_option("shiftwidth=4").await;
+
+        cx.set_shared_state("ˇhello\nworld\n").await;
+        cx.simulate_shared_keystrokes("v j > g v").await;
+        cx.shared_state()
+            .await
+            .assert_eq("«    hello\n ˇ»   world\n");
     }
 }

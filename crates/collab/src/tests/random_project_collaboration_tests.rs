@@ -1047,7 +1047,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             },
             None,
         )));
-        client.language_registry().register_fake_lsp_adapter(
+        client.language_registry().register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 name: "the-fake-language-server",

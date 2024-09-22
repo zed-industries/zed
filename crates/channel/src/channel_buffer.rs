@@ -5,8 +5,8 @@ use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
 use language::proto::serialize_version;
 use rpc::{
-    proto::{self, AnyProtoClient, PeerId},
-    TypedEnvelope,
+    proto::{self, PeerId},
+    AnyProtoClient, TypedEnvelope,
 };
 use std::{sync::Arc, time::Duration};
 use text::BufferId;
@@ -66,7 +66,7 @@ impl ChannelBuffer {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
-        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
+        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -151,7 +151,7 @@ impl ChannelBuffer {
             cx.notify();
             this.buffer
                 .update(cx, |buffer, cx| buffer.apply_ops(ops, cx))
-        })??;
+        })?;
 
         Ok(())
     }
@@ -171,11 +171,14 @@ impl ChannelBuffer {
     fn on_buffer_update(
         &mut self,
         _: Model<language::Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::Event::Operation(operation) => {
+            language::BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => {
                 if *ZED_ALWAYS_ACTIVE {
                     if let language::Operation::UpdateSelections { selections, .. } = operation {
                         if selections.is_empty() {
@@ -191,7 +194,7 @@ impl ChannelBuffer {
                     })
                     .log_err();
             }
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 cx.emit(ChannelBufferEvent::BufferEdited);
             }
             _ => {}

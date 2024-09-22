@@ -1,7 +1,7 @@
 id = "svelte"
 name = "Svelte"
 description = "Svelte support"
-version = "0.1.1"
+version = "0.2.0"
 schema_version = 1
 authors = []
 repository = "https://github.com/zed-extensions/svelte"
@@ -11,5 +11,5 @@ name = "Svelte Language Server"
 language = "Svelte"
 
 [grammars.svelte]
-repository = "https://github.com/Himujjal/tree-sitter-svelte"
-commit = "b08d070e303d2a385d6d0ab3add500f8fa514443"
+repository = "https://github.com/tree-sitter-grammars/tree-sitter-svelte"
+commit = "3f06f705410683adb17d146b5eca28c62fe81ba6"

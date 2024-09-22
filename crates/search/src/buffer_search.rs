@@ -505,6 +505,8 @@ impl BufferSearchBar {
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
+        let search_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+
         Self {
             query_editor,
             query_editor_focused: false,
@@ -514,8 +516,8 @@ impl BufferSearchBar {
             active_searchable_item_subscription: None,
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
-            default_options: SearchOptions::NONE,
-            search_options: SearchOptions::NONE,
+            default_options: search_options,
+            search_options,
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
@@ -602,6 +604,12 @@ impl BufferSearchBar {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
+
+        self.default_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+
+        if self.default_options != self.search_options {
+            self.search_options = self.default_options;
+        }
 
         self.dismissed = false;
         handle.search_bar_visibility_changed(true, cx);
@@ -1203,6 +1211,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            crate::init(cx);
         });
     }
 

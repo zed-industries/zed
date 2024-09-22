@@ -1,23 +1,27 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
-use language::LanguageRegistry;
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use node_runtime::DummyNodeRuntime;
 use project::{
-    buffer_store::BufferStore, dap_store::DapStore, project_settings::SettingsObserver,
-    search::SearchQuery, worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId,
-    WorktreeSettings,
+    buffer_store::{BufferStore, BufferStoreEvent},
+    dap_store::DapStore,
+    project_settings::SettingsObserver,
+    search::SearchQuery,
+    worktree_store::WorktreeStore,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
-    proto::{self, AnyProtoClient, SSH_PEER_ID, SSH_PROJECT_ID},
-    TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
+    AnyProtoClient, TypedEnvelope,
 };
-use settings::Settings as _;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt;
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -28,24 +32,26 @@ pub struct HeadlessProject {
     pub lsp_store: Model<LspStore>,
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
+    pub languages: Arc<LanguageRegistry>,
 }
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
         settings::init(cx);
         language::init(cx);
-        WorktreeSettings::register(cx);
+        project::Project::init_settings(cx);
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        // TODO: we should load the env correctly (as we do in login_shell_env_loaded when stdout is not a pty). Can we re-use the ProjectEnvironment for that?
-        let languages = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
-        let dap_store = cx.new_model(DapStore::new);
+        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
-        let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
+        let worktree_store = cx.new_model(|cx| {
+            let mut store = WorktreeStore::new(None, true, fs.clone());
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
+        });
+
+        let dap_store = cx.new_model(DapStore::new);
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store = BufferStore::new(
                 worktree_store.clone(),
@@ -56,6 +62,16 @@ impl HeadlessProject {
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+        let prettier_store = cx.new_model(|cx| {
+            PrettierStore::new(
+                DummyNodeRuntime::new(),
+                fs.clone(),
+                languages.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
         let settings_observer = cx.new_model(|cx| {
             let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
@@ -63,20 +79,33 @@ impl HeadlessProject {
         });
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
-            LspStore::new(
+            let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 dap_store.clone(),
-                Some(environment),
-                languages,
+                prettier_store.clone(),
+                environment,
+                languages.clone(),
                 None,
                 fs.clone(),
-                Some(session.clone().into()),
-                None,
-                Some(0),
                 cx,
-            )
+            );
+            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            lsp_store
         });
+
+        cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+        cx.subscribe(
+            &buffer_store,
+            |_this, _buffer_store, event, cx| match event {
+                BufferStoreEvent::BufferAdded(buffer) => {
+                    cx.subscribe(buffer, Self::on_buffer_event).detach();
+                }
+                _ => {}
+            },
+        )
+        .detach();
 
         let client: AnyProtoClient = session.clone().into();
 
@@ -95,9 +124,16 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
+        client.add_model_request_handler(LspStore::handle_create_language_server);
+        client.add_model_request_handler(LspStore::handle_which_command);
+        client.add_model_request_handler(LspStore::handle_shell_env);
+        client.add_model_request_handler(LspStore::handle_try_exec);
+        client.add_model_request_handler(LspStore::handle_read_text_file);
+
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
+        LspStore::init(&client);
 
         HeadlessProject {
             session: client,
@@ -107,6 +143,52 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             next_entry_id: Default::default(),
+            languages,
+        }
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx
+                .background_executor()
+                .spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: SSH_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(operation)],
+                }))
+                .detach(),
+            _ => {}
+        }
+    }
+
+    fn on_lsp_store_event(
+        &mut self,
+        _lsp_store: Model<LspStore>,
+        event: &LspStoreEvent,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            LspStoreEvent::LanguageServerUpdate {
+                language_server_id,
+                message,
+            } => {
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: SSH_PROJECT_ID,
+                        language_server_id: language_server_id.to_proto(),
+                        variant: Some(message.clone()),
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 
@@ -129,18 +211,11 @@ impl HeadlessProject {
             .await?;
 
         this.update(&mut cx, |this, cx| {
-            let session = this.session.clone();
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.add(&worktree, cx);
             });
-            worktree.update(cx, |worktree, cx| {
-                worktree.observe_updates(0, cx, move |update| {
-                    session.send(update).ok();
-                    futures::future::ready(true)
-                });
-                proto::AddWorktreeResponse {
-                    worktree_id: worktree.id().to_proto(),
-                }
+            worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
+                worktree_id: worktree.id().to_proto(),
             })
         })
     }
