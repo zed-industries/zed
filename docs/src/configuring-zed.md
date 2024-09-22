@@ -2128,6 +2128,16 @@ Float values between `0.0` and `0.9`, where:
 }
 ```
 
+## UI Font Size
+
+- Description: The default font size for text in the UI.
+- Setting: `ui_font_size`
+- Default: `16`
+
+**Options**
+
+`integer` values
+
 ## An example configuration:
 
 ```json
