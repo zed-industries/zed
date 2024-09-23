@@ -274,7 +274,7 @@ impl HttpClient for BlockedHttpClient {
         Box::pin(async {
             Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                "ssh host blocked http connection",
+                "BlockedHttpClient disallowed request",
             )
             .into())
         })

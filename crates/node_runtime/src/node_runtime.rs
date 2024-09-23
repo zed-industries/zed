@@ -453,29 +453,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         local_package_directory: &Path,
         name: &str,
     ) -> Result<Option<String>> {
-        let mut package_json_path = local_package_directory.to_owned();
-        package_json_path.extend(["node_modules", name, "package.json"]);
-
-        let mut file = match fs::File::open(package_json_path).await {
-            Ok(file) => file,
-            Err(err) => {
-                if err.kind() == io::ErrorKind::NotFound {
-                    return Ok(None);
-                }
-
-                Err(err)?
-            }
-        };
-
-        #[derive(Deserialize)]
-        struct PackageJson {
-            version: String,
-        }
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).await?;
-        let package_json: PackageJson = serde_json::from_str(&contents)?;
-        Ok(Some(package_json.version))
+        read_package_installed_version(local_package_directory.join("node_modules"), name).await
     }
 }
 
@@ -591,11 +569,40 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
 
     async fn npm_package_installed_version(
         &self,
-        _local_package_directory: &Path,
-        _: &str,
+        local_package_directory: &Path,
+        name: &str,
     ) -> Result<Option<String>> {
-        bail!("no node runtime available")
+        read_package_installed_version(local_package_directory.join("node_modules"), name).await
+        // todo: allow returning a globally installed version (requires callers not to hard-code the path)
     }
+}
+
+async fn read_package_installed_version(
+    node_module_directory: PathBuf,
+    name: &str,
+) -> Result<Option<String>> {
+    let package_json_path = node_module_directory.join(name).join("package.json");
+
+    let mut file = match fs::File::open(package_json_path).await {
+        Ok(file) => file,
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound {
+                return Ok(None);
+            }
+
+            Err(err)?
+        }
+    };
+
+    #[derive(Deserialize)]
+    struct PackageJson {
+        version: String,
+    }
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).await?;
+    let package_json: PackageJson = serde_json::from_str(&contents)?;
+    Ok(Some(package_json.version))
 }
 
 pub struct UnavailableNodeRuntime;
@@ -606,7 +613,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         Box::new(UnavailableNodeRuntime)
     }
     fn binary_path(&self) -> Result<PathBuf> {
-        bail!("no node runtime available")
+        bail!("binary_path: no node runtime available")
     }
 
     async fn run_npm_subcommand(
@@ -616,7 +623,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _: &str,
         _: &[&str],
     ) -> anyhow::Result<Output> {
-        bail!("no node runtime available")
+        bail!("run_npm_subcommand: no node runtime available")
     }
 
     async fn npm_package_installed_version(
@@ -624,7 +631,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _local_package_directory: &Path,
         _: &str,
     ) -> Result<Option<String>> {
-        bail!("no node runtime available")
+        bail!("npm_package_installed_version: no node runtime available")
     }
 }
 

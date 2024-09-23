@@ -34,6 +34,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub git: GitSettings,
 
+    /// Configuration for Node-related features
+    #[serde(default)]
+    pub node: NodeBinarySettings,
+
     /// Configuration for how direnv configuration should be loaded
     #[serde(default)]
     pub load_direnv: DirenvSettings,
@@ -41,6 +45,17 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct NodeBinarySettings {
+    /// The path to the node binary
+    pub path: Option<String>,
+    ///  The path to the npm binary Zed should use (defaults to .path/../npm)
+    pub npm_path: Option<String>,
+    /// If disabled, zed will download its own copy of node.
+    #[serde(default)]
+    pub disable_path_lookup: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
