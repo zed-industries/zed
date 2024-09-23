@@ -243,7 +243,6 @@ impl ProjectPanel {
                 | project::Event::DiagnosticsUpdated { .. } => {
                     if ProjectPanelSettings::get_global(cx).show_diagnostic_errors {
                         this.update_diagnostics(cx);
-                        this.update_visible_entries(None, cx);
                         cx.notify();
                     }
                 }
