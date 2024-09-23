@@ -48,7 +48,7 @@ use language::{
     ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
+use multi_buffer::{Anchor, AnchorRangeExt as _, MultiBufferPoint, MultiBufferRow};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -1305,30 +1305,50 @@ impl EditorElement {
             let display_hunks = buffer_snapshot
                 .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
                 .filter_map(|hunk| {
-                    let display_hunk = diff_hunk_to_display(&hunk, snapshot);
+                    let mut display_hunk = diff_hunk_to_display(&hunk, snapshot);
 
                     if let DisplayDiffHunk::Unfolded {
                         multi_buffer_range,
                         status,
                         ..
-                    } = &display_hunk
+                    } = &mut display_hunk
                     {
-                        if *status == DiffHunkStatus::Removed {
-                            while let Some(expanded_hunk) = expanded_hunks.peek() {
-                                match expanded_hunk
-                                    .hunk_range
-                                    .start
-                                    .cmp(&multi_buffer_range.start, &buffer_snapshot)
-                                {
-                                    Ordering::Less => {
-                                        expanded_hunks.next();
-                                    }
-                                    Ordering::Equal => {
-                                        return None;
-                                    }
-                                    Ordering::Greater => {
-                                        break;
-                                    }
+                        let mut is_expanded = false;
+                        while let Some(expanded_hunk) = expanded_hunks.peek() {
+                            dbg!(expanded_hunk.hunk_range.start);
+                            dbg!(expanded_hunk.hunk_range.to_point(buffer_snapshot));
+
+                            dbg!(multi_buffer_range.start);
+
+                            match expanded_hunk
+                                .hunk_range
+                                .start
+                                .cmp(&multi_buffer_range.start, &buffer_snapshot)
+                            {
+                                Ordering::Less => {
+                                    expanded_hunks.next();
+                                }
+                                Ordering::Equal => {
+                                    is_expanded = true;
+                                    break;
+                                }
+                                Ordering::Greater => {
+                                    break;
+                                }
+                            }
+                        }
+                        match status {
+                            DiffHunkStatus::Added => {}
+                            DiffHunkStatus::Modified => {
+                                dbg!("modified");
+                                if is_expanded {
+                                    dbg!("changing to added");
+                                    *status = DiffHunkStatus::Added;
+                                }
+                            }
+                            DiffHunkStatus::Removed => {
+                                if is_expanded {
+                                    return None;
                                 }
                             }
                         }
