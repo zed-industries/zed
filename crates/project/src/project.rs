@@ -625,7 +625,7 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let worktree_store = cx.new_model(|_| WorktreeStore::new(None, false, fs.clone()));
+            let worktree_store = cx.new_model(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -722,7 +722,7 @@ impl Project {
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
             let worktree_store =
-                cx.new_model(|_| WorktreeStore::new(Some(ssh.clone().into()), false, fs.clone()));
+                cx.new_model(|_| WorktreeStore::remote(false, ssh.clone().into(), 0, None));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -744,7 +744,6 @@ impl Project {
                     worktree_store.clone(),
                     languages.clone(),
                     ssh.clone().into(),
-                    0,
                     cx,
                 )
             });
@@ -874,11 +873,15 @@ impl Project {
         let role = response.payload.role();
 
         let worktree_store = cx.new_model(|_| {
-            let mut store = WorktreeStore::new(Some(client.clone().into()), true, fs.clone());
-            if let Some(dev_server_project_id) = response.payload.dev_server_project_id {
-                store.set_dev_server_project_id(DevServerProjectId(dev_server_project_id));
-            }
-            store
+            WorktreeStore::remote(
+                true,
+                client.clone().into(),
+                response.payload.project_id,
+                response
+                    .payload
+                    .dev_server_project_id
+                    .map(DevServerProjectId),
+            )
         })?;
         let buffer_store =
             cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx))?;
