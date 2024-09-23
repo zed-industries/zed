@@ -372,7 +372,9 @@ messages!(
     (ShellEnvResponse, Foreground),
     (TryExec, Foreground),
     (ReadTextFile, Foreground),
-    (ReadTextFileResponse, Foreground)
+    (ReadTextFileResponse, Foreground),
+    (CheckFileExists, Background),
+    (CheckFileExistsResponse, Background)
 );
 
 request_messages!(
@@ -501,6 +503,7 @@ request_messages!(
     (ShellEnv, ShellEnvResponse),
     (ReadTextFile, ReadTextFileResponse),
     (TryExec, Ack),
+    (CheckFileExists, CheckFileExistsResponse)
 );
 
 entity_messages!(
@@ -578,7 +581,8 @@ entity_messages!(
     WhichCommand,
     ShellEnv,
     TryExec,
-    ReadTextFile
+    ReadTextFile,
+    CheckFileExists,
 );
 
 entity_messages!(
