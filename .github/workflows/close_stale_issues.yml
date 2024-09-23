@@ -23,11 +23,8 @@ jobs:
           days-before-stale: 365
           days-before-close: 7
           only-labels: "defect,panic / crash"
-          only-issues: true
           operations-per-run: 100
           ascending: true
           enable-statistics: true
           debug-only: true
-          ignore-updates: true
-          ignore-issue-updates: true
           stale-issue-label: "stale"
