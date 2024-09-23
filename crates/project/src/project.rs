@@ -153,7 +153,7 @@ pub struct Project {
     git_diff_debouncer: DebouncedDelay<Self>,
     remotely_created_models: Arc<Mutex<RemotelyCreatedModels>>,
     terminals: Terminals,
-    node: Option<Arc<dyn NodeRuntime>>,
+    node: Option<NodeRuntime>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
@@ -579,7 +579,7 @@ impl Project {
 
     pub fn local(
         client: Arc<Client>,
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -675,7 +675,7 @@ impl Project {
     pub fn ssh(
         ssh: Arc<SshSession>,
         client: Arc<Client>,
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -1064,7 +1064,7 @@ impl Project {
             .update(|cx| {
                 Project::local(
                     client,
-                    node_runtime::FakeNodeRuntime::new(),
+                    node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
                     fs,
@@ -1104,7 +1104,7 @@ impl Project {
         let project = cx.update(|cx| {
             Project::local(
                 client,
-                node_runtime::FakeNodeRuntime::new(),
+                node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
                 fs,
@@ -1157,7 +1157,7 @@ impl Project {
         self.user_store.clone()
     }
 
-    pub fn node_runtime(&self) -> Option<&Arc<dyn NodeRuntime>> {
+    pub fn node_runtime(&self) -> Option<&NodeRuntime> {
         self.node.as_ref()
     }
 

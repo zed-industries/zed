@@ -20,13 +20,13 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct VtslsLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl VtslsLspAdapter {
     const SERVER_PATH: &'static str = "node_modules/@vtsls/language-server/bin/vtsls.js";
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         VtslsLspAdapter { node }
     }
     async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
@@ -154,14 +154,14 @@ impl LspAdapter for VtslsLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -298,7 +298,7 @@ impl LspAdapter for VtslsLspAdapter {
 
 async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let server_path = container_dir.join(VtslsLspAdapter::SERVER_PATH);

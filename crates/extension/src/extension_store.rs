@@ -177,7 +177,7 @@ actions!(zed, [ReloadExtensions]);
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -228,7 +228,7 @@ impl ExtensionStore {
         http_client: Arc<HttpClientWithUrl>,
         builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
