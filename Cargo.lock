@@ -404,6 +404,7 @@ dependencies = [
  "language_model",
  "languages",
  "log",
+ "lsp",
  "markdown",
  "menu",
  "multi_buffer",

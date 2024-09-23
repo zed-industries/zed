@@ -675,7 +675,9 @@ impl DelayedDebouncedEditAction {
 pub enum Event {
     PaneAdded(View<Pane>),
     PaneRemoved,
-    ItemAdded,
+    ItemAdded {
+        item: Box<dyn ItemHandle>,
+    },
     ItemRemoved,
     ActiveItemChanged,
     UserSavedItem {
@@ -2984,7 +2986,9 @@ impl Workspace {
         match event {
             pane::Event::AddItem { item } => {
                 item.added_to_pane(self, pane, cx);
-                cx.emit(Event::ItemAdded);
+                cx.emit(Event::ItemAdded {
+                    item: item.boxed_clone(),
+                });
             }
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);

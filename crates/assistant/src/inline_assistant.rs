@@ -12,8 +12,9 @@ use editor::{
         BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
-    Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
-    ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
+    ToOffset as _, ToPoint,
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
@@ -35,6 +36,7 @@ use language_model::{
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
+use project::{CodeAction, ProjectTransaction};
 use rope::Rope;
 use settings::{Settings, SettingsStore};
 use smol::future::FutureExt;
@@ -49,10 +51,11 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal_view::terminal_panel::TerminalPanel;
+use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
-use workspace::{notifications::NotificationId, Toast, Workspace};
+use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -129,8 +132,10 @@ impl InlineAssistant {
     }
 
     pub fn register_workspace(&mut self, workspace: &View<Workspace>, cx: &mut WindowContext) {
-        cx.subscribe(workspace, |_, event, cx| {
-            Self::update_global(cx, |this, cx| this.handle_workspace_event(event, cx));
+        cx.subscribe(workspace, |workspace, event, cx| {
+            Self::update_global(cx, |this, cx| {
+                this.handle_workspace_event(workspace, event, cx)
+            });
         })
         .detach();
 
@@ -150,19 +155,49 @@ impl InlineAssistant {
         .detach();
     }
 
-    fn handle_workspace_event(&mut self, event: &workspace::Event, cx: &mut WindowContext) {
-        // When the user manually saves an editor, automatically accepts all finished transformations.
-        if let workspace::Event::UserSavedItem { item, .. } = event {
-            if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx)) {
-                if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
-                    for assist_id in editor_assists.assist_ids.clone() {
-                        let assist = &self.assists[&assist_id];
-                        if let CodegenStatus::Done = assist.codegen.read(cx).status(cx) {
-                            self.finish_assist(assist_id, false, cx)
+    fn handle_workspace_event(
+        &mut self,
+        workspace: View<Workspace>,
+        event: &workspace::Event,
+        cx: &mut WindowContext,
+    ) {
+        match event {
+            workspace::Event::UserSavedItem { item, .. } => {
+                // When the user manually saves an editor, automatically accepts all finished transformations.
+                if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx)) {
+                    if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+                        for assist_id in editor_assists.assist_ids.clone() {
+                            let assist = &self.assists[&assist_id];
+                            if let CodegenStatus::Done = assist.codegen.read(cx).status(cx) {
+                                self.finish_assist(assist_id, false, cx)
+                            }
                         }
                     }
                 }
             }
+            workspace::Event::ItemAdded { item } => {
+                self.register_workspace_item(&workspace, item.as_ref(), cx);
+            }
+            _ => (),
+        }
+    }
+
+    fn register_workspace_item(
+        &mut self,
+        workspace: &View<Workspace>,
+        item: &dyn ItemHandle,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(editor) = item.act_as::<Editor>(cx) {
+            editor.update(cx, |editor, cx| {
+                editor.push_code_action_provider(
+                    Arc::new(AssistantCodeActionProvider {
+                        editor: cx.view().downgrade(),
+                        workspace: workspace.downgrade(),
+                    }),
+                    cx,
+                );
+            });
         }
     }
 
@@ -332,6 +367,7 @@ impl InlineAssistant {
         mut range: Range<Anchor>,
         initial_prompt: String,
         initial_transaction_id: Option<TransactionId>,
+        focus: bool,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         cx: &mut WindowContext,
@@ -404,6 +440,11 @@ impl InlineAssistant {
         assist_group.assist_ids.push(assist_id);
         editor_assists.assist_ids.push(assist_id);
         self.assist_groups.insert(assist_group_id, assist_group);
+
+        if focus {
+            self.focus_assist(assist_id, cx);
+        }
+
         assist_id
     }
 
@@ -3286,6 +3327,132 @@ where
                 return Poll::Ready(None);
             }
         }
+    }
+}
+
+struct AssistantCodeActionProvider {
+    editor: WeakView<Editor>,
+    workspace: WeakView<Workspace>,
+}
+
+impl CodeActionProvider for AssistantCodeActionProvider {
+    fn code_actions(
+        &self,
+        buffer: &Model<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        let snapshot = buffer.read(cx).snapshot();
+        let mut range = range.to_point(&snapshot);
+
+        // Expand the range to line boundaries.
+        range.start.column = 0;
+        range.end.column = snapshot.line_len(range.end.row);
+
+        let mut has_diagnostics = false;
+        for diagnostic in snapshot.diagnostics_in_range::<_, Point>(range.clone(), false) {
+            range.start = cmp::min(range.start, diagnostic.range.start);
+            range.end = cmp::max(range.end, diagnostic.range.end);
+            has_diagnostics = true;
+        }
+        if has_diagnostics {
+            if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None) {
+                if let Some(symbol) = symbols_containing_start.last() {
+                    range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
+                    range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
+                }
+            }
+
+            if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None) {
+                if let Some(symbol) = symbols_containing_end.last() {
+                    range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
+                    range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
+                }
+            }
+
+            Task::ready(Ok(vec![CodeAction {
+                server_id: language::LanguageServerId(0),
+                range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
+                lsp_action: lsp::CodeAction {
+                    title: "Fix with Assistant".into(),
+                    ..Default::default()
+                },
+            }]))
+        } else {
+            Task::ready(Ok(Vec::new()))
+        }
+    }
+
+    fn apply_code_action(
+        &self,
+        buffer: Model<Buffer>,
+        action: CodeAction,
+        excerpt_id: ExcerptId,
+        _push_to_history: bool,
+        cx: &mut WindowContext,
+    ) -> Task<Result<ProjectTransaction>> {
+        let editor = self.editor.clone();
+        let workspace = self.workspace.clone();
+        cx.spawn(|mut cx| async move {
+            let editor = editor.upgrade().context("editor was released")?;
+            let range = editor
+                .update(&mut cx, |editor, cx| {
+                    editor.buffer().update(cx, |multibuffer, cx| {
+                        let buffer = buffer.read(cx);
+                        let multibuffer_snapshot = multibuffer.read(cx);
+
+                        let old_context_range =
+                            multibuffer_snapshot.context_range_for_excerpt(excerpt_id)?;
+                        let mut new_context_range = old_context_range.clone();
+                        if action
+                            .range
+                            .start
+                            .cmp(&old_context_range.start, buffer)
+                            .is_lt()
+                        {
+                            new_context_range.start = action.range.start;
+                        }
+                        if action.range.end.cmp(&old_context_range.end, buffer).is_gt() {
+                            new_context_range.end = action.range.end;
+                        }
+                        drop(multibuffer_snapshot);
+
+                        if new_context_range != old_context_range {
+                            multibuffer.resize_excerpt(excerpt_id, new_context_range, cx);
+                        }
+
+                        let multibuffer_snapshot = multibuffer.read(cx);
+                        Some(
+                            multibuffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, action.range.start)?
+                                ..multibuffer_snapshot
+                                    .anchor_in_excerpt(excerpt_id, action.range.end)?,
+                        )
+                    })
+                })?
+                .context("invalid range")?;
+            let assistant_panel = workspace.update(&mut cx, |workspace, cx| {
+                workspace
+                    .panel::<AssistantPanel>(cx)
+                    .context("assistant panel was released")
+            })??;
+
+            cx.update_global(|assistant: &mut InlineAssistant, cx| {
+                let assist_id = assistant.suggest_assist(
+                    &editor,
+                    range,
+                    "Fix Diagnostics".into(),
+                    None,
+                    true,
+                    Some(workspace),
+                    Some(&assistant_panel),
+                    cx,
+                );
+                assistant.start_assist(assist_id, cx);
+            })?;
+
+            Ok(ProjectTransaction::default())
+        })
     }
 }
 
