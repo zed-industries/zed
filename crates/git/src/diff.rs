@@ -41,7 +41,7 @@ impl sum_tree::Item for InternalDiffHunk {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
 }
@@ -49,8 +49,10 @@ pub struct DiffHunkSummary {
 impl sum_tree::Summary for DiffHunkSummary {
     type Context = text::BufferSnapshot;
 
-    fn zero(_cx: &Self::Context) -> Self {
-        Default::default()
+    fn zero(buffer: &Self::Context) -> Self {
+        Self {
+            buffer_range: buffer.min_anchor()..buffer.min_anchor(),
+        }
     }
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {

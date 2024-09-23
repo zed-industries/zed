@@ -64,14 +64,15 @@ pub enum WorkflowSuggestion {
 
 impl WorkflowSuggestion {
     pub fn range(&self) -> Range<language::Anchor> {
-        match self {
-            Self::Update { range, .. } => range.clone(),
-            Self::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
-            Self::InsertBefore { position, .. } | Self::InsertAfter { position, .. } => {
-                *position..*position
-            }
-            Self::Delete { range, .. } => range.clone(),
-        }
+        todo!()
+        // match self {
+        //     Self::Update { range, .. } => range.clone(),
+        //     Self::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
+        //     Self::InsertBefore { position, .. } | Self::InsertAfter { position, .. } => {
+        //         *position..*position
+        //     }
+        //     Self::Delete { range, .. } => range.clone(),
+        // }
     }
 
     pub fn description(&self) -> Option<&str> {

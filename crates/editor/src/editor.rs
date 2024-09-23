@@ -3095,59 +3095,60 @@ impl Editor {
 
     fn linked_editing_ranges_for(
         &self,
-        selection: Range<text::Anchor>,
-        cx: &AppContext,
+        _selection: Range<text::Anchor>,
+        _cx: &AppContext,
     ) -> Option<HashMap<Model<Buffer>, Vec<Range<text::Anchor>>>> {
-        if self.linked_edit_ranges.is_empty() {
-            return None;
-        }
-        let ((base_range, linked_ranges), buffer_snapshot, buffer) =
-            selection.end.buffer_id.and_then(|end_buffer_id| {
-                if selection.start.buffer_id != Some(end_buffer_id) {
-                    return None;
-                }
-                let buffer = self.buffer.read(cx).buffer(end_buffer_id)?;
-                let snapshot = buffer.read(cx).snapshot();
-                self.linked_edit_ranges
-                    .get(end_buffer_id, selection.start..selection.end, &snapshot)
-                    .map(|ranges| (ranges, snapshot, buffer))
-            })?;
-        use text::ToOffset as TO;
-        // find offset from the start of current range to current cursor position
-        let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
+        todo!()
+        // if self.linked_edit_ranges.is_empty() {
+        //     return None;
+        // }
+        // let ((base_range, linked_ranges), buffer_snapshot, buffer) =
+        //     selection.end.buffer_id.and_then(|end_buffer_id| {
+        //         if selection.start.buffer_id != Some(end_buffer_id) {
+        //             return None;
+        //         }
+        //         let buffer = self.buffer.read(cx).buffer(end_buffer_id)?;
+        //         let snapshot = buffer.read(cx).snapshot();
+        //         self.linked_edit_ranges
+        //             .get(end_buffer_id, selection.start..selection.end, &snapshot)
+        //             .map(|ranges| (ranges, snapshot, buffer))
+        //     })?;
+        // use text::ToOffset as TO;
+        // // find offset from the start of current range to current cursor position
+        // let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
 
-        let start_offset = TO::to_offset(&selection.start, &buffer_snapshot);
-        let start_difference = start_offset - start_byte_offset;
-        let end_offset = TO::to_offset(&selection.end, &buffer_snapshot);
-        let end_difference = end_offset - start_byte_offset;
-        // Current range has associated linked ranges.
-        let mut linked_edits = HashMap::<_, Vec<_>>::default();
-        for range in linked_ranges.iter() {
-            let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
-            let end_offset = start_offset + end_difference;
-            let start_offset = start_offset + start_difference;
-            if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
-                continue;
-            }
-            if self.selections.disjoint_anchor_ranges().iter().any(|s| {
-                if s.start.buffer_id != selection.start.buffer_id
-                    || s.end.buffer_id != selection.end.buffer_id
-                {
-                    return false;
-                }
-                TO::to_offset(&s.start.text_anchor, &buffer_snapshot) <= end_offset
-                    && TO::to_offset(&s.end.text_anchor, &buffer_snapshot) >= start_offset
-            }) {
-                continue;
-            }
-            let start = buffer_snapshot.anchor_after(start_offset);
-            let end = buffer_snapshot.anchor_after(end_offset);
-            linked_edits
-                .entry(buffer.clone())
-                .or_default()
-                .push(start..end);
-        }
-        Some(linked_edits)
+        // let start_offset = TO::to_offset(&selection.start, &buffer_snapshot);
+        // let start_difference = start_offset - start_byte_offset;
+        // let end_offset = TO::to_offset(&selection.end, &buffer_snapshot);
+        // let end_difference = end_offset - start_byte_offset;
+        // // Current range has associated linked ranges.
+        // let mut linked_edits = HashMap::<_, Vec<_>>::default();
+        // for range in linked_ranges.iter() {
+        //     let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
+        //     let end_offset = start_offset + end_difference;
+        //     let start_offset = start_offset + start_difference;
+        //     if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
+        //         continue;
+        //     }
+        //     if self.selections.disjoint_anchor_ranges().iter().any(|s| {
+        //         if s.start.buffer_id != selection.start.buffer_id
+        //             || s.end.buffer_id != selection.end.buffer_id
+        //         {
+        //             return false;
+        //         }
+        //         TO::to_offset(&s.start.text_anchor, &buffer_snapshot) <= end_offset
+        //             && TO::to_offset(&s.end.text_anchor, &buffer_snapshot) >= start_offset
+        //     }) {
+        //         continue;
+        //     }
+        //     let start = buffer_snapshot.anchor_after(start_offset);
+        //     let end = buffer_snapshot.anchor_after(end_offset);
+        //     linked_edits
+        //         .entry(buffer.clone())
+        //         .or_default()
+        //         .push(start..end);
+        // }
+        // Some(linked_edits)
     }
 
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
@@ -5611,7 +5612,7 @@ impl Editor {
                 for selection in selections.iter() {
                     let selection_start = snapshot.anchor_before(selection.start).text_anchor;
                     let selection_end = snapshot.anchor_after(selection.end).text_anchor;
-                    if selection_start.buffer_id != selection_end.buffer_id {
+                    if selection_start.buffer_id() != selection_end.buffer_id() {
                         continue;
                     }
                     if let Some(ranges) =
@@ -12686,7 +12687,7 @@ fn snippet_completions(
         return vec![];
     }
     let snapshot = buffer.read(cx).text_snapshot();
-    let chunks = snapshot.reversed_chunks_in_range(text::Anchor::MIN..buffer_position);
+    let chunks = snapshot.reversed_chunks_in_range(snapshot.min_anchor()..buffer_position);
 
     let mut lines = chunks.lines();
     let Some(line_at) = lines.next().filter(|line| !line.is_empty()) else {

@@ -599,7 +599,7 @@ impl Context {
         });
         let message = MessageAnchor {
             id: first_message_id,
-            start: language::Anchor::MIN,
+            start: this.buffer.read(cx).min_anchor(),
         };
         this.messages_metadata.insert(
             first_message_id,
@@ -862,11 +862,9 @@ impl Context {
         }
 
         match op {
-            ContextOperation::InsertMessage { anchor, .. } => self
-                .buffer
-                .read(cx)
-                .version
-                .observed(anchor.start.timestamp),
+            ContextOperation::InsertMessage { anchor, .. } => {
+                self.buffer.read(cx).can_resolve(&anchor.start)
+            }
             ContextOperation::UpdateMessage { message_id, .. } => {
                 self.messages_metadata.contains_key(message_id)
             }
@@ -876,20 +874,12 @@ impl Context {
                 sections,
                 ..
             } => {
-                let version = &self.buffer.read(cx).version;
+                let buffer = self.buffer.read(cx);
                 sections
                     .iter()
                     .map(|section| &section.range)
                     .chain([output_range])
-                    .all(|range| {
-                        let observed_start = range.start == language::Anchor::MIN
-                            || range.start == language::Anchor::MAX
-                            || version.observed(range.start.timestamp);
-                        let observed_end = range.end == language::Anchor::MIN
-                            || range.end == language::Anchor::MAX
-                            || version.observed(range.end.timestamp);
-                        observed_start && observed_end
-                    })
+                    .all(|range| buffer.can_resolve(&range.start) && buffer.can_resolve(&range.end))
             }
             ContextOperation::BufferOperation(_) => {
                 panic!("buffer operations should always be applied")
@@ -1563,7 +1553,7 @@ impl Context {
         }
 
         if let Some(mut pending_step) = pending_step {
-            pending_step.range.end = text::Anchor::MAX;
+            pending_step.range.end = buffer.max_anchor();
             new_steps.push(pending_step);
         }
 
@@ -2707,7 +2697,7 @@ impl Context {
                         messages.next();
                     }
                 }
-                let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
+                let message_end_anchor = message_end.unwrap_or(buffer.max_anchor());
                 let message_end = message_end_anchor.to_offset(buffer);
 
                 return Some(Message {
@@ -2932,6 +2922,7 @@ impl SavedContext {
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Context>,
     ) -> Vec<ContextOperation> {
+        let buffer = buffer.read(cx);
         let mut operations = Vec::new();
         let mut version = clock::Global::new();
         let mut next_timestamp = clock::Lamport::new(ReplicaId::default());
@@ -2944,7 +2935,7 @@ impl SavedContext {
                 operations.push(ContextOperation::InsertMessage {
                     anchor: MessageAnchor {
                         id: message.id,
-                        start: buffer.read(cx).anchor_before(message.start),
+                        start: buffer.anchor_before(message.start),
                     },
                     metadata: MessageMetadata {
                         role: message.metadata.role,
@@ -2977,19 +2968,16 @@ impl SavedContext {
         let timestamp = next_timestamp.tick();
         operations.push(ContextOperation::SlashCommandFinished {
             id: SlashCommandId(timestamp),
-            output_range: language::Anchor::MIN..language::Anchor::MAX,
+            output_range: buffer.min_anchor()..buffer.max_anchor(),
             sections: self
                 .slash_command_output_sections
                 .into_iter()
-                .map(|section| {
-                    let buffer = buffer.read(cx);
-                    SlashCommandOutputSection {
-                        range: buffer.anchor_after(section.range.start)
-                            ..buffer.anchor_before(section.range.end),
-                        icon: section.icon,
-                        label: section.label,
-                        metadata: section.metadata,
-                    }
+                .map(|section| SlashCommandOutputSection {
+                    range: buffer.anchor_after(section.range.start)
+                        ..buffer.anchor_before(section.range.end),
+                    icon: section.icon,
+                    label: section.label,
+                    metadata: section.metadata,
                 })
                 .collect(),
             version: version.clone(),

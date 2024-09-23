@@ -429,7 +429,7 @@ impl ProjectDiagnosticsEditor {
                             prev_excerpt_id = excerpt_id;
                             first_excerpt_id.get_or_insert(prev_excerpt_id);
                             group_state.excerpts.push(excerpt_id);
-                            let header_position = (excerpt_id, language::Anchor::MIN);
+                            let header_position = (excerpt_id, snapshot.min_anchor());
 
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;

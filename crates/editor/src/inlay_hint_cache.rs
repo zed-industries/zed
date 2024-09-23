@@ -169,65 +169,66 @@ impl TasksForRanges {
 
     fn remove_cached_ranges_from_query(
         &mut self,
-        buffer_snapshot: &BufferSnapshot,
-        query_range: Range<language::Anchor>,
+        _buffer_snapshot: &BufferSnapshot,
+        _query_range: Range<language::Anchor>,
     ) -> Vec<Range<language::Anchor>> {
-        let mut ranges_to_query = Vec::new();
-        let mut latest_cached_range = None::<&mut Range<language::Anchor>>;
-        for cached_range in self
-            .sorted_ranges
-            .iter_mut()
-            .skip_while(|cached_range| {
-                cached_range
-                    .end
-                    .cmp(&query_range.start, buffer_snapshot)
-                    .is_lt()
-            })
-            .take_while(|cached_range| {
-                cached_range
-                    .start
-                    .cmp(&query_range.end, buffer_snapshot)
-                    .is_le()
-            })
-        {
-            match latest_cached_range {
-                Some(latest_cached_range) => {
-                    if latest_cached_range.end.offset.saturating_add(1) < cached_range.start.offset
-                    {
-                        ranges_to_query.push(latest_cached_range.end..cached_range.start);
-                        cached_range.start = latest_cached_range.end;
-                    }
-                }
-                None => {
-                    if query_range
-                        .start
-                        .cmp(&cached_range.start, buffer_snapshot)
-                        .is_lt()
-                    {
-                        ranges_to_query.push(query_range.start..cached_range.start);
-                        cached_range.start = query_range.start;
-                    }
-                }
-            }
-            latest_cached_range = Some(cached_range);
-        }
+        todo!()
+        // let mut ranges_to_query = Vec::new();
+        // let mut latest_cached_range = None::<&mut Range<language::Anchor>>;
+        // for cached_range in self
+        //     .sorted_ranges
+        //     .iter_mut()
+        //     .skip_while(|cached_range| {
+        //         cached_range
+        //             .end
+        //             .cmp(&query_range.start, buffer_snapshot)
+        //             .is_lt()
+        //     })
+        //     .take_while(|cached_range| {
+        //         cached_range
+        //             .start
+        //             .cmp(&query_range.end, buffer_snapshot)
+        //             .is_le()
+        //     })
+        // {
+        //     match latest_cached_range {
+        //         Some(latest_cached_range) => {
+        //             if latest_cached_range.end.offset.saturating_add(1) < cached_range.start.offset
+        //             {
+        //                 ranges_to_query.push(latest_cached_range.end..cached_range.start);
+        //                 cached_range.start = latest_cached_range.end;
+        //             }
+        //         }
+        //         None => {
+        //             if query_range
+        //                 .start
+        //                 .cmp(&cached_range.start, buffer_snapshot)
+        //                 .is_lt()
+        //             {
+        //                 ranges_to_query.push(query_range.start..cached_range.start);
+        //                 cached_range.start = query_range.start;
+        //             }
+        //         }
+        //     }
+        //     latest_cached_range = Some(cached_range);
+        // }
 
-        match latest_cached_range {
-            Some(latest_cached_range) => {
-                if latest_cached_range.end.offset.saturating_add(1) < query_range.end.offset {
-                    ranges_to_query.push(latest_cached_range.end..query_range.end);
-                    latest_cached_range.end = query_range.end;
-                }
-            }
-            None => {
-                ranges_to_query.push(query_range.clone());
-                self.sorted_ranges.push(query_range);
-                self.sorted_ranges
-                    .sort_by(|range_a, range_b| range_a.start.cmp(&range_b.start, buffer_snapshot));
-            }
-        }
+        // match latest_cached_range {
+        //     Some(latest_cached_range) => {
+        //         if latest_cached_range.end.offset.saturating_add(1) < query_range.end.offset {
+        //             ranges_to_query.push(latest_cached_range.end..query_range.end);
+        //             latest_cached_range.end = query_range.end;
+        //         }
+        //     }
+        //     None => {
+        //         ranges_to_query.push(query_range.clone());
+        //         self.sorted_ranges.push(query_range);
+        //         self.sorted_ranges
+        //             .sort_by(|range_a, range_b| range_a.start.cmp(&range_b.start, buffer_snapshot));
+        //     }
+        // }
 
-        ranges_to_query
+        // ranges_to_query
     }
 
     fn invalidate_range(&mut self, buffer: &BufferSnapshot, range: &Range<language::Anchor>) {

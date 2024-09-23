@@ -437,19 +437,20 @@ impl MultiBuffer {
         self.capability == Capability::ReadOnly
     }
 
-    pub fn singleton(buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Self {
-        let mut this = Self::new(buffer.read(cx).capability());
-        this.singleton = true;
-        this.push_excerpts(
-            buffer,
-            [ExcerptRange {
-                context: text::Anchor::MIN..text::Anchor::MAX,
-                primary: None,
-            }],
-            cx,
-        );
-        this.snapshot.borrow_mut().singleton = true;
-        this
+    pub fn singleton(_buffer: Model<Buffer>, _cx: &mut ModelContext<Self>) -> Self {
+        todo!()
+        // let mut this = Self::new(buffer.read(cx).capability());
+        // this.singleton = true;
+        // this.push_excerpts(
+        //     buffer,
+        //     [ExcerptRange {
+        //         context: text::Anchor::MIN..text::Anchor::MAX,
+        //         primary: None,
+        //     }],
+        //     cx,
+        // );
+        // this.snapshot.borrow_mut().singleton = true;
+        // this
     }
 
     /// Returns an up-to-date snapshot of the MultiBuffer.
@@ -3031,106 +3032,107 @@ impl MultiBufferSnapshot {
         summaries
     }
 
-    pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(usize, Anchor, bool)>
+    pub fn refresh_anchors<'a, I>(&'a self, _anchors: I) -> Vec<(usize, Anchor, bool)>
     where
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
-        let mut anchors = anchors.into_iter().enumerate().peekable();
-        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(&());
-        cursor.next(&());
+        todo!()
+        // let mut anchors = anchors.into_iter().enumerate().peekable();
+        // let mut cursor = self.excerpts.cursor::<Option<&Locator>>(&());
+        // cursor.next(&());
 
-        let mut result = Vec::new();
+        // let mut result = Vec::new();
 
-        while let Some((_, anchor)) = anchors.peek() {
-            let old_excerpt_id = anchor.excerpt_id;
+        // while let Some((_, anchor)) = anchors.peek() {
+        //     let old_excerpt_id = anchor.excerpt_id;
 
-            // Find the location where this anchor's excerpt should be.
-            let old_locator = self.excerpt_locator_for_id(old_excerpt_id);
-            cursor.seek_forward(&Some(old_locator), Bias::Left, &());
+        //     // Find the location where this anchor's excerpt should be.
+        //     let old_locator = self.excerpt_locator_for_id(old_excerpt_id);
+        //     cursor.seek_forward(&Some(old_locator), Bias::Left, &());
 
-            if cursor.item().is_none() {
-                cursor.next(&());
-            }
+        //     if cursor.item().is_none() {
+        //         cursor.next(&());
+        //     }
 
-            let next_excerpt = cursor.item();
-            let prev_excerpt = cursor.prev_item();
+        //     let next_excerpt = cursor.item();
+        //     let prev_excerpt = cursor.prev_item();
 
-            // Process all of the anchors for this excerpt.
-            while let Some((_, anchor)) = anchors.peek() {
-                if anchor.excerpt_id != old_excerpt_id {
-                    break;
-                }
-                let (anchor_ix, anchor) = anchors.next().unwrap();
-                let mut anchor = *anchor;
+        //     // Process all of the anchors for this excerpt.
+        //     while let Some((_, anchor)) = anchors.peek() {
+        //         if anchor.excerpt_id != old_excerpt_id {
+        //             break;
+        //         }
+        //         let (anchor_ix, anchor) = anchors.next().unwrap();
+        //         let mut anchor = *anchor;
 
-                // Leave min and max anchors unchanged if invalid or
-                // if the old excerpt still exists at this location
-                let mut kept_position = next_excerpt
-                    .map_or(false, |e| e.id == old_excerpt_id && e.contains(&anchor))
-                    || old_excerpt_id == ExcerptId::max()
-                    || old_excerpt_id == ExcerptId::min();
+        //         // Leave min and max anchors unchanged if invalid or
+        //         // if the old excerpt still exists at this location
+        //         let mut kept_position = next_excerpt
+        //             .map_or(false, |e| e.id == old_excerpt_id && e.contains(&anchor))
+        //             || old_excerpt_id == ExcerptId::max()
+        //             || old_excerpt_id == ExcerptId::min();
 
-                // If the old excerpt no longer exists at this location, then attempt to
-                // find an equivalent position for this anchor in an adjacent excerpt.
-                if !kept_position {
-                    for excerpt in [next_excerpt, prev_excerpt].iter().filter_map(|e| *e) {
-                        if excerpt.contains(&anchor) {
-                            anchor.excerpt_id = excerpt.id;
-                            kept_position = true;
-                            break;
-                        }
-                    }
-                }
+        //         // If the old excerpt no longer exists at this location, then attempt to
+        //         // find an equivalent position for this anchor in an adjacent excerpt.
+        //         if !kept_position {
+        //             for excerpt in [next_excerpt, prev_excerpt].iter().filter_map(|e| *e) {
+        //                 if excerpt.contains(&anchor) {
+        //                     anchor.excerpt_id = excerpt.id;
+        //                     kept_position = true;
+        //                     break;
+        //                 }
+        //             }
+        //         }
 
-                // If there's no adjacent excerpt that contains the anchor's position,
-                // then report that the anchor has lost its position.
-                if !kept_position {
-                    anchor = if let Some(excerpt) = next_excerpt {
-                        let mut text_anchor = excerpt
-                            .range
-                            .context
-                            .start
-                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
-                        if text_anchor
-                            .cmp(&excerpt.range.context.end, &excerpt.buffer)
-                            .is_gt()
-                        {
-                            text_anchor = excerpt.range.context.end;
-                        }
-                        Anchor {
-                            buffer_id: Some(excerpt.buffer_id),
-                            excerpt_id: excerpt.id,
-                            text_anchor,
-                        }
-                    } else if let Some(excerpt) = prev_excerpt {
-                        let mut text_anchor = excerpt
-                            .range
-                            .context
-                            .end
-                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
-                        if text_anchor
-                            .cmp(&excerpt.range.context.start, &excerpt.buffer)
-                            .is_lt()
-                        {
-                            text_anchor = excerpt.range.context.start;
-                        }
-                        Anchor {
-                            buffer_id: Some(excerpt.buffer_id),
-                            excerpt_id: excerpt.id,
-                            text_anchor,
-                        }
-                    } else if anchor.text_anchor.bias == Bias::Left {
-                        Anchor::min()
-                    } else {
-                        Anchor::max()
-                    };
-                }
+        //         // If there's no adjacent excerpt that contains the anchor's position,
+        //         // then report that the anchor has lost its position.
+        //         if !kept_position {
+        //             anchor = if let Some(excerpt) = next_excerpt {
+        //                 let mut text_anchor = excerpt
+        //                     .range
+        //                     .context
+        //                     .start
+        //                     .bias(anchor.text_anchor.bias, &excerpt.buffer);
+        //                 if text_anchor
+        //                     .cmp(&excerpt.range.context.end, &excerpt.buffer)
+        //                     .is_gt()
+        //                 {
+        //                     text_anchor = excerpt.range.context.end;
+        //                 }
+        //                 Anchor {
+        //                     buffer_id: Some(excerpt.buffer_id),
+        //                     excerpt_id: excerpt.id,
+        //                     text_anchor,
+        //                 }
+        //             } else if let Some(excerpt) = prev_excerpt {
+        //                 let mut text_anchor = excerpt
+        //                     .range
+        //                     .context
+        //                     .end
+        //                     .bias(anchor.text_anchor.bias, &excerpt.buffer);
+        //                 if text_anchor
+        //                     .cmp(&excerpt.range.context.start, &excerpt.buffer)
+        //                     .is_lt()
+        //                 {
+        //                     text_anchor = excerpt.range.context.start;
+        //                 }
+        //                 Anchor {
+        //                     buffer_id: Some(excerpt.buffer_id),
+        //                     excerpt_id: excerpt.id,
+        //                     text_anchor,
+        //                 }
+        //             } else if anchor.text_anchor.bias == Bias::Left {
+        //                 Anchor::min()
+        //             } else {
+        //                 Anchor::max()
+        //             };
+        //         }
 
-                result.push((anchor_ix, anchor, kept_position));
-            }
-        }
-        result.sort_unstable_by(|a, b| a.1.cmp(&b.1, self));
-        result
+        //         result.push((anchor_ix, anchor, kept_position));
+        //     }
+        // }
+        // result.sort_unstable_by(|a, b| a.1.cmp(&b.1, self));
+        // result
     }
 
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {

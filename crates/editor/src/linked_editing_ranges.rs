@@ -15,6 +15,7 @@ pub(super) struct LinkedEditingRanges(
 );
 
 impl LinkedEditingRanges {
+    #[allow(dead_code)] // todo!()
     pub(super) fn get(
         &self,
         id: BufferId,

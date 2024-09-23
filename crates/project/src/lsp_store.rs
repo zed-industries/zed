@@ -998,8 +998,9 @@ impl LspStore {
 
             let actions = this
                 .update(cx, move |this, cx| {
+                    let range = buffer.read(cx).min_anchor()..buffer.read(cx).max_anchor();
                     let request = GetCodeActions {
-                        range: text::Anchor::MIN..text::Anchor::MAX,
+                        range,
                         kinds: Some(code_actions),
                     };
                     let server = LanguageServerToQuery::Other(language_server.server_id());
@@ -1323,9 +1324,7 @@ impl LspStore {
                 });
 
                 buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_edits(Some(position.timestamp))
-                    })?
+                    .update(&mut cx, |buffer, _| buffer.wait_for_anchors(Some(position)))?
                     .await?;
                 this.update(&mut cx, |this, cx| {
                     let position = position.to_point_utf16(buffer.read(cx));
@@ -1969,7 +1968,7 @@ impl LspStore {
             cx.spawn(move |_, mut cx| async move {
                 buffer_handle
                     .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
+                        buffer.wait_for_anchors(vec![range_start, range_end])
                     })?
                     .await
                     .context("waiting for inlay hint request range edits")?;

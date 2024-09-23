@@ -16,19 +16,21 @@ pub struct Anchor {
 
 impl Anchor {
     pub fn min() -> Self {
-        Self {
-            buffer_id: None,
-            excerpt_id: ExcerptId::min(),
-            text_anchor: text::Anchor::MIN,
-        }
+        todo!()
+        // Self {
+        //     buffer_id: None,
+        //     excerpt_id: ExcerptId::min(),
+        //     text_anchor: text::Anchor::MIN,
+        // }
     }
 
     pub fn max() -> Self {
-        Self {
-            buffer_id: None,
-            excerpt_id: ExcerptId::max(),
-            text_anchor: text::Anchor::MAX,
-        }
+        todo!()
+        // Self {
+        //     buffer_id: None,
+        //     excerpt_id: ExcerptId::max(),
+        //     text_anchor: text::Anchor::MAX,
+        // }
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
@@ -47,33 +49,36 @@ impl Anchor {
     }
 
     pub fn bias(&self) -> Bias {
-        self.text_anchor.bias
+        todo!()
+        // self.text_anchor.bias
     }
 
-    pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Left {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
-                };
-            }
-        }
-        *self
+    pub fn bias_left(&self, _snapshot: &MultiBufferSnapshot) -> Anchor {
+        todo!()
+        // if self.text_anchor.bias != Bias::Left {
+        //     if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        //         return Self {
+        //             buffer_id: self.buffer_id,
+        //             excerpt_id: self.excerpt_id,
+        //             text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
+        //         };
+        //     }
+        // }
+        // *self
     }
 
-    pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Right {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
-                };
-            }
-        }
-        *self
+    pub fn bias_right(&self, _snapshot: &MultiBufferSnapshot) -> Anchor {
+        todo!()
+        // if self.text_anchor.bias != Bias::Right {
+        //     if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        //         return Self {
+        //             buffer_id: self.buffer_id,
+        //             excerpt_id: self.excerpt_id,
+        //             text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
+        //         };
+        //     }
+        // }
+        // *self
     }
 
     pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D

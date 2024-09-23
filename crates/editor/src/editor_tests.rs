@@ -739,7 +739,12 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
             let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
-            invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
+            invalid_anchor.text_anchor = text::Anchor::Character {
+                buffer_id: invalid_anchor.text_anchor.buffer_id(),
+                insertion_id: clock::Lamport::MAX,
+                offset: 42,
+                bias: Bias::Left,
+            };
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
                 Box::new(NavigationData {
