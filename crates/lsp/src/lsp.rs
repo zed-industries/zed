@@ -615,8 +615,14 @@ impl LanguageServer {
                             snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
                                 properties: vec![
-                                    "documentation".to_string(),
                                     "additionalTextEdits".to_string(),
+                                    "command".to_string(),
+                                    "detail".to_string(),
+                                    "documentation".to_string(),
+                                    "filterText".to_string(),
+                                    "labelDetails".to_string(),
+                                    "tags".to_string(),
+                                    "textEdit".to_string(),
                                 ],
                             }),
                             insert_replace_support: Some(true),

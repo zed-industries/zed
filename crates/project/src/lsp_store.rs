@@ -50,7 +50,7 @@ use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;
 
-use rpc::AnyProtoClient;
+use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient};
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
@@ -132,6 +132,7 @@ impl LocalLspStore {
 
 pub struct RemoteLspStore {
     upstream_client: AnyProtoClient,
+    upstream_project_id: u64,
 }
 
 impl RemoteLspStore {}
@@ -164,8 +165,7 @@ impl LspStoreMode {
 
 pub struct LspStore {
     mode: LspStoreMode,
-    downstream_client: Option<AnyProtoClient>,
-    project_id: u64,
+    downstream_client: Option<(AnyProtoClient, u64)>,
     nonce: u128,
     buffer_store: Model<BufferStore>,
     worktree_store: Model<WorktreeStore>,
@@ -302,14 +302,16 @@ impl LspStore {
         }
     }
 
-    pub fn upstream_client(&self) -> Option<AnyProtoClient> {
+    pub fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
         match &self.mode {
             LspStoreMode::Ssh(SshLspStore {
                 upstream_client, ..
-            })
-            | LspStoreMode::Remote(RemoteLspStore {
-                upstream_client, ..
-            }) => Some(upstream_client.clone()),
+            }) => Some((upstream_client.clone(), SSH_PROJECT_ID)),
+            LspStoreMode::Remote(RemoteLspStore {
+                upstream_client,
+                upstream_project_id,
+                ..
+            }) => Some((upstream_client.clone(), *upstream_project_id)),
             LspStoreMode::Local(_) => None,
         }
     }
@@ -374,7 +376,6 @@ impl LspStore {
                 }),
             }),
             downstream_client: None,
-            project_id: 0,
             buffer_store,
             worktree_store,
             languages: languages.clone(),
@@ -395,10 +396,11 @@ impl LspStore {
         &self,
         buffer: Model<Buffer>,
         client: AnyProtoClient,
+        upstream_project_id: u64,
         request: R,
         cx: &mut ModelContext<'_, LspStore>,
     ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
-        let message = request.to_proto(self.project_id, buffer.read(cx));
+        let message = request.to_proto(upstream_project_id, buffer.read(cx));
         cx.spawn(move |this, cx| async move {
             let response = client.request(message).await?;
             let this = this.upgrade().context("project dropped")?;
@@ -413,7 +415,6 @@ impl LspStore {
         worktree_store: Model<WorktreeStore>,
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
-        project_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -429,7 +430,6 @@ impl LspStore {
                 current_lsp_settings: Default::default(),
             }),
             downstream_client: None,
-            project_id,
             buffer_store,
             worktree_store,
             languages: languages.clone(),
@@ -461,9 +461,11 @@ impl LspStore {
             .detach();
 
         Self {
-            mode: LspStoreMode::Remote(RemoteLspStore { upstream_client }),
+            mode: LspStoreMode::Remote(RemoteLspStore {
+                upstream_client,
+                upstream_project_id: project_id,
+            }),
             downstream_client: None,
-            project_id,
             buffer_store,
             worktree_store,
             languages: languages.clone(),
@@ -768,13 +770,13 @@ impl LspStore {
     }
 
     pub(crate) fn send_diagnostic_summaries(&self, worktree: &mut Worktree) {
-        if let Some(client) = self.downstream_client.clone() {
+        if let Some((client, downstream_project_id)) = self.downstream_client.clone() {
             if let Some(summaries) = self.diagnostic_summaries.get(&worktree.id()) {
                 for (path, summaries) in summaries {
                     for (&server_id, summary) in summaries {
                         client
                             .send(proto::UpdateDiagnosticSummary {
-                                project_id: self.project_id,
+                                project_id: downstream_project_id,
                                 worktree_id: worktree.id().to_proto(),
                                 summary: Some(summary.to_proto(server_id, path)),
                             })
@@ -798,8 +800,14 @@ impl LspStore {
     {
         let buffer = buffer_handle.read(cx);
 
-        if let Some(upstream_client) = self.upstream_client() {
-            return self.send_lsp_proto_request(buffer_handle, upstream_client, request, cx);
+        if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
+            return self.send_lsp_proto_request(
+                buffer_handle,
+                upstream_client,
+                upstream_project_id,
+                request,
+                cx,
+            );
         }
 
         let language_server = match server {
@@ -1077,9 +1085,9 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        if let Some(upstream_client) = self.upstream_client() {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = proto::ApplyCodeAction {
-                project_id: self.project_id,
+                project_id,
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
                 action: Some(Self::serialize_code_action(&action)),
             };
@@ -1163,9 +1171,9 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
-        if let Some(upstream_client) = self.upstream_client() {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = proto::ResolveInlayHint {
-                project_id: self.project_id,
+                project_id,
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
                 language_server_id: server_id.0 as u64,
                 hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
@@ -1274,9 +1282,9 @@ impl LspStore {
         trigger: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        if let Some(client) = self.upstream_client() {
+        if let Some((client, project_id)) = self.upstream_client() {
             let request = proto::OnTypeFormatting {
-                project_id: self.project_id,
+                project_id,
                 buffer_id: buffer.read(cx).remote_id().into(),
                 position: Some(serialize_anchor(&position)),
                 trigger,
@@ -1424,11 +1432,11 @@ impl LspStore {
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if let Some(upstream_client) = self.upstream_client() {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
                 version: serialize_version(&buffer_handle.read(cx).version()),
-                project_id: self.project_id,
+                project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
@@ -1437,7 +1445,7 @@ impl LspStore {
                         range: range.clone(),
                         kinds: None,
                     }
-                    .to_proto(self.project_id, buffer_handle.read(cx)),
+                    .to_proto(project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -1506,10 +1514,11 @@ impl LspStore {
     ) -> Task<Result<Vec<Completion>>> {
         let language_registry = self.languages.clone();
 
-        if let Some(upstream_client) = self.upstream_client() {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
             let task = self.send_lsp_proto_request(
                 buffer.clone(),
                 upstream_client,
+                project_id,
                 GetCompletions { position, context },
                 cx,
             );
@@ -1605,22 +1614,17 @@ impl LspStore {
     ) -> Task<Result<bool>> {
         let client = self.upstream_client();
         let language_registry = self.languages.clone();
-        let project_id = self.project_id;
 
         let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(move |this, cx| async move {
             let mut did_resolve = false;
-            if let Some(client) = client {
+            if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
                     let (server_id, completion) = {
                         let completions_guard = completions.read();
                         let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
                         did_resolve = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
@@ -1645,10 +1649,6 @@ impl LspStore {
                     let (server_id, completion) = {
                         let completions_guard = completions.read();
                         let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
@@ -1745,6 +1745,10 @@ impl LspStore {
                 completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
             }
         }
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.lsp_completion = completion_item;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1773,6 +1777,10 @@ impl LspStore {
         else {
             return;
         };
+        let Some(lsp_completion) = serde_json::from_slice(&response.lsp_completion).log_err()
+        else {
+            return;
+        };
 
         let documentation = if response.documentation.is_empty() {
             Documentation::Undocumented
@@ -1789,6 +1797,7 @@ impl LspStore {
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
+        completion.lsp_completion = lsp_completion;
 
         let old_range = response
             .old_start
@@ -1812,8 +1821,7 @@ impl LspStore {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
-        if let Some(client) = self.upstream_client() {
-            let project_id = self.project_id;
+        if let Some((client, project_id)) = self.upstream_client() {
             cx.spawn(move |_, mut cx| async move {
                 let response = client
                     .request(proto::ApplyCompletionAdditionalEdits {
@@ -1928,9 +1936,9 @@ impl LspStore {
         let buffer_id = buffer.remote_id().into();
         let lsp_request = InlayHints { range };
 
-        if let Some(client) = self.upstream_client() {
+        if let Some((client, project_id)) = self.upstream_client() {
             let request = proto::InlayHints {
-                project_id: self.project_id,
+                project_id,
                 buffer_id,
                 start: Some(serialize_anchor(&range_start)),
                 end: Some(serialize_anchor(&range_end)),
@@ -1978,16 +1986,16 @@ impl LspStore {
     ) -> Task<Vec<SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
 
-        if let Some(client) = self.upstream_client() {
+        if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
                 version: serialize_version(&buffer.read(cx).version()),
-                project_id: self.project_id,
+                project_id: upstream_project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetSignatureHelp(
-                    GetSignatureHelp { position }.to_proto(self.project_id, buffer.read(cx)),
+                    GetSignatureHelp { position }.to_proto(upstream_project_id, buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -2050,16 +2058,16 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Hover>> {
-        if let Some(client) = self.upstream_client() {
+        if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
                 version: serialize_version(&buffer.read(cx).version()),
-                project_id: self.project_id,
+                project_id: upstream_project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetHover(
-                    GetHover { position }.to_proto(self.project_id, buffer.read(cx)),
+                    GetHover { position }.to_proto(upstream_project_id, buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -2124,9 +2132,9 @@ impl LspStore {
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
         let language_registry = self.languages.clone();
 
-        if let Some(upstream_client) = self.upstream_client().as_ref() {
+        if let Some((upstream_client, project_id)) = self.upstream_client().as_ref() {
             let request = upstream_client.request(proto::GetProjectSymbols {
-                project_id: self.project_id,
+                project_id: *project_id,
                 query: query.to_string(),
             });
             cx.foreground_executor().spawn(async move {
@@ -2599,8 +2607,7 @@ impl LspStore {
         downstream_client: AnyProtoClient,
         _: &mut ModelContext<Self>,
     ) {
-        self.project_id = project_id;
-        self.downstream_client = Some(downstream_client.clone());
+        self.downstream_client = Some((downstream_client.clone(), project_id));
 
         for (server_id, status) in &self.language_server_statuses {
             downstream_client
@@ -2858,10 +2865,10 @@ impl LspStore {
         }
 
         if !old_summary.is_empty() || !new_summary.is_empty() {
-            if let Some(downstream_client) = &self.downstream_client {
+            if let Some((downstream_client, project_id)) = &self.downstream_client {
                 downstream_client
                     .send(proto::UpdateDiagnosticSummary {
-                        project_id: self.project_id,
+                        project_id: *project_id,
                         worktree_id: worktree_id.to_proto(),
                         summary: Some(proto::DiagnosticSummary {
                             path: worktree_path.to_string_lossy().to_string(),
@@ -2882,9 +2889,9 @@ impl LspStore {
         symbol: &Symbol,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if let Some(client) = self.upstream_client() {
+        if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::OpenBufferForSymbol {
-                project_id: self.project_id,
+                project_id,
                 symbol: Some(Self::serialize_symbol(symbol)),
             });
             cx.spawn(move |this, mut cx| async move {
@@ -3185,6 +3192,17 @@ impl LspStore {
         envelope: TypedEnvelope<proto::MultiLspQuery>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::MultiLspQueryResponse> {
+        let response_from_ssh = this.update(&mut cx, |this, _| {
+            let ssh = this.as_ssh()?;
+            let mut payload = envelope.payload.clone();
+            payload.project_id = SSH_PROJECT_ID;
+
+            Some(ssh.upstream_client.request(payload))
+        })?;
+        if let Some(response_from_ssh) = response_from_ssh {
+            return response_from_ssh.await;
+        }
+
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
@@ -4194,17 +4212,32 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
-            .read_with(&cx, |this, _| {
+            .read_with(&cx, |this, cx| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
                 let Some(server) = this.language_server_for_id(id) else {
                     return Err(anyhow!("No language server {id}"));
                 };
 
-                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+                Ok(cx.background_executor().spawn(async move {
+                    let can_resolve = server
+                        .capabilities()
+                        .completion_provider
+                        .as_ref()
+                        .and_then(|options| options.resolve_provider)
+                        .unwrap_or(false);
+                    if can_resolve {
+                        server
+                            .request::<lsp::request::ResolveCompletionItem>(lsp_completion)
+                            .await
+                    } else {
+                        anyhow::Ok(lsp_completion)
+                    }
+                }))
             })??
             .await?;
 
         let mut documentation_is_markdown = false;
+        let lsp_completion = serde_json::to_string(&completion)?.into_bytes();
         let documentation = match completion.documentation {
             Some(lsp::Documentation::String(text)) => text,
 
@@ -4246,6 +4279,7 @@ impl LspStore {
             old_start,
             old_end,
             new_text,
+            lsp_completion,
         })
     }
 
@@ -4764,10 +4798,11 @@ impl LspStore {
         // TODO: We should use `adapter` here instead of reaching through the `CachedLspAdapter`.
         let lsp_adapter = adapter.adapter.clone();
 
-        let project_id = self.project_id;
+        let Some((upstream_client, project_id)) = self.upstream_client() else {
+            return;
+        };
         let worktree_id = worktree.read(cx).id().to_proto();
-        let upstream_client = ssh.upstream_client.clone();
-        let name = adapter.name();
+        let name = adapter.name().to_string();
 
         let Some(available_language) = self.languages.available_language_for_name(&language) else {
             log::error!("failed to find available language {language}");
@@ -5150,12 +5185,11 @@ impl LspStore {
                     }
                 });
 
-                let project_id = self.project_id;
                 for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
                     summaries.retain(|path, summaries_by_server_id| {
                         if summaries_by_server_id.remove(&server_id).is_some() {
-                            if let Some(downstream_client) = self.downstream_client.clone() {
-                                downstream_client
+                            if let Some((client, project_id)) = self.downstream_client.clone() {
+                                client
                                     .send(proto::UpdateDiagnosticSummary {
                                         project_id,
                                         worktree_id: worktree_id.to_proto(),
@@ -5221,9 +5255,9 @@ impl LspStore {
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some(client) = self.upstream_client() {
+        if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::RestartLanguageServers {
-                project_id: self.project_id,
+                project_id,
                 buffer_ids: buffers
                     .into_iter()
                     .map(|b| b.read(cx).remote_id().to_proto())
@@ -5679,9 +5713,9 @@ impl LspStore {
                     async move {
                         this.update(&mut cx, |this, cx| {
                             cx.emit(LspStoreEvent::RefreshInlayHints);
-                            this.downstream_client.as_ref().map(|client| {
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshInlayHints {
-                                    project_id: this.project_id,
+                                    project_id: *project_id,
                                 })
                             })
                         })?
@@ -6058,9 +6092,9 @@ impl LspStore {
 
         cx.emit(LspStoreEvent::LanguageServerAdded(server_id));
 
-        if let Some(downstream_client) = self.downstream_client.as_ref() {
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client.send(proto::StartLanguageServer {
-                project_id: self.project_id,
+                project_id: *project_id,
                 server: Some(proto::LanguageServer {
                     id: server_id.0 as u64,
                     name: language_server.name().to_string(),
