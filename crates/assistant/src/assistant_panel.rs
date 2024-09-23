@@ -1439,9 +1439,8 @@ struct ScrollPosition {
 
 struct PatchViewState {
     header_block_id: CustomBlockId,
-    header_crease_id: CreaseId,
     footer_block_id: Option<CustomBlockId>,
-    footer_crease_id: Option<CreaseId>,
+    crease_id: Option<CreaseId>,
     editor: Option<WeakView<ProposedChangesEditor>>,
     applied: bool,
     resolution: Option<Arc<Result<AssistantPatchResolution>>>,
@@ -2226,9 +2225,8 @@ impl ContextEditor {
             if let Some(state) = self.patches.remove(range) {
                 editors_to_close.extend(self.hide_patch(range.clone(), cx));
                 removed_block_ids.insert(state.header_block_id);
-                removed_crease_ids.push(state.header_crease_id);
                 removed_block_ids.extend(state.footer_block_id);
-                removed_crease_ids.extend(state.footer_crease_id);
+                removed_crease_ids.extend(state.crease_id);
             }
         }
 
@@ -2247,39 +2245,30 @@ impl ContextEditor {
                 };
 
                 let resolution = patch.resolution.clone();
-                let header_start = patch.range.start;
-                let header_end = if buffer.contains_str_at(patch.leading_tags_end, "\n") {
-                    buffer.anchor_before(patch.leading_tags_end.to_offset(&buffer) + 1)
-                } else {
-                    patch.leading_tags_end
-                };
-                let header_range = multibuffer
-                    .anchor_in_excerpt(excerpt_id, header_start)
-                    .unwrap()
-                    ..multibuffer
-                        .anchor_in_excerpt(excerpt_id, header_end)
-                        .unwrap();
-                let footer_range = patch.trailing_tag_start.map(|start| {
-                    let mut patch_range_end = patch.range.end.to_offset(&buffer);
-                    if buffer.contains_str_at(patch_range_end, "\n") {
-                        // Only include the newline if it belongs to the same message.
-                        let messages = self
-                            .context
-                            .read(cx)
-                            .messages_for_offsets([patch_range_end, patch_range_end + 1], cx);
-                        if messages.len() == 1 {
-                            patch_range_end += 1;
-                        }
-                    }
 
-                    let end = buffer.anchor_before(patch_range_end);
-                    multibuffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                        ..multibuffer.anchor_in_excerpt(excerpt_id, end).unwrap()
-                });
+                let patch_start = patch.range.start;
+                let mut patch_end = patch.range.end.to_offset(&buffer);
+                if buffer.contains_str_at(patch_end, "\n") {
+                    // Only include the newline if it belongs to the same message.
+                    let messages = self
+                        .context
+                        .read(cx)
+                        .messages_for_offsets([patch_end, patch_end + 1], cx);
+                    if messages.len() == 1 {
+                        patch_end += 1;
+                    }
+                }
+                let patch_end = buffer.anchor_before(patch_end);
+                let patch_start = multibuffer
+                    .anchor_in_excerpt(excerpt_id, patch_start)
+                    .unwrap();
+                let patch_end = multibuffer
+                    .anchor_in_excerpt(excerpt_id, patch_end)
+                    .unwrap();
 
                 let block_ids = editor.insert_blocks(
                     [BlockProperties {
-                        position: header_range.start,
+                        position: patch_start,
                         height: 1,
                         style: BlockStyle::Flex,
                         render: Box::new({
@@ -2307,9 +2296,9 @@ impl ContextEditor {
                         priority: 0,
                     }]
                     .into_iter()
-                    .chain(footer_range.as_ref().map(|footer_range| {
-                        return BlockProperties {
-                            position: footer_range.end,
+                    .chain(if patch_end.text_anchor != text::Anchor::MAX {
+                        Some(BlockProperties {
+                            position: patch_end,
                             height: 1,
                             style: BlockStyle::Flex,
                             render: Box::new({
@@ -2333,18 +2322,15 @@ impl ContextEditor {
                             }),
                             disposition: BlockDisposition::Below,
                             priority: 0,
-                        };
-                    })),
+                        })
+                    } else {
+                        None
+                    }),
                     None,
                     cx,
                 );
 
                 let header_placeholder = FoldPlaceholder {
-                    render: Arc::new(move |_, _crease_range, _cx| Empty.into_any()),
-                    constrain_width: false,
-                    merge_adjacent: false,
-                };
-                let footer_placeholder = FoldPlaceholder {
                     render: render_fold_icon_button(
                         cx.view().downgrade(),
                         IconName::Code,
@@ -2356,47 +2342,24 @@ impl ContextEditor {
 
                 let new_crease_ids = editor.insert_creases(
                     [Crease::new(
-                        header_range.clone(),
+                        patch_start..patch_end,
                         header_placeholder.clone(),
                         fold_toggle("patch-header"),
                         |_, _, _| Empty.into_any_element(),
-                    )]
-                    .into_iter()
-                    .chain(footer_range.clone().map(|footer_range| {
-                        Crease::new(
-                            footer_range,
-                            footer_placeholder.clone(),
-                            |row, is_folded, fold, cx| {
-                                if is_folded {
-                                    Empty.into_any_element()
-                                } else {
-                                    fold_toggle("patch-footer")(row, is_folded, fold, cx)
-                                }
-                            },
-                            |_, _, _| Empty.into_any_element(),
-                        )
-                    })),
+                    )],
                     cx,
                 );
 
                 let state = PatchViewState {
                     header_block_id: block_ids[0],
-                    header_crease_id: new_crease_ids[0],
                     footer_block_id: block_ids.get(1).copied(),
-                    footer_crease_id: new_crease_ids.get(1).copied(),
+                    crease_id: new_crease_ids.get(0).copied(),
                     resolution,
                     applied: false,
                     editor: None,
                 };
 
-                let mut folds_to_insert = [(header_range.clone(), header_placeholder)]
-                    .into_iter()
-                    .chain(
-                        footer_range
-                            .clone()
-                            .map(|range| (range, footer_placeholder)),
-                    )
-                    .collect::<Vec<_>>();
+                let mut folds_to_insert = vec![(patch_start..patch_end, header_placeholder)];
 
                 match self.patches.entry(range.clone()) {
                     hash_map::Entry::Vacant(entry) => {
@@ -2405,22 +2368,14 @@ impl ContextEditor {
                     hash_map::Entry::Occupied(mut entry) => {
                         let entry = entry.get_mut();
                         removed_block_ids.insert(entry.header_block_id);
-                        removed_crease_ids.push(entry.header_crease_id);
                         removed_block_ids.extend(entry.footer_block_id);
-                        removed_crease_ids.extend(entry.footer_crease_id);
+                        removed_crease_ids.extend(entry.crease_id);
                         folds_to_insert.retain(|(range, _)| snapshot.intersects_fold(range.start));
                         *entry = state;
                     }
                 }
 
-                editor.unfold_ranges(
-                    [header_range.clone()]
-                        .into_iter()
-                        .chain(footer_range.clone()),
-                    true,
-                    false,
-                    cx,
-                );
+                editor.unfold_ranges([patch_start..patch_end], true, false, cx);
 
                 if !folds_to_insert.is_empty() {
                     editor.fold_ranges(folds_to_insert, false, cx);
@@ -2633,6 +2588,7 @@ impl ContextEditor {
             })
             .log_err()?;
 
+        patch.editor = Some(editor.downgrade());
         Some(editor)
     }
 
