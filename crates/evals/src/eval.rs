@@ -9,7 +9,7 @@ use git::GitHostingProviderRegistry;
 use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
 use semantic_index::{
@@ -292,7 +292,7 @@ async fn run_evaluation(
     let user_store = cx
         .new_model(|cx| UserStore::new(client.clone(), cx))
         .unwrap();
-    let node_runtime = Arc::new(FakeNodeRuntime {});
+    let node_runtime = NodeRuntime::unavailable();
 
     let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
     let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).unwrap();

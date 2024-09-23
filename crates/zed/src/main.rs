@@ -29,8 +29,9 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
-use node_runtime::RealNodeRuntime;
+use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
+use project::project_settings::ProjectSettings;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
 use session::{AppSession, Session};
@@ -43,7 +44,7 @@ use std::{
     env,
     fs::OpenOptions,
     io::{IsTerminal, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process,
     sync::Arc,
 };
@@ -477,7 +478,32 @@ fn main() {
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
-        let node_runtime = RealNodeRuntime::new(client.http_client());
+        let (tx, rx) = async_watch::channel(None);
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let settings = &ProjectSettings::get_global(cx).node;
+            let options = NodeBinaryOptions {
+                allow_path_lookup: !settings.disable_path_lookup.unwrap_or_default(),
+                // TODO: Expose this setting
+                allow_binary_download: true,
+                use_paths: settings.path.as_ref().map(|node_path| {
+                    let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                    let npm_path = settings
+                        .npm_path
+                        .as_ref()
+                        .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                    (
+                        node_path.clone(),
+                        npm_path.unwrap_or_else(|| {
+                            let base_path = PathBuf::new();
+                            node_path.parent().unwrap_or(&base_path).join("npm")
+                        }),
+                    )
+                }),
+            };
+            tx.send(Some(options)).log_err();
+        })
+        .detach();
+        let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
