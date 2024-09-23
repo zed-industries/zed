@@ -6,43 +6,68 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
 
 /// A timestamped position in a buffer
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
-pub struct Anchor {
-    pub timestamp: clock::Lamport,
-    /// The byte offset in the buffer
-    pub offset: usize,
-    /// Describes which character the anchor is biased towards
-    pub bias: Bias,
-    pub buffer_id: Option<BufferId>,
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+pub enum Anchor {
+    Start {
+        buffer_id: BufferId,
+    },
+    End {
+        buffer_id: BufferId,
+    },
+    Character {
+        buffer_id: BufferId,
+        insertion_id: clock::Lamport,
+        offset: usize,
+        bias: Bias,
+    },
 }
 
 impl Anchor {
-    pub const MIN: Self = Self {
-        timestamp: clock::Lamport::MIN,
-        offset: usize::MIN,
-        bias: Bias::Left,
-        buffer_id: None,
-    };
-
-    pub const MAX: Self = Self {
-        timestamp: clock::Lamport::MAX,
-        offset: usize::MAX,
-        bias: Bias::Right,
-        buffer_id: None,
-    };
+    pub fn buffer_id(&self) -> BufferId {
+        match self {
+            Anchor::Start { buffer_id } => *buffer_id,
+            Anchor::End { buffer_id } => *buffer_id,
+            Anchor::Character { buffer_id, .. } => *buffer_id,
+        }
+    }
 
     pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Ordering {
-        let fragment_id_comparison = if self.timestamp == other.timestamp {
-            Ordering::Equal
-        } else {
-            buffer
-                .fragment_id_for_anchor(self)
-                .cmp(buffer.fragment_id_for_anchor(other))
-        };
+        debug_assert_eq!(
+            self.buffer_id(),
+            other.buffer_id(),
+            "anchors belong to different buffers"
+        );
 
-        fragment_id_comparison
-            .then_with(|| self.offset.cmp(&other.offset))
-            .then_with(|| self.bias.cmp(&other.bias))
+        match (self, other) {
+            (Anchor::Start { .. }, Anchor::Start { .. }) => Ordering::Equal,
+            (Anchor::End { .. }, Anchor::End { .. }) => Ordering::Equal,
+            (Anchor::Start { .. }, _) | (_, Anchor::End { .. }) => Ordering::Less,
+            (_, Anchor::Start { .. }) | (Anchor::End { .. }, _) => Ordering::Greater,
+            (
+                Anchor::Character {
+                    insertion_id,
+                    offset,
+                    bias,
+                    ..
+                },
+                Anchor::Character {
+                    insertion_id: other_insertion_id,
+                    offset: other_offset,
+                    bias: other_bias,
+                    ..
+                },
+            ) => {
+                if insertion_id == other_insertion_id {
+                    offset
+                        .cmp(&other_offset)
+                        .then_with(|| bias.cmp(&other_bias))
+                } else {
+                    buffer
+                        .fragment_id_for_anchor(self)
+                        .cmp(buffer.fragment_id_for_anchor(other))
+                }
+            }
+        }
     }
 
     pub fn min(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
@@ -70,18 +95,42 @@ impl Anchor {
     }
 
     pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {
-        if self.bias == Bias::Left {
-            *self
-        } else {
-            buffer.anchor_before(self)
+        match self {
+            Anchor::Start { buffer_id } => Anchor::Start {
+                buffer_id: *buffer_id,
+            },
+            Anchor::End { .. } => buffer.anchor_before(buffer.len()),
+            Anchor::Character {
+                buffer_id,
+                insertion_id,
+                offset,
+                ..
+            } => Anchor::Character {
+                buffer_id: *buffer_id,
+                insertion_id: *insertion_id,
+                offset: *offset,
+                bias: Bias::Left,
+            },
         }
     }
 
     pub fn bias_right(&self, buffer: &BufferSnapshot) -> Anchor {
-        if self.bias == Bias::Right {
-            *self
-        } else {
-            buffer.anchor_after(self)
+        match self {
+            Anchor::Start { .. } => buffer.anchor_after(0),
+            Anchor::End { buffer_id } => Anchor::End {
+                buffer_id: *buffer_id,
+            },
+            Anchor::Character {
+                buffer_id,
+                insertion_id,
+                offset,
+                ..
+            } => Anchor::Character {
+                buffer_id: *buffer_id,
+                insertion_id: *insertion_id,
+                offset: *offset,
+                bias: Bias::Right,
+            },
         }
     }
 
@@ -94,17 +143,23 @@ impl Anchor {
 
     /// Returns true when the [`Anchor`] is located inside a visible fragment.
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
-        if *self == Anchor::MIN || *self == Anchor::MAX {
-            true
-        } else if self.buffer_id != Some(buffer.remote_id) {
-            false
-        } else {
-            let fragment_id = buffer.fragment_id_for_anchor(self);
-            let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>(&None);
-            fragment_cursor.seek(&Some(fragment_id), Bias::Left, &None);
-            fragment_cursor
-                .item()
-                .map_or(false, |fragment| fragment.visible)
+        match self {
+            Anchor::Start { buffer_id } | Anchor::End { buffer_id } => {
+                *buffer_id == buffer.remote_id
+            }
+            Anchor::Character { buffer_id, .. } => {
+                if *buffer_id == buffer.remote_id {
+                    let fragment_id = buffer.fragment_id_for_anchor(self);
+                    let mut fragment_cursor =
+                        buffer.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+                    fragment_cursor.seek(&Some(fragment_id), Bias::Left, &None);
+                    fragment_cursor
+                        .item()
+                        .map_or(false, |fragment| fragment.visible)
+                } else {
+                    false
+                }
+            }
         }
     }
 }

@@ -2481,7 +2481,8 @@ fn assert_diff_hunks(
     buffer.read_with(cx, |buffer, _| {
         let snapshot = buffer.snapshot();
         assert_hunks(
-            snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
+            snapshot
+                .git_diff_hunks_intersecting_range(snapshot.min_anchor()..snapshot.max_anchor()),
             &snapshot,
             &buffer.diff_base().unwrap().to_string(),
             expected_hunks,
@@ -2768,7 +2769,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
         let actual_remote_selections = buffer
-            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+            .selections_in_range(buffer.min_anchor()..buffer.max_anchor(), false)
             .map(|(replica_id, _, _, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let expected_remote_selections = active_selections
