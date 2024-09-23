@@ -20,7 +20,7 @@ jobs:
           close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
           days-before-stale: 365
           days-before-close: 7
-          only-issue-labels: "defect,panic / crash"
+          any-of-issue-labels: "defect,panic / crash"
           operations-per-run: 100
           ascending: true
           enable-statistics: true
