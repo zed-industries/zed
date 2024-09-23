@@ -9,7 +9,7 @@ use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},
     Project,
@@ -502,7 +502,7 @@ fn build_project(ssh: Arc<SshSession>, cx: &mut TestAppContext) -> Model<Project
         )
     });
 
-    let node = FakeNodeRuntime::new();
+    let node = NodeRuntime::unavailable();
     let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
