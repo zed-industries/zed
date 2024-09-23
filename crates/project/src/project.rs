@@ -45,10 +45,7 @@ use language::{
         language_settings, FormatOnSave, Formatter, InlayHintKind, LanguageSettings,
         SelectedFormatter,
     },
-    proto::{
-        deserialize_anchor, serialize_anchor, serialize_line_ending, serialize_version,
-        split_operations,
-    },
+    proto::{deserialize_anchor, serialize_anchor, split_operations},
     Buffer, BufferEvent, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry,
     Diff, Documentation, File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -2212,23 +2209,6 @@ impl Project {
                 .ok();
             }
 
-            BufferEvent::Reloaded => {
-                if self.is_local_or_ssh() {
-                    if let Some(project_id) = self.remote_id() {
-                        let buffer = buffer.read(cx);
-                        self.client
-                            .send(proto::BufferReloaded {
-                                project_id,
-                                buffer_id: buffer.remote_id().to_proto(),
-                                version: serialize_version(&buffer.version()),
-                                mtime: buffer.saved_mtime().map(|t| t.into()),
-                                line_ending: serialize_line_ending(buffer.line_ending()) as i32,
-                            })
-                            .log_err();
-                    }
-                }
-            }
-
             _ => {}
         }
 
@@ -4150,7 +4130,13 @@ impl Project {
 
         let project_transaction = format.await?;
         let project_transaction = this.update(&mut cx, |this, cx| {
-            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+            this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.serialize_project_transaction_for_peer(
+                    project_transaction,
+                    sender_id,
+                    cx,
+                )
+            })
         })?;
         Ok(proto::FormatBuffersResponse {
             transaction: Some(project_transaction),

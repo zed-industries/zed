@@ -7,6 +7,7 @@ use http_client::FakeHttpClient;
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
+    LineEnding,
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
 use node_runtime::FakeNodeRuntime;
@@ -18,7 +19,10 @@ use remote::SshSession;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -438,6 +442,57 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
+}
+
+#[gpui::test]
+async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, fs) = init_test(cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a")], None, cx);
+    });
+
+    fs.save(
+        &PathBuf::from("/code/project1/src/lib.rs"),
+        &("bloop".to_string().into()),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+
+    dbg!("******* EDITED FILE OUT FROM UNDER YOU!!!!");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(buffer.read(cx).has_conflict());
+    });
+
+    dbg!("******* calling reload");
+    project
+        .update(cx, |project, cx| {
+            project.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    dbg!("******* done calling reload");
+
+    cx.update(|cx| {
+        assert!(!buffer.read(cx).has_conflict());
+    });
 }
 
 fn init_logger() {

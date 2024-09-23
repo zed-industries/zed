@@ -14,7 +14,10 @@ use gpui::{
 };
 use http_client::Url;
 use language::{
-    proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
+    proto::{
+        deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
+        split_operations,
+    },
     Buffer, BufferEvent, Capability, File as _, Language, Operation,
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
@@ -921,8 +924,26 @@ impl BufferStore {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        if event == &BufferEvent::FileHandleChanged {
-            self.buffer_changed_file(buffer, cx);
+        match event {
+            BufferEvent::FileHandleChanged => {
+                self.buffer_changed_file(buffer, cx);
+            }
+            BufferEvent::Reloaded => {
+                let Some((downstream_client, project_id)) = self.downstream_client.as_ref() else {
+                    return;
+                };
+                let buffer = buffer.read(cx);
+                downstream_client
+                    .send(proto::BufferReloaded {
+                        project_id: *project_id,
+                        buffer_id: buffer.remote_id().to_proto(),
+                        version: serialize_version(&buffer.version()),
+                        mtime: buffer.saved_mtime().map(|t| t.into()),
+                        line_ending: serialize_line_ending(buffer.line_ending()) as i32,
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 
