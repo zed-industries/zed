@@ -187,6 +187,7 @@ impl WorkflowSuggestion {
                 suggestion_range,
                 initial_prompt,
                 initial_transaction_id,
+                false,
                 Some(workspace.clone()),
                 Some(assistant_panel),
                 cx,

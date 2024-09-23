@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
-    SettingEvent,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, Panic,
+    ReplEvent, SettingEvent,
 };
 use uuid::Uuid;
 
@@ -149,7 +149,8 @@ pub async fn post_crash(
         installation_id = %installation_id,
         description = %description,
         backtrace = %summary,
-        "crash report");
+        "crash report"
+    );
 
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
         let payload = slack::WebhookBody::new(|w| {
@@ -295,10 +296,11 @@ pub async fn post_panic(
         version = %panic.app_version,
         os_name = %panic.os_name,
         os_version = %panic.os_version.clone().unwrap_or_default(),
-        installation_id = %panic.installation_id.unwrap_or_default(),
+        installation_id = %panic.installation_id.clone().unwrap_or_default(),
         description = %panic.payload,
         backtrace = %panic.backtrace.join("\n"),
-        "panic report");
+        "panic report"
+    );
 
     let backtrace = if panic.backtrace.len() > 25 {
         let total = panic.backtrace.len();
@@ -316,6 +318,11 @@ pub async fn post_panic(
     } else {
         panic.backtrace.join("\n")
     };
+
+    if !report_to_slack(&panic) {
+        return Ok(());
+    }
+
     let backtrace_with_summary = panic.payload + "\n" + &backtrace;
 
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
@@ -354,6 +361,23 @@ pub async fn post_panic(
     }
 
     Ok(())
+}
+
+fn report_to_slack(panic: &Panic) -> bool {
+    if panic.os_name == "Linux" {
+        if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
+            return false;
+        }
+
+        if panic
+            .payload
+            .contains("GPU has crashed, and no debug information is available")
+        {
+            return false;
+        }
+    }
+
+    true
 }
 
 pub async fn post_events(
@@ -627,7 +651,9 @@ where
 
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct EditorEventRow {
+    system_id: String,
     installation_id: String,
+    session_id: Option<String>,
     metrics_id: String,
     operation: String,
     app_version: String,
@@ -647,7 +673,6 @@ pub struct EditorEventRow {
     historical_event: bool,
     architecture: String,
     is_staff: Option<bool>,
-    session_id: Option<String>,
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
@@ -677,9 +702,10 @@ impl EditorEventRow {
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
             architecture: body.architecture.clone(),
+            system_id: body.system_id.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
-            metrics_id: body.metrics_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
+            metrics_id: body.metrics_id.clone().unwrap_or_default(),
             is_staff: body.is_staff,
             time: time.timestamp_millis(),
             operation: event.operation,
@@ -699,6 +725,7 @@ impl EditorEventRow {
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct InlineCompletionEventRow {
     installation_id: String,
+    session_id: Option<String>,
     provider: String,
     suggestion_accepted: bool,
     app_version: String,
@@ -713,7 +740,6 @@ pub struct InlineCompletionEventRow {
     city: String,
     time: i64,
     is_staff: Option<bool>,
-    session_id: Option<String>,
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
@@ -834,6 +860,7 @@ pub struct AssistantEventRow {
     // AssistantEventRow
     conversation_id: String,
     kind: String,
+    phase: String,
     model: String,
     response_latency_in_ms: Option<i64>,
     error_message: Option<String>,
@@ -866,6 +893,7 @@ impl AssistantEventRow {
             time: time.timestamp_millis(),
             conversation_id: event.conversation_id.unwrap_or_default(),
             kind: event.kind.to_string(),
+            phase: event.phase.to_string(),
             model: event.model,
             response_latency_in_ms: event
                 .response_latency
@@ -878,6 +906,7 @@ impl AssistantEventRow {
 #[derive(Debug, clickhouse::Row, Serialize)]
 pub struct CpuEventRow {
     installation_id: Option<String>,
+    session_id: Option<String>,
     is_staff: Option<bool>,
     usage_as_percentage: f32,
     core_count: u32,
@@ -886,7 +915,6 @@ pub struct CpuEventRow {
     os_name: String,
     os_version: String,
     time: i64,
-    session_id: Option<String>,
     // pub normalized_cpu_usage: f64, MATERIALIZED
     major: Option<i32>,
     minor: Option<i32>,

@@ -35,6 +35,8 @@ use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
+use http_client::HttpClient;
+use isahc_http_client::IsahcHttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
@@ -45,7 +47,6 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use http_client::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -139,7 +140,7 @@ struct Session {
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
     supermaven_client: Option<Arc<SupermavenAdminApi>>,
-    http_client: Arc<IsahcHttpClient>,
+    http_client: Arc<dyn HttpClient>,
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
@@ -957,7 +958,7 @@ impl Server {
 
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
             let http_client = match IsahcHttpClient::builder().default_header("User-Agent", user_agent).build() {
-                Ok(http_client) => Arc::new(http_client),
+                Ok(http_client) => Arc::new(IsahcHttpClient::from(http_client)),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;

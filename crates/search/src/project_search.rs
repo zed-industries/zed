@@ -176,12 +176,11 @@ pub struct ProjectSearchBar {
 
 impl ProjectSearch {
     pub fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
-        let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
         Self {
             project,
-            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(capability)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -2746,7 +2745,7 @@ pub mod tests {
                 search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx)),
-                "\n\n\nconst ONE: usize = 1;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                "\n\n\nconst TWO: usize = one::ONE + one::ONE;\n\n\n\n\nconst ONE: usize = 1;\n",
                 "New search in directory should have a filter that matches a certain directory"
             );
                 })

@@ -45,6 +45,7 @@ Zed supports hundreds of programming languages and text formats. Some work out-o
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
 - [R](./languages/r.md)
+- [Rego](./languages/rego.md)
 - [ReStructuredText](./languages/rst.md)
 - [Racket](./languages/racket.md)
 - [Roc](./languages/roc.md)

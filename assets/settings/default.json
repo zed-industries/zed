@@ -15,9 +15,11 @@
   // text editor:
   //
   // 1. "VSCode"
-  // 2. "JetBrains"
-  // 3. "SublimeText"
-  // 4. "Atom"
+  // 2. "Atom"
+  // 3. "JetBrains"
+  // 4. "None"
+  // 5. "SublimeText"
+  // 6. "TextMate"
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
@@ -318,6 +320,10 @@
     "show_parameter_hints": true,
     // Corresponds to null/None LSP hint type value.
     "show_other_hints": true,
+    // Whether to show a background for inlay hints.
+    //
+    // If set to `true`, the background will use the `hint.background` color from the current theme.
+    "show_background": false,
     // Time to wait after editing the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "edit_debounce_ms": 700,
@@ -491,6 +497,11 @@
     "enable_preview_from_file_finder": false,
     // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
     "enable_preview_from_code_navigation": false
+  },
+  // Settings related to the file finder.
+  "file_finder": {
+    // Whether to show file icons in the file finder.
+    "file_icons": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1025,7 +1036,7 @@
   // environment variables.
   //
   // Examples:
-  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "socks5h://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
   "proxy": null,
   // Set to configure aliases for the command palette.

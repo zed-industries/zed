@@ -284,7 +284,7 @@ impl TerminalInlineAssistant {
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         })
     }
 
@@ -1066,6 +1066,7 @@ impl Codegen {
                         telemetry.report_assistant_event(
                             None,
                             telemetry_events::AssistantKind::Inline,
+                            telemetry_events::AssistantPhase::Response,
                             model_telemetry_id,
                             response_latency,
                             error_message,
