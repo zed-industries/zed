@@ -39,7 +39,6 @@ http_client.workspace = true
 itertools.workspace = true
 log.workspace = true
 lsp.workspace = true
-node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 pulldown-cmark.workspace = true
