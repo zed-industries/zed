@@ -90,8 +90,8 @@ pub fn diff_hunk_to_display(
         let hunk_end_row = hunk.row_range.end.max(hunk.row_range.start);
         let hunk_end_point = Point::new(hunk_end_row.0, 0);
 
-        let multi_buffer_start = snapshot.buffer_snapshot.anchor_after(hunk_start_point);
-        let multi_buffer_end = snapshot.buffer_snapshot.anchor_before(hunk_end_point);
+        let multi_buffer_start = snapshot.buffer_snapshot.anchor_before(hunk_start_point);
+        let multi_buffer_end = snapshot.buffer_snapshot.anchor_after(hunk_end_point);
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {

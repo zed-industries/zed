@@ -38,7 +38,7 @@ pub(super) struct HoveredHunk {
 
 #[derive(Debug, Default)]
 pub(super) struct ExpandedHunks {
-    hunks: Vec<ExpandedHunk>,
+    pub(crate) hunks: Vec<ExpandedHunk>,
     diff_base: HashMap<BufferId, DiffBaseBuffer>,
     hunk_update_tasks: HashMap<Option<BufferId>, Task<()>>,
 }
@@ -248,6 +248,7 @@ impl Editor {
                                     display_row_range,
                                     multi_buffer_range,
                                     status,
+                                    ..
                                 } => {
                                     let hunk_to_toggle_row_range = display_row_range;
                                     if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end
@@ -435,7 +436,7 @@ impl Editor {
                                     multi_buffer_range: hunk.multi_buffer_range.clone(),
                                     display_row_range: hunk_display_range.start.row()
                                         ..hunk_display_range.end.row(),
-                                    status: hunk.status,
+                                    status: DiffHunkStatus::Modified,
                                 },
                             );
 
@@ -455,6 +456,7 @@ impl Editor {
                                 .child(
                                     h_flex()
                                         .id("gutter hunk")
+                                        .bg(cx.theme().status().deleted)
                                         .pl(gutter_dimensions.margin
                                             + gutter_dimensions
                                                 .git_blame_entries_width
