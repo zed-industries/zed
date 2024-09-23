@@ -7,7 +7,7 @@
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
+    ListSizingBehavior, Pixels, Point, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
     ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
@@ -110,6 +110,11 @@ impl UniformListScrollHandle {
         let this = self.0.borrow();
         this.deferred_scroll_to_item
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
+    }
+
+    /// Get the current scroll offset.
+    pub fn offset(&self) -> Point<Pixels> {
+        self.0.borrow().base_handle.offset()
     }
 }
 

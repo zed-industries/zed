@@ -2644,9 +2644,9 @@ impl ProjectPanel {
 
 #[derive(IntoElement)]
 struct IndentGuides {
+    scroll_handle: Option<UniformListScrollHandle>,
     indent_size: Pixels,
     element_height: Pixels,
-    offset: Point<Pixels>,
 }
 
 struct IndentGuidesLayout {
@@ -2657,14 +2657,28 @@ struct IndentGuidesLayout {
 impl RenderOnce for IndentGuides {
     fn render(self, _: &mut WindowContext) -> impl IntoElement {
         canvas(
-            move |bounds, _| IndentGuidesLayout {
-                offset: bounds.origin + self.offset,
-                lines: vec![(gpui::point(px(0.), px(0.)), bounds.size.height)],
+            move |bounds, _| {
+                let offset = self
+                    .scroll_handle
+                    .map(|handle| handle.offset().y)
+                    .unwrap_or_default();
+
+                let first_item_offset = offset % self.element_height;
+
+                IndentGuidesLayout {
+                    offset: bounds.origin + gpui::point(px(0.), first_item_offset),
+                    lines: vec![
+                        (gpui::point(px(0.), px(0.)), self.element_height * 5.),
+                        (
+                            gpui::point(self.indent_size, self.element_height * 2.),
+                            self.element_height * 3.,
+                        ),
+                    ],
+                }
             },
             move |_, layout, cx| {
                 for (origin, height) in layout.lines {
-                    let bounds = Bounds::new(origin + layout.offset, gpui::size(px(5.), height));
-                    dbg!(bounds);
+                    let bounds = Bounds::new(origin + layout.offset, gpui::size(px(1.), height));
                     cx.paint_quad(fill(bounds, gpui::Hsla::red()));
                 }
             },
@@ -2680,6 +2694,7 @@ impl Render for ProjectPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
+        let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
 
         if has_worktree {
             let items_count = self
@@ -2785,9 +2800,9 @@ impl Render for ProjectPanel {
                 )
                 .children(self.render_scrollbar(items_count, cx))
                 .child(IndentGuides {
-                    element_height: px(25.),
-                    indent_size: px(10.),
-                    offset: gpui::point(px(0.), px(0.)),
+                    scroll_handle: Some(self.scroll_handle.clone()),
+                    element_height: px(26.),
+                    indent_size: px(indent_size),
                 })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
