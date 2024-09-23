@@ -1,25 +1,17 @@
 # Rego
 
-Rego support is available via the
-[zed-rego](https://github.com/StyraInc/zed-rego) extension.
+Rego language support in Zed is provided by the community-maintained [Rego extension](https://github.com/StyraInc/zed-rego).
 
 - Tree Sitter: [FallenAngel97/tree-sitter-rego](https://github.com/FallenAngel97/tree-sitter-rego)
 - Language Server: [StyraInc/regal](https://github.com/StyraInc/regal)
 
 ## Installation
 
-The extensions is largely based on the
-[Regal](https://docs.styra.com/regal/language-server)
-language server which should be installed to make use of the extension.
-Read the [getting started](https://docs.styra.com/regal#getting-started)
-instructions for more information.
+The extensions is largely based on the [Regal](https://docs.styra.com/regal/language-server) language server which should be installed to make use of the extension. Read the [getting started](https://docs.styra.com/regal#getting-started) instructions for more information.
 
 ## Configuration
 
-The extension's behaviour is configured in the `.regal/config.yaml` file. The
-following is an example configuration which disables the `todo-comment` rule,
-customizes the `line-length` rule, and ignores test files for the `opa-fmt`
-rule:
+The extension's behavior is configured in the `.regal/config.yaml` file. The following is an example configuration which disables the `todo-comment` rule, customizes the `line-length` rule, and ignores test files for the `opa-fmt` rule:
 
 ```yaml
 rules:
@@ -40,9 +32,7 @@ rules:
       # in this example, test files are ignored
       ignore:
         files:
-        - "*_test.rego"
+          - "*_test.rego"
 ```
 
-Read Regal's
-[configuration documentation](https://docs.styra.com/regal#configuration)
-for more information.
+Read Regal's [configuration documentation](https://docs.styra.com/regal#configuration) for more information.
