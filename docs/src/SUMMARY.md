@@ -17,7 +17,7 @@
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 <!-- - [Fonts](./fonts.md) -->
-- [Vim](./vim.md)
+- [Vim Mode](./vim.md)
 
 # Using Zed
 
