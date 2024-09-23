@@ -38,9 +38,9 @@ use fs::Fs;
 use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
-    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem, Empty,
-    Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusableView, FontWeight,
-    InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
+    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
+    CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
     SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
     UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
@@ -1442,36 +1442,7 @@ struct PatchViewState {
     footer_block_id: Option<CustomBlockId>,
     crease_id: Option<CreaseId>,
     editor: Option<WeakView<ProposedChangesEditor>>,
-    applied: bool,
-    resolution: Option<Arc<Result<AssistantPatchResolution>>>,
-}
-
-impl PatchViewState {
-    fn status(&self, _cx: &AppContext) -> PatchStatus {
-        if let Some(resolution) = self.resolution.as_deref() {
-            match resolution {
-                Err(err) => PatchStatus::Error(err),
-                Ok(_) => PatchStatus::Idle,
-            }
-        } else {
-            PatchStatus::Resolving
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum PatchStatus<'a> {
-    Resolving,
-    Error(&'a anyhow::Error),
-    Idle,
-    Done,
-    Confirmed,
-}
-
-impl<'a> PatchStatus<'a> {
-    pub(crate) fn is_confirmed(&self) -> bool {
-        matches!(self, Self::Confirmed)
-    }
+    resolution: Option<Arc<AssistantPatchResolution>>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1614,7 +1585,7 @@ impl ContextEditor {
             return;
         }
 
-        if self.apply_active_patch(cx) {
+        if self.focus_active_patch(cx) {
             return;
         }
 
@@ -1623,65 +1594,15 @@ impl ContextEditor {
         cx.notify();
     }
 
-    fn apply_patch(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        self.show_patch(range.clone(), cx);
-
-        if let Some(patch) = self.patches.get(&range) {
-            if let Some(_editor) = patch.editor.as_ref() {
-                //
-            }
-        }
-    }
-
-    fn apply_active_patch(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        let Some((range, patch)) = self.active_patch() else {
-            return false;
-        };
-
-        if let Some(_editor) = patch.editor.as_ref() {
-            if patch.applied {
-                return false;
-            } else {
-                //
-            }
-        } else {
-            match patch.resolution.as_deref() {
-                Some(Ok(_)) => self.apply_patch(range, cx),
-                Some(Err(_)) => self.resolve_patch(range, cx),
-                None => {}
+    fn focus_active_patch(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some((_range, patch)) = self.active_patch() {
+            if let Some(editor) = patch.editor.as_ref().and_then(|view| view.upgrade()) {
+                cx.focus_view(&editor);
+                return true;
             }
         }
 
-        true
-    }
-
-    fn resolve_patch(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        self.context
-            .update(cx, |context, cx| context.resolve_patch(range, cx));
-    }
-
-    fn undo_patch(&mut self, range: Range<language::Anchor>, _cx: &mut ViewContext<Self>) {
-        if let Some(patch) = self.patches.get_mut(&range) {
-            if let Some(_editor) = &patch.editor {
-                todo!()
-            }
-        }
-    }
-
-    fn confirm_patch(&mut self, range: Range<language::Anchor>, _cx: &mut ViewContext<Self>) {
-        if let Some(patch) = self.patches.get(&range) {
-            if let Some(_editor) = patch.editor.as_ref() {
-                todo!()
-            }
-        }
-    }
-
-    fn reject_patch(&mut self, range: Range<language::Anchor>, _cx: &mut ViewContext<Self>) {
-        if let Some(patch) = self.patches.get_mut(&range) {
-            if let Some(_editor) = patch.editor.as_ref() {
-                todo!()
-            }
-        }
+        false
     }
 
     fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
@@ -1714,15 +1635,6 @@ impl ContextEditor {
             return;
         }
 
-        if let Some((range, active_patch)) = self.active_patch() {
-            match active_patch.status(cx) {
-                PatchStatus::Done => {
-                    self.reject_patch(range, cx);
-                    return;
-                }
-                _ => {}
-            }
-        }
         cx.propagate();
     }
 
@@ -2245,6 +2157,9 @@ impl ContextEditor {
                 };
 
                 let resolution = patch.resolution.clone();
+                let path_count = resolution
+                    .as_deref()
+                    .map_or(0, |resolution| resolution.suggestion_groups.len());
 
                 let patch_start = patch.range.start;
                 let mut patch_end = patch.range.end.to_offset(&buffer);
@@ -2269,7 +2184,7 @@ impl ContextEditor {
                 let block_ids = editor.insert_blocks(
                     [BlockProperties {
                         position: patch_start,
-                        height: 1,
+                        height: path_count as u32 + 1,
                         style: BlockStyle::Flex,
                         render: Box::new({
                             let this = this.clone();
@@ -2355,7 +2270,6 @@ impl ContextEditor {
                     footer_block_id: block_ids.get(1).copied(),
                     crease_id: new_crease_ids.get(0).copied(),
                     resolution,
-                    applied: false,
                     editor: None,
                 };
 
@@ -2476,7 +2390,7 @@ impl ContextEditor {
     }
 
     fn update_active_patch(&mut self, cx: &mut ViewContext<Self>) {
-        let newest_cursor = self.editor.read(cx).selections.newest::<usize>(cx).head();
+        let newest_cursor = self.editor.read(cx).selections.newest::<Point>(cx).head();
         let context = self.context.read(cx);
 
         let new_patch = context
@@ -2544,15 +2458,21 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Option<View<ProposedChangesEditor>> {
         let patch = self.patches.get_mut(&patch_range)?;
+        let title = self
+            .context
+            .read(cx)
+            .patch_for_range(&patch_range, cx)?
+            .title
+            .clone();
         if let Some(editor) = patch.editor.clone().and_then(|editor| editor.upgrade()) {
             return Some(editor);
         }
 
         let resolution = patch.resolution.as_ref()?.clone();
-        let resolution = resolution.as_ref().as_ref().ok()?;
 
         let editor = cx.new_view(|cx| {
             ProposedChangesEditor::new(
+                title,
                 resolution
                     .suggestion_groups
                     .iter()
@@ -3485,96 +3405,64 @@ impl ContextEditor {
         id: BlockId,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let patch_state = self.patches.get(&range)?;
-        let status = patch_state.status(cx);
-        let this = cx.view().downgrade();
+        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
+
+        let paths = if let Some(resolution) = patch.resolution.as_deref() {
+            resolution
+                .suggestion_groups
+                .keys()
+                .filter_map(|buffer| {
+                    Some(
+                        buffer
+                            .read(cx)
+                            .file()?
+                            .full_path(cx)
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                })
+                .collect::<BTreeSet<_>>()
+        } else {
+            BTreeSet::default()
+        };
 
         let theme = cx.theme().status();
-        let is_confirmed = status.is_confirmed();
-        let border_color = if is_confirmed {
-            theme.ignored_border
-        } else {
-            theme.info_border
-        };
-
         let editor = self.editor.read(cx);
-        let focus_handle = editor.focus_handle(cx);
-        let snapshot = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()?
-            .read(cx)
-            .text_snapshot();
-        let start_offset = range.start.to_offset(&snapshot);
-        let parent_message = self
-            .context
-            .read(cx)
-            .messages_for_offsets([start_offset], cx);
-        debug_assert_eq!(parent_message.len(), 1);
-        let parent_message = parent_message.first()?;
-
-        let patch_index = self
-            .patches
-            .keys()
-            .filter(|workflow_patch_range| {
-                workflow_patch_range
-                    .start
-                    .cmp(&parent_message.anchor_range.start, &snapshot)
-                    .is_ge()
-                    && workflow_patch_range.end.cmp(&range.end, &snapshot).is_le()
-            })
-            .count();
-
-        let patch_label = Label::new(format!("Step {patch_index}")).size(LabelSize::Small);
-
-        let patch_label = if is_confirmed {
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(patch_label.strikethrough(true).color(Color::Muted))
-                .child(
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Created),
-                )
-        } else {
-            div().child(patch_label)
-        };
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
+        let excerpt_id = *excerpt_id;
+        let anchor = buffer.anchor_in_excerpt(excerpt_id, range.start).unwrap();
 
         Some(
             v_flex()
+                .id(id)
                 .w(max_width)
                 .pl(gutter_width)
+                .cursor(CursorStyle::PointingHand)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        editor.change_selections(None, cx, |selections| {
+                            selections.select_ranges(vec![anchor..anchor]);
+                        });
+                    });
+                    this.focus_active_patch(cx);
+                }))
                 .child(
                     h_flex()
                         .w_full()
                         .h_8()
                         .border_b_1()
-                        .border_color(border_color)
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .child(h_flex().justify_start().gap_2().child(patch_label))
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_end()
-                                .child(Self::render_patch_status(
-                                    status,
-                                    range.clone(),
-                                    focus_handle.clone(),
-                                    this.clone(),
-                                    id,
-                                )),
-                        ),
+                        .border_color(theme.info_border)
+                        .gap_1()
+                        .child(Icon::new(IconName::Pencil))
+                        .child(Label::new(patch.title.clone()).size(LabelSize::Small)),
                 )
-                // todo!("do we wanna keep this?")
-                // .children(edit_paths.iter().map(|path| {
-                //     h_flex()
-                //         .gap_1()
-                //         .child(Icon::new(IconName::File))
-                //         .child(Label::new(path.clone()))
-                // }))
+                .children(paths.into_iter().map(|path| {
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::File))
+                        .child(Label::new(path))
+                }))
                 .into_any(),
         )
     }
@@ -3586,237 +3474,15 @@ impl ContextEditor {
         gutter_width: Pixels,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let patch = self.patches.get(&patch_range)?;
-        let current_status = patch.status(cx);
         let theme = cx.theme().status();
-        let border_color = if current_status.is_confirmed() {
-            theme.ignored_border
-        } else {
-            theme.info_border
-        };
         Some(
             v_flex()
                 .w(max_width)
                 .pt_1()
                 .pl(gutter_width)
-                .child(h_flex().h(px(1.)).bg(border_color))
+                .child(h_flex().h(px(1.)).bg(theme.info_border))
                 .into_any(),
         )
-    }
-
-    fn render_patch_status(
-        status: PatchStatus,
-        patch_range: Range<language::Anchor>,
-        focus_handle: FocusHandle,
-        editor: WeakView<ContextEditor>,
-        id: BlockId,
-    ) -> AnyElement {
-        let id = EntityId::from(id).as_u64();
-        fn display_keybind_in_tooltip(
-            patch_range: &Range<language::Anchor>,
-            editor: &WeakView<ContextEditor>,
-            cx: &mut WindowContext<'_>,
-        ) -> bool {
-            editor
-                .update(cx, |this, _| {
-                    this.active_patch
-                        .as_ref()
-                        .map(|patch| &patch.range == patch_range)
-                })
-                .ok()
-                .flatten()
-                .unwrap_or_default()
-        }
-
-        match status {
-            PatchStatus::Error(error) => {
-                let error = error.to_string();
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("patch-resolution-failure")
-                            .child(
-                                Label::new("Step Resolution Failed")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .tooltip(move |cx| Tooltip::text(error.clone(), cx)),
-                    )
-                    .child(
-                        Button::new(("transform", id), "Retry")
-                            .icon(IconName::Update)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::Small)
-                            .label_size(LabelSize::Small)
-                            .on_click({
-                                let editor = editor.clone();
-                                let patch_range = patch_range.clone();
-                                move |_, cx| {
-                                    editor
-                                        .update(cx, |this, cx| {
-                                            this.resolve_patch(patch_range.clone(), cx)
-                                        })
-                                        .ok();
-                                }
-                            }),
-                    )
-                    .into_any()
-            }
-            PatchStatus::Idle | PatchStatus::Resolving { .. } => {
-                Button::new(("transform", id), "Transform")
-                    .icon(IconName::SparkleAlt)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .label_size(LabelSize::Small)
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .tooltip({
-                        let patch_range = patch_range.clone();
-                        let editor = editor.clone();
-                        move |cx| {
-                            cx.new_view(|cx| {
-                                let tooltip = Tooltip::new("Transform");
-                                if display_keybind_in_tooltip(&patch_range, &editor, cx) {
-                                    tooltip.key_binding(KeyBinding::for_action_in(
-                                        &Assist,
-                                        &focus_handle,
-                                        cx,
-                                    ))
-                                } else {
-                                    tooltip
-                                }
-                            })
-                            .into()
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        let patch_range = patch_range.clone();
-                        let is_idle = matches!(status, PatchStatus::Idle);
-                        move |_, cx| {
-                            if is_idle {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.apply_patch(patch_range.clone(), cx)
-                                    })
-                                    .ok();
-                            }
-                        }
-                    })
-                    .map(|this| {
-                        if let PatchStatus::Resolving = &status {
-                            this.with_animation(
-                                ("resolving-suggestion-animation", id),
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.alpha(delta),
-                            )
-                            .into_any_element()
-                        } else {
-                            this.into_any_element()
-                        }
-                    })
-            }
-            PatchStatus::Done => h_flex()
-                .gap_1()
-                .child(
-                    IconButton::new(("stop-transformation", id), IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Negative))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            let editor = editor.clone();
-                            let patch_range = patch_range.clone();
-                            move |cx| {
-                                cx.new_view(|cx| {
-                                    let tooltip = Tooltip::new("Reject Transformation");
-                                    if display_keybind_in_tooltip(&patch_range, &editor, cx) {
-                                        tooltip.key_binding(KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                    } else {
-                                        tooltip
-                                    }
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            let patch_range = patch_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.reject_patch(patch_range.clone(), cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .child(
-                    Button::new(("confirm-workflow-patch", id), "Accept")
-                        .icon(IconName::Check)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::Small)
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Positive))
-                        .tooltip({
-                            let editor = editor.clone();
-                            let patch_range = patch_range.clone();
-                            move |cx| {
-                                cx.new_view(|cx| {
-                                    let tooltip = Tooltip::new("Accept Transformation");
-                                    if display_keybind_in_tooltip(&patch_range, &editor, cx) {
-                                        tooltip.key_binding(KeyBinding::for_action_in(
-                                            &Assist,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                    } else {
-                                        tooltip
-                                    }
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            let patch_range = patch_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.confirm_patch(patch_range.clone(), cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
-            PatchStatus::Confirmed => h_flex()
-                .child(
-                    Button::new(("revert-workflow-patch", id), "Undo")
-                        .style(ButtonStyle::Filled)
-                        .icon(Some(IconName::Undo))
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::Small)
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let editor = editor.clone();
-                            let patch_range = patch_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.undo_patch(patch_range.clone(), cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
-        }
     }
 
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
@@ -3906,16 +3572,6 @@ impl ContextEditor {
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
-        let button_text = match self.active_patch() {
-            Some((_, patch)) => match patch.status(cx) {
-                PatchStatus::Error(_) => "Retry Patch Resolution",
-                PatchStatus::Resolving => "Transform",
-                PatchStatus::Idle => "Transform",
-                PatchStatus::Done => "Accept",
-                PatchStatus::Confirmed => "Send",
-            },
-            None => "Send",
-        };
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
@@ -3955,7 +3611,7 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new(button_text))
+            .child(Label::new("Send"))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),

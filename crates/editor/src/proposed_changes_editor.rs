@@ -13,6 +13,7 @@ use workspace::Item;
 
 pub struct ProposedChangesEditor {
     editor: View<Editor>,
+    title: SharedString,
     _subscriptions: Vec<Subscription>,
     buffer_entries: Vec<BufferEntry>,
     _recalculate_diffs_task: Task<Option<()>>,
@@ -31,6 +32,7 @@ struct BufferEntry {
 
 impl ProposedChangesEditor {
     pub fn new<T: ToOffset>(
+        title: impl Into<SharedString>,
         changes_buffers: Vec<ProposedChangesBuffer<T>>,
         project: Option<Model<Project>>,
         cx: &mut ViewContext<Self>,
@@ -64,6 +66,7 @@ impl ProposedChangesEditor {
         Self {
             editor: cx
                 .new_view(|cx| Editor::for_multibuffer(multibuffer.clone(), project, true, cx)),
+            title: title.into(),
             buffer_entries,
             recalculate_diffs_tx,
             _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
@@ -142,6 +145,6 @@ impl Item for ProposedChangesEditor {
     }
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some("Proposed changes".into())
+        Some(self.title.clone())
     }
 }

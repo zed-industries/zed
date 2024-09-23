@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::Editor;
 use gpui::AsyncAppContext;
-use gpui::{Model, Task, UpdateGlobal as _, View, WeakView, WindowContext};
+use gpui::{Model, SharedString, Task, UpdateGlobal as _, View, WeakView, WindowContext};
 use language::{Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -14,11 +14,10 @@ use workspace::Workspace;
 #[derive(Debug)]
 pub(crate) struct AssistantPatch {
     pub range: Range<language::Anchor>,
-    pub leading_tags_end: text::Anchor,
-    pub trailing_tag_start: Option<text::Anchor>,
+    pub title: SharedString,
     pub edits: Arc<[Result<AssistantEdit>]>,
     pub resolution_task: Option<Task<()>>,
-    pub resolution: Option<Arc<Result<AssistantPatchResolution>>>,
+    pub resolution: Option<Arc<AssistantPatchResolution>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,8 +28,14 @@ pub(crate) struct AssistantEdit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AssistantPatchResolution {
-    pub title: String,
     pub suggestion_groups: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
+    pub errors: Vec<AssistantPatchResolutionError>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AssistantPatchResolutionError {
+    pub edit_ix: usize,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

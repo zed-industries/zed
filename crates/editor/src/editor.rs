@@ -11923,7 +11923,12 @@ impl Editor {
             .map(|(buffer, ranges)| ProposedChangesBuffer { buffer, ranges })
             .collect::<Vec<_>>();
         let proposed_changes_editor = cx.new_view(|cx| {
-            ProposedChangesEditor::new(proposed_changes_buffers, self.project.clone(), cx)
+            ProposedChangesEditor::new(
+                "Proposed changes",
+                proposed_changes_buffers,
+                self.project.clone(),
+                cx,
+            )
         });
 
         cx.window_context().defer(move |cx| {

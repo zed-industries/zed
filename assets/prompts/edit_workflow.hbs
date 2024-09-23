@@ -1,73 +1,35 @@
 <task_description>
 
-To suggest edits to source code files, provide a `<patch>` XML tag. The `<patch>` tag should contain one or more `<edit>` tags with the following child tags:
+The user wants to make a change to their codebase. Your task is to describe the change using
+the following XML structure:
 
-### `<description>` (required)
-
-This tag contains a single-line description of the edit that should be made at the given location.
-
-### `<path>` (required)
-
-This tag contains the path to the file that will be changed. It can be an existing path, or a path that should be created.
-
-### `<old_text>` (optional)
-
-This tag contains a search string to locate in the source file, e.g. `pub fn baz() {`. If not provided, the new content will be inserted at the top of the file. Make sure to produce a string that exists in the source file and that isn't ambiguous. When there's ambiguity, add more lines to the search to eliminate it.
-
-### `<operation>` (required)
-
-This tag indicates what type of change should be made, relative to the given location. It can be one of the following:
-- `update`: Rewrites the specified string entirely based on the given description.
-- `create`: Creates a new file with the given path based on the provided description.
-- `insert_before`: Inserts new text based on the given description before the specified search string.
-- `insert_after`: Inserts new text based on the given description after the specified search string.
-- `delete`: Deletes the specified string from the containing file.
-
-### `<new_text>` (required)
-
-This tag should contain the new text to insert at the given location in the file.
-
-## Example 1
-
-<patch>
-<edit>
-<description>Add the age field</description>
-<path>src/person.rs</path>
-<operation>insert_before</operation>
-<old_text>
-height: f32,
-</old_text>
-<new_text>
-age: usize,
-</new_text>
-</edit>
-
-<edit>
-<description>Add the age getter</description>
-<path>src/person.rs</path>
-<operation>insert_after</operation>
-<old_text>
-impl Person {
-</old_text>
-<new_text>
-fn age(&self) -> usize {
-    self.age
-}
-</new_text>
-</edit>
-</patch>
+- <patch> - A group of related code changes.
+  Includes the following child tags:
+    - <title> (required) - A short, high-level description of the changes.
+    - <edit> (1 or more) - An edit to make at a particular location within the file.
+      Includes the following child tags:
+        - <path> (required) - The path to the file that will be changed.
+        - <description> (optional) - An arbitrarily-long comment that describes the purpose of this edit.
+        - <old_text> (optional) - An excerpt from the file's current contents that uniquely
+          identifies a particular range within the file where an edit should occur. If this
+          tag is not specified, then the entire file will be used as the location of the edit.
+        - <new_text> (required) - The new text to insert at the given location in the file.
+        - <operation> (required) - The type of change that should happen at this range of the file.
+          Must be one of the following values:
+            - `update`: Rewrites the specified string entirely based on the given description.
+            - `create`: Creates a new file with the given path based on the provided description.
+            - `insert_before`: Inserts new text based on the given description before the specified search string.
+            - `insert_after`: Inserts new text based on the given description after the specified search string.
+            - `delete`: Deletes the specified string from the containing file.
 
 <guidelines>
 - Only reference locations that actually exist (unless you're creating a file).
 - If creating a file, assume any subsequent updates are included at the time of creation.
 - Don't create and then update a file. Always create new files in one shot.
 - Prefer multiple edits to smaller regions, as opposed to one big edit to a larger region.
-- Don't produce edits that intersect each other. In that case, merge them into a bigger edit.
-- Never nest an edit with another edit. Never include CDATA. All edits are leaf nodes.
-- Descriptions are required for all edits except delete.
-- When generating multiple edits, ensure the descriptions are specific to each individual operation.
-- Avoid referring to the search string in the description. Focus on the change to be made, not the location where it's made. That's implicit with the `search` string you provide.
-- Don't generate multiple edits at the same location. Instead, combine them together in a single edit with a succinct combined description.
+- Don't produce edits that intersect each other. In that case, merge them into one edit.
+- Never nest an edit with another edit.
+- There's no need to escape angle brackets within tags.
 - Always ensure imports are added if you're referencing symbols that are not in scope.
 </guidelines>
 
@@ -113,13 +75,13 @@ Update all shapes to store their origin as an (x, y) tuple and implement Display
 We'll need to update both the rectangle and circle modules.
 
 <patch>
+<title>Add origins and display impls to all shapes</title>
 <edit>
-<description>Add the origin field to Rectangle</description>
 <path>src/shapes/rectangle.rs</path>
-<operation>insert_before</operation>
+<description>Add the origin field to Rectangle struct</description>
+<operation>insert_after</operation>
 <old_text>
-width: f64,
-height: f64,
+pub struct Rectangle {
 </old_text>
 <new_text>
 origin: (f64, f64),
@@ -127,8 +89,8 @@ origin: (f64, f64),
 </edit>
 
 <edit>
-<description>Update the Rectangle new function to take an origin</description>
 <path>src/shapes/rectangle.rs</path>
+<description>Update the Rectangle's new function to take an origin parameter</description>
 <operation>update</operation>
 <old_text>
 fn new(width: f64, height: f64) -> Self {
@@ -143,20 +105,21 @@ fn new(origin: (f64, f64), width: f64, height: f64) -> Self {
 </edit>
 
 <edit>
-<description>Add the origin field to Circle</description>
 <path>src/shapes/circle.rs</path>
-<operation>insert_before</operation>
+<description>Add the origin field to Circle struct</description>
+<operation>insert_after</operation>
 <old_text>
-radius: f64,
+pub struct Circle {
+    radius: f64,
 </old_text>
 <new_text>
-origin: (f64, f64),
+    origin: (f64, f64),
 </new_text>
 </edit>
 
 <edit>
-<description>Update the Circle new function to take an origin</description>
 <path>src/shapes/circle.rs</path>
+<description>Update the Circle's new function to take an origin parameter</description>
 <operation>update</operation>
 <old_text>
 fn new(radius: f64) -> Self {
@@ -172,20 +135,21 @@ fn new(origin: (f64, f64), radius: f64) -> Self {
 </step>
 
 <edit>
-<description>Add an import for the `std::fmt` module</description>
 <path>src/shapes/rectangle.rs</path>
+<description>Add an import for the std::fmt module</description>
 <operation>insert_before</operation>
 <old_text>
 struct Rectangle {
 </old_text>
 <new_text>
 use std::fmt;
+
 </new_text>
 </edit>
 
 <edit>
-<description>Add a Display implementation for Rectangle</description>
 <path>src/shapes/rectangle.rs</path>
+<description>Add a Display implementation for Rectangle</description>
 <operation>insert_after</operation>
 <old_text>
         Rectangle { width, height }
@@ -206,8 +170,8 @@ impl fmt::Display for Rectangle {
 </edit>
 
 <edit>
-<description>Add an import for the `std::fmt` module</description>
 <path>src/shapes/circle.rs</path>
+<description>Add an import for the `std::fmt` module</description>
 <operation>insert_before</operation>
 <old_text>
 struct Circle {
@@ -218,8 +182,8 @@ use std::fmt;
 </edit>
 
 <edit>
-<description>Add a Display implementation for Circle</description>
 <path>src/shapes/circle.rs</path>
+<description>Add a Display implementation for Circle</description>
 <operation>insert_after</operation>
 <old_text>
         Circle { radius }

@@ -3,7 +3,8 @@ mod context_tests;
 
 use crate::{
     prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantEdit, AssistantPatch,
-    AssistantPatchResolution, MessageId, MessageStatus, WorkflowSuggestionGroup,
+    AssistantPatchResolution, AssistantPatchResolutionError, MessageId, MessageStatus,
+    WorkflowSuggestionGroup,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -17,7 +18,7 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
-    FutureExt, StreamExt,
+    FutureExt, StreamExt, TryFutureExt as _,
 };
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage,
@@ -47,7 +48,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::{AssistantKind, AssistantPhase};
-use text::BufferSnapshot;
+use text::{BufferSnapshot, ToPoint};
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
@@ -452,12 +453,13 @@ pub struct XmlTag {
 #[strum(serialize_all = "snake_case")]
 pub enum XmlTagKind {
     Patch,
+    Title,
     Edit,
     Path,
+    Description,
     OldText,
     NewText,
     Operation,
-    Description,
 }
 
 pub struct Context {
@@ -928,24 +930,32 @@ impl Context {
 
     pub(crate) fn patch_containing(
         &self,
-        offset: usize,
+        position: Point,
         cx: &AppContext,
     ) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
-        let index = self
-            .patches
-            .binary_search_by(|patch| {
-                let patch_range = patch.range.to_offset(&buffer);
-                if offset < patch_range.start {
-                    Ordering::Greater
-                } else if offset > patch_range.end {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
+        let index = self.patches.binary_search_by(|patch| {
+            let patch_range = patch.range.to_point(&buffer);
+            if position < patch_range.start {
+                Ordering::Greater
+            } else if position > patch_range.end {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        });
+        match index {
+            Ok(ix) => Some(&self.patches[ix]),
+            Err(ix) => {
+                if ix > 0 {
+                    let prev_patch = &self.patches[ix - 1];
+                    if prev_patch.range.end.to_point(buffer) + Point::new(1, 0) == position {
+                        return Some(prev_patch);
+                    }
                 }
-            })
-            .ok()?;
-        Some(&self.patches[index])
+                None
+            }
+        }
     }
 
     pub fn patch_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
@@ -1478,16 +1488,13 @@ impl Context {
                 let mut edits = Vec::new();
                 let mut patch = AssistantPatch {
                     range: patch_start..patch_start,
-                    leading_tags_end: tag.range.end,
-                    trailing_tag_start: None,
+                    title: String::new().into(),
                     edits: Default::default(),
                     resolution: None,
                     resolution_task: None,
                 };
 
                 while let Some(tag) = tags.next() {
-                    patch.trailing_tag_start.get_or_insert(tag.range.start);
-
                     if tag.kind == XmlTagKind::Patch && !tag.is_open_tag {
                         patch_tag_depth -= 1;
                         if patch_tag_depth == 0 {
@@ -1495,6 +1502,19 @@ impl Context {
                             patch.edits = edits.into();
                             new_patches.push(patch);
                             continue 'tags;
+                        }
+                    }
+
+                    if tag.kind == XmlTagKind::Title && tag.is_open_tag {
+                        let content_start = tag.range.end;
+                        while let Some(tag) = tags.next() {
+                            if tag.kind == XmlTagKind::Title && !tag.is_open_tag {
+                                let content_end = tag.range.start;
+                                patch.title =
+                                    trimmed_text_in_range(buffer, content_start..content_end)
+                                        .into();
+                                break;
+                            }
                         }
                     }
 
@@ -1533,20 +1553,10 @@ impl Context {
                                     if tag.kind == kind && !tag.is_open_tag {
                                         let tag = tags.next().unwrap();
                                         let content_end = tag.range.start;
-                                        let mut is_start = true;
-                                        let mut content = buffer
-                                            .text_for_range(content_start..content_end)
-                                            .map(|mut chunk| {
-                                                if is_start {
-                                                    chunk = chunk.trim_start();
-                                                    if !chunk.is_empty() {
-                                                        is_start = false;
-                                                    }
-                                                }
-                                                chunk
-                                            })
-                                            .collect::<String>();
-                                        content.truncate(content.trim_end().len());
+                                        let content = trimmed_text_in_range(
+                                            buffer,
+                                            content_start..content_end,
+                                        );
                                         match kind {
                                             XmlTagKind::Path => path = Some(content),
                                             XmlTagKind::Operation => operation = Some(content),
@@ -1606,37 +1616,13 @@ impl Context {
             let edits = patch.edits.clone();
             let project = project.clone();
             |this, mut cx| async move {
-                let suggestion_groups =
-                    Self::compute_patch_resolution(project, edits, &mut cx).await;
+                let resolution = Self::compute_patch_resolution(project, edits, &mut cx).await;
 
                 this.update(&mut cx, |this, cx| {
                     let buffer = this.buffer.read(cx).text_snapshot();
                     let ix = this.patch_index_for_range(&range, &buffer).ok();
                     if let Some(ix) = ix {
                         let patch = &mut this.patches[ix];
-
-                        let resolution = suggestion_groups.map(|suggestion_groups| {
-                            let mut title = String::new();
-                            for mut chunk in buffer.text_for_range(
-                                patch.leading_tags_end
-                                    ..patch.trailing_tag_start.unwrap_or(patch.range.end),
-                            ) {
-                                if title.is_empty() {
-                                    chunk = chunk.trim_start();
-                                }
-                                if let Some((prefix, _)) = chunk.split_once('\n') {
-                                    title.push_str(prefix);
-                                    break;
-                                } else {
-                                    title.push_str(chunk);
-                                }
-                            }
-
-                            AssistantPatchResolution {
-                                title,
-                                suggestion_groups,
-                            }
-                        });
 
                         patch.resolution = Some(Arc::new(resolution));
                         cx.emit(ContextEvent::PatchesUpdated {
@@ -1654,28 +1640,42 @@ impl Context {
         project: Model<Project>,
         edits: Arc<[Result<AssistantEdit>]>,
         cx: &mut AsyncAppContext,
-    ) -> Result<HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>> {
+    ) -> AssistantPatchResolution {
         let mut suggestion_tasks = Vec::new();
-        for edit in edits.iter() {
-            let edit = edit.as_ref().map_err(|e| anyhow!("{e}"))?;
-            suggestion_tasks.push(edit.resolve(project.clone(), cx.clone()));
+        for (ix, edit) in edits.iter().enumerate() {
+            if let Ok(edit) = edit.as_ref() {
+                suggestion_tasks.push(
+                    edit.resolve(project.clone(), cx.clone())
+                        .map_err(move |error| (ix, error)),
+                );
+            }
+        }
+
+        let suggestions = future::join_all(suggestion_tasks).await;
+        let mut errors = Vec::new();
+        let mut suggestions_by_buffer = HashMap::default();
+        for entry in suggestions {
+            match entry {
+                Ok((buffer, suggestion)) => {
+                    suggestions_by_buffer
+                        .entry(buffer)
+                        .or_insert_with(Vec::new)
+                        .push(suggestion);
+                }
+                Err((edit_ix, error)) => errors.push(AssistantPatchResolutionError {
+                    edit_ix,
+                    message: error.to_string(),
+                }),
+            }
         }
 
         // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
-        let suggestions = future::try_join_all(suggestion_tasks).await?;
-
-        let mut suggestions_by_buffer = HashMap::default();
-        for (buffer, suggestion) in suggestions {
-            suggestions_by_buffer
-                .entry(buffer)
-                .or_insert_with(Vec::new)
-                .push(suggestion);
-        }
-
         let mut suggestion_groups_by_buffer = HashMap::default();
         for (buffer, mut suggestions) in suggestions_by_buffer {
             let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
-            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let Some(snapshot) = buffer.update(cx, |buffer, _| buffer.snapshot()).ok() else {
+                continue;
+            };
             // Sort suggestions by their range so that earlier, larger ranges come first
             suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
 
@@ -1724,7 +1724,10 @@ impl Context {
             suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
         }
 
-        Ok(suggestion_groups_by_buffer)
+        AssistantPatchResolution {
+            suggestion_groups: suggestion_groups_by_buffer,
+            errors,
+        }
     }
 
     pub fn pending_command_for_position(
@@ -2813,6 +2816,24 @@ impl Context {
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
     }
+}
+
+fn trimmed_text_in_range(buffer: &BufferSnapshot, range: Range<text::Anchor>) -> String {
+    let mut is_start = true;
+    let mut content = buffer
+        .text_for_range(range)
+        .map(|mut chunk| {
+            if is_start {
+                chunk = chunk.trim_start();
+                if !chunk.is_empty() {
+                    is_start = false;
+                }
+            }
+            chunk
+        })
+        .collect::<String>();
+    content.truncate(content.trim_end().len());
+    content
 }
 
 #[derive(Debug, Default)]
