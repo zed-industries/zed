@@ -25,8 +25,8 @@ use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
-    worktree_store::WorktreeStore, File, FormatOperation, PathChange, ProjectEntryId, Worktree,
-    WorktreeId,
+    lsp_store::WorktreeId, worktree_store::WorktreeStore, File, PathChange, ProjectEntryId,
+    Worktree,
 };
 
 pub struct PrettierStore {
@@ -644,7 +644,7 @@ pub(super) async fn format_with_prettier(
     prettier_store: &WeakModel<PrettierStore>,
     buffer: &Model<Buffer>,
     cx: &mut AsyncAppContext,
-) -> Option<Result<FormatOperation>> {
+) -> Option<Result<crate::lsp_store::FormatOperation>> {
     let prettier_instance = prettier_store
         .update(cx, |prettier_store, cx| {
             prettier_store.prettier_instance_for_buffer(buffer, cx)
@@ -671,7 +671,7 @@ pub(super) async fn format_with_prettier(
             let format_result = prettier
                 .format(buffer, buffer_path, cx)
                 .await
-                .map(FormatOperation::Prettier)
+                .map(crate::lsp_store::FormatOperation::Prettier)
                 .with_context(|| format!("{} failed to format buffer", prettier_description));
 
             Some(format_result)
