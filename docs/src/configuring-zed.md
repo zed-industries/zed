@@ -381,12 +381,6 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
-## Default Dock Anchor
-
-- Description: The default anchor for new docks.
-- Setting: `default_dock_anchor`
-- Default: `bottom`
-
 **Options**
 
 1. Position the dock attached to the bottom of the workspace: `bottom`
