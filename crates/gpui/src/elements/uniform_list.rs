@@ -6,7 +6,7 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
-    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, Interactivity, IntoElement, LayoutId,
     ListSizingBehavior, Pixels, Point, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
     ViewContext, WindowContext,
 };
@@ -46,6 +46,7 @@ where
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
+        indent_guides: None,
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
@@ -66,15 +67,23 @@ pub struct UniformList {
     item_to_measure_index: usize,
     render_items:
         Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
+    indent_guides: Option<IndentGuides>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
     sizing_behavior: ListSizingBehavior,
+}
+
+struct IndentGuides {
+    line_color: Hsla,
+    indent_size: Pixels,
+    compute_fn: Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[usize; 64]>>,
 }
 
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     item_size: Size<Pixels>,
     items: SmallVec<[AnyElement; 32]>,
+    indent_guides: SmallVec<[Bounds<Pixels>; 8]>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -177,6 +186,7 @@ impl Element for UniformList {
             UniformListFrameState {
                 item_size,
                 items: SmallVec::new(),
+                indent_guides: SmallVec::new(),
             },
         )
     }
@@ -264,6 +274,15 @@ impl Element for UniformList {
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
                     let mut items = (self.render_items)(visible_range.clone(), cx);
+
+                    let indent_guides = if let Some(indent_guides) = self.indent_guides.as_ref() {
+                        let visible_entries =
+                            &(indent_guides.compute_fn)(visible_range.clone(), cx);
+                        Some(compute_indent_guides(&visible_entries))
+                    } else {
+                        None
+                    };
+
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
@@ -276,6 +295,23 @@ impl Element for UniformList {
                             item.layout_as_root(available_space, cx);
                             item.prepaint_at(item_origin, cx);
                             frame_state.items.push(item);
+                        }
+
+                        if let Some((indent_guides, settings)) =
+                            indent_guides.zip(self.indent_guides.as_ref())
+                        {
+                            for guide in indent_guides {
+                                let bounds = Bounds::new(
+                                    padded_bounds.origin
+                                        + point(
+                                            px(guide.offset.x as f32) * settings.indent_size
+                                                + px(3.),
+                                            px(guide.offset.y as f32) * item_height,
+                                        ),
+                                    size(px(1.), px(guide.length as f32) * item_height),
+                                );
+                                frame_state.indent_guides.push(bounds);
+                            }
                         }
                     });
                 }
@@ -298,6 +334,11 @@ impl Element for UniformList {
                 for item in &mut request_layout.items {
                     item.paint(cx);
                 }
+                if let Some(indent_guides) = self.indent_guides.as_ref() {
+                    for indent_guide_bounds in &request_layout.indent_guides {
+                        cx.paint_quad(crate::fill(*indent_guide_bounds, indent_guides.line_color));
+                    }
+                }
             })
     }
 }
@@ -310,6 +351,53 @@ impl IntoElement for UniformList {
     }
 }
 
+struct IndentGuideLayout {
+    offset: Point<usize>,
+    length: usize,
+}
+
+fn compute_indent_guides(items: &[usize]) -> SmallVec<[IndentGuideLayout; 8]> {
+    let mut guides = SmallVec::new();
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+
+    for (y, &depth) in items.iter().enumerate() {
+        while let Some(&(last_depth, start)) = stack.last() {
+            if depth <= last_depth {
+                if y > start + 1 {
+                    guides.push(IndentGuideLayout {
+                        offset: Point::new(last_depth, start + 1),
+                        length: y - start - 1,
+                    });
+                }
+                stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        if stack
+            .last()
+            .map(|&(last_depth, _)| depth > last_depth)
+            .unwrap_or(true)
+        {
+            stack.push((depth, y));
+        }
+    }
+
+    // Handle any remaining guides
+    let total_lines = items.len();
+    for (depth, start) in stack {
+        if total_lines > start + 1 {
+            guides.push(IndentGuideLayout {
+                offset: Point::new(depth, start + 1),
+                length: total_lines - start - 1,
+            });
+        }
+    }
+
+    guides
+}
+
 impl UniformList {
     /// Selects a specific list item for measurement.
     pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
@@ -320,6 +408,31 @@ impl UniformList {
     /// Sets the sizing behavior, similar to the `List` element.
     pub fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
         self.sizing_behavior = behavior;
+        self
+    }
+
+    /// Sets the function that computes indent guides.
+    pub fn with_indent_guides<V>(
+        mut self,
+        view: View<V>,
+        indent_size: Pixels,
+        line_color: Hsla,
+        compute_indent_guides: impl 'static
+            + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<usize>,
+    ) -> Self
+    where
+        V: Render,
+    {
+        let compute_indent_guides = move |range, cx: &mut WindowContext| {
+            view.update(cx, |this, cx| {
+                compute_indent_guides(this, range, cx).into_iter().collect() //TODO use of smallvec does not make sense here, as we allocate anyways
+            })
+        };
+        self.indent_guides = Some(IndentGuides {
+            line_color,
+            indent_size,
+            compute_fn: Box::new(compute_indent_guides),
+        });
         self
     }
 

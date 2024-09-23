@@ -16,12 +16,12 @@ use anyhow::{anyhow, Result};
 use collections::{hash_map, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, canvas, deferred, div, fill, impl_actions, px, uniform_list, Action,
-    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
-    InteractiveElement, KeyContext, ListSizingBehavior, Model, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
+    ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
+    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -2642,54 +2642,6 @@ impl ProjectPanel {
     }
 }
 
-#[derive(IntoElement)]
-struct IndentGuides {
-    scroll_handle: Option<UniformListScrollHandle>,
-    indent_size: Pixels,
-    element_height: Pixels,
-}
-
-struct IndentGuidesLayout {
-    offset: Point<Pixels>,
-    lines: Vec<(Point<Pixels>, Pixels)>,
-}
-
-impl RenderOnce for IndentGuides {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
-        canvas(
-            move |bounds, _| {
-                let offset = self
-                    .scroll_handle
-                    .map(|handle| handle.offset().y)
-                    .unwrap_or_default();
-
-                let first_item_offset = offset % self.element_height;
-
-                IndentGuidesLayout {
-                    offset: bounds.origin + gpui::point(px(0.), first_item_offset),
-                    lines: vec![
-                        (gpui::point(px(0.), px(0.)), self.element_height * 5.),
-                        (
-                            gpui::point(self.indent_size, self.element_height * 2.),
-                            self.element_height * 3.,
-                        ),
-                    ],
-                }
-            },
-            move |_, layout, cx| {
-                for (origin, height) in layout.lines {
-                    let bounds = Bounds::new(origin + layout.offset, gpui::size(px(1.), height));
-                    cx.paint_quad(fill(bounds, gpui::Hsla::red()));
-                }
-            },
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-    }
-}
-
 impl Render for ProjectPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
@@ -2794,16 +2746,24 @@ impl Render for ProjectPanel {
                             items
                         }
                     })
+                    .with_indent_guides(
+                        cx.view().clone(),
+                        px(indent_size),
+                        cx.theme().colors().editor_indent_guide,
+                        |this, range, cx| {
+                            let mut items = Vec::with_capacity(range.end - range.start);
+                            this.for_each_visible_entry(range, cx, |_, details, _| {
+                                // TODO: only fetch depth instead of all details
+                                items.push(details.depth);
+                            });
+                            items
+                        },
+                    )
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_scrollbar(items_count, cx))
-                .child(IndentGuides {
-                    scroll_handle: Some(self.scroll_handle.clone()),
-                    element_height: px(26.),
-                    indent_size: px(indent_size),
-                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()
