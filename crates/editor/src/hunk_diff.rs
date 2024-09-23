@@ -416,32 +416,8 @@ impl Editor {
                 style: BlockStyle::Flex,
                 disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
-                    let Some(gutter_bounds) = editor.read(cx).gutter_bounds() else {
-                        return div().into_any_element();
-                    };
-                    let (gutter_dimensions, hunk_bounds) =
-                        editor.update(cx.context, |editor, cx| {
-                            let editor_snapshot = editor.snapshot(cx);
-                            let hunk_display_range = hunk
-                                .multi_buffer_range
-                                .clone()
-                                .to_display_points(&editor_snapshot);
-                            let gutter_dimensions = editor.gutter_dimensions;
-                            let hunk_bounds = EditorElement::diff_hunk_bounds(
-                                &editor_snapshot,
-                                cx.line_height(),
-                                gutter_bounds,
-                                &DisplayDiffHunk::Unfolded {
-                                    diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                                    multi_buffer_range: hunk.multi_buffer_range.clone(),
-                                    display_row_range: hunk_display_range.start.row()
-                                        ..hunk_display_range.end.row(),
-                                    status: DiffHunkStatus::Modified,
-                                },
-                            );
-
-                            (gutter_dimensions, hunk_bounds)
-                        });
+                    let width = EditorElement::diff_hunk_strip_width(cx.line_height());
+                    let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
                     h_flex()
                         .id("gutter with editor")
                         .bg(deleted_hunk_color)
@@ -461,8 +437,8 @@ impl Editor {
                                             + gutter_dimensions
                                                 .git_blame_entries_width
                                                 .unwrap_or_default())
-                                        .max_w(hunk_bounds.size.width)
-                                        .min_w(hunk_bounds.size.width)
+                                        .max_w(width)
+                                        .min_w(width)
                                         .size_full()
                                         .cursor(CursorStyle::PointingHand)
                                         .on_mouse_down(MouseButton::Left, {

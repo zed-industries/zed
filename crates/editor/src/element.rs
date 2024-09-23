@@ -3289,7 +3289,7 @@ impl EditorElement {
                 let start_y = display_row.as_f32() * line_height - scroll_top;
                 let end_y = start_y + line_height;
 
-                let width = (0.275 * line_height).floor();
+                let width = Self::diff_hunk_strip_width(line_height);
                 let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                 let highlight_size = size(width, end_y - start_y);
                 Bounds::new(highlight_origin, highlight_size)
@@ -3322,7 +3322,7 @@ impl EditorElement {
                     let start_y = start_row.as_f32() * line_height - scroll_top;
                     let end_y = end_row_in_current_excerpt.as_f32() * line_height - scroll_top;
 
-                    let width = (0.275 * line_height).floor();
+                    let width = Self::diff_hunk_strip_width(line_height);
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
@@ -3341,6 +3341,10 @@ impl EditorElement {
                 }
             },
         }
+    }
+
+    pub(super) fn diff_hunk_strip_width(line_height: Pixels) -> Pixels {
+        (0.275 * line_height).floor()
     }
 
     fn paint_gutter_indicators(&self, layout: &mut EditorLayout, cx: &mut WindowContext) {
