@@ -241,9 +241,11 @@ impl ProjectPanel {
                 }
                 project::Event::DiskBasedDiagnosticsFinished { .. }
                 | project::Event::DiagnosticsUpdated { .. } => {
-                    this.update_diagnostics(cx);
-                    this.update_visible_entries(None, cx);
-                    cx.notify();
+                    if ProjectPanelSettings::get_global(cx).show_diagnostic_errors {
+                        this.update_diagnostics(cx);
+                        this.update_visible_entries(None, cx);
+                        cx.notify();
+                    }
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
@@ -287,9 +289,12 @@ impl ProjectPanel {
             .detach();
 
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
-            cx.observe_global::<SettingsStore>(move |_, cx| {
+            cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
+                    if new_settings.show_diagnostic_errors {
+                        this.update_diagnostics(cx);
+                    }
                     project_panel_settings = new_settings;
                     cx.notify();
                 }
