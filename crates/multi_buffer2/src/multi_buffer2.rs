@@ -33,7 +33,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     locator::Locator,
     subscription::{Subscription, Topic},
-    BufferId, Edit, TextSummary,
+    AnchorRangeExt as _, BufferId, Edit, TextSummary,
 };
 use theme::SyntaxTheme;
 
@@ -229,11 +229,18 @@ pub struct ExcerptRange<T> {
 
 #[derive(Clone, Debug)]
 pub struct ExcerptSummary {
-    path: Option<PathBuf>,
-    buffer_id: BufferId,
+    max_key: ExcerptKey,
     /// The maximum row of the [`Excerpt`]s being summarized
     max_buffer_row: MultiBufferRow,
     text: TextSummary,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExcerptKey {
+    path: Option<PathBuf>,
+    buffer_id: BufferId,
+    replica_id: ReplicaId,
+    range: Range<text::Anchor>,
 }
 
 #[derive(Clone)]
@@ -1147,14 +1154,58 @@ impl MultiBuffer {
         // rx
     }
 
-    pub fn insert_excerpts<O>(
+    pub fn insert_excerpts(
         &mut self,
-        buffer: Model<Buffer>,
-        ranges: impl IntoIterator<Item = ExcerptRange<O>>,
+        mut new_excerpts: Vec<(Model<Buffer>, ExcerptRange<text::Anchor>)>,
         cx: &mut ModelContext<Self>,
-    ) where
-        O: text::ToOffset,
-    {
+    ) {
+        self.sync(cx);
+
+        // Sort excerpts with earlier/larger context ranges first
+        new_excerpts.sort_unstable_by(|(buffer_a, range_a), (buffer_b, range_b)| {
+            let buffer_a = buffer_a.read(cx);
+            let buffer_b = buffer_b.read(cx);
+
+            let path_a = buffer_a.file().map(|file| file.full_path(cx));
+            let path_b = buffer_b.file().map(|file| file.full_path(cx));
+            path_a
+                .cmp(&path_b)
+                .then_with(|| buffer_a.remote_id().cmp(&buffer_b.remote_id()))
+                .then_with(|| buffer_a.replica_id().cmp(&buffer_b.replica_id()))
+                .then_with(|| range_a.context.cmp(&range_b.context, buffer_a))
+        });
+
+        // Merge intersecting excerpts
+        new_excerpts.dedup_by(|(buffer_a, range_a), (buffer_b, range_b)| {
+            if buffer_a.entity_id() == buffer_b.entity_id() {
+                let buffer = buffer_a.read(cx);
+                let offset_range_a = range_a.context.to_offset(buffer);
+                let offset_range_b = range_b.context.to_offset(buffer);
+                if offset_range_a.start <= offset_range_b.end
+                    && offset_range_b.start <= offset_range_a.end
+                {
+                    if offset_range_a.start < offset_range_b.start {
+                        range_b.context.start = range_a.context.start;
+                    }
+
+                    if offset_range_a.end > offset_range_b.end {
+                        range_b.context.end = range_a.context.end;
+                    }
+
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        });
+
+        // Insert new excerpts into the existing tree
+        // let cursor = self.snapshot.ex
+        let snapshot = self.snapshot.borrow_mut();
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptKey>(&());
+
         todo!()
     }
 
@@ -1972,14 +2023,22 @@ impl MultiBuffer {
     ) -> Model<Self> {
         let multi = cx.new_model(|_| Self::new(Capability::ReadWrite));
         for (text, ranges) in excerpts {
-            let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-            let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
-                context: range,
-                primary: None,
-            });
-            multi.update(cx, |multi, cx| {
-                multi.insert_excerpts(buffer, excerpt_ranges, cx)
-            });
+            let buffer_handle = cx.new_model(|cx| Buffer::local(text, cx));
+            let excerpts = ranges
+                .into_iter()
+                .map(|range| {
+                    let buffer = buffer_handle.read(cx);
+                    (
+                        buffer_handle.clone(),
+                        ExcerptRange {
+                            context: buffer.anchor_before(range.start)
+                                ..buffer.anchor_after(range.end),
+                            primary: None,
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            multi.update(cx, |multi, cx| multi.insert_excerpts(excerpts, cx));
         }
 
         multi
