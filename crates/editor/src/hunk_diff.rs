@@ -67,6 +67,7 @@ pub(super) struct ExpandedHunk {
 }
 
 impl Editor {
+    // TODO: Remove this, as it is no longer referenced.
     pub(super) fn open_hunk_context_menu(
         &mut self,
         hovered_hunk: HoveredHunk,
