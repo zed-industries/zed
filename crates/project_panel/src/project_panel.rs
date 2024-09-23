@@ -292,7 +292,9 @@ impl ProjectPanel {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
-                    if new_settings.show_diagnostic_errors {
+                    if new_settings.show_diagnostic_errors
+                        && !project_panel_settings.show_diagnostic_errors
+                    {
                         this.update_diagnostics(cx);
                     }
                     project_panel_settings = new_settings;
