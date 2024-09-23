@@ -3037,15 +3037,11 @@ impl Project {
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<ResolvedPath>> {
-        // TODO: ssh based remoting.
-        if self.ssh_session.is_some() {
-            return Task::ready(None);
-        }
+        let path_buf = PathBuf::from(path);
+        if path_buf.is_absolute() || path.starts_with("~") {
+            if self.is_local() {
+                let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
 
-        if self.is_local_or_ssh() {
-            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
-
-            if expanded.is_absolute() {
                 let fs = self.fs.clone();
                 cx.background_executor().spawn(async move {
                     let path = expanded.as_path();
@@ -3053,16 +3049,24 @@ impl Project {
 
                     exists.then(|| ResolvedPath::AbsPath(expanded))
                 })
+            } else if let Some(ssh_session) = self.ssh_session.as_ref() {
+                let request = ssh_session.request(proto::CheckFileExists {
+                    project_id: SSH_PROJECT_ID,
+                    path: path.to_string(),
+                });
+                cx.background_executor().spawn(async move {
+                    let response = request.await.log_err()?;
+                    if response.exists {
+                        Some(ResolvedPath::AbsPath(PathBuf::from(response.path)))
+                    } else {
+                        None
+                    }
+                })
             } else {
-                self.resolve_path_in_worktrees(expanded, buffer, cx)
-            }
-        } else {
-            let path = PathBuf::from(path);
-            if path.is_absolute() || path.starts_with("~") {
                 return Task::ready(None);
             }
-
-            self.resolve_path_in_worktrees(path, buffer, cx)
+        } else {
+            self.resolve_path_in_worktrees(path_buf, buffer, cx)
         }
     }
 
@@ -4016,17 +4020,7 @@ impl Project {
     }
 
     pub fn worktree_metadata_protos(&self, cx: &AppContext) -> Vec<proto::WorktreeMetadata> {
-        self.worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                proto::WorktreeMetadata {
-                    id: worktree.id().to_proto(),
-                    root_name: worktree.root_name().into(),
-                    visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().into(),
-                }
-            })
-            .collect()
+        self.worktree_store.read(cx).worktree_metadata_protos(cx)
     }
 
     fn set_worktrees_from_proto(
@@ -4035,10 +4029,9 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Result<()> {
         cx.notify();
-        let result = self.worktree_store.update(cx, |worktree_store, cx| {
+        self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
-        });
-        result
+        })
     }
 
     fn set_collaborators_from_proto(
@@ -4545,6 +4538,22 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
 pub enum ResolvedPath {
     ProjectPath(ProjectPath),
     AbsPath(PathBuf),
+}
+
+impl ResolvedPath {
+    pub fn abs_path(&self) -> Option<&Path> {
+        match self {
+            Self::AbsPath(path) => Some(path.as_path()),
+            _ => None,
+        }
+    }
+
+    pub fn project_path(&self) -> Option<&ProjectPath> {
+        match self {
+            Self::ProjectPath(path) => Some(&path),
+            _ => None,
+        }
+    }
 }
 
 impl Item for Buffer {
