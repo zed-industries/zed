@@ -52,7 +52,7 @@ fn completion_state_from_diff(
     position: Anchor,
     delete_range: Range<Anchor>,
 ) -> CompletionProposal {
-    let buffer_text = snapshot
+    let buffer_chars = snapshot
         .text_for_range(delete_range.clone())
         .collect::<String>()
         .chars()
@@ -60,27 +60,30 @@ fn completion_state_from_diff(
 
     let mut inlays: Vec<InlayProposal> = Vec::new();
 
-    let completion = completion_text.chars().collect::<Vec<char>>();
+    let completion_chars = completion_text.chars().collect::<Vec<char>>();
 
     let mut offset = position.to_offset(&snapshot);
 
     let mut i = 0;
     let mut j = 0;
-    while i < completion.len() && j < buffer_text.len() {
+    while i < completion_chars.len() && j < buffer_chars.len() {
         // find the next instance of the buffer text in the completion text.
-        let k = completion[i..].iter().position(|c| *c == buffer_text[j]);
+        let k = completion_chars[i..]
+            .iter()
+            .position(|c| *c == buffer_chars[j]);
         match k {
             Some(k) => {
                 if k != 0 {
                     // the range from the current position to item is an inlay.
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
-                        completion_text[i..i + k].into(),
+                        completion_chars[i..i + k].iter().collect::<String>().into(),
                     ));
                 }
                 i += k + 1;
                 j += 1;
-                offset.add_assign(1);
+
+                offset.add_assign(completion_chars[k].len_utf8());
             }
             None => {
                 // there are no more matching completions, so drop the remaining
@@ -90,11 +93,14 @@ fn completion_state_from_diff(
         }
     }
 
-    if j == buffer_text.len() && i < completion.len() {
+    if j == buffer_chars.len() && i < completion_chars.len() {
         // there is leftover completion text, so drop it as an inlay.
         inlays.push(InlayProposal::Suggestion(
             snapshot.anchor_after(offset),
-            completion_text[i..completion_text.len()].into(),
+            completion_chars[i..completion_chars.len()]
+                .iter()
+                .collect::<String>()
+                .into(),
         ));
     }
 
