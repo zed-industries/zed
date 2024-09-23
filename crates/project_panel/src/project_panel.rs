@@ -16,12 +16,12 @@ use anyhow::{anyhow, Result};
 use collections::{hash_map, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
-    ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, anchored, canvas, deferred, div, fill, impl_actions, px, uniform_list, Action,
+    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
+    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    InteractiveElement, KeyContext, ListSizingBehavior, Model, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -2642,6 +2642,40 @@ impl ProjectPanel {
     }
 }
 
+#[derive(IntoElement)]
+struct IndentGuides {
+    indent_size: Pixels,
+    element_height: Pixels,
+    offset: Point<Pixels>,
+}
+
+struct IndentGuidesLayout {
+    offset: Point<Pixels>,
+    lines: Vec<(Point<Pixels>, Pixels)>,
+}
+
+impl RenderOnce for IndentGuides {
+    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+        canvas(
+            move |bounds, _| IndentGuidesLayout {
+                offset: bounds.origin + self.offset,
+                lines: vec![(gpui::point(px(0.), px(0.)), bounds.size.height)],
+            },
+            move |_, layout, cx| {
+                for (origin, height) in layout.lines {
+                    let bounds = Bounds::new(origin + layout.offset, gpui::size(px(5.), height));
+                    dbg!(bounds);
+                    cx.paint_quad(fill(bounds, gpui::Hsla::red()));
+                }
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    }
+}
+
 impl Render for ProjectPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
@@ -2750,6 +2784,11 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_scrollbar(items_count, cx))
+                .child(IndentGuides {
+                    element_height: px(25.),
+                    indent_size: px(10.),
+                    offset: gpui::point(px(0.), px(0.)),
+                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()
