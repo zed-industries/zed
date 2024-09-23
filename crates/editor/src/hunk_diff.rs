@@ -445,8 +445,6 @@ impl Editor {
                             );
                             (gutter_dimensions, hunk_bounds, close_button)
                         });
-                    let click_editor = editor.clone();
-                    let clicked_hunk = hunk.clone();
                     h_flex()
                         .id("gutter with editor")
                         .bg(deleted_hunk_color)
@@ -470,22 +468,12 @@ impl Editor {
                                         .size_full()
                                         .cursor(CursorStyle::PointingHand)
                                         .on_mouse_down(MouseButton::Left, {
-                                            let click_hunk = hunk.clone();
-                                            move |e, cx| {
-                                                let modifiers = e.modifiers;
-                                                if modifiers.control || modifiers.platform {
-                                                    click_editor.update(cx, |editor, cx| {
-                                                        editor.toggle_hovered_hunk(&click_hunk, cx);
-                                                    });
-                                                } else {
-                                                    click_editor.update(cx, |editor, cx| {
-                                                        editor.open_hunk_context_menu(
-                                                            clicked_hunk.clone(),
-                                                            e.position,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
+                                            let editor = editor.clone();
+                                            let hunk = hunk.clone();
+                                            move |_event, cx| {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.toggle_hovered_hunk(&hunk, cx);
+                                                });
                                             }
                                         }),
                                 )

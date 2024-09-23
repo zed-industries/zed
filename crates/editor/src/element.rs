@@ -511,7 +511,7 @@ impl EditorElement {
                     },
                 );
                 if hunk_bounds.contains(&event.position) {
-                    editor.open_hunk_context_menu(hovered_hunk, event.position, cx);
+                    editor.toggle_hovered_hunk(&hovered_hunk, cx);
                 }
             }
             cx.notify();
