@@ -293,7 +293,10 @@ message Envelope {
 
         TryExec try_exec = 252;
         ReadTextFile read_text_file = 253;
-        ReadTextFileResponse read_text_file_response = 254; // current max
+        ReadTextFileResponse read_text_file_response = 254;
+
+        CheckFileExists check_file_exists = 255;
+        CheckFileExistsResponse check_file_exists_response = 256; // current max
     }
 
     reserved 158 to 161;
@@ -2573,4 +2576,14 @@ message TryExec {
 
 message TryExecResponse {
     string text = 1;
+}
+
+message CheckFileExists {
+    uint64 project_id = 1;
+    string path = 2;
+}
+
+message CheckFileExistsResponse {
+    bool exists = 1;
+    string path = 2;
 }
