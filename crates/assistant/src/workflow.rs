@@ -304,9 +304,10 @@ impl AssistantEdit {
                     },
                     AssistantEditKind::InsertBefore {
                         old_text,
-                        new_text,
+                        mut new_text,
                         description,
                     } => {
+                        new_text.push('\n');
                         let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::InsertBefore {
                             position: range.start,
@@ -316,9 +317,10 @@ impl AssistantEdit {
                     }
                     AssistantEditKind::InsertAfter {
                         old_text,
-                        new_text,
+                        mut new_text,
                         description,
                     } => {
+                        new_text.insert(0, '\n');
                         let range = Self::resolve_location(&snapshot, &old_text);
                         WorkflowSuggestion::InsertAfter {
                             position: range.end,
