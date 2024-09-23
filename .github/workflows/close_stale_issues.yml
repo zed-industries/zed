@@ -1,0 +1,33 @@
+name: "Close Stale Issues"
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: >
+            Hi there! 👋
+
+            We're tidying up our issue tracker. Is this still a problem in the latest version?
+
+            If we don't hear back in a week, we'll close this for housekeeping. No worries though - just respond to keep it open, or feel free to open a new issue later if needed.
+
+            Thanks for your help.
+          close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
+          days-before-stale: 365
+          days-before-close: 7
+          only-labels: "defect,panic / crash"
+          only-issues: true
+          operations-per-run: 100
+          ascending: true
+          enable-statistics: true
+          debug-only: true
+          ignore-updates: true
+          ignore-issue-updates: true
+          stale-issue-label: "stale"
