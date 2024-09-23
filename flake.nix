@@ -17,34 +17,27 @@
     fenix,
     ...
   }: let
-    systems = ["x86_64-linux" "aarch64-linux"];
-
-    overlays = {
-      fenix = fenix.overlays.default;
-      rust-toolchain = final: prev: {
-        rustToolchain = final.fenix.stable.toolchain;
-      };
-      zed-editor = final: prev: {
-        zed-editor = final.callPackage ./nix/build.nix {
-          craneLib = (crane.mkLib final).overrideToolchain final.rustToolchain;
-          rustPlatform = final.makeRustPlatform {
-            inherit (final.rustToolchain) cargo rustc;
-          };
-        };
-      };
-    };
-
-    mkPkgs = system:
-      import nixpkgs {
-        inherit system;
-        overlays = builtins.attrValues overlays;
-      };
-
-    forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (mkPkgs system));
+    forAllSystems = function:
+      nixpkgs.lib.genAttrs [
+        "x86_64-linux"
+        "aarch64-linux"
+      ] (system:
+        function (import nixpkgs {
+          inherit system;
+          overlays = [fenix.overlays.default];
+        }));
   in {
-    packages = forAllSystems (pkgs: {
-      zed-editor = pkgs.zed-editor;
-      default = pkgs.zed-editor;
+    packages = forAllSystems (pkgs: let
+      craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.fenix.stable.toolchain);
+      rustPlatform = pkgs.makeRustPlatform {
+        inherit (pkgs.fenix.stable.toolchain) cargo rustc;
+      };
+      nightlyBuild = pkgs.callPackage ./nix/build.nix {
+        inherit craneLib rustPlatform;
+      };
+    in {
+      zed-editor = nightlyBuild;
+      default = nightlyBuild;
     });
 
     devShells = forAllSystems (pkgs: {
@@ -53,10 +46,13 @@
 
     formatter = forAllSystems (pkgs: pkgs.alejandra);
 
-    overlays =
-      overlays
-      // {
-        default = nixpkgs.lib.composeManyExtensions (builtins.attrValues overlays);
+    overlays.default = final: prev: {
+      zed-editor = final.callPackage ./nix/build.nix {
+        craneLib = (crane.mkLib final).overrideToolchain (p: p.fenix.stable.toolchain);
+        rustPlatform = final.makeRustPlatform {
+          inherit (final.fenix.stable.toolchain) cargo rustc;
+        };
       };
+    };
   };
 }
