@@ -13,6 +13,7 @@ mod undo_map;
 pub use anchor::*;
 use anyhow::{anyhow, Context as _, Result};
 pub use clock::ReplicaId;
+use clock::LOCAL_BRANCH_REPLICA_ID;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;
@@ -713,6 +714,19 @@ impl Buffer {
 
     pub fn snapshot(&self) -> BufferSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn branch(&self) -> Self {
+        Self {
+            snapshot: self.snapshot.clone(),
+            history: History::new(self.base_text().clone()),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: HashSet::default(),
+            lamport_clock: clock::Lamport::new(LOCAL_BRANCH_REPLICA_ID),
+            subscriptions: Default::default(),
+            edit_id_resolvers: Default::default(),
+            wait_for_version_txs: Default::default(),
+        }
     }
 
     pub fn replica_id(&self) -> ReplicaId {

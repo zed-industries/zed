@@ -9,10 +9,10 @@ use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
 use isahc::config::{Configurable, RedirectPolicy};
-use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
+use language::{LanguageName, LanguageServerName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -412,7 +412,7 @@ impl ExtensionImports for WasmState {
                             .and_then(|key| {
                                 ProjectSettings::get(location, cx)
                                     .lsp
-                                    .get(&Arc::<str>::from(key))
+                                    .get(&LanguageServerName::from_proto(key))
                             })
                             .cloned()
                             .unwrap_or_default();

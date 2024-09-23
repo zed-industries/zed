@@ -103,7 +103,7 @@ pub struct LocalLspStore {
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Model<PrettierStore>,
-    current_lsp_settings: HashMap<Arc<str>, LspSettings>,
+    current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
     _subscription: gpui::Subscription,
 }
 
@@ -139,7 +139,7 @@ impl RemoteLspStore {}
 
 pub struct SshLspStore {
     upstream_client: AnyProtoClient,
-    current_lsp_settings: HashMap<Arc<str>, LspSettings>,
+    current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -318,8 +318,8 @@ impl LspStore {
 
     pub fn swap_current_lsp_settings(
         &mut self,
-        new_settings: HashMap<Arc<str>, LspSettings>,
-    ) -> Option<HashMap<Arc<str>, LspSettings>> {
+        new_settings: HashMap<LanguageServerName, LspSettings>,
+    ) -> Option<HashMap<LanguageServerName, LspSettings>> {
         match &mut self.mode {
             LspStoreMode::Ssh(SshLspStore {
                 current_lsp_settings,
@@ -941,7 +941,7 @@ impl LspStore {
                 if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
                     language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
                 } else if let Some(worktree) = worktree {
-                    let server_name = &adapter.name.0;
+                    let server_name = &adapter.name;
                     match (
                         current_lsp_settings.get(server_name),
                         new_lsp_settings.get(server_name),
@@ -1623,10 +1623,6 @@ impl LspStore {
                     let (server_id, completion) = {
                         let completions_guard = completions.read();
                         let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
                         did_resolve = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
@@ -1651,10 +1647,6 @@ impl LspStore {
                     let (server_id, completion) = {
                         let completions_guard = completions.read();
                         let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
@@ -1751,6 +1743,10 @@ impl LspStore {
                 completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
             }
         }
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.lsp_completion = completion_item;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1779,6 +1775,10 @@ impl LspStore {
         else {
             return;
         };
+        let Some(lsp_completion) = serde_json::from_slice(&response.lsp_completion).log_err()
+        else {
+            return;
+        };
 
         let documentation = if response.documentation.is_empty() {
             Documentation::Undocumented
@@ -1795,6 +1795,7 @@ impl LspStore {
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
+        completion.lsp_completion = lsp_completion;
 
         let old_range = response
             .old_start
@@ -4209,17 +4210,32 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
-            .read_with(&cx, |this, _| {
+            .read_with(&cx, |this, cx| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
                 let Some(server) = this.language_server_for_id(id) else {
                     return Err(anyhow!("No language server {id}"));
                 };
 
-                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+                Ok(cx.background_executor().spawn(async move {
+                    let can_resolve = server
+                        .capabilities()
+                        .completion_provider
+                        .as_ref()
+                        .and_then(|options| options.resolve_provider)
+                        .unwrap_or(false);
+                    if can_resolve {
+                        server
+                            .request::<lsp::request::ResolveCompletionItem>(lsp_completion)
+                            .await
+                    } else {
+                        anyhow::Ok(lsp_completion)
+                    }
+                }))
             })??
             .await?;
 
         let mut documentation_is_markdown = false;
+        let lsp_completion = serde_json::to_string(&completion)?.into_bytes();
         let documentation = match completion.documentation {
             Some(lsp::Documentation::String(text)) => text,
 
@@ -4261,6 +4277,7 @@ impl LspStore {
             old_start,
             old_end,
             new_text,
+            lsp_completion,
         })
     }
 
@@ -4801,7 +4818,7 @@ impl LspStore {
                 }
             };
 
-            let name = adapter.name().to_string();
+            let name = adapter.name();
             let code_action_kinds = adapter
                 .adapter
                 .code_action_kinds()
@@ -4827,7 +4844,7 @@ impl LspStore {
                 .request(proto::CreateLanguageServer {
                     project_id,
                     worktree_id,
-                    name,
+                    name: name.0.to_string(),
                     binary: Some(language_server_command),
                     initialization_options,
                     code_action_kinds,
@@ -4910,7 +4927,7 @@ impl LspStore {
         );
 
         // We need some on the SSH client, and some on SSH host
-        let lsp = project_settings.lsp.get(&adapter.name.0);
+        let lsp = project_settings.lsp.get(&adapter.name);
         let override_options = lsp.and_then(|s| s.initialization_options.clone());
 
         let server_id = pending_server.server_id;
@@ -5096,7 +5113,7 @@ impl LspStore {
 
     async fn shutdown_language_server(
         server_state: Option<LanguageServerState>,
-        name: Arc<str>,
+        name: LanguageServerName,
         cx: AsyncAppContext,
     ) {
         let server = match server_state {
@@ -5141,7 +5158,7 @@ impl LspStore {
         let key = (worktree_id, adapter_name);
         if self.mode.is_local() {
             if let Some(server_id) = self.language_server_ids.remove(&key) {
-                let name = key.1 .0;
+                let name = key.1;
                 log::info!("stopping language server {name}");
 
                 // Remove other entries for this language server as well
@@ -7185,7 +7202,7 @@ impl LspAdapter for SshLspAdapter {
 }
 pub fn language_server_settings<'a, 'b: 'a>(
     delegate: &'a dyn LspAdapterDelegate,
-    language: &str,
+    language: &LanguageServerName,
     cx: &'b AppContext,
 ) -> Option<&'a LspSettings> {
     ProjectSettings::get(

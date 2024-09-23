@@ -146,12 +146,15 @@ impl HeadlessProject {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            BufferEvent::Operation(op) => cx
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx
                 .background_executor()
                 .spawn(self.session.request(proto::UpdateBuffer {
                     project_id: SSH_PROJECT_ID,
                     buffer_id: buffer.read(cx).remote_id().to_proto(),
-                    operations: vec![serialize_operation(op)],
+                    operations: vec![serialize_operation(operation)],
                 }))
                 .detach(),
             _ => {}

@@ -93,6 +93,7 @@
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
 - [R](./languages/r.md)
+- [Rego](./languages/rego.md)
 - [ReStructuredText](./languages/rst.md)
 - [Racket](./languages/racket.md)
 - [Roc](./languages/roc.md)
