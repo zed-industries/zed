@@ -24,6 +24,7 @@ pub enum ComponentStory {
     Disclosure,
     Focus,
     Icon,
+    Icon2,
     IconButton,
     Keybinding,
     Label,
@@ -77,6 +78,7 @@ impl ComponentStory {
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new_view(|_| crate::stories::WithRemSizeStory).into(),
             Self::Vector => cx.new_view(|_| ui::VectorStory).into(),
+            Self::Icon2 => cx.new_view(|_| ui::Icon2Story).into(),
         }
     }
 }
