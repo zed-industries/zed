@@ -474,13 +474,11 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
     .await
     .unwrap();
 
-    dbg!("******* EDITED FILE OUT FROM UNDER YOU!!!!");
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(buffer.read(cx).has_conflict());
     });
 
-    dbg!("******* calling reload");
     project
         .update(cx, |project, cx| {
             project.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
@@ -488,7 +486,6 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         .await
         .unwrap();
     cx.run_until_parked();
-    dbg!("******* done calling reload");
 
     cx.update(|cx| {
         assert!(!buffer.read(cx).has_conflict());
