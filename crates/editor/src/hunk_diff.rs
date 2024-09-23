@@ -118,7 +118,7 @@ impl Editor {
                             }
                         },
                     )
-                    .entry("Revert Hunk", Some(RevertSelectedHunks.boxed_clone()), {
+                    .entry("Discard Hunk", Some(RevertSelectedHunks.boxed_clone()), {
                         let editor = editor_handle.clone();
                         let hunk = hovered_hunk.clone();
                         move |cx| {
@@ -140,7 +140,7 @@ impl Editor {
                             }
                         }
                     })
-                    .action("Revert File", RevertFile.boxed_clone())
+                    .action("Discard File", RevertFile.boxed_clone())
             }),
             cx,
         )
