@@ -12,6 +12,7 @@
 .hljs {
   color: #24292e;
   background: #ffffff;
+  overflow-x: auto;
 }
 
 .hljs-doctag,
