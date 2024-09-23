@@ -357,7 +357,9 @@
       ///
       /// Default: always
       "show": "always"
-    }
+    },
+    /// Whether to highlight errors in the project panel.
+    "show_diagnostic_errors": true
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

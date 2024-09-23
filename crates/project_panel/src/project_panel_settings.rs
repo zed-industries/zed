@@ -22,6 +22,7 @@ pub struct ProjectPanelSettings {
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+    pub show_diagnostic_errors: bool,
 }
 
 /// When to show the scrollbar in the project panel.
@@ -96,6 +97,10 @@ pub struct ProjectPanelSettingsContent {
     pub auto_fold_dirs: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Whether to highlight errors in the project panel.
+    ///
+    /// Default: true
+    pub show_diagnostic_errors: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {

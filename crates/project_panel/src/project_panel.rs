@@ -82,7 +82,7 @@ pub struct ProjectPanel {
     show_scrollbar: bool,
     scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     hide_scrollbar_task: Option<Task<()>>,
-    diagnostic_error_colors: HashMap<PathBuf, Color>,
+    diagnostic_error_paths: HashSet<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +114,7 @@ struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
+    is_diagnostic_error: bool,
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
@@ -319,7 +320,7 @@ impl ProjectPanel {
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 scrollbar_drag_thumb_offset: Default::default(),
-                diagnostic_error_colors: Default::default(),
+                diagnostic_error_paths: Default::default(),
             };
             this.update_visible_entries(None, cx);
 
@@ -442,27 +443,27 @@ impl ProjectPanel {
     }
 
     fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
-        self.diagnostic_error_colors = self
+        self.diagnostic_error_paths = self
             .project
             .read(cx)
             .diagnostic_summaries(false, cx)
             .filter_map(|(path, _, diagnostic_summary)| {
                 if diagnostic_summary.error_count > 0 {
-                    Some((path, Color::Error))
+                    Some(path)
                 } else {
                     None
                 }
             })
-            .flat_map(|(project_path, color)| {
+            .flat_map(|project_path| {
                 let mut path_buf = PathBuf::new();
                 project_path
                     .path
                     .components()
                     .map(|component| {
                         path_buf.push(component);
-                        (path_buf.clone(), color)
+                        path_buf.clone()
                     })
-                    .chain(std::iter::once((PathBuf::from(""), color)))
+                    .chain(std::iter::once(PathBuf::from("")))
                     .collect::<Vec<_>>()
             })
             .collect();
@@ -2059,12 +2060,13 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let (git_status_setting, show_file_icons, show_folder_icons) = {
+            let (git_status_setting, show_file_icons, show_folder_icons, show_diagnostic_errors) = {
                 let settings = ProjectPanelSettings::get_global(cx);
                 (
                     settings.git_status,
                     settings.file_icons,
                     settings.folder_icons,
+                    settings.show_diagnostic_errors,
                 )
             };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
@@ -2141,6 +2143,10 @@ impl ProjectPanel {
                             .clipboard
                             .as_ref()
                             .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
+                        is_diagnostic_error: show_diagnostic_errors
+                            && self
+                                .diagnostic_error_paths
+                                .contains(&entry.path.to_path_buf()),
                         git_status: status,
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
@@ -2230,11 +2236,8 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color = if let Some(color) = self
-            .diagnostic_error_colors
-            .get(&details.path.to_path_buf())
-        {
-            *color
+        let filename_text_color = if details.is_diagnostic_error {
+            Color::Error
         } else {
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked)
         };
