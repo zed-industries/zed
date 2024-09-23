@@ -205,7 +205,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(Some(&"Rust".into()))
                 .language_servers,
-            ["custom-rust-analyzer".into()]
+            ["custom-rust-analyzer".to_string()]
         )
     });
 
@@ -264,7 +264,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             )
             .language(Some(&"Rust".into()))
             .language_servers,
-            ["override-rust-analyzer".into()]
+            ["override-rust-analyzer".to_string()]
         )
     });
 
@@ -274,7 +274,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             all_language_settings(file, cx)
                 .language(Some(&"Rust".into()))
                 .language_servers,
-            ["override-rust-analyzer".into()]
+            ["override-rust-analyzer".to_string()]
         )
     });
 }
@@ -357,7 +357,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             all_language_settings(file, cx)
                 .language(Some(&"Rust".into()))
                 .language_servers,
-            ["rust-analyzer".into()]
+            ["rust-analyzer".to_string()]
         )
     });
 

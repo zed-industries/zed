@@ -1219,6 +1219,7 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    bytes lsp_completion = 6;
 }
 
 message ResolveInlayHint {

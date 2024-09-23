@@ -19,7 +19,10 @@ use workspace::{item::ItemHandle, StatusItemView, Workspace};
 actions!(activity_indicator, [ShowErrorMessage]);
 
 pub enum Event {
-    ShowError { lsp_name: Arc<str>, error: String },
+    ShowError {
+        lsp_name: LanguageServerName,
+        error: String,
+    },
 }
 
 pub struct ActivityIndicator {
@@ -123,7 +126,7 @@ impl ActivityIndicator {
         self.statuses.retain(|status| {
             if let LanguageServerBinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {
-                    lsp_name: status.name.0.clone(),
+                    lsp_name: status.name.clone(),
                     error: error.clone(),
                 });
                 false
