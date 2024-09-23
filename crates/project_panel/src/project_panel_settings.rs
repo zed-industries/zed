@@ -97,7 +97,7 @@ pub struct ProjectPanelSettingsContent {
     pub auto_fold_dirs: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
-    /// Whether to highlight errors in the project panel.
+    /// Whether to show errors in the project panel.
     ///
     /// Default: true
     pub show_diagnostic_errors: Option<bool>,

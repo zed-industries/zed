@@ -358,7 +358,7 @@
       /// Default: always
       "show": "always"
     },
-    /// Whether to highlight errors in the project panel.
+    /// Whether to show errors in the project panel.
     "show_diagnostic_errors": true
   },
   "outline_panel": {
