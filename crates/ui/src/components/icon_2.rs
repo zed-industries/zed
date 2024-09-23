@@ -139,10 +139,12 @@ pub mod story {
     impl Render for Icon2Story {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
             let icons = IconName2::iter().map(|icon| {
-                v_flex()
-                    .gap_0p5()
-                    .text_xs()
-                    .text_color(cx.theme().colors().text_muted)
+                div()
+                    // .bg(cx.theme().colors().surface_background)
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
                     .child(Icon2::new(cx, icon))
                 // .child(icon.to_string())
             });
@@ -155,56 +157,131 @@ pub mod story {
                 // .child(icon.to_string())
             });
 
-            Story::container().child(
-                Story::section()
-                    .max_w(rems(48.))
-                    .gap_3()
-                    .child(
-                        Story::section_title().child("Icons").child(
+            let layout = Story::container()
+                .text_color(cx.theme().colors().text)
+                .h_flex()
+                .child(
+                    // Controls
+                    v_flex()
+                        .w_64()
+                        .h_full()
+                        .bg(cx.theme().colors().surface_background)
+                        .child(
+                            div()
+                                .p_4()
+                                .text_color(cx.theme().colors().text)
+                                .child("Icons"),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .h_full()
+                        .w_px()
+                        .bg(cx.theme().colors().border),
+                )
+                .child(
+                    // Icons
+                    v_flex()
+                        .h_full()
+                        .p_4()
+                        .gap_4()
+                        .flex_grow()
+                        .min_w_56()
+                        .max_w(rems(48.))
+                        .bg(cx.theme().colors().background)
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().colors().text_placeholder)
+                                .child("Future filter input"),
+                        )
+                        .child(
                             h_flex()
                                 .flex_wrap()
-                                .gap_3()
-                                .p_3()
-                                .bg(cx.theme().colors().background)
+                                .gap_4()
+                                .children(icons.clone())
+                                .children(icons.clone())
+                                .children(icons.clone())
+                                .children(icons.clone())
+                                .children(icons.clone())
+                                .children(icons.clone())
+                                .children(icons.clone())
+                                .children(icons.clone())
                                 .children(icons),
                         ),
-                    )
-                    .child(Story::divider())
-                    .child(
-                        Story::section_title().child("Small Icons").child(
-                            h_flex()
-                                .p_3()
-                                .bg(cx.theme().colors().background)
-                                .flex_wrap()
-                                .gap_3()
-                                .children(small_icons),
-                        ),
-                    )
-                    .child(Story::divider())
-                    .child(
-                        Story::section_title().child("Examples").child(
-                            v_flex().gap_2().child(
-                                h_flex()
-                                    .gap_1()
-                                    .px_1p5()
-                                    .py_1()
-                                    .bg(cx.theme().colors().element_background)
-                                    .flex_initial()
-                                    .min_w(px(1.))
-                                    .child(SmallIcon2::new(cx, SmallIconName2::XMark))
-                                    .child(
-                                        h_flex()
-                                            .gap_1p5()
-                                            .text_size(px(15.))
-                                            .text_color(Color::Default.color(cx))
-                                            .font_ui(cx)
-                                            .line_height(px(15.))
-                                            .child("Delete"),
-                                    ),
-                            ),
-                        ),
-                    ),
-            )
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .h_full()
+                        .w_px()
+                        .bg(cx.theme().colors().border),
+                )
+                .child(
+                    // Icon Preview
+                    v_flex()
+                        .bg(cx.theme().colors().elevated_surface_background)
+                        .h_full()
+                        .flex_grow()
+                        .min_w_56()
+                        .p_4()
+                        .gap_4()
+                        .child("Nothing Selected"),
+                );
+
+            // Story::container().child(
+            //     Story::section()
+            //         .max_w(rems(48.))
+            //         .gap_3()
+            //         .child(
+            //             Story::section_title().child("Icons").child(
+            //                 h_flex()
+            //                     .flex_wrap()
+            //                     .gap_3()
+            //                     .p_3()
+            //                     .bg(cx.theme().colors().background)
+            //                     .children(icons),
+            //             ),
+            //         )
+            //         .child(Story::divider())
+            //         .child(
+            //             Story::section_title().child("Small Icons").child(
+            //                 h_flex()
+            //                     .p_3()
+            //                     .bg(cx.theme().colors().background)
+            //                     .flex_wrap()
+            //                     .gap_3()
+            //                     .children(small_icons),
+            //             ),
+            //         )
+            //         .child(Story::divider())
+            //         .child(
+            //             Story::section_title().child("Examples").child(
+            //                 v_flex().gap_2().child(
+            //                     h_flex()
+            //                         .gap_1()
+            //                         .px_1p5()
+            //                         .py_1()
+            //                         .bg(cx.theme().colors().element_background)
+            //                         .flex_initial()
+            //                         .min_w(px(1.))
+            //                         .child(SmallIcon2::new(cx, SmallIconName2::XMark))
+            //                         .child(
+            //                             h_flex()
+            //                                 .gap_1p5()
+            //                                 .text_size(px(15.))
+            //                                 .text_color(Color::Default.color(cx))
+            //                                 .font_ui(cx)
+            //                                 .line_height(px(15.))
+            //                                 .child("Delete"),
+            //                         ),
+            //                 ),
+            //             ),
+            //         ),
+            // )
+
+            layout
         }
     }
 }
