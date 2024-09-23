@@ -24,5 +24,4 @@ jobs:
           operations-per-run: 100
           ascending: true
           enable-statistics: true
-          debug-only: true
           stale-issue-label: "stale"
