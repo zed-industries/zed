@@ -706,7 +706,7 @@ impl MacWindow {
                 }
             }
 
-            if focus {
+            if focus && show {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if show {
                 native_window.orderFront_(nil);
