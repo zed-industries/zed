@@ -1,17 +1,16 @@
-use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
+use super::{MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
 use language::{OffsetUtf16, Point, TextDimension};
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},
 };
 use sum_tree::Bias;
-use text::BufferId;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
-pub struct Anchor {
-    pub buffer_id: Option<BufferId>,
-    pub excerpt_id: ExcerptId,
-    pub text_anchor: text::Anchor,
+pub enum Anchor {
+    Start,
+    End,
+    Text(text::Anchor),
 }
 
 impl Anchor {
@@ -34,18 +33,19 @@ impl Anchor {
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
-        if excerpt_id_cmp.is_eq() {
-            if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
-                Ordering::Equal
-            } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
-            } else {
-                Ordering::Equal
-            }
-        } else {
-            excerpt_id_cmp
-        }
+        todo!()
+        // let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
+        // if excerpt_id_cmp.is_eq() {
+        //     if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
+        //         Ordering::Equal
+        //     } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        //         self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
+        //     } else {
+        //         Ordering::Equal
+        //     }
+        // } else {
+        //     excerpt_id_cmp
+        // }
     }
 
     pub fn bias(&self) -> Bias {
@@ -89,16 +89,17 @@ impl Anchor {
     }
 
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
-        if *self == Anchor::min() || *self == Anchor::max() {
-            true
-        } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-            excerpt.contains(self)
-                && (self.text_anchor == excerpt.range.context.start
-                    || self.text_anchor == excerpt.range.context.end
-                    || self.text_anchor.is_valid(&excerpt.buffer))
-        } else {
-            false
-        }
+        todo!()
+        // if *self == Anchor::min() || *self == Anchor::max() {
+        //     true
+        // } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        //     excerpt.contains(self)
+        //         && (self.text_anchor == excerpt.range.context.start
+        //             || self.text_anchor == excerpt.range.context.end
+        //             || self.text_anchor.is_valid(&excerpt.buffer))
+        // } else {
+        //     false
+        // }
     }
 }
 
