@@ -1,0 +1,50 @@
+[package]
+name = "multi_buffer2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/multi_buffer2.rs"
+doctest = false
+
+[features]
+test-support = [
+    "text/test-support",
+    "language/test-support",
+    "gpui/test-support",
+    "util/test-support",
+]
+
+[dependencies]
+anyhow.workspace = true
+clock.workspace = true
+collections.workspace = true
+ctor.workspace = true
+env_logger.workspace = true
+futures.workspace = true
+gpui.workspace = true
+itertools.workspace = true
+language.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+settings.workspace = true
+serde.workspace = true
+smallvec.workspace = true
+sum_tree.workspace = true
+text.workspace = true
+theme.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+rand.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
