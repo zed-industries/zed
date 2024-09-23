@@ -14,11 +14,9 @@ jobs:
           stale-issue-message: >
             Hi there! 👋
 
-            We're tidying up our issue tracker. Is this still a problem in the latest version?
+            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. Are you able to reproduce this issue in the latest version of Zed? If so, please let us know by commenting on this issue and we will keep it open; otherwise, we'll close it in a week. Feel free to open a new issue if you're seeing this message after the issue has been closed.
 
-            If we don't hear back in a week, we'll close this for housekeeping. No worries though - just respond to keep it open, or feel free to open a new issue later if needed.
-
-            Thanks for your help.
+            Thanks for your help!
           close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
           days-before-stale: 365
           days-before-close: 7
