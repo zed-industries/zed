@@ -14,8 +14,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, rems, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Styled, ViewContext, VisualContext,
+    div, h_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -418,7 +418,7 @@ impl Editor {
                     let Some(gutter_bounds) = editor.read(cx).gutter_bounds() else {
                         return div().into_any_element();
                     };
-                    let (gutter_dimensions, hunk_bounds, close_button) =
+                    let (gutter_dimensions, hunk_bounds) =
                         editor.update(cx.context, |editor, cx| {
                             let editor_snapshot = editor.snapshot(cx);
                             let hunk_display_range = hunk
@@ -439,12 +439,7 @@ impl Editor {
                                 },
                             );
 
-                            let close_button = editor.close_hunk_diff_button(
-                                hunk.clone(),
-                                hunk_display_range.start.row(),
-                                cx,
-                            );
-                            (gutter_dimensions, hunk_bounds, close_button)
+                            (gutter_dimensions, hunk_bounds)
                         });
                     h_flex()
                         .id("gutter with editor")
@@ -477,13 +472,6 @@ impl Editor {
                                                 });
                                             }
                                         }),
-                                )
-                                .child(
-                                    v_flex()
-                                        .size_full()
-                                        .pt(rems(0.25))
-                                        .justify_start()
-                                        .child(close_button),
                                 ),
                         )
                         .child(editor_with_deleted_text.clone())
