@@ -1615,10 +1615,6 @@ impl LspStore {
                     let (server_id, completion) = {
                         let completions_guard = completions.read();
                         let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
                         did_resolve = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
@@ -1643,10 +1639,6 @@ impl LspStore {
                     let (server_id, completion) = {
                         let completions_guard = completions.read();
                         let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
@@ -1743,6 +1735,10 @@ impl LspStore {
                 completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
             }
         }
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.lsp_completion = completion_item;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1771,6 +1767,10 @@ impl LspStore {
         else {
             return;
         };
+        let Some(lsp_completion) = serde_json::from_slice(&response.lsp_completion).log_err()
+        else {
+            return;
+        };
 
         let documentation = if response.documentation.is_empty() {
             Documentation::Undocumented
@@ -1787,6 +1787,7 @@ impl LspStore {
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
+        completion.lsp_completion = lsp_completion;
 
         let old_range = response
             .old_start
@@ -4192,17 +4193,32 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
-            .read_with(&cx, |this, _| {
+            .read_with(&cx, |this, cx| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
                 let Some(server) = this.language_server_for_id(id) else {
                     return Err(anyhow!("No language server {id}"));
                 };
 
-                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+                Ok(cx.background_executor().spawn(async move {
+                    let can_resolve = server
+                        .capabilities()
+                        .completion_provider
+                        .as_ref()
+                        .and_then(|options| options.resolve_provider)
+                        .unwrap_or(false);
+                    if can_resolve {
+                        server
+                            .request::<lsp::request::ResolveCompletionItem>(lsp_completion)
+                            .await
+                    } else {
+                        anyhow::Ok(lsp_completion)
+                    }
+                }))
             })??
             .await?;
 
         let mut documentation_is_markdown = false;
+        let lsp_completion = serde_json::to_string(&completion)?.into_bytes();
         let documentation = match completion.documentation {
             Some(lsp::Documentation::String(text)) => text,
 
@@ -4244,6 +4260,7 @@ impl LspStore {
             old_start,
             old_end,
             new_text,
+            lsp_completion,
         })
     }
 
