@@ -2312,7 +2312,7 @@ impl Project {
         self.lsp_store.read(cx).language_server_statuses()
     }
 
-    pub fn last_formatting_failure<'a, 'b>(&'a self, cx: &'b AppContext) -> Option<&'b str> {
+    pub fn last_formatting_failure<'a>(&self, cx: &'a AppContext) -> Option<&'a str> {
         self.lsp_store.read(cx).last_formatting_failure()
     }
 
