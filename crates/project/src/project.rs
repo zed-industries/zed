@@ -92,8 +92,8 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    DebugAdapterConfig, DebugTaskFile, HideStrategy, RevealStrategy, Shell, TaskContext,
-    TaskTemplate, TaskVariables, VariableName, VsCodeTaskFile,
+    DebugTaskFile, HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables,
+    VariableName, VsCodeTaskFile,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId};
@@ -1193,17 +1193,9 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(adapter_config) = debug_task.debug_adapter_config() {
-            self.start_debug_adapter_client(adapter_config, cx);
+            self.dap_store
+                .update(cx, |store, cx| store.start_client(adapter_config, cx));
         }
-    }
-
-    pub fn start_debug_adapter_client(
-        &mut self,
-        config: DebugAdapterConfig,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.dap_store
-            .update(cx, |store, cx| store.start_client(config, cx));
     }
 
     /// Get all serialized breakpoints that belong to a buffer

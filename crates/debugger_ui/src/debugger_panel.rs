@@ -223,13 +223,9 @@ impl DebugPanel {
         client: Arc<DebugAdapterClient>,
         cx: &mut ViewContext<Self>,
     ) {
-        this.workspace
-            .update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    project.start_debug_adapter_client(client.config(), cx);
-                })
-            })
-            .log_err();
+        this.dap_store.update(cx, |store, cx| {
+            store.start_client(client.config(), cx);
+        });
     }
 
     fn handle_debug_client_events(
