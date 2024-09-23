@@ -2647,6 +2647,7 @@ impl Render for ProjectPanel {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
+        let indent_guides = ProjectPanelSettings::get_global(cx).indent_guides;
 
         if has_worktree {
             let items_count = self
@@ -2746,19 +2747,21 @@ impl Render for ProjectPanel {
                             items
                         }
                     })
-                    .with_indent_guides(
-                        cx.view().clone(),
-                        px(indent_size),
-                        cx.theme().colors().editor_indent_guide,
-                        |this, range, cx| {
-                            let mut items = Vec::with_capacity(range.end - range.start);
-                            this.for_each_visible_entry(range, cx, |_, details, _| {
-                                // TODO: only fetch depth instead of all details
-                                items.push(details.depth);
-                            });
-                            items
-                        },
-                    )
+                    .when(indent_guides, |this| {
+                        this.with_indent_guides(
+                            cx.view().clone(),
+                            px(indent_size),
+                            cx.theme().colors().editor_indent_guide,
+                            |this, range, cx| {
+                                let mut items = Vec::with_capacity(range.end - range.start);
+                                this.for_each_visible_entry(range, cx, |_, details, _| {
+                                    // TODO: only fetch depth instead of all details
+                                    items.push(details.depth);
+                                });
+                                items
+                            },
+                        )
+                    })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
                     .track_scroll(self.scroll_handle.clone()),

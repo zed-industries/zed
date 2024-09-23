@@ -304,8 +304,7 @@ impl Element for UniformList {
                                 let bounds = Bounds::new(
                                     padded_bounds.origin
                                         + point(
-                                            px(guide.offset.x as f32) * settings.indent_size
-                                                + px(3.),
+                                            px(guide.offset.x as f32) * settings.indent_size,
                                             px(guide.offset.y as f32) * item_height,
                                         ),
                                     size(px(1.), px(guide.length as f32) * item_height),
@@ -375,10 +374,11 @@ fn compute_indent_guides(items: &[usize]) -> SmallVec<[IndentGuideLayout; 8]> {
             }
         }
 
-        if stack
-            .last()
-            .map(|&(last_depth, _)| depth > last_depth)
-            .unwrap_or(true)
+        if depth > 0
+            && stack
+                .last()
+                .map(|&(last_depth, _)| depth > last_depth)
+                .unwrap_or(true)
         {
             stack.push((depth, y));
         }
