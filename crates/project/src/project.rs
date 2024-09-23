@@ -1536,7 +1536,7 @@ impl Project {
         });
 
         self.join_project_response_message_id = message_id;
-        self.set_worktrees_from_proto(message.worktrees, cx)?;
+        self.set_worktrees_from_proto(message.id, message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.lsp_store.update(cx, |lsp_store, _| {
             lsp_store.set_language_server_statuses_from_proto(message.language_servers)
@@ -4091,7 +4091,11 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
-                this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
+                this.set_worktrees_from_proto(
+                    envelope.payload.project_id,
+                    envelope.payload.worktrees,
+                    cx,
+                )?;
             }
             Ok(())
         })?
@@ -4639,12 +4643,13 @@ impl Project {
 
     fn set_worktrees_from_proto(
         &mut self,
+        project_id: u64,
         worktrees: Vec<proto::WorktreeMetadata>,
         cx: &mut ModelContext<Project>,
     ) -> Result<()> {
         cx.notify();
         let result = self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
+            worktree_store.set_worktrees_from_proto(project_id, worktrees, self.replica_id(), cx)
         });
         result
     }

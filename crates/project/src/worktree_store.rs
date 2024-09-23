@@ -376,6 +376,7 @@ impl WorktreeStore {
 
     pub fn set_worktrees_from_proto(
         &mut self,
+        project_id: u64,
         worktrees: Vec<proto::WorktreeMetadata>,
         replica_id: ReplicaId,
         cx: &mut ModelContext<Self>,
@@ -408,7 +409,7 @@ impl WorktreeStore {
                 self.worktrees.push(handle);
             } else {
                 self.add(
-                    &Worktree::remote(self.remote_id, replica_id, worktree, client.clone(), cx),
+                    &Worktree::remote(project_id, replica_id, worktree, client.clone(), cx),
                     cx,
                 );
             }
