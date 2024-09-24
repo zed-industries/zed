@@ -25,8 +25,6 @@ struct SeedConfig {
     admins: Vec<String>,
     /// Which channels to create (all admins are invited to all channels).
     channels: Vec<String>,
-    /// Number of random users to create from the Github API.
-    number_of_users: Option<usize>,
 }
 
 pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result<()> {
@@ -119,39 +117,29 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
         }
     }
 
-    if let Some(number_of_users) = seed_config.number_of_users {
-        let user_count = db
-            .get_all_users(0, 200)
+    let github_users_filepath = seed_path.parent().unwrap().join("seed/github_users.json");
+    let github_users: Vec<GithubUser> =
+        serde_json::from_str(&fs::read_to_string(github_users_filepath)?)?;
+
+    for github_user in github_users {
+        log::info!("Seeding {:?} from GitHub", github_user.login);
+
+        let user = db
+            .get_or_create_user_by_github_account(
+                &github_user.login,
+                github_user.id,
+                github_user.email.as_deref(),
+                github_user.created_at,
+                None,
+            )
             .await
-            .expect("failed to load users from db")
-            .len();
-        if user_count < number_of_users {
-            let github_users_filepath = seed_path.parent().unwrap().join("seed/github_users.json");
+            .expect("failed to insert user");
 
-            let github_users: Vec<GithubUser> =
-                serde_json::from_str(&fs::read_to_string(github_users_filepath)?)?;
-
-            for github_user in github_users {
-                log::info!("Seeding {:?} from GitHub", github_user.login);
-
-                let user = db
-                    .get_or_create_user_by_github_account(
-                        &github_user.login,
-                        github_user.id,
-                        github_user.email.as_deref(),
-                        github_user.created_at,
-                        None,
-                    )
-                    .await
-                    .expect("failed to insert user");
-
-                for flag in &flags {
-                    db.add_user_flag(user.id, *flag).await.context(format!(
-                        "Unable to enable flag '{}' for user '{}'",
-                        flag, user.id
-                    ))?;
-                }
-            }
+        for flag in &flags {
+            db.add_user_flag(user.id, *flag).await.context(format!(
+                "Unable to enable flag '{}' for user '{}'",
+                flag, user.id
+            ))?;
         }
     }
 
