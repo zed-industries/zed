@@ -358,7 +358,7 @@
       /// Default: always
       "show": "always"
     },
-    /// Which files to mark containing diagnostic errors/warnings in the project panel.
+    /// Which files containing diagnostic errors/warnings to mark in the project panel.
     ///
     /// Default: "errors"
     "show_diagnostics": "errors"

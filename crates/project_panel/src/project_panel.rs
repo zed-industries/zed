@@ -2281,13 +2281,13 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color = if settings.show_diagnostics != ShowDiagnostics::Off
-            && details.diagnostics_color.is_some()
-        {
-            details.diagnostics_color.unwrap()
-        } else {
-            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked)
-        };
+        let filename_text_color = details
+            .diagnostics_color
+            .unwrap_or(entry_git_aware_label_color(
+                details.git_status,
+                details.is_ignored,
+                is_marked,
+            ));
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {

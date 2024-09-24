@@ -54,7 +54,7 @@ pub struct ScrollbarSettingsContent {
     pub show: Option<ShowScrollbar>,
 }
 
-/// Which files to mark containing diagnostic errors/warnings in the project panel.
+/// Which files containing diagnostic errors/warnings to mark in the project panel.
 ///
 /// Default: errors
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -112,7 +112,7 @@ pub struct ProjectPanelSettingsContent {
     pub auto_fold_dirs: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
-    /// Which files to mark containing diagnostic errors/warnings in the project panel.
+    /// Which files containing diagnostic errors/warnings to mark in the project panel.
     ///
     /// Default: errors
     pub show_diagnostics: Option<ShowDiagnostics>,
