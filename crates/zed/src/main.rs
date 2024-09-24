@@ -443,6 +443,8 @@ fn main() {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
         settings::init(cx);
+        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
         client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -469,9 +471,6 @@ fn main() {
         git_hosting_providers::init(cx);
 
         OpenListener::set_global(cx, open_listener.clone());
-
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
 
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
