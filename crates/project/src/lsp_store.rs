@@ -89,6 +89,8 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 
+type PendingLanguageServerTask = Task<Result<(lsp::LanguageServer, Option<serde_json::Value>)>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatTrigger {
     Save,
@@ -112,13 +114,6 @@ impl FormatTrigger {
             _ => FormatTrigger::Save,
         }
     }
-}
-
-pub struct PendingLanguageServer {
-    pub server_id: LanguageServerId,
-    pub task: Task<Result<(lsp::LanguageServer, Option<serde_json::Value>)>>,
-    pub delegate: Arc<dyn LspAdapterDelegate>,
-    pub adapter: Arc<CachedLspAdapter>,
 }
 
 pub struct LocalLspStore {
@@ -5492,6 +5487,12 @@ impl LspStore {
         language: LanguageName,
         cx: &mut ModelContext<Self>,
     ) {
+        pub struct PendingLanguageServer {
+            pub task: PendingLanguageServerTask,
+            pub delegate: Arc<dyn LspAdapterDelegate>,
+            pub adapter: Arc<CachedLspAdapter>,
+        }
+
         if self.mode.is_remote() {
             return;
         }
@@ -5575,9 +5576,18 @@ impl LspStore {
                         .await?;
 
                     #[cfg(any(test, feature = "test-support"))]
-                    if let Some(server) = _lsp_store.update(&mut cx, |this, cx| {
-                        this.languages.create_fake_language_server(&adapter.name)
-                    }) {
+                    if let Some(server) = _lsp_store
+                        .update(&mut cx, |this, cx| {
+                            this.languages.create_fake_language_server(
+                                server_id,
+                                &adapter.name,
+                                binary.clone(),
+                                cx.to_async(),
+                            )
+                        })
+                        .ok()
+                        .flatten()
+                    {
                         return Ok((server, options));
                     }
 
@@ -5596,7 +5606,6 @@ impl LspStore {
             });
 
             PendingLanguageServer {
-                server_id,
                 task,
                 delegate,
                 adapter: adapter.clone(),
@@ -5613,13 +5622,51 @@ impl LspStore {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        let language_server = Self::setup_pending_language_server(
-                            this.clone(),
-                            override_options,
-                            pending_server,
-                            &mut cx,
-                        )
-                        .await?;
+                        let PendingLanguageServer {
+                            task,
+                            delegate,
+                            adapter,
+                            ..
+                        } = pending_server;
+
+                        let workspace_config = adapter
+                            .adapter
+                            .clone()
+                            .workspace_configuration(&delegate, &mut cx)
+                            .await?;
+
+                        let (language_server, mut initialization_options) = task.await?;
+
+                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
+
+                        match (&mut initialization_options, override_options) {
+                            (Some(initialization_options), Some(override_options)) => {
+                                merge_json_value_into(override_options, initialization_options);
+                            }
+                            (None, override_options) => initialization_options = override_options,
+                            _ => {}
+                        }
+
+                        let language_server = cx
+                            .update(|cx| language_server.initialize(initialization_options, cx))?
+                            .await
+                            .inspect_err(|_| {
+                                if let Some(this) = this.upgrade() {
+                                    this.update(&mut cx, |_, cx| {
+                                        cx.emit(LspStoreEvent::LanguageServerRemoved(server_id))
+                                    })
+                                    .ok();
+                                }
+                            })?;
+
+                        language_server
+                            .notify::<lsp::notification::DidChangeConfiguration>(
+                                lsp::DidChangeConfigurationParams {
+                                    settings: workspace_config,
+                                },
+                            )
+                            .ok();
+
                         anyhow::Ok(language_server)
                     }
                 }
@@ -5947,24 +5994,14 @@ impl LspStore {
         .detach();
     }
 
-    async fn setup_pending_language_server(
+    fn setup_lsp_messages(
         this: WeakModel<Self>,
-        override_options: Option<serde_json::Value>,
-        pending_server: PendingLanguageServer,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Arc<LanguageServer>> {
-        let server_id = pending_server.server_id;
-        let delegate = pending_server.delegate;
-        let adapter = pending_server.adapter;
-        let workspace_config = adapter
-            .adapter
-            .clone()
-            .workspace_configuration(&delegate, cx)
-            .await?;
-        // This has to come from the server
-        let (language_server, mut initialization_options) = pending_server.task.await?;
-
+        language_server: &LanguageServer,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        adapter: Arc<CachedLspAdapter>,
+    ) {
         let name = language_server.name();
+        let server_id = language_server.server_id();
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
@@ -6018,7 +6055,6 @@ impl LspStore {
             })
             .detach();
 
-        let id = language_server.server_id();
         language_server
             .on_request::<lsp::request::WorkspaceFoldersRequest, _, _>({
                 let this = this.clone();
@@ -6026,7 +6062,7 @@ impl LspStore {
                     let this = this.clone();
                     async move {
                         let Some(server) =
-                            this.update(&mut cx, |this, _| this.language_server_for_id(id))?
+                            this.update(&mut cx, |this, _| this.language_server_for_id(server_id))?
                         else {
                             return Ok(None);
                         };
@@ -6302,9 +6338,6 @@ impl LspStore {
             })
             .detach();
 
-        let disk_based_diagnostics_progress_token =
-            adapter.disk_based_diagnostics_progress_token.clone();
-
         language_server
             .on_notification::<ServerStatus, _>({
                 let this = this.clone();
@@ -6375,6 +6408,10 @@ impl LspStore {
                 }
             })
             .detach();
+
+        let disk_based_diagnostics_progress_token =
+            adapter.disk_based_diagnostics_progress_token.clone();
+
         language_server
             .on_notification::<lsp::notification::Progress, _>({
                 let this = this.clone();
@@ -6429,36 +6466,6 @@ impl LspStore {
                 }
             })
             .detach();
-
-        match (&mut initialization_options, override_options) {
-            (Some(initialization_options), Some(override_options)) => {
-                merge_json_value_into(override_options, initialization_options);
-            }
-            (None, override_options) => initialization_options = override_options,
-            _ => {}
-        }
-
-        let language_server = cx
-            .update(|cx| language_server.initialize(initialization_options, cx))?
-            .await
-            .inspect_err(|_| {
-                if let Some(this) = this.upgrade() {
-                    this.update(cx, |_, cx| {
-                        cx.emit(LspStoreEvent::LanguageServerRemoved(server_id))
-                    })
-                    .ok();
-                }
-            })?;
-
-        language_server
-            .notify::<lsp::notification::DidChangeConfiguration>(
-                lsp::DidChangeConfigurationParams {
-                    settings: workspace_config,
-                },
-            )
-            .ok();
-
-        Ok(language_server)
     }
 
     pub fn update_diagnostics(

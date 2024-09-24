@@ -886,8 +886,15 @@ impl LanguageRegistry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn create_fake_langauge_server(&self, name: &LanguageServerName) -> Option<LanguageServer> {
-        let Some(fake_entry) = self.state.write().fake_server_entries.get_mut(&name) else {
+    pub fn create_fake_language_server(
+        &self,
+        server_id: LanguageServerId,
+        name: &LanguageServerName,
+        binary: lsp::LanguageServerBinary,
+        cx: gpui::AsyncAppContext,
+    ) -> Option<lsp::LanguageServer> {
+        let mut state = self.state.write();
+        let Some(fake_entry) = state.fake_server_entries.get_mut(&name) else {
             return None;
         };
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
