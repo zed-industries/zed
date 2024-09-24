@@ -577,8 +577,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         )
     });
 
-    const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
-    let builder_client = IsahcHttpClient::new(None, Some(user_agent), HTTP_TIMEOUT);
+    let builder_client = IsahcHttpClient::new(None, Some(user_agent));
 
     let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(

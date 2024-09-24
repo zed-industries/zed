@@ -9,15 +9,13 @@ pub struct IsahcHttpClient(isahc::HttpClient);
 
 pub use http_client::*;
 
+const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
+
 impl IsahcHttpClient {
-    pub fn new(
-        proxy: Option<Uri>,
-        user_agent: Option<String>,
-        timeout: Duration,
-    ) -> Arc<IsahcHttpClient> {
+    pub fn new(proxy: Option<Uri>, user_agent: Option<String>) -> Arc<IsahcHttpClient> {
         let mut builder = isahc::HttpClient::builder()
             .connect_timeout(Duration::from_secs(5))
-            .timeout(timeout)
+            .timeout(DEFAULT_HTTP_TIMEOUT)
             .low_speed_timeout(100, Duration::from_secs(5))
             .proxy(proxy.clone());
         if let Some(agent) = user_agent {

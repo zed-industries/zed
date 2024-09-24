@@ -495,8 +495,7 @@ pub struct OpenAiEmbedding {
     pub embedding: Vec<f32>,
 }
 
-// We've seen embeddings time out with the default timeout.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub fn embed<'a>(
     client: &dyn HttpClient,

@@ -28,10 +28,8 @@ fn main() {
 
         let clock = Arc::new(FakeSystemClock::default());
 
-        const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
-
         let http = Arc::new(HttpClientWithUrl::new(
-            IsahcHttpClient::new(None, None, HTTP_TIMEOUT),
+            IsahcHttpClient::new(None, None),
             "http://localhost:11434",
             None,
         ));
