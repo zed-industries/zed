@@ -6,12 +6,19 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId,
     ListSizingBehavior, Pixels, Point, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
     ViewContext, WindowContext,
 };
+use collections::HashMap;
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
+use std::{
+    any::{Any, TypeId},
+    cell::RefCell,
+    cmp,
+    ops::Range,
+    rc::Rc,
+};
 use taffy::style::Overflow;
 
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
@@ -46,7 +53,7 @@ where
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
-        indent_guides: None,
+        decorations: SmallVec::new(),
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
@@ -67,23 +74,17 @@ pub struct UniformList {
     item_to_measure_index: usize,
     render_items:
         Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
-    indent_guides: Option<IndentGuides>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
     sizing_behavior: ListSizingBehavior,
-}
-
-struct IndentGuides {
-    line_color: Hsla,
-    indent_size: Pixels,
-    compute_fn: Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[usize; 64]>>,
+    decorations: SmallVec<[AnyUniformListDecoration; 1]>,
 }
 
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     item_size: Size<Pixels>,
     items: SmallVec<[AnyElement; 32]>,
-    indent_guides: SmallVec<[Bounds<Pixels>; 8]>,
+    decorations: HashMap<TypeId, Box<dyn Any>>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -97,6 +98,22 @@ pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
     pub deferred_scroll_to_item: Option<usize>,
     pub last_item_height: Option<Pixels>,
+}
+
+/// A struct representing a decoration for a uniform list.
+pub struct UniformListDecoration<T> {
+    /// A function that prepares the decoration data for painting.
+    pub prepaint_fn: Box<dyn Fn(Range<usize>, Bounds<Pixels>, Pixels, &mut WindowContext) -> T>,
+
+    /// A function that paints the decoration using the prepared data.
+    pub paint_fn: Box<dyn Fn(&T, &mut WindowContext)>,
+}
+
+struct AnyUniformListDecoration {
+    type_id: TypeId,
+    prepaint_fn:
+        Box<dyn Fn(Range<usize>, Bounds<Pixels>, Pixels, &mut WindowContext) -> Box<dyn Any>>,
+    paint_fn: Box<dyn Fn(&Box<dyn Any>, &mut WindowContext)>,
 }
 
 impl UniformListScrollHandle {
@@ -186,7 +203,7 @@ impl Element for UniformList {
             UniformListFrameState {
                 item_size,
                 items: SmallVec::new(),
-                indent_guides: SmallVec::new(),
+                decorations: HashMap::default(),
             },
         )
     }
@@ -275,13 +292,15 @@ impl Element for UniformList {
 
                     let mut items = (self.render_items)(visible_range.clone(), cx);
 
-                    let indent_guides = if let Some(indent_guides) = self.indent_guides.as_ref() {
-                        let visible_entries =
-                            &(indent_guides.compute_fn)(visible_range.clone(), cx);
-                        Some(compute_indent_guides(&visible_entries))
-                    } else {
-                        None
-                    };
+                    for decoration in &self.decorations {
+                        let prepaint_fn = decoration.prepaint_fn.as_ref();
+                        let bounds = Bounds::new(
+                            padded_bounds.origin + point(px(0.), scroll_offset.y + padding.top),
+                            padded_bounds.size,
+                        );
+                        let state = prepaint_fn(visible_range.clone(), bounds, item_height, cx);
+                        frame_state.decorations.insert(decoration.type_id, state);
+                    }
 
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
@@ -295,22 +314,6 @@ impl Element for UniformList {
                             item.layout_as_root(available_space, cx);
                             item.prepaint_at(item_origin, cx);
                             frame_state.items.push(item);
-                        }
-
-                        if let Some((indent_guides, settings)) =
-                            indent_guides.zip(self.indent_guides.as_ref())
-                        {
-                            for guide in indent_guides {
-                                let bounds = Bounds::new(
-                                    padded_bounds.origin
-                                        + point(
-                                            px(guide.offset.x as f32) * settings.indent_size,
-                                            px(guide.offset.y as f32) * item_height,
-                                        ),
-                                    size(px(1.), px(guide.length as f32) * item_height),
-                                );
-                                frame_state.indent_guides.push(bounds);
-                            }
                         }
                     });
                 }
@@ -333,10 +336,11 @@ impl Element for UniformList {
                 for item in &mut request_layout.items {
                     item.paint(cx);
                 }
-                if let Some(indent_guides) = self.indent_guides.as_ref() {
-                    for indent_guide_bounds in &request_layout.indent_guides {
-                        cx.paint_quad(crate::fill(*indent_guide_bounds, indent_guides.line_color));
-                    }
+                for decoration in &self.decorations {
+                    let Some(state) = request_layout.decorations.get(&decoration.type_id) else {
+                        continue;
+                    };
+                    (&decoration.paint_fn)(&state, cx);
                 }
             })
     }
@@ -348,54 +352,6 @@ impl IntoElement for UniformList {
     fn into_element(self) -> Self::Element {
         self
     }
-}
-
-struct IndentGuideLayout {
-    offset: Point<usize>,
-    length: usize,
-}
-
-fn compute_indent_guides(items: &[usize]) -> SmallVec<[IndentGuideLayout; 8]> {
-    let mut guides = SmallVec::new();
-    let mut stack: Vec<(usize, usize)> = Vec::new();
-
-    for (y, &depth) in items.iter().enumerate() {
-        while let Some(&(last_depth, start)) = stack.last() {
-            if depth <= last_depth {
-                if y > start + 1 {
-                    guides.push(IndentGuideLayout {
-                        offset: Point::new(last_depth, start + 1),
-                        length: y - start - 1,
-                    });
-                }
-                stack.pop();
-            } else {
-                break;
-            }
-        }
-
-        if depth > 0
-            && stack
-                .last()
-                .map(|&(last_depth, _)| depth > last_depth)
-                .unwrap_or(true)
-        {
-            stack.push((depth, y));
-        }
-    }
-
-    // Handle any remaining guides
-    let total_lines = items.len();
-    for (depth, start) in stack {
-        if total_lines > start + 1 {
-            guides.push(IndentGuideLayout {
-                offset: Point::new(depth, start + 1),
-                length: total_lines - start - 1,
-            });
-        }
-    }
-
-    guides
 }
 
 impl UniformList {
@@ -411,27 +367,24 @@ impl UniformList {
         self
     }
 
-    /// Sets the function that computes indent guides.
-    pub fn with_indent_guides<V>(
+    /// Adds a decoration to the list.
+    pub fn with_decoration<T: 'static>(
         mut self,
-        view: View<V>,
-        indent_size: Pixels,
-        line_color: Hsla,
-        compute_indent_guides: impl 'static
-            + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<usize>,
-    ) -> Self
-    where
-        V: Render,
-    {
-        let compute_indent_guides = move |range, cx: &mut WindowContext| {
-            view.update(cx, |this, cx| {
-                compute_indent_guides(this, range, cx).into_iter().collect() //TODO use of smallvec does not make sense here, as we allocate anyways
-            })
-        };
-        self.indent_guides = Some(IndentGuides {
-            line_color,
-            indent_size,
-            compute_fn: Box::new(compute_indent_guides),
+        decoration: impl Into<UniformListDecoration<T>>,
+    ) -> Self {
+        let decoration = decoration.into();
+        self.decorations.push(AnyUniformListDecoration {
+            type_id: TypeId::of::<T>(),
+            prepaint_fn: Box::new(move |visible_range, item_height, bounds, cx| {
+                let decoration_fn = &decoration.prepaint_fn;
+                let state = (decoration_fn)(visible_range, item_height, bounds, cx);
+                Box::new(state) as Box<dyn Any>
+            }),
+            paint_fn: Box::new(move |data, cx| {
+                let decoration_fn = &decoration.paint_fn;
+                let state = data.downcast_ref::<T>().expect("Invalid state type");
+                (decoration_fn)(state, cx)
+            }),
         });
         self
     }

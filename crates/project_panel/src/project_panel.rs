@@ -2748,19 +2748,20 @@ impl Render for ProjectPanel {
                         }
                     })
                     .when(indent_guides, |this| {
-                        this.with_indent_guides(
+                        this.with_decoration(ui::indent_guides(
                             cx.view().clone(),
                             px(indent_size),
-                            cx.theme().colors().editor_indent_guide,
                             |this, range, cx| {
-                                let mut items = Vec::with_capacity(range.end - range.start);
+                                use smallvec::SmallVec;
+                                let mut items = SmallVec::with_capacity(range.end - range.start);
                                 this.for_each_visible_entry(range, cx, |_, details, _| {
                                     // TODO: only fetch depth instead of all details
                                     items.push(details.depth);
                                 });
                                 items
                             },
-                        )
+                            cx,
+                        ))
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
