@@ -928,6 +928,32 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
             Ok(buffer)
         })
     }
+
+    fn reload_buffers(
+        &self,
+        buffers: Vec<Model<Buffer>>,
+        push_to_history: bool,
+        cx: &mut ModelContext<BufferStore>,
+    ) -> Task<Result<ProjectTransaction>> {
+        cx.spawn(move |_, mut cx| async move {
+            let mut project_transaction = ProjectTransaction::default();
+            for buffer in buffers {
+                let transaction = buffer
+                    .update(&mut cx, |buffer, cx| buffer.reload(cx))?
+                    .await?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    if let Some(transaction) = transaction {
+                        if !push_to_history {
+                            buffer.forget_transaction(transaction.id);
+                        }
+                        project_transaction.0.insert(cx.handle(), transaction);
+                    }
+                })?;
+            }
+
+            Ok(project_transaction)
+        })
+    }
 }
 
 impl BufferStore {
