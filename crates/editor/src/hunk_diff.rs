@@ -68,84 +68,84 @@ pub(super) struct ExpandedHunk {
 
 impl Editor {
     // TODO: Remove this, as it is no longer referenced.
-    pub(super) fn open_hunk_context_menu(
-        &mut self,
-        hovered_hunk: HoveredHunk,
-        clicked_point: gpui::Point<Pixels>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let focus_handle = self.focus_handle.clone();
-        let expanded = self
-            .expanded_hunks
-            .hunks(false)
-            .any(|expanded_hunk| expanded_hunk.hunk_range == hovered_hunk.multi_buffer_range);
-        let editor_handle = cx.view().clone();
-        let editor_snapshot = self.snapshot(cx);
-        let start_point = self
-            .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
-            .unwrap_or(clicked_point);
-        let end_point = self
-            .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
-            .unwrap_or(clicked_point);
-        let norm =
-            |a: gpui::Point<Pixels>, b: gpui::Point<Pixels>| (a.x - b.x).abs() + (a.y - b.y).abs();
-        let closest_source = if norm(start_point, clicked_point) < norm(end_point, clicked_point) {
-            hovered_hunk.multi_buffer_range.start
-        } else {
-            hovered_hunk.multi_buffer_range.end
-        };
+    // pub(super) fn open_hunk_context_menu(
+    //     &mut self,
+    //     hovered_hunk: HoveredHunk,
+    //     clicked_point: gpui::Point<Pixels>,
+    //     cx: &mut ViewContext<Editor>,
+    // ) {
+    //     let focus_handle = self.focus_handle.clone();
+    //     let expanded = self
+    //         .expanded_hunks
+    //         .hunks(false)
+    //         .any(|expanded_hunk| expanded_hunk.hunk_range == hovered_hunk.multi_buffer_range);
+    //     let editor_handle = cx.view().clone();
+    //     let editor_snapshot = self.snapshot(cx);
+    //     let start_point = self
+    //         .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
+    //         .unwrap_or(clicked_point);
+    //     let end_point = self
+    //         .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
+    //         .unwrap_or(clicked_point);
+    //     let norm =
+    //         |a: gpui::Point<Pixels>, b: gpui::Point<Pixels>| (a.x - b.x).abs() + (a.y - b.y).abs();
+    //     let closest_source = if norm(start_point, clicked_point) < norm(end_point, clicked_point) {
+    //         hovered_hunk.multi_buffer_range.start
+    //     } else {
+    //         hovered_hunk.multi_buffer_range.end
+    //     };
 
-        self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
-            self,
-            closest_source,
-            clicked_point,
-            ContextMenu::build(cx, move |menu, _| {
-                menu.on_blur_subscription(Subscription::new(|| {}))
-                    .context(focus_handle)
-                    .entry(
-                        if expanded {
-                            "Collapse Hunk"
-                        } else {
-                            "Expand Hunk"
-                        },
-                        Some(ToggleHunkDiff.boxed_clone()),
-                        {
-                            let editor = editor_handle.clone();
-                            let hunk = hovered_hunk.clone();
-                            move |cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.toggle_hovered_hunk(&hunk, cx);
-                                });
-                            }
-                        },
-                    )
-                    .entry("Discard Hunk", Some(RevertSelectedHunks.boxed_clone()), {
-                        let editor = editor_handle.clone();
-                        let hunk = hovered_hunk.clone();
-                        move |cx| {
-                            let multi_buffer = editor.read(cx).buffer().clone();
-                            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                            let mut revert_changes = HashMap::default();
-                            if let Some(hunk) =
-                                crate::hunk_diff::to_diff_hunk(&hunk, &multi_buffer_snapshot)
-                            {
-                                Editor::prepare_revert_change(
-                                    &mut revert_changes,
-                                    &multi_buffer,
-                                    &hunk,
-                                    cx,
-                                );
-                            }
-                            if !revert_changes.is_empty() {
-                                editor.update(cx, |editor, cx| editor.revert(revert_changes, cx));
-                            }
-                        }
-                    })
-                    .action("Discard File", RevertFile.boxed_clone())
-            }),
-            cx,
-        )
-    }
+    //     self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+    //         self,
+    //         closest_source,
+    //         clicked_point,
+    //         ContextMenu::build(cx, move |menu, _| {
+    //             menu.on_blur_subscription(Subscription::new(|| {}))
+    //                 .context(focus_handle)
+    //                 .entry(
+    //                     if expanded {
+    //                         "Collapse Hunk"
+    //                     } else {
+    //                         "Expand Hunk"
+    //                     },
+    //                     Some(ToggleHunkDiff.boxed_clone()),
+    //                     {
+    //                         let editor = editor_handle.clone();
+    //                         let hunk = hovered_hunk.clone();
+    //                         move |cx| {
+    //                             editor.update(cx, |editor, cx| {
+    //                                 editor.toggle_hovered_hunk(&hunk, cx);
+    //                             });
+    //                         }
+    //                     },
+    //                 )
+    //                 .entry("Discard Hunk", Some(RevertSelectedHunks.boxed_clone()), {
+    //                     let editor = editor_handle.clone();
+    //                     let hunk = hovered_hunk.clone();
+    //                     move |cx| {
+    //                         let multi_buffer = editor.read(cx).buffer().clone();
+    //                         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+    //                         let mut revert_changes = HashMap::default();
+    //                         if let Some(hunk) =
+    //                             crate::hunk_diff::to_diff_hunk(&hunk, &multi_buffer_snapshot)
+    //                         {
+    //                             Editor::prepare_revert_change(
+    //                                 &mut revert_changes,
+    //                                 &multi_buffer,
+    //                                 &hunk,
+    //                                 cx,
+    //                             );
+    //                         }
+    //                         if !revert_changes.is_empty() {
+    //                             editor.update(cx, |editor, cx| editor.revert(revert_changes, cx));
+    //                         }
+    //                     }
+    //                 })
+    //                 .action("Discard File", RevertFile.boxed_clone())
+    //         }),
+    //         cx,
+    //     )
+    // }
 
     pub(super) fn toggle_hovered_hunk(
         &mut self,
