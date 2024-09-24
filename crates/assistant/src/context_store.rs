@@ -357,9 +357,6 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local_or_ssh() {
-            return Task::ready(Err(anyhow!("cannot create remote contexts as the host")));
-        }
 
         let replica_id = project.replica_id();
         let capability = project.capability();
@@ -488,9 +485,6 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local_or_ssh() {
-            return Task::ready(Err(anyhow!("cannot open remote contexts as the host")));
-        }
 
         if let Some(context) = self.loaded_context_for_id(&context_id, cx) {
             return Task::ready(Ok(context));

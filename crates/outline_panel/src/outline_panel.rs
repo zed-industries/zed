@@ -3909,7 +3909,7 @@ impl Render for OutlinePanel {
             .when(project.is_local(), |el| {
                 el.on_action(cx.listener(Self::reveal_in_finder))
             })
-            .when(project.is_local_or_ssh(), |el| {
+            .when(project.is_local() || project.is_via_ssh(), |el| {
                 el.on_action(cx.listener(Self::open_in_terminal))
             })
             .on_mouse_down(

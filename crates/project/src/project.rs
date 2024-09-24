@@ -1199,7 +1199,13 @@ impl Project {
         self.dev_server_project_id
     }
 
-    pub fn supports_remote_terminal(&self, cx: &AppContext) -> bool {
+    pub fn supports_terminal(&self, cx: &AppContext) -> bool {
+        if self.is_local() {
+            return true;
+        }
+        if self.is_via_ssh() {
+            return true;
+        }
         let Some(id) = self.dev_server_project_id else {
             return false;
         };
@@ -1639,13 +1645,6 @@ impl Project {
         }
     }
 
-    pub fn is_local_or_ssh(&self) -> bool {
-        match &self.client_state {
-            ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
-            ProjectClientState::Remote { .. } => false,
-        }
-    }
-
     pub fn is_via_ssh(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
@@ -1731,7 +1730,7 @@ impl Project {
     ) -> Task<Result<Model<Buffer>>> {
         if let Some(buffer) = self.buffer_for_id(id, cx) {
             Task::ready(Ok(buffer))
-        } else if self.is_local_or_ssh() {
+        } else if self.is_local() || self.is_via_ssh() {
             Task::ready(Err(anyhow!("buffer {} does not exist", id)))
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferById {
@@ -3324,7 +3323,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            if this.is_local_or_ssh() {
+            if this.is_local() || this.is_via_ssh() {
                 this.unshare(cx)?;
             } else {
                 this.disconnected_from_host(cx);
@@ -4002,7 +4001,7 @@ impl Project {
         location: Location,
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
-        if self.is_local_or_ssh() {
+        if self.is_local() {
             let (worktree_id, worktree_abs_path) = if let Some(worktree) = self.task_worktree(cx) {
                 (
                     Some(worktree.read(cx).id()),
@@ -4088,7 +4087,7 @@ impl Project {
         location: Option<Location>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
-        if self.is_local_or_ssh() {
+        if self.is_local() {
             let (file, language) = location
                 .map(|location| {
                     let buffer = location.buffer.read(cx);
