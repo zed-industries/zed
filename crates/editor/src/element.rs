@@ -11,7 +11,7 @@ use crate::{
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
-    hunk_diff::{diff_hunk_to_display, DisplayDiffHunk, ExpandedHunk},
+    hunk_diff::{diff_hunk_to_display, DisplayDiffHunk},
     hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
@@ -20,8 +20,8 @@ use crate::{
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, RangeToAnchorExt, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -489,28 +489,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            if modifiers.control || modifiers.platform {
-                editor.toggle_hovered_hunk(&hovered_hunk, cx);
-            } else {
-                let display_range = hovered_hunk
-                    .multi_buffer_range
-                    .clone()
-                    .to_display_points(&position_map.snapshot);
-                let hunk_bounds = Self::diff_hunk_bounds(
-                    &position_map.snapshot,
-                    position_map.line_height,
-                    gutter_hitbox.bounds,
-                    &DisplayDiffHunk::Unfolded {
-                        diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
-                        display_row_range: display_range.start.row()..display_range.end.row(),
-                        multi_buffer_range: hovered_hunk.multi_buffer_range.clone(),
-                        status: hovered_hunk.status,
-                    },
-                );
-                if hunk_bounds.contains(&event.position) {
-                    editor.open_hunk_context_menu(hovered_hunk, event.position, cx);
-                }
-            }
+            editor.toggle_hovered_hunk(&hovered_hunk, cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
@@ -3371,9 +3350,6 @@ impl EditorElement {
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(cx);
             }
-            for close_indicator in layout.close_indicators.iter_mut() {
-                close_indicator.paint(cx);
-            }
 
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
                 indicator.paint(cx);
@@ -4158,46 +4134,6 @@ impl EditorElement {
             .floor() as usize
             + 1;
         self.column_pixels(digit_count, cx)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn layout_hunk_diff_close_indicators(
-        &self,
-        line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
-        expanded_hunks_by_rows: HashMap<DisplayRow, ExpandedHunk>,
-        cx: &mut WindowContext,
-    ) -> Vec<AnyElement> {
-        self.editor.update(cx, |editor, cx| {
-            expanded_hunks_by_rows
-                .into_iter()
-                .map(|(display_row, hunk)| {
-                    let button = editor.close_hunk_diff_button(
-                        HoveredHunk {
-                            multi_buffer_range: hunk.hunk_range,
-                            status: hunk.status,
-                            diff_base_byte_range: hunk.diff_base_byte_range,
-                        },
-                        display_row,
-                        cx,
-                    );
-
-                    prepaint_gutter_button(
-                        button,
-                        display_row,
-                        line_height,
-                        gutter_dimensions,
-                        scroll_pixel_position,
-                        gutter_hitbox,
-                        rows_with_hunk_bounds,
-                        cx,
-                    )
-                })
-                .collect()
-        })
     }
 }
 
@@ -5549,15 +5485,6 @@ impl Element for EditorElement {
                     } else {
                         Vec::new()
                     };
-                    let close_indicators = self.layout_hunk_diff_close_indicators(
-                        line_height,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &rows_with_hunk_bounds,
-                        expanded_add_hunks_by_rows,
-                        cx,
-                    );
 
                     self.layout_signature_help(
                         &hitbox,
@@ -5670,7 +5597,6 @@ impl Element for EditorElement {
                         selections,
                         mouse_context_menu,
                         test_indicators,
-                        close_indicators,
                         code_actions_indicator,
                         gutter_fold_toggles,
                         crease_trailers,
@@ -5812,7 +5738,6 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
-    close_indicators: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,
