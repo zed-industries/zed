@@ -268,7 +268,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .as_ref()
                                 .map(|port| port.to_string())
                                 .unwrap_or_default(),
-                            ssh_project.path,
+                            ssh_project.paths.join(","),
                             ssh_project
                                 .user
                                 .as_ref()
@@ -403,7 +403,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 password: None,
                             };
 
-                            let paths = vec![PathBuf::from(ssh_project.path.clone())];
+                            let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
                             cx.spawn(|_, mut cx| async move {
                                 open_ssh_project(connection_options, paths, app_state, open_options, &mut cx).await
@@ -460,9 +460,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .filter_map(|i| paths.paths().get(*i).cloned())
                     .collect(),
             ),
-            SerializedWorkspaceLocation::Ssh(ssh_project) => {
-                Arc::new(vec![PathBuf::from(ssh_project.ssh_url())])
-            }
+            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
