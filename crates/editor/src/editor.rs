@@ -992,9 +992,7 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| {
-                StringMatchCandidate::new(id, completion.label.text.clone().into())
-            })
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.text.clone()))
             .collect();
 
         Self {
@@ -4587,8 +4585,7 @@ impl Editor {
                 for tabstop in snippet
                     .tabstops
                     .iter_mut()
-                    .map(|tabstop| tabstop.ranges.iter_mut())
-                    .flatten()
+                    .flat_map(|tabstop| tabstop.ranges.iter_mut())
                 {
                     tabstop.start -= common_prefix_len as isize;
                     tabstop.end -= common_prefix_len as isize;

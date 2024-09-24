@@ -160,7 +160,7 @@ fn parse_choices<'a>(
 
                 if let Some(c) = source.chars().next() {
                     if !found_default_choice {
-                        current_choice.push(c.clone());
+                        current_choice.push(c);
                         text.push(c);
                     }
                     source = &source[c.len_utf8()..];
