@@ -149,12 +149,13 @@ impl MultiBuffer {
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
         let mut renames = Vec::new();
-        // let mut edits = Vec::new();
+        let mut edits = Vec::new();
 
         for (buffer_id, old_snapshot) in self.snapshot.buffer_snapshots.clone().iter() {
             let new_snapshot = self.buffers[buffer_id].read(cx).snapshot();
 
-            let mut changed = false;
+            let mut changed = new_snapshot.non_text_state_update_count()
+                != old_snapshot.non_text_state_update_count();
 
             let old_path = old_snapshot
                 .file()
@@ -163,15 +164,14 @@ impl MultiBuffer {
                 .file()
                 .map(|file| Arc::from(file.full_path(cx)));
             if new_path != old_path {
-                renames.push((*buffer_id, old_path, new_path));
+                renames.push((*buffer_id, old_path, new_path.clone()));
                 changed = true;
             }
 
             for edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
                 changed = true;
-                // edits.push((new_path.clone(), new_snapshot.clone(), edit));
+                edits.push((*buffer_id, new_path.clone(), edit));
             }
-            // todo!(process edits)
 
             if changed {
                 self.snapshot
@@ -181,43 +181,62 @@ impl MultiBuffer {
         }
 
         self.apply_renames(renames);
-        // self.apply_edits(edits);
+        self.apply_edits(edits);
         self.check_invariants();
     }
 
     fn apply_renames(&mut self, renames: Vec<(BufferId, Option<Arc<Path>>, Option<Arc<Path>>)>) {
-        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-        let mut new_tree = SumTree::default();
+        // Remove all the excerpts that have been renamed.
         let mut renamed_excerpts = Vec::new();
-        for (buffer_id, old_path, new_path) in renames {
-            let buffer_start = ExcerptOffset {
-                path: old_path.clone(),
-                buffer_id,
-                offset: 0,
-            };
-            new_tree.append(cursor.slice(&buffer_start, Bias::Right, &()), &());
-            while let Some(excerpt) = cursor.item() {
-                if excerpt.key.buffer_id == buffer_id {
-                    renamed_excerpts.push(Excerpt {
-                        key: ExcerptKey {
-                            path: new_path.clone(),
-                            buffer_id,
-                            range: excerpt.key.range.clone(),
-                        },
-                        text_summary: excerpt.text_summary.clone(),
-                    });
-                    cursor.next(&());
-                } else {
-                    break;
+        {
+            let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+            let mut new_tree = SumTree::default();
+            for (buffer_id, old_path, new_path) in renames {
+                let buffer_start = ExcerptOffset {
+                    path: old_path.clone(),
+                    buffer_id,
+                    offset: 0,
+                };
+                new_tree.append(cursor.slice(&buffer_start, Bias::Left, &()), &());
+                while let Some(excerpt) = cursor.item() {
+                    if excerpt.key.buffer_id == buffer_id {
+                        renamed_excerpts.push(Excerpt {
+                            key: ExcerptKey {
+                                path: new_path.clone(),
+                                buffer_id,
+                                range: excerpt.key.range.clone(),
+                            },
+                            text_summary: excerpt.text_summary.clone(),
+                        });
+                        cursor.next(&());
+                    } else {
+                        break;
+                    }
                 }
             }
+            new_tree.append(cursor.suffix(&()), &());
+            drop(cursor);
+            self.snapshot.excerpts = new_tree;
+        }
+
+        // Re-insert excerpts for the renamed buffer at the right location.
+        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+        let mut new_tree = SumTree::default();
+        for excerpt in renamed_excerpts {
+            let buffer_start = ExcerptOffset {
+                path: excerpt.key.path.clone(),
+                buffer_id: excerpt.key.buffer_id,
+                offset: excerpt.key.range.start,
+            };
+            new_tree.append(cursor.slice(&buffer_start, Bias::Right, &()), &());
+            new_tree.push(excerpt, &());
         }
         new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.snapshot.excerpts = new_tree;
     }
 
-    // fn apply_edits(&mut self, edits: Vec<(Option<Arc<Path>>, BufferId, language::Edit<usize>)>) {}
+    fn apply_edits(&mut self, _edits: Vec<(BufferId, Option<Arc<Path>>, language::Edit<usize>)>) {}
 
     pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
         self.sync(cx);
@@ -431,6 +450,8 @@ impl ToOffset for usize {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use gpui::{AppContext, Context};
     use language::Buffer;
@@ -530,6 +551,109 @@ mod tests {
 
             multibuffer
         });
+    }
+
+    #[gpui::test]
+    fn test_rename_buffers(cx: &mut AppContext) {
+        let buffer1 = cx.new_model(|cx| {
+            let mut buffer = Buffer::local("The quick brown fox", cx);
+            buffer.file_updated(
+                Arc::new(TestFile {
+                    path: Path::new("a.txt").into(),
+                }),
+                cx,
+            );
+            buffer
+        });
+        let buffer2 = cx.new_model(|cx| {
+            let mut buffer = Buffer::local("jumps over the lazy dog", cx);
+            buffer.file_updated(
+                Arc::new(TestFile {
+                    path: Path::new("b.txt").into(),
+                }),
+                cx,
+            );
+            buffer
+        });
+
+        cx.new_model(|cx| {
+            let mut multibuffer = MultiBuffer::new();
+            multibuffer.insert_excerpts(
+                vec![
+                    (buffer1.clone(), 0..9),
+                    (buffer2.clone(), 0..5),
+                    (buffer1.clone(), 10..19),
+                    (buffer2.clone(), 6..23),
+                ],
+                cx,
+            );
+            assert_eq!(
+                multibuffer.snapshot(cx).text(),
+                "\nThe quick\nbrown fox\njumps\nover the lazy dog"
+            );
+
+            // Rename /b.txt to /0.txt
+            buffer2.update(cx, |buffer, cx| {
+                buffer.file_updated(
+                    Arc::new(TestFile {
+                        path: Path::new("/0.txt").into(),
+                    }),
+                    cx,
+                );
+            });
+            assert_eq!(
+                multibuffer.snapshot(cx).text(),
+                "\njumps\nover the lazy dog\nThe quick\nbrown fox"
+            );
+
+            multibuffer
+        });
+    }
+
+    struct TestFile {
+        path: Arc<Path>,
+    }
+
+    impl language::File for TestFile {
+        fn as_local(&self) -> Option<&dyn language::LocalFile> {
+            None
+        }
+
+        fn mtime(&self) -> Option<std::time::SystemTime> {
+            None
+        }
+
+        fn path(&self) -> &Arc<Path> {
+            &self.path
+        }
+
+        fn full_path(&self, _: &AppContext) -> PathBuf {
+            Path::new("root").join(&self.path)
+        }
+
+        fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
+            unimplemented!()
+        }
+
+        fn is_deleted(&self) -> bool {
+            false
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            unimplemented!()
+        }
+
+        fn to_proto(&self, _: &AppContext) -> rpc::proto::File {
+            unimplemented!()
+        }
+
+        fn worktree_id(&self, _: &AppContext) -> settings::WorktreeId {
+            settings::WorktreeId::from_usize(0)
+        }
+
+        fn is_private(&self) -> bool {
+            false
+        }
     }
 
     const WORDS: &[&str] = &[

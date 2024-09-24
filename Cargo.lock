@@ -7087,6 +7087,7 @@ dependencies = [
  "log",
  "parking_lot",
  "rand 0.8.5",
+ "rpc",
  "serde",
  "settings",
  "smallvec",
