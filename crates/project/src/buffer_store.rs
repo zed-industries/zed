@@ -450,7 +450,6 @@ impl LocalBufferStore {
             let mtime = new_file.mtime;
             this.update(&mut cx, |this, cx| {
                 if let Some((downstream_client, project_id)) = this.downstream_client(cx) {
-                    let project_id = project_id;
                     if has_changed_file {
                         downstream_client
                             .send(proto::UpdateBufferFile {
