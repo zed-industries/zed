@@ -3311,7 +3311,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+        assert_item_labels(&pane, ["A", "B", "C*", "D"], cx);
 
         pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
@@ -3322,7 +3322,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update(cx, |pane, cx| {
             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
@@ -3330,7 +3330,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A", "C*"], cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
 
         pane.update(cx, |pane, cx| {
             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
