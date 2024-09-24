@@ -67,9 +67,8 @@ use std::{
     iter, mem,
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
-    process::Stdio,
     str,
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use text::{Anchor, BufferId, LineEnding};
@@ -87,8 +86,6 @@ pub use worktree::{
     FS_WATCH_LATENCY,
 };
 
-const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
-const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 
@@ -5512,10 +5509,6 @@ impl LspStore {
             return;
         }
 
-        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
-            return;
-        }
-
         let local = self.as_local().unwrap();
 
         let project_settings = ProjectSettings::get(
@@ -5617,9 +5610,7 @@ impl LspStore {
 
             cx.spawn(move |this, mut cx| async move {
                 let result = {
-                    let language = language.clone();
                     let this = this.clone();
-                    let adapter = adapter.clone();
                     let mut cx = cx.clone();
                     async move {
                         let language_server = Self::setup_pending_language_server(
@@ -5629,66 +5620,31 @@ impl LspStore {
                             &mut cx,
                         )
                         .await?;
-
-                        this.update(&mut cx, |this, mut cx| {
-                            this.insert_newly_running_language_server(
-                                language,
-                                adapter,
-                                language_server.clone(),
-                                server_id,
-                                key,
-                                &mut cx,
-                            )
-                        })??;
-
-                        anyhow::Ok(Some(language_server))
+                        anyhow::Ok(language_server)
                     }
                 }
                 .await;
 
                 match result {
                     Ok(server) => {
+                        this.update(&mut cx, |this, mut cx| {
+                            this.insert_newly_running_language_server(
+                                language,
+                                adapter,
+                                server.clone(),
+                                server_id,
+                                key,
+                                &mut cx,
+                            );
+                        })
+                        .ok();
                         stderr_capture.lock().take();
-                        server
+                        Some(server)
                     }
 
                     Err(err) => {
                         log::error!("failed to start language server {server_name:?}: {err}");
                         log::error!("server stderr: {:?}", stderr_capture.lock().take());
-
-                        let this = this.upgrade()?;
-                        let container_dir = container_dir?;
-
-                        let attempt_count = adapter.reinstall_attempt_count.fetch_add(1, SeqCst);
-                        if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
-                            let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
-                            log::error!("Hit {max} reinstallation attempts for {server_name:?}");
-                            return None;
-                        }
-
-                        log::info!(
-                            "retrying installation of language server {server_name:?} in {}s",
-                            SERVER_REINSTALL_DEBOUNCE_TIMEOUT.as_secs()
-                        );
-                        cx.background_executor()
-                            .timer(SERVER_REINSTALL_DEBOUNCE_TIMEOUT)
-                            .await;
-
-                        let installation_test_binary = adapter
-                            .installation_test_binary(container_dir.to_path_buf())
-                            .await;
-
-                        this.update(&mut cx, |_, cx| {
-                            Self::check_errored_server(
-                                language,
-                                adapter,
-                                server_id,
-                                installation_test_binary,
-                                cx,
-                            )
-                        })
-                        .ok();
-
                         None
                     }
                 }
@@ -5987,75 +5943,6 @@ impl LspStore {
                 }
             })
             .ok();
-        })
-        .detach();
-    }
-
-    fn check_errored_server(
-        language: LanguageName,
-        adapter: Arc<CachedLspAdapter>,
-        server_id: LanguageServerId,
-        installation_test_binary: Option<LanguageServerBinary>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if !adapter.can_be_reinstalled() {
-            log::info!(
-                "Validation check requested for {:?} but it cannot be reinstalled",
-                adapter.name.0
-            );
-            return;
-        }
-
-        cx.spawn(move |this, mut cx| async move {
-            log::info!("About to spawn test binary");
-
-            // A lack of test binary counts as a failure
-            let process = installation_test_binary.and_then(|binary| {
-                smol::process::Command::new(&binary.path)
-                    .current_dir(&binary.path)
-                    .args(binary.arguments)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .ok()
-            });
-
-            const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
-            let mut timeout = cx.background_executor().timer(PROCESS_TIMEOUT).fuse();
-
-            let mut errored = false;
-            if let Some(mut process) = process {
-                futures::select! {
-                    status = process.status().fuse() => match status {
-                        Ok(status) => errored = !status.success(),
-                        Err(_) => errored = true,
-                    },
-
-                    _ = timeout => {
-                        log::info!("test binary time-ed out, this counts as a success");
-                        _ = process.kill();
-                    }
-                }
-            } else {
-                log::warn!("test binary failed to launch");
-                errored = true;
-            }
-
-            if errored {
-                log::warn!("test binary check failed");
-                let task = this
-                    .update(&mut cx, move |this, cx| {
-                        this.reinstall_language_server(language, adapter, server_id, cx)
-                    })
-                    .ok()
-                    .flatten();
-
-                if let Some(task) = task {
-                    task.await;
-                }
-            }
         })
         .detach();
     }
@@ -6704,7 +6591,7 @@ impl LspStore {
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) {
         // If the language server for this key doesn't match the server id, don't store the
         // server. Which will cause it to be dropped, killing the process
         if self
@@ -6713,7 +6600,7 @@ impl LspStore {
             .map(|id| id != &server_id)
             .unwrap_or(false)
         {
-            return Ok(());
+            return;
         }
 
         // Update language_servers collection with Running variant of LanguageServerState
@@ -6743,13 +6630,15 @@ impl LspStore {
         cx.emit(LspStoreEvent::LanguageServerAdded(server_id));
 
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
-            downstream_client.send(proto::StartLanguageServer {
-                project_id: *project_id,
-                server: Some(proto::LanguageServer {
-                    id: server_id.0 as u64,
-                    name: language_server.name().to_string(),
-                }),
-            })?;
+            downstream_client
+                .send(proto::StartLanguageServer {
+                    project_id: *project_id,
+                    server: Some(proto::LanguageServer {
+                        id: server_id.0 as u64,
+                        name: language_server.name().to_string(),
+                    }),
+                })
+                .log_err();
         }
 
         // Tell the language server about every open buffer in the worktree that matches the language.
@@ -6796,16 +6685,18 @@ impl LspStore {
                 let version = snapshot.version;
                 let initial_snapshot = &snapshot.snapshot;
                 let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                language_server.notify::<lsp::notification::DidOpenTextDocument>(
-                    lsp::DidOpenTextDocumentParams {
-                        text_document: lsp::TextDocumentItem::new(
-                            uri,
-                            adapter.language_id(&language.name()),
-                            version,
-                            initial_snapshot.text(),
-                        ),
-                    },
-                )?;
+                language_server
+                    .notify::<lsp::notification::DidOpenTextDocument>(
+                        lsp::DidOpenTextDocumentParams {
+                            text_document: lsp::TextDocumentItem::new(
+                                uri,
+                                adapter.language_id(&language.name()),
+                                version,
+                                initial_snapshot.text(),
+                            ),
+                        },
+                    )
+                    .log_err();
 
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
@@ -6819,11 +6710,9 @@ impl LspStore {
                     )
                 });
             }
-            anyhow::Ok(())
-        })?;
+        });
 
         cx.notify();
-        Ok(())
     }
 
     fn buffer_snapshot_for_lsp_version(
