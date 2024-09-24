@@ -497,9 +497,9 @@ impl ProjectPanel {
     ) {
         self.diagnostics
             .entry((project_path.worktree_id, path_buffer.clone()))
-            .and_modify(|max_diagnostic_severity| {
-                *max_diagnostic_severity =
-                    std::cmp::min(*max_diagnostic_severity, diagnostic_severity);
+            .and_modify(|strongest_diagnostic_severity| {
+                *strongest_diagnostic_severity =
+                    std::cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
             })
             .or_insert(diagnostic_severity);
     }
