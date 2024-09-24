@@ -2073,13 +2073,11 @@ impl Interactivity {
 
                     if overflow.x == Overflow::Scroll {
                         let mut delta_x = Pixels::ZERO;
-                        dbg!(("!!!!!", delta));
                         if !delta.x.is_zero() {
                             delta_x = delta.x;
                         } else if overflow.y != Overflow::Scroll {
                             delta_x = delta.y;
                         }
-                        dbg!(("!!!!!", delta_x));
 
                         scroll_offset.x += delta_x;
                     }

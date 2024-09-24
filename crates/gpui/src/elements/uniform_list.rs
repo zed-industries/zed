@@ -238,24 +238,10 @@ impl Element for UniformList {
                     }
 
                     let content_width = measurement.width + padding.left + padding.right;
-                    let min_horizontal_scroll_offset = padded_bounds.size.width - content_width;
                     let is_scrolled_horizontally = !scroll_offset.x.is_zero();
-                    if is_scrolled_horizontally {
-                        dbg!((
-                            "@@@",
-                            bounds,
-                            padded_bounds,
-                            content_size,
-                            measurement,
-                            padding,
-                            &border
-                        ));
-                    }
-                    if is_scrolled_horizontally && scroll_offset.x < min_horizontal_scroll_offset {
-                        dbg!(("!!!!!", scroll_offset.x));
-                        shared_scroll_offset.borrow_mut().x = min_horizontal_scroll_offset;
-
-                        scroll_offset.x = min_horizontal_scroll_offset;
+                    if is_scrolled_horizontally && content_width <= padded_bounds.size.width {
+                        shared_scroll_offset.borrow_mut().x = Pixels::ZERO;
+                        scroll_offset.x = Pixels::ZERO;
                     }
 
                     if let Some(ix) = shared_scroll_to_item {
@@ -286,17 +272,10 @@ impl Element for UniformList {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
                             // TODO kb scroll highlilghts and rename editor are not shown after scrolling horizontally
                             // TODO kb cannot click on the right side of the item when scrolled
-                            // TODO kb flickers when a project panel is fully expanded
+                            // TODO kb can horizontall scroll more than thumb size
                             // TODO kb does not recalculate the thumb size on directory folding
-                            // and horizontally scrolled to the right
-                            if is_scrolled_horizontally {
-                                dbg!((
-                                    padded_bounds.size.width,
-                                    content_width,
-                                    min_horizontal_scroll_offset,
-                                    scroll_offset.x
-                                ));
-                            }
+                            // TODO kb hide scrollbars on hover and only show them when scrolling
+                            // TODO kb restyle scrollbars
                             let item_origin = padded_bounds.origin
                                 + point(
                                     scroll_offset.x + padding.left,
