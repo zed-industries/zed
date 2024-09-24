@@ -1667,16 +1667,8 @@ impl Project {
     }
 
     pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.create_buffer(
-                if self.is_via_collab() {
-                    Some((self.client.clone().into(), self.remote_id().unwrap()))
-                } else {
-                    None
-                },
-                cx,
-            )
-        })
+        self.buffer_store
+            .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))
     }
 
     pub fn create_local_buffer(

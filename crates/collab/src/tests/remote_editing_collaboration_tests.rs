@@ -108,14 +108,31 @@ async fn test_sharing_an_ssh_remote_project(
     });
 
     project_b
-        .update(cx_b, |project, cx| project.save_buffer(buffer_b, cx))
+        .update(cx_b, |project, cx| {
+            project.save_buffer_as(
+                buffer_b,
+                ProjectPath {
+                    worktree_id: worktree_id.to_owned(),
+                    path: Path::new("/code/project1/src/renamed.rs"),
+                },
+                cx,
+            )
+        })
         .await
         .unwrap();
     assert_eq!(
         remote_fs
-            .load("/code/project1/src/lib.rs".as_ref())
+            .load("/code/project1/src/renamed.rs".as_ref())
             .await
             .unwrap(),
         "fn one() -> usize { 100 }"
     );
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            buffer.read(cx).file().abs_path(),
+            "/code/project1/src/renamed.rs"
+        );
+    });
+    assert_eq()
 }
