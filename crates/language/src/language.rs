@@ -384,8 +384,9 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .await
                 {
                     log::info!(
-                        "failed to fetch newest version of language server {:?}. falling back to using {:?}",
+                        "failed to fetch newest version of language server {:?}. error: {:?}, falling back to using {:?}",
                         self.name(),
+                        error,
                         prev_downloaded_binary.path
                     );
                     binary = Ok(prev_downloaded_binary);

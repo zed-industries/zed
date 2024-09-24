@@ -297,7 +297,8 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
-    const CURRENT_VERSION: &'static str = "release/2.4.4";
+    const CURRENT_VERSION: &'static str = "2.4.4";
+    const CURRENT_VERSION_TAG_NAME: &'static str = "release/2.4.4";
 
     #[cfg(not(windows))]
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -312,6 +313,10 @@ impl EsLintLspAdapter {
 
     pub fn new(node: NodeRuntime) -> Self {
         EsLintLspAdapter { node }
+    }
+
+    fn build_destination_path(container_dir: &Path) -> PathBuf {
+        container_dir.join(format!("vscode-eslint-{}", Self::CURRENT_VERSION))
     }
 }
 
@@ -413,7 +418,7 @@ impl LspAdapter for EsLintLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let url = build_asset_url(
             "microsoft/vscode-eslint",
-            Self::CURRENT_VERSION,
+            Self::CURRENT_VERSION_TAG_NAME,
             Self::GITHUB_ASSET_KIND,
         )?;
 
@@ -430,7 +435,7 @@ impl LspAdapter for EsLintLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
+        let destination_path = Self::build_destination_path(&container_dir);
         let server_path = destination_path.join(Self::SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
@@ -496,38 +501,27 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_eslint_server_binary(container_dir, &self.node).await
+        let server_path =
+            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
+            env: None,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_eslint_server_binary(container_dir, &self.node).await
-    }
-}
-
-async fn get_cached_eslint_server_binary(
-    container_dir: PathBuf,
-    node: &NodeRuntime,
-) -> Option<LanguageServerBinary> {
-    maybe!(async {
-        // This is unfortunate but we don't know what the version is to build a path directly
-        let mut dir = fs::read_dir(&container_dir).await?;
-        let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
-        if !first.file_type().await?.is_dir() {
-            return Err(anyhow!("First entry is not a directory"));
-        }
-        let server_path = first.path().join(EsLintLspAdapter::SERVER_PATH);
-
-        Ok(LanguageServerBinary {
-            path: node.binary_path().await?,
+        let server_path =
+            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
             env: None,
             arguments: eslint_server_binary_arguments(&server_path),
         })
-    })
-    .await
-    .log_err()
+    }
 }
 
 #[cfg(target_os = "windows")]
