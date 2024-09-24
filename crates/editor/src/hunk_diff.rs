@@ -14,8 +14,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, rems, v_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Styled, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, ContextMenu, InteractiveElement, IntoElement, ParentElement, Pixels,
+    Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
 
@@ -38,7 +38,7 @@ pub(super) struct HoveredHunk {
 
 #[derive(Debug, Default)]
 pub(super) struct ExpandedHunks {
-    hunks: Vec<ExpandedHunk>,
+    pub(crate) hunks: Vec<ExpandedHunk>,
     diff_base: HashMap<BufferId, DiffBaseBuffer>,
     hunk_update_tasks: HashMap<Option<BufferId>, Task<()>>,
 }
@@ -414,39 +414,22 @@ impl Editor {
                 style: BlockStyle::Flex,
                 disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
-                    let Some(gutter_bounds) = editor.read(cx).gutter_bounds() else {
-                        return div().into_any_element();
-                    };
-                    let (gutter_dimensions, hunk_bounds, close_button) =
-                        editor.update(cx.context, |editor, cx| {
-                            let editor_snapshot = editor.snapshot(cx);
-                            let hunk_display_range = hunk
-                                .multi_buffer_range
-                                .clone()
-                                .to_display_points(&editor_snapshot);
-                            let gutter_dimensions = editor.gutter_dimensions;
-                            let hunk_bounds = EditorElement::diff_hunk_bounds(
-                                &editor_snapshot,
-                                cx.line_height(),
-                                gutter_bounds,
-                                &DisplayDiffHunk::Unfolded {
-                                    diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                                    multi_buffer_range: hunk.multi_buffer_range.clone(),
-                                    display_row_range: hunk_display_range.start.row()
-                                        ..hunk_display_range.end.row(),
-                                    status: hunk.status,
-                                },
-                            );
+                    let width = EditorElement::diff_hunk_strip_width(cx.line_height());
+                    let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 
-                            let close_button = editor.close_hunk_diff_button(
-                                hunk.clone(),
-                                hunk_display_range.start.row(),
-                                cx,
-                            );
-                            (gutter_dimensions, hunk_bounds, close_button)
-                        });
-                    let click_editor = editor.clone();
-                    let clicked_hunk = hunk.clone();
+                    let close_button = editor.update(cx.context, |editor, cx| {
+                        let editor_snapshot = editor.snapshot(cx);
+                        let hunk_display_range = hunk
+                            .multi_buffer_range
+                            .clone()
+                            .to_display_points(&editor_snapshot);
+                        editor.close_hunk_diff_button(
+                            hunk.clone(),
+                            hunk_display_range.start.row(),
+                            cx,
+                        )
+                    });
+
                     h_flex()
                         .id("gutter with editor")
                         .bg(deleted_hunk_color)
@@ -461,27 +444,29 @@ impl Editor {
                                 .child(
                                     h_flex()
                                         .id("gutter hunk")
+                                        .bg(cx.theme().status().deleted)
                                         .pl(gutter_dimensions.margin
                                             + gutter_dimensions
                                                 .git_blame_entries_width
                                                 .unwrap_or_default())
-                                        .max_w(hunk_bounds.size.width)
-                                        .min_w(hunk_bounds.size.width)
+                                        .max_w(width)
+                                        .min_w(width)
                                         .size_full()
                                         .cursor(CursorStyle::PointingHand)
                                         .on_mouse_down(MouseButton::Left, {
-                                            let click_hunk = hunk.clone();
-                                            move |e, cx| {
-                                                let modifiers = e.modifiers;
+                                            let editor = editor.clone();
+                                            let hunk = hunk.clone();
+                                            move |event, cx| {
+                                                let modifiers = event.modifiers;
                                                 if modifiers.control || modifiers.platform {
-                                                    click_editor.update(cx, |editor, cx| {
-                                                        editor.toggle_hovered_hunk(&click_hunk, cx);
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.toggle_hovered_hunk(&hunk, cx);
                                                     });
                                                 } else {
-                                                    click_editor.update(cx, |editor, cx| {
+                                                    editor.update(cx, |editor, cx| {
                                                         editor.open_hunk_context_menu(
-                                                            clicked_hunk.clone(),
-                                                            e.position,
+                                                            hunk.clone(),
+                                                            event.position,
                                                             cx,
                                                         );
                                                     });
