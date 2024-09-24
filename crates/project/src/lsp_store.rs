@@ -38,8 +38,8 @@ use language::{
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageConfig,
     LanguageMatcher, LanguageName, LanguageRegistry, LanguageServerBinaryStatus,
-    LanguageServerName, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PendingLanguageServer,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    LanguageServerName, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
@@ -115,6 +115,13 @@ impl FormatTrigger {
             _ => FormatTrigger::Save,
         }
     }
+}
+
+pub struct PendingLanguageServer {
+    pub server_id: LanguageServerId,
+    pub task: Task<Result<(lsp::LanguageServer, Option<serde_json::Value>)>>,
+    pub delegate: Arc<dyn LspAdapterDelegate>,
+    pub adapter: Arc<CachedLspAdapter>,
 }
 
 pub struct LocalLspStore {
@@ -5549,11 +5556,7 @@ impl LspStore {
 
                     let binary_result = adapter
                         .clone()
-                        .get_language_server_command(
-                            container_dir.clone(),
-                            delegate.clone(),
-                            &mut cx,
-                        )
+                        .get_language_server_command(container_dir, delegate.clone(), &mut cx)
                         .await;
 
                     delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
@@ -5602,49 +5605,43 @@ impl LspStore {
             PendingLanguageServer {
                 server_id,
                 task,
-                container_dir,
+                delegate,
+                adapter: adapter.clone(),
             }
         };
 
-        let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
-            let adapter = adapter.clone();
-            let delegate = delegate.clone();
             let server_name = adapter.name.0.clone();
             let language = language.clone();
             let key = key.clone();
 
             cx.spawn(move |this, mut cx| async move {
                 let result = {
+                    let language = language.clone();
                     let this = this.clone();
                     let adapter = adapter.clone();
-                    let language = language.clone();
-                    let cx: &mut AsyncAppContext = &mut cx;
+                    let mut cx = cx.clone();
                     async move {
                         let language_server = Self::setup_pending_language_server(
                             this.clone(),
                             override_options,
                             pending_server,
-                            delegate,
-                            adapter.clone(),
-                            cx,
+                            &mut cx,
                         )
                         .await?;
-                        let this = match this.upgrade() {
-                            Some(this) => this,
-                            None => return Err(anyhow!("failed to upgrade project handle")),
-                        };
-                        this.update(cx, |this, cx| {
+
+                        this.update(&mut cx, |this, mut cx| {
                             this.insert_newly_running_language_server(
                                 language,
                                 adapter,
                                 language_server.clone(),
                                 server_id,
                                 key,
-                                cx,
+                                &mut cx,
                             )
                         })??;
-                        Ok(Some(language_server))
+
+                        anyhow::Ok(Some(language_server))
                     }
                 }
                 .await;
@@ -6067,11 +6064,11 @@ impl LspStore {
         this: WeakModel<Self>,
         override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
-        delegate: Arc<dyn LspAdapterDelegate>,
-        adapter: Arc<CachedLspAdapter>,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
         let server_id = pending_server.server_id;
+        let delegate = pending_server.delegate;
+        let adapter = pending_server.adapter;
         let workspace_config = adapter
             .adapter
             .clone()

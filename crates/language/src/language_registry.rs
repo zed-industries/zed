@@ -117,12 +117,6 @@ pub enum LanguageServerBinaryStatus {
     Failed { error: String },
 }
 
-pub struct PendingLanguageServer {
-    pub server_id: LanguageServerId,
-    pub task: Task<Result<(lsp::LanguageServer, Option<serde_json::Value>)>>,
-    pub container_dir: Option<Arc<Path>>,
-}
-
 #[derive(Clone)]
 pub struct AvailableLanguage {
     id: LanguageId,
