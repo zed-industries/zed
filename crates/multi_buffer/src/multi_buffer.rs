@@ -5520,6 +5520,7 @@ mod tests {
         );
     }
 
+    #[gpui::test]
     async fn test_push_multiple_excerpts_with_context_lines(cx: &mut TestAppContext) {
         let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(15, 4, 'a'), cx));
