@@ -1447,13 +1447,8 @@ impl Interactivity {
                         .bottom
                         .to_pixels(bounds.size.height.into(), rem_size),
             );
-            let default_scroll = Size::default();
-            let scroll_max = size(
-                self.content_size.width.max(default_scroll.width),
-                (self.content_size + padding_size - bounds.size)
-                    .height
-                    .max(default_scroll.height),
-            );
+            let scroll_max = (self.content_size + padding_size - bounds.size).max(&Size::default());
+
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();

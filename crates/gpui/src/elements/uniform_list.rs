@@ -195,7 +195,7 @@ impl Element for UniformList {
         );
 
         let content_size = Size {
-            width: padded_bounds.size.width,
+            width: padded_bounds.size.width.max(frame_state.item_size.width),
             height: frame_state.item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
@@ -272,8 +272,8 @@ impl Element for UniformList {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
                             // TODO kb scroll highlilghts and rename editor are not shown after scrolling horizontally
                             // TODO kb cannot click on the right side of the item when scrolled
-                            // TODO kb can horizontall scroll more than thumb size
                             // TODO kb does not recalculate the thumb size on directory folding
+                            /////////////////////////////////////////////////////////////////////
                             // TODO kb hide scrollbars on hover and only show them when scrolling
                             // TODO kb restyle scrollbars
                             let item_origin = padded_bounds.origin
