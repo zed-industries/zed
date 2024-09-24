@@ -38,18 +38,22 @@ impl MultiBuffer {
 
         let mut new_excerpts = new_excerpts
             .into_iter()
-            .map(|(buffer_handle, range)| {
+            .filter_map(|(buffer_handle, range)| {
                 let buffer = buffer_handle.read(cx);
                 let range = range.to_offset(buffer);
-                let key = ExcerptKey {
-                    path: buffer.file().map(|file| file.full_path(cx).into()),
-                    buffer_id: BufferId {
-                        remote_id: buffer.remote_id(),
-                        replica_id: buffer.replica_id(),
-                    },
-                    range,
-                };
-                (buffer_handle, key)
+                if range.is_empty() {
+                    None
+                } else {
+                    let key = ExcerptKey {
+                        path: buffer.file().map(|file| file.full_path(cx).into()),
+                        buffer_id: BufferId {
+                            remote_id: buffer.remote_id(),
+                            replica_id: buffer.replica_id(),
+                        },
+                        range,
+                    };
+                    Some((buffer_handle, key))
+                }
             })
             .collect::<Vec<_>>();
         new_excerpts.sort_unstable_by_key(|(_, key)| key.clone());
@@ -303,6 +307,7 @@ mod tests {
     use super::*;
     use gpui::{AppContext, Context};
     use language::Buffer;
+    use rand::prelude::*;
 
     #[gpui::test]
     fn test_insert_excerpts(cx: &mut AppContext) {
@@ -329,4 +334,117 @@ mod tests {
             multibuffer
         });
     }
+
+    #[gpui::test(iterations = 1000)]
+    fn test_insert_random_excerpts(mut rng: StdRng, cx: &mut AppContext) {
+        let buffer = cx.new_model(|cx| {
+            let random_words: Vec<&str> = WORDS.choose_multiple(&mut rng, 10).cloned().collect();
+            let content = random_words.join(" ");
+            Buffer::local(&content, cx)
+        });
+
+        let buffer_len = buffer.read(cx).len();
+
+        let generate_excerpts = |rng: &mut StdRng| {
+            let mut ranges = Vec::new();
+            for _ in 0..5 {
+                let start = rng.gen_range(0..=buffer_len);
+                let end = rng.gen_range(start..=buffer_len);
+                ranges.push(start..end);
+            }
+            ranges
+        };
+
+        cx.new_model(|cx| {
+            let mut multibuffer = MultiBuffer::new();
+            let excerpts1 = generate_excerpts(&mut rng);
+            let excerpts2 = generate_excerpts(&mut rng);
+            multibuffer.insert_excerpts(
+                excerpts1
+                    .iter()
+                    .map(|range| (buffer.clone(), range.clone())),
+                cx,
+            );
+            multibuffer.insert_excerpts(
+                excerpts2
+                    .iter()
+                    .map(|range| (buffer.clone(), range.clone())),
+                cx,
+            );
+
+            let mut excerpt_ranges = excerpts1
+                .iter()
+                .chain(&excerpts2)
+                .cloned()
+                .collect::<Vec<_>>();
+            excerpt_ranges.sort_by_key(|range| (range.start, range.end));
+            excerpt_ranges.dedup_by(|a, b| {
+                if a.start <= b.end && b.start <= a.end {
+                    b.start = a.start.min(b.start);
+                    b.end = a.end.max(b.end);
+                    true
+                } else {
+                    false
+                }
+            });
+
+            dbg!(&excerpts1, &excerpts2, &excerpt_ranges);
+            let expected_text = excerpt_ranges
+                .into_iter()
+                .filter_map(|range| {
+                    if range.is_empty() {
+                        None
+                    } else {
+                        Some(format!("\n{}", &buffer.read(cx).text()[range]))
+                    }
+                })
+                .collect::<String>();
+            assert_eq!(multibuffer.snapshot(cx).text(), expected_text);
+
+            multibuffer
+        });
+    }
+
+    const WORDS: &[&str] = &[
+        "apple",
+        "banana",
+        "cherry",
+        "date",
+        "elderberry",
+        "fig",
+        "grape",
+        "honeydew",
+        "kiwi",
+        "lemon",
+        "mango",
+        "nectarine",
+        "orange",
+        "papaya",
+        "quince",
+        "raspberry",
+        "strawberry",
+        "tangerine",
+        "ugli",
+        "vanilla",
+        "watermelon",
+        "xigua",
+        "yuzu",
+        "zucchini",
+        "apricot",
+        "blackberry",
+        "coconut",
+        "dragonfruit",
+        "eggplant",
+        "feijoa",
+        "guava",
+        "hazelnut",
+        "jackfruit",
+        "kumquat",
+        "lime",
+        "mulberry",
+        "nance",
+        "olive",
+        "peach",
+        "rambutan",
+    ];
 }
