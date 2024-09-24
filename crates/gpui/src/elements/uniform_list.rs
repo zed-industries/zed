@@ -134,7 +134,7 @@ impl Element for UniformList {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let max_items = self.item_count;
-        let item_size = self.measure_item(None, cx);
+        let item_size = self.measure_item(cx);
         let layout_id = self
             .interactivity
             .request_layout(global_id, cx, |style, cx| match self.sizing_behavior {
@@ -201,15 +201,7 @@ impl Element for UniformList {
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
 
-        // TODO kb: current item highlight and long enough file names both are trimmed from the right side
-        // and do not update when the project panel is scrolled to the right
-        // lower makes list highlights good, upper enables horizontal scrolling
-        //
-        // TODO kb fully expanded panel's scroll to left is flickering
-        let unconstrained_measurement = self.measure_item(None, cx);
-        let measurement = self.measure_item(Some(padded_bounds.size.width), cx);
-        dbg!(("old-new", measurement, unconstrained_measurement));
-        let measurement = unconstrained_measurement;
+        let measurement = self.measure_item(cx);
         let item_height = measurement.height;
         let shared_scroll_to_item = self.scroll_handle.as_mut().and_then(|handle| {
             let mut handle = handle.0.borrow_mut();
@@ -248,7 +240,19 @@ impl Element for UniformList {
                     let content_width = measurement.width + padding.left + padding.right;
                     let min_horizontal_scroll_offset = padded_bounds.size.width - content_width;
                     let is_scrolled_horizontally = !scroll_offset.x.is_zero();
+                    if is_scrolled_horizontally {
+                        dbg!((
+                            "@@@",
+                            bounds,
+                            padded_bounds,
+                            content_size,
+                            measurement,
+                            padding,
+                            &border
+                        ));
+                    }
                     if is_scrolled_horizontally && scroll_offset.x < min_horizontal_scroll_offset {
+                        dbg!(("!!!!!", scroll_offset.x));
                         shared_scroll_offset.borrow_mut().x = min_horizontal_scroll_offset;
 
                         scroll_offset.x = min_horizontal_scroll_offset;
@@ -280,9 +284,22 @@ impl Element for UniformList {
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
+                            // TODO kb scroll highlilghts and rename editor are not shown after scrolling horizontally
+                            // TODO kb cannot click on the right side of the item when scrolled
+                            // TODO kb flickers when a project panel is fully expanded
+                            // TODO kb does not recalculate the thumb size on directory folding
+                            // and horizontally scrolled to the right
+                            if is_scrolled_horizontally {
+                                dbg!((
+                                    padded_bounds.size.width,
+                                    content_width,
+                                    min_horizontal_scroll_offset,
+                                    scroll_offset.x
+                                ));
+                            }
                             let item_origin = padded_bounds.origin
                                 + point(
-                                    dbg!(scroll_offset.x) + padding.left,
+                                    scroll_offset.x + padding.left,
                                     item_height * ix + scroll_offset.y + padding.top,
                                 );
                             let available_space = size(
@@ -339,7 +356,7 @@ impl UniformList {
         self
     }
 
-    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut WindowContext) -> Size<Pixels> {
+    fn measure_item(&self, cx: &mut WindowContext) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();
         }
@@ -349,12 +366,7 @@ impl UniformList {
         let Some(mut item_to_measure) = items.pop() else {
             return Size::default();
         };
-        let available_space = size(
-            list_width.map_or(AvailableSpace::MinContent, |width| {
-                AvailableSpace::Definite(width)
-            }),
-            AvailableSpace::MinContent,
-        );
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
         item_to_measure.layout_as_root(available_space, cx)
     }
 

@@ -158,10 +158,6 @@ impl RenderOnce for ListItem {
         h_flex()
             .id(self.id)
             .w_full()
-            // TODO kb this is the "best" fix so far, but how to make it generic?
-            // .w(rems(100.0))
-            // TODO kb almost works for the highlight preservation
-            .overflow_x_scroll()
             .relative()
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
@@ -243,7 +239,6 @@ impl RenderOnce for ListItem {
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
                             .gap(Spacing::Small.rems(cx))
-                            .overflow_hidden()
                             .children(self.start_slot)
                             .children(self.children),
                     )

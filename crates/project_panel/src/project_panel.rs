@@ -2679,16 +2679,15 @@ impl ProjectPanel {
         if overshoot > 0. {
             percentage -= overshoot;
         }
-        const MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT: f32 = 0.005;
-        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT > 1.0 || end_offset > longest_item_width
+        const MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH: f32 = 0.005;
+        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH > 1.0 || end_offset > longest_item_width
         {
             return None;
         }
         if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 {
             return None;
         }
-        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT, 1.);
-        dbg!(end_offset);
+        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH, 1.);
         Some(
             div()
                 .occlude()
@@ -2924,7 +2923,6 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(items_count, cx))
-                // .when(!show_editor, then)
                 .children(self.render_horizontal_scrollbar(cx))
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
