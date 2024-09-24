@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext};
+use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, LanguageSettings},
@@ -1130,66 +1130,6 @@ impl MultiBuffer {
         }
     }
 
-    pub fn stream_excerpts_with_context_lines(
-        &mut self,
-        buffer: Model<Buffer>,
-        ranges: Vec<Range<text::Anchor>>,
-        context_line_count: u32,
-        cx: &mut ModelContext<Self>,
-    ) -> mpsc::Receiver<Range<Anchor>> {
-        let (buffer_id, buffer_snapshot) =
-            buffer.update(cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
-
-        let (mut tx, rx) = mpsc::channel(256);
-        cx.spawn(move |this, mut cx| async move {
-            let mut excerpt_ranges = Vec::new();
-            let mut range_counts = Vec::new();
-            cx.background_executor()
-                .scoped(|scope| {
-                    scope.spawn(async {
-                        let (ranges, counts) =
-                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-                        excerpt_ranges = ranges;
-                        range_counts = counts;
-                    });
-                })
-                .await;
-
-            let mut ranges = ranges.into_iter();
-            let mut range_counts = range_counts.into_iter();
-            for excerpt_ranges in excerpt_ranges.chunks(100) {
-                let excerpt_ids = match this.update(&mut cx, |this, cx| {
-                    this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
-                }) {
-                    Ok(excerpt_ids) => excerpt_ids,
-                    Err(_) => return,
-                };
-
-                for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
-                {
-                    for range in ranges.by_ref().take(range_count) {
-                        let start = Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: range.start,
-                        };
-                        let end = Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: range.end,
-                        };
-                        if tx.send(start..end).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        })
-        .detach();
-
-        rx
-    }
-
     pub fn push_excerpts<O>(
         &mut self,
         buffer: Model<Buffer>,
@@ -1237,6 +1177,91 @@ impl MultiBuffer {
             }))
         }
         anchor_ranges
+    }
+
+    pub fn push_multiple_excerpts_with_context_lines(
+        &mut self,
+        buffers_with_ranges: Vec<(Model<Buffer>, Vec<Range<text::Anchor>>)>,
+        context_line_count: u32,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Vec<Range<Anchor>>> {
+        use futures::StreamExt;
+
+        let (excerpt_ranges_tx, mut excerpt_ranges_rx) = mpsc::channel(256);
+
+        let mut buffer_ids = Vec::with_capacity(buffers_with_ranges.len());
+
+        for (buffer, ranges) in buffers_with_ranges {
+            let (buffer_id, buffer_snapshot) =
+                buffer.update(cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
+
+            buffer_ids.push(buffer_id);
+
+            cx.background_executor()
+                .spawn({
+                    let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
+
+                    async move {
+                        let (excerpt_ranges, counts) =
+                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                        excerpt_ranges_tx
+                            .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
+                            .await
+                            .ok();
+                    }
+                })
+                .detach()
+        }
+
+        cx.spawn(move |this, mut cx| async move {
+            let mut results_by_buffer_id = HashMap::default();
+            while let Some((buffer_id, buffer, ranges, excerpt_ranges, range_counts)) =
+                excerpt_ranges_rx.next().await
+            {
+                results_by_buffer_id
+                    .insert(buffer_id, (buffer, ranges, excerpt_ranges, range_counts));
+            }
+
+            let mut multi_buffer_ranges = Vec::default();
+            'outer: for buffer_id in buffer_ids {
+                let Some((buffer, ranges, excerpt_ranges, range_counts)) =
+                    results_by_buffer_id.remove(&buffer_id)
+                else {
+                    continue;
+                };
+
+                let mut ranges = ranges.into_iter();
+                let mut range_counts = range_counts.into_iter();
+                for excerpt_ranges in excerpt_ranges.chunks(100) {
+                    let excerpt_ids = match this.update(&mut cx, |this, cx| {
+                        this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
+                    }) {
+                        Ok(excerpt_ids) => excerpt_ids,
+                        Err(_) => continue 'outer,
+                    };
+
+                    for (excerpt_id, range_count) in
+                        excerpt_ids.into_iter().zip(range_counts.by_ref())
+                    {
+                        for range in ranges.by_ref().take(range_count) {
+                            let start = Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id,
+                                text_anchor: range.start,
+                            };
+                            let end = Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id,
+                                text_anchor: range.end,
+                            };
+                            multi_buffer_ranges.push(start..end);
+                        }
+                    }
+                }
+            }
+
+            multi_buffer_ranges
+        })
     }
 
     pub fn insert_excerpts_after<O>(
@@ -5052,7 +5077,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::StreamExt;
     use gpui::{AppContext, Context, TestAppContext};
     use language::{Buffer, Rope};
     use parking_lot::RwLock;
@@ -5601,41 +5625,67 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
-        let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-        let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
-            let snapshot = buffer.read(cx);
-            let ranges = vec![
-                snapshot.anchor_before(Point::new(3, 2))..snapshot.anchor_before(Point::new(4, 2)),
-                snapshot.anchor_before(Point::new(7, 1))..snapshot.anchor_before(Point::new(7, 3)),
-                snapshot.anchor_before(Point::new(15, 0))
-                    ..snapshot.anchor_before(Point::new(15, 0)),
-            ];
-            multibuffer.stream_excerpts_with_context_lines(buffer.clone(), ranges, 2, cx)
-        });
+    #[gpui::test(iterations = 100)]
+    async fn test_push_multiple_excerpts_with_context_lines(cx: &mut TestAppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(15, 4, 'a'), cx));
+        let snapshot_1 = buffer_1.update(cx, |buffer, _| buffer.snapshot());
+        let snapshot_2 = buffer_2.update(cx, |buffer, _| buffer.snapshot());
+        let ranges_1 = vec![
+            snapshot_1.anchor_before(Point::new(3, 2))..snapshot_1.anchor_before(Point::new(4, 2)),
+            snapshot_1.anchor_before(Point::new(7, 1))..snapshot_1.anchor_before(Point::new(7, 3)),
+            snapshot_1.anchor_before(Point::new(15, 0))
+                ..snapshot_1.anchor_before(Point::new(15, 0)),
+        ];
+        let ranges_2 = vec![
+            snapshot_2.anchor_before(Point::new(2, 1))..snapshot_2.anchor_before(Point::new(3, 1)),
+            snapshot_2.anchor_before(Point::new(10, 0))
+                ..snapshot_2.anchor_before(Point::new(10, 2)),
+        ];
 
-        let anchor_ranges = anchor_ranges.collect::<Vec<_>>().await;
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let anchor_ranges = multibuffer
+            .update(cx, |multibuffer, cx| {
+                multibuffer.push_multiple_excerpts_with_context_lines(
+                    vec![(buffer_1.clone(), ranges_1), (buffer_2.clone(), ranges_2)],
+                    2,
+                    cx,
+                )
+            })
+            .await;
 
         let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         assert_eq!(
             snapshot.text(),
             concat!(
-                "bbb\n", //
+                "bbb\n", // buffer_1
                 "ccc\n", //
-                "ddd\n", //
-                "eee\n", //
+                "ddd\n", // <-- excerpt 1
+                "eee\n", // <-- excerpt 1
                 "fff\n", //
                 "ggg\n", //
-                "hhh\n", //
+                "hhh\n", // <-- excerpt 2
                 "iii\n", //
                 "jjj\n", //
+                //
                 "nnn\n", //
                 "ooo\n", //
-                "ppp\n", //
+                "ppp\n", // <-- excerpt 3
                 "qqq\n", //
-                "rrr",   //
+                "rrr\n", //
+                //
+                "aaaa\n", // buffer 2
+                "bbbb\n", //
+                "cccc\n", // <-- excerpt 4
+                "dddd\n", // <-- excerpt 4
+                "eeee\n", //
+                "ffff\n", //
+                //
+                "iiii\n", //
+                "jjjj\n", //
+                "kkkk\n", // <-- excerpt 5
+                "llll\n", //
+                "mmmm",   //
             )
         );
 
@@ -5647,7 +5697,9 @@ mod tests {
             vec![
                 Point::new(2, 2)..Point::new(3, 2),
                 Point::new(6, 1)..Point::new(6, 3),
-                Point::new(11, 0)..Point::new(11, 0)
+                Point::new(11, 0)..Point::new(11, 0),
+                Point::new(16, 1)..Point::new(17, 1),
+                Point::new(22, 0)..Point::new(22, 2)
             ]
         );
     }

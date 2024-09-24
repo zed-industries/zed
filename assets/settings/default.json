@@ -771,6 +771,21 @@
       "pyrightconfig.json"
     ]
   },
+  /// By default use a recent system version of node, or install our own.
+  /// You can override this to use a version of node that is not in $PATH with:
+  /// {
+  ///   "node": {
+  ///     "node_path": "/path/to/node"
+  ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
+  ///   }
+  /// }
+  /// or to ensure Zed always downloads and installs an isolated version of node:
+  /// {
+  ///   "node": {
+  ///     "disable_path_lookup": true
+  ///   }
+  /// NOTE: changing this setting currently requires restarting Zed.
+  "node": {},
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings

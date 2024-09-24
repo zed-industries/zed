@@ -87,6 +87,7 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
+    configured_options: SearchOptions,
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
@@ -517,6 +518,7 @@ impl BufferSearchBar {
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
+            configured_options: search_options,
             search_options,
             pending_search: None,
             query_contains_error: false,
@@ -605,10 +607,11 @@ impl BufferSearchBar {
             return false;
         };
 
-        self.default_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-
-        if self.default_options != self.search_options {
-            self.search_options = self.default_options;
+        self.configured_options =
+            SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+        if self.dismissed && self.configured_options != self.default_options {
+            self.search_options = self.configured_options;
+            self.default_options = self.configured_options;
         }
 
         self.dismissed = false;
@@ -627,6 +630,7 @@ impl BufferSearchBar {
             .map(SearchableItemHandle::supported_options)
             .unwrap_or_default()
     }
+
     pub fn search_suggested(&mut self, cx: &mut ViewContext<Self>) {
         let search = self
             .query_suggestion(cx)
@@ -1195,10 +1199,11 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer};
-    use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
+    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer, SearchSettings};
+    use gpui::{Context, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
+    use settings::SettingsStore;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -2318,6 +2323,121 @@ mod tests {
             .unwrap_err();
         editor.update(cx, |editor, cx| {
             assert!(display_points_of(editor.all_text_background_highlights(cx)).is_empty(),);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_options_changes(cx: &mut TestAppContext) {
+        let (_editor, search_bar, cx) = init_test(cx);
+        update_search_settings(
+            SearchSettings {
+                whole_word: false,
+                case_sensitive: false,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+
+        let deploy = Deploy {
+            focus: true,
+            replace_enabled: false,
+            selection_search_enabled: true,
+        };
+
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have no search options enabled by default"
+            );
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::WHOLE_WORD,
+                "Should enable the option toggled"
+            );
+            assert!(
+                !search_bar.dismissed,
+                "Search bar should be present and visible"
+            );
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.configured_options,
+                SearchOptions::NONE,
+                "Should have configured search options matching the settings"
+            );
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::WHOLE_WORD,
+                "After (re)deploying, the option should still be enabled"
+            );
+
+            search_bar.dismiss(&Dismiss, cx);
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "After hiding and showing the search bar, default options should be used"
+            );
+
+            search_bar.toggle_search_option(SearchOptions::REGEX, cx);
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Should enable the options toggled"
+            );
+            assert!(
+                !search_bar.dismissed,
+                "Search bar should be present and visible"
+            );
+        });
+
+        update_search_settings(
+            SearchSettings {
+                whole_word: false,
+                case_sensitive: true,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Should have no search options enabled by default"
+            );
+
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.configured_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have configured search options matching the settings"
+            );
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Toggling a non-dismissed search bar with custom options should not change the default options"
+            );
+            search_bar.dismiss(&Dismiss, cx);
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "After hiding and showing the search bar, default options should be used"
+            );
+        });
+    }
+
+    fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<EditorSettings>(cx, |settings| {
+                    settings.search = Some(search_settings);
+                });
+            });
         });
     }
 }
