@@ -87,6 +87,7 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
+    configured_options: SearchOptions,
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
@@ -517,6 +518,7 @@ impl BufferSearchBar {
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
+            configured_options: search_options,
             search_options,
             pending_search: None,
             query_contains_error: false,
@@ -605,9 +607,11 @@ impl BufferSearchBar {
             return false;
         };
 
-        self.default_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-        if self.dismissed && self.default_options != self.search_options {
-            self.search_options = self.default_options;
+        self.configured_options =
+            SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+        if self.dismissed && self.configured_options != self.default_options {
+            self.search_options = self.configured_options;
+            self.default_options = self.configured_options;
         }
 
         self.dismissed = false;
@@ -630,7 +634,7 @@ impl BufferSearchBar {
     pub fn search_suggested(&mut self, cx: &mut ViewContext<Self>) {
         let search = self
             .query_suggestion(cx)
-            .map(|suggestion| self.search(&suggestion, Some(self.search_options), cx));
+            .map(|suggestion| self.search(&suggestion, Some(self.default_options), cx));
 
         if let Some(search) = search {
             cx.spawn(|this, mut cx| async move {
@@ -733,6 +737,7 @@ impl BufferSearchBar {
         cx: &mut ViewContext<Self>,
     ) {
         self.search_options.toggle(search_option);
+        self.default_options = self.search_options;
         drop(self.update_matches(cx));
         cx.notify();
     }
@@ -2358,9 +2363,9 @@ mod tests {
             );
             search_bar.deploy(&deploy, cx);
             assert_eq!(
-                search_bar.default_options,
+                search_bar.configured_options,
                 SearchOptions::NONE,
-                "Should have default search options matching the settings"
+                "Should have configured search options matching the settings"
             );
             assert_eq!(
                 search_bar.search_options,
@@ -2407,9 +2412,9 @@ mod tests {
 
             search_bar.deploy(&deploy, cx);
             assert_eq!(
-                search_bar.default_options,
+                search_bar.configured_options,
                 SearchOptions::CASE_SENSITIVE,
-                "Should have default search options matching the settings"
+                "Should have configured search options matching the settings"
             );
             assert_eq!(
                 search_bar.search_options,
