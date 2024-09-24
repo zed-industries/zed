@@ -37,7 +37,6 @@ client.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
-log.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

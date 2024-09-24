@@ -8506,7 +8506,6 @@ dependencies = [
  "gpui",
  "indexmap 1.9.3",
  "language",
- "log",
  "menu",
  "pretty_assertions",
  "project",
