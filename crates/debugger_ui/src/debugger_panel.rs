@@ -22,7 +22,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::u64;
 use ui::prelude::*;
-use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
