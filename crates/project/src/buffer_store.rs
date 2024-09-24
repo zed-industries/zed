@@ -1587,6 +1587,15 @@ impl BufferStore {
                     cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
                 }
             }
+            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
+                downstream_client
+                    .send(proto::UpdateBufferFile {
+                        project_id: *project_id,
+                        buffer_id: buffer_id.into(),
+                        file: envelope.payload.file,
+                    })
+                    .log_err();
+            }
             Ok(())
         })?
     }
@@ -1601,8 +1610,17 @@ impl BufferStore {
             let buffer_id = BufferId::new(buffer_id)?;
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id, cx) {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.set_diff_base(envelope.payload.diff_base, cx)
+                    buffer.set_diff_base(envelope.payload.diff_base.clone(), cx)
                 });
+            }
+            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
+                downstream_client
+                    .send(proto::UpdateDiffBase {
+                        project_id: *project_id,
+                        buffer_id: buffer_id.into(),
+                        diff_base: envelope.payload.diff_base,
+                    })
+                    .log_err();
             }
             Ok(())
         })?
@@ -1682,12 +1700,23 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.map(|time| time.into());
-        this.update(&mut cx, |this, cx| {
+        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
+        this.update(&mut cx, move |this, cx| {
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id, cx) {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_save(version, mtime, cx);
                 });
+            }
+
+            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
+                downstream_client
+                    .send(proto::BufferSaved {
+                        project_id: *project_id,
+                        buffer_id: buffer_id.into(),
+                        mtime: envelope.payload.mtime,
+                        version: envelope.payload.version,
+                    })
+                    .log_err();
             }
         })
     }
@@ -1699,7 +1728,7 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.map(|time| time.into());
+        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(envelope.payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
@@ -1709,6 +1738,18 @@ impl BufferStore {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_reload(version, line_ending, mtime, cx);
                 });
+            }
+
+            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
+                downstream_client
+                    .send(proto::BufferReloaded {
+                        project_id: *project_id,
+                        buffer_id: buffer_id.into(),
+                        mtime: envelope.payload.mtime,
+                        version: envelope.payload.version,
+                        line_ending: envelope.payload.line_ending,
+                    })
+                    .log_err();
             }
         })
     }

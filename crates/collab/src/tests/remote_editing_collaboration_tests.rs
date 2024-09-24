@@ -114,7 +114,7 @@ async fn test_sharing_an_ssh_remote_project(
                 buffer_b.clone(),
                 ProjectPath {
                     worktree_id: worktree_id.to_owned(),
-                    path: Arc::from(Path::new("/code/project1/src/renamed.rs")),
+                    path: Arc::from(Path::new("src/renamed.rs")),
                 },
                 cx,
             )
@@ -138,7 +138,7 @@ async fn test_sharing_an_ssh_remote_project(
                 .path()
                 .to_string_lossy()
                 .to_string(),
-            "/code/project1/src/renamed.rs".to_string()
+            "src/renamed.rs".to_string()
         );
     });
 }
