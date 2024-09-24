@@ -538,11 +538,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let mut command = Command::new(self.node.clone());
+        let mut command = Command::new(self.npm.clone());
         command
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .arg(self.npm.clone())
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
             .args([
