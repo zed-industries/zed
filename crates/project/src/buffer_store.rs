@@ -108,11 +108,6 @@ pub enum BufferStoreEvent {
     },
 }
 
-enum BufferStoreState {
-    Remote {},
-    Local {},
-}
-
 #[derive(Default, Debug)]
 pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>);
 
@@ -361,15 +356,16 @@ impl BufferStoreImpl for Model<RemoteBufferStore> {
 
                 this.update(&mut cx, |this, cx| {
                     this.buffer_store.update(cx, |buffer_store, cx| {
-                        buffer_store.add_buffer(buffer.clone(), cx).log_err();
-                    });
+                        buffer_store.add_buffer(buffer.clone(), cx)
+                    })??;
 
                     if let Some(senders) = this.remote_buffer_listeners.remove(&buffer_id) {
                         for sender in senders {
                             sender.send(Ok(buffer.clone())).ok();
                         }
                     }
-                });
+                    anyhow::Ok(())
+                })??;
 
                 Ok(buffer)
             })
@@ -747,11 +743,13 @@ impl LocalBufferStore {
             buffer.file_updated(Arc::new(new_file), cx);
             Some(events)
         })?;
-        self.buffer_store.update(cx, |_buffer_store, cx| {
-            for event in events {
-                cx.emit(event);
-            }
-        });
+        self.buffer_store
+            .update(cx, |_buffer_store, cx| {
+                for event in events {
+                    cx.emit(event);
+                }
+            })
+            .log_err()?;
 
         None
     }
@@ -873,8 +871,8 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
                 }?;
                 this.update(&mut cx, |this, cx| {
                     buffer_store.update(cx, |buffer_store, cx| {
-                        buffer_store.add_buffer(buffer.clone(), cx);
-                    })?;
+                        buffer_store.add_buffer(buffer.clone(), cx)
+                    })??;
                     let buffer_id = buffer.read(cx).remote_id();
                     if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
                         this.local_buffer_ids_by_path.insert(
@@ -1910,6 +1908,20 @@ impl BufferStore {
                 remote.deserialize_project_transaction(message, push_to_history, cx)
             })
         } else {
+            debug_panic!("not a remote buffer store");
+            Task::ready(Err(anyhow!("not a remote buffer store")))
+        }
+    }
+
+    pub fn wait_for_remote_buffer(
+        &self,
+        id: BufferId,
+        cx: &mut AppContext,
+    ) -> Task<Result<Model<Buffer>>> {
+        if let Some(remote) = self.state.as_remote() {
+            remote.update(cx, |remote, cx| remote.wait_for_remote_buffer(id, cx))
+        } else {
+            debug_panic!("not a remote buffer store");
             Task::ready(Err(anyhow!("not a remote buffer store")))
         }
     }

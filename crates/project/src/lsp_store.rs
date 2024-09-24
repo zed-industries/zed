@@ -5261,7 +5261,7 @@ impl LspStore {
             })
         } else if let Some((client, project_id)) = self.upstream_client() {
             let buffer_store = self.buffer_store();
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(move |_, mut cx| async move {
                 let response = client
                     .request(proto::FormatBuffers {
                         project_id,
