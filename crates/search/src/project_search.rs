@@ -2745,7 +2745,7 @@ pub mod tests {
                 search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx)),
-                "\n\n\nconst ONE: usize = 1;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                "\n\n\nconst TWO: usize = one::ONE + one::ONE;\n\n\n\n\nconst ONE: usize = 1;\n",
                 "New search in directory should have a filter that matches a certain directory"
             );
                 })

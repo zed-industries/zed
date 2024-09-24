@@ -1,0 +1,27 @@
+name: "Close Stale Issues"
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: >
+            Hi there! 👋
+
+            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. Are you able to reproduce this issue in the latest version of Zed? If so, please let us know by commenting on this issue and we will keep it open; otherwise, we'll close it in a week. Feel free to open a new issue if you're seeing this message after the issue has been closed.
+
+            Thanks for your help!
+          close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
+          days-before-stale: 180
+          days-before-close: 7
+          any-of-issue-labels: "defect,panic / crash"
+          operations-per-run: 100
+          ascending: true
+          enable-statistics: true
+          stale-issue-label: "stale"

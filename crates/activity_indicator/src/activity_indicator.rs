@@ -280,7 +280,7 @@ impl ActivityIndicator {
         }
 
         // Show any formatting failure
-        if let Some(failure) = self.project.read(cx).last_formatting_failure() {
+        if let Some(failure) = self.project.read(cx).last_formatting_failure(cx) {
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)

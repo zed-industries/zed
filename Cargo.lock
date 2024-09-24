@@ -404,6 +404,7 @@ dependencies = [
  "language_model",
  "languages",
  "log",
+ "lsp",
  "markdown",
  "menu",
  "multi_buffer",
@@ -7189,6 +7190,7 @@ dependencies = [
  "async-std",
  "async-tar",
  "async-trait",
+ "async-watch",
  "async_zip",
  "futures 0.3.30",
  "http_client",
@@ -7201,6 +7203,7 @@ dependencies = [
  "tempfile",
  "util",
  "walkdir",
+ "which 6.0.3",
  "windows 0.58.0",
 ]
 
@@ -14392,6 +14395,7 @@ dependencies = [
  "ashpd",
  "assets",
  "assistant",
+ "async-watch",
  "audio",
  "auto_update",
  "backtrace",
@@ -14465,6 +14469,7 @@ dependencies = [
  "session",
  "settings",
  "settings_ui",
+ "shellexpand 2.1.2",
  "simplelog",
  "smol",
  "snippet_provider",
@@ -14616,7 +14621,7 @@ dependencies = [
 
 [[package]]
 name = "zed_lua"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

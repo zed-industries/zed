@@ -407,7 +407,11 @@ impl BackgroundExecutor {
 
     /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
-        num_cpus::get()
+        #[cfg(any(test, feature = "test-support"))]
+        return 4;
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        return num_cpus::get();
     }
 
     /// Whether we're on the main thread.

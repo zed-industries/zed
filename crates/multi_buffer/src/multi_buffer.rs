@@ -1810,6 +1810,69 @@ impl MultiBuffer {
         self.as_singleton().unwrap().read(cx).is_parsing()
     }
 
+    pub fn resize_excerpt(
+        &mut self,
+        id: ExcerptId,
+        range: Range<text::Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.sync(cx);
+
+        let snapshot = self.snapshot(cx);
+        let locator = snapshot.excerpt_locator_for_id(id);
+        let mut new_excerpts = SumTree::default();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>(&());
+        let mut edits = Vec::<Edit<usize>>::new();
+
+        let prefix = cursor.slice(&Some(locator), Bias::Left, &());
+        new_excerpts.append(prefix, &());
+
+        let mut excerpt = cursor.item().unwrap().clone();
+        let old_text_len = excerpt.text_summary.len;
+
+        excerpt.range.context.start = range.start;
+        excerpt.range.context.end = range.end;
+        excerpt.max_buffer_row = range.end.to_point(&excerpt.buffer).row;
+
+        excerpt.text_summary = excerpt
+            .buffer
+            .text_summary_for_range(excerpt.range.context.clone());
+
+        let new_start_offset = new_excerpts.summary().text.len;
+        let old_start_offset = cursor.start().1;
+        let edit = Edit {
+            old: old_start_offset..old_start_offset + old_text_len,
+            new: new_start_offset..new_start_offset + excerpt.text_summary.len,
+        };
+
+        if let Some(last_edit) = edits.last_mut() {
+            if last_edit.old.end == edit.old.start {
+                last_edit.old.end = edit.old.end;
+                last_edit.new.end = edit.new.end;
+            } else {
+                edits.push(edit);
+            }
+        } else {
+            edits.push(edit);
+        }
+
+        new_excerpts.push(excerpt, &());
+
+        cursor.next(&());
+
+        new_excerpts.append(cursor.suffix(&()), &());
+
+        drop(cursor);
+        self.snapshot.borrow_mut().excerpts = new_excerpts;
+
+        self.subscriptions.publish_mut(edits);
+        cx.emit(Event::Edited {
+            singleton_buffer_edited: false,
+        });
+        cx.emit(Event::ExcerptsExpanded { ids: vec![id] });
+        cx.notify();
+    }
+
     pub fn expand_excerpts(
         &mut self,
         ids: impl IntoIterator<Item = ExcerptId>,
@@ -3137,6 +3200,10 @@ impl MultiBufferSnapshot {
             }
         }
         None
+    }
+
+    pub fn context_range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<text::Anchor>> {
+        Some(self.excerpt(excerpt_id)?.range.context.clone())
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {

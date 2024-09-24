@@ -53,6 +53,7 @@ async fn test_sharing_an_ssh_remote_project(
     let (project_a, worktree_id) = client_a
         .build_ssh_project("/code/project1", client_ssh, cx_a)
         .await;
+    executor.run_until_parked();
 
     // User A shares the remote project.
     let active_call_a = cx_a.read(ActiveCall::global);
