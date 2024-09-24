@@ -2178,6 +2178,64 @@ Float values between `0.0` and `0.9`, where:
 }
 ```
 
+## UI Font Family
+
+- Description: The name of a font to use for rendering in the UI.
+- Setting: `ui_font_family`
+- Default: `Zed Plex Sans`
+
+**Options**
+
+The name of any font family installed on the user's system
+
+## UI Font Features
+
+- Description: The OpenType features to enable for text in the UI.
+- Setting: `ui_font_features`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+Zed supports all OpenType features that can be enabled or disabled for a given ui font, as well as setting values for font features.
+
+For example, to disable font ligatures, add the following to your settings:
+
+```json
+{
+  "ui_font_features": {
+    "calt": false
+  }
+}
+```
+
+You can also set other OpenType features, like setting `cv01` to `7`:
+
+```json
+{
+  "ui_font_features": {
+    "cv01": 7
+  }
+}
+```
+
+## UI Font Fallbacks
+
+- Description: The font fallbacks to use for rendering in the UI.
+- Setting: `ui_font_fallbacks`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+For example, to use `Nerd Font` as a fallback, add the following to your settings:
+
+```json
+{
+  "ui_font_fallbacks": ["Nerd Font"]
+}
+```
+
 ## UI Font Size
 
 - Description: The default font size for text in the UI.
@@ -2187,6 +2245,16 @@ Float values between `0.0` and `0.9`, where:
 **Options**
 
 `integer` values from `6` to `100` pixels (inclusive)
+
+## UI Font Weight
+
+- Description: The weight of the UI font in CSS units from 100 to 900.
+- Setting: `ui_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
 
 ## An example configuration:
 
