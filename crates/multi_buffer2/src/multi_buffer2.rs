@@ -1,3 +1,4 @@
+use collections::HashMap;
 use gpui::{Model, ModelContext};
 use language::{Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, ReplicaId};
 use std::{
@@ -10,7 +11,7 @@ use std::{
 use sum_tree::{SeekTarget, SumTree, TreeMap};
 use text::TextSummary;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct BufferId {
     remote_id: text::BufferId,
     replica_id: ReplicaId,
@@ -18,12 +19,14 @@ struct BufferId {
 
 pub struct MultiBuffer {
     snapshot: MultiBufferSnapshot,
+    buffers: HashMap<BufferId, Model<Buffer>>,
 }
 
 impl MultiBuffer {
     pub fn new() -> Self {
         Self {
             snapshot: MultiBufferSnapshot::default(),
+            buffers: HashMap::default(),
         }
     }
 
@@ -130,6 +133,84 @@ impl MultiBuffer {
         self.check_invariants();
     }
 
+    fn sync(&mut self, cx: &mut ModelContext<Self>) {
+        let mut renames = Vec::new();
+        // let mut edits = Vec::new();
+
+        for (buffer_id, old_snapshot) in self.snapshot.buffer_snapshots.clone().iter() {
+            let new_snapshot = self.buffers[buffer_id].read(cx).snapshot();
+
+            let mut changed = false;
+
+            let old_path = old_snapshot
+                .file()
+                .map(|file| Arc::from(file.full_path(cx)));
+            let new_path = new_snapshot
+                .file()
+                .map(|file| Arc::from(file.full_path(cx)));
+            if new_path != old_path {
+                renames.push((*buffer_id, old_path, new_path));
+                changed = true;
+            }
+
+            for edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+                changed = true;
+                // edits.push((new_path.clone(), new_snapshot.clone(), edit));
+            }
+            // todo!(process edits)
+
+            if changed {
+                self.snapshot
+                    .buffer_snapshots
+                    .insert(*buffer_id, new_snapshot);
+            }
+        }
+
+        self.apply_renames(renames);
+        // self.apply_edits(edits);
+        self.check_invariants();
+    }
+
+    fn apply_renames(&mut self, renames: Vec<(BufferId, Option<Arc<Path>>, Option<Arc<Path>>)>) {
+        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+        let mut new_tree = SumTree::default();
+        let mut renamed_excerpts = Vec::new();
+        for (buffer_id, old_path, new_path) in renames {
+            let buffer_start = ExcerptOffset {
+                path: old_path.clone(),
+                buffer_id,
+                offset: 0,
+            };
+            new_tree.append(cursor.slice(&buffer_start, Bias::Right, &()), &());
+            while let Some(excerpt) = cursor.item() {
+                if excerpt.key.buffer_id == buffer_id {
+                    renamed_excerpts.push(Excerpt {
+                        key: ExcerptKey {
+                            path: new_path.clone(),
+                            buffer_id,
+                            range: excerpt.key.range.clone(),
+                        },
+                        snapshot: excerpt.snapshot.clone(),
+                        text_summary: excerpt.text_summary.clone(),
+                    });
+                    cursor.next(&());
+                } else {
+                    break;
+                }
+            }
+        }
+        new_tree.append(cursor.suffix(&()), &());
+        drop(cursor);
+        self.snapshot.excerpts = new_tree;
+    }
+
+    // fn apply_edits(&mut self, edits: Vec<(Option<Arc<Path>>, BufferId, language::Edit<usize>)>) {}
+
+    pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
+        self.sync(cx);
+        self.snapshot.clone()
+    }
+
     fn check_invariants(&self) {
         #[cfg(debug_assertions)]
         {
@@ -147,13 +228,6 @@ impl MultiBuffer {
                 cursor.next(&());
             }
         }
-    }
-
-    fn sync(&mut self, _cx: &mut ModelContext<Self>) {}
-
-    pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
-        self.sync(cx);
-        self.snapshot.clone()
     }
 }
 
@@ -183,7 +257,7 @@ fn push_excerpt(excerpts: &mut SumTree<Excerpt>, excerpt: Excerpt) {
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
-    _snapshots: TreeMap<BufferId, BufferSnapshot>,
+    buffer_snapshots: TreeMap<BufferId, BufferSnapshot>,
 }
 
 impl MultiBufferSnapshot {
