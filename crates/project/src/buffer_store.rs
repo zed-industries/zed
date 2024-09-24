@@ -65,6 +65,7 @@ pub enum BufferStoreEvent {
 
 enum BufferStoreState {
     Remote {
+        shared_with_me: HashSet<Model<Buffer>>,
         upstream_client: AnyProtoClient,
         project_id: u64,
     },
@@ -125,6 +126,7 @@ impl BufferStore {
 
         Self {
             state: BufferStoreState::Remote {
+                shared_with_me: Default::default(),
                 upstream_client,
                 project_id: remote_id,
             },
@@ -1255,6 +1257,19 @@ impl BufferStore {
                     }
                 } else if chunk.is_last {
                     self.loading_remote_buffers_by_id.remove(&buffer_id);
+                    // retain buffers sent by peers to avoid races.
+                    match &mut self.state {
+                        BufferStoreState::Remote {
+                            ref mut shared_with_me,
+                            upstream_client,
+                            ..
+                        } => {
+                            if upstream_client.is_via_collab() {
+                                shared_with_me.insert(buffer.clone());
+                            }
+                        }
+                        _ => {}
+                    }
                     self.add_buffer(buffer, cx)?;
                 }
             }
@@ -1619,6 +1634,7 @@ impl BufferStore {
             BufferStoreState::Remote {
                 upstream_client,
                 project_id,
+                ..
             } => Some((upstream_client.clone(), *project_id)),
             BufferStoreState::Local { .. } => None,
         }

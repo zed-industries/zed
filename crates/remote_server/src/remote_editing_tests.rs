@@ -535,6 +535,34 @@ async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut 
     );
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+
+    // Open a buffer on the client but cancel after a random amount of time.
+    let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx));
+    cx.executor().simulate_random_delay().await;
+    drop(buffer);
+
+    // Try opening the same buffer again as the client, and ensure we can
+    // still do it despite the cancellation above.
+    let buffer = project
+        .update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buf, _| {
+        assert_eq!(buf.text(), "fn one() -> usize { 1 }")
+    });
+}
+
 fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::try_init().ok();
