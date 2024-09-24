@@ -1601,19 +1601,19 @@ impl LspStore {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
                 action: Some(Self::serialize_code_action(&action)),
             };
-            cx.spawn(move |this, cx| async move {
+            let buffer_store = self.buffer_store();
+            cx.spawn(move |_, mut cx| async move {
                 let response = upstream_client
                     .request(request)
                     .await?
                     .transaction
                     .ok_or_else(|| anyhow!("missing transaction"))?;
-                BufferStore::deserialize_project_transaction(
-                    this.read_with(&cx, |this, _| this.buffer_store.downgrade())?,
-                    response,
-                    push_to_history,
-                    cx,
-                )
-                .await
+
+                buffer_store
+                    .update(&mut cx, |buffer_store, cx| {
+                        buffer_store.deserialize_project_transaction(response, push_to_history, cx)
+                    })?
+                    .await
             })
         } else {
             let buffer = buffer_handle.read(cx);
@@ -5062,6 +5062,7 @@ impl LspStore {
                 .spawn(this.languages.language_for_name(language_name.0.as_ref()))
                 .detach();
 
+            // host
             let adapter = this.languages.get_or_register_lsp_adapter(
                 language_name.clone(),
                 server_name.clone(),
@@ -5259,7 +5260,8 @@ impl LspStore {
                 result
             })
         } else if let Some((client, project_id)) = self.upstream_client() {
-            cx.spawn(move |this, mut cx| async move {
+            let buffer_store = self.buffer_store();
+            cx.spawn(move |_, mut cx| async move {
                 let response = client
                     .request(proto::FormatBuffers {
                         project_id,
@@ -5274,13 +5276,12 @@ impl LspStore {
                     .await?
                     .transaction
                     .ok_or_else(|| anyhow!("missing transaction"))?;
-                BufferStore::deserialize_project_transaction(
-                    this.read_with(&cx, |this, _| this.buffer_store.downgrade())?,
-                    response,
-                    push_to_history,
-                    cx,
-                )
-                .await
+
+                buffer_store
+                    .update(&mut cx, |buffer_store, cx| {
+                        buffer_store.deserialize_project_transaction(response, push_to_history, cx)
+                    })?
+                    .await
             })
         } else {
             Task::ready(Ok(ProjectTransaction::default()))
