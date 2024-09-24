@@ -1335,7 +1335,11 @@ impl EditorElement {
                         }
                         match status {
                             DiffHunkStatus::Added => {}
-                            DiffHunkStatus::Modified => {}
+                            DiffHunkStatus::Modified => {
+                                if is_expanded {
+                                    *status = DiffHunkStatus::Added;
+                                }
+                            }
                             DiffHunkStatus::Removed => {
                                 if is_expanded {
                                     return None;
