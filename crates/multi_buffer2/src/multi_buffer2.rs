@@ -80,6 +80,12 @@ impl MultiBuffer {
         }
 
         for (buffer, key) in new_excerpts {
+            if self.buffers.insert(key.buffer_id, buffer.clone()).is_none() {
+                self.snapshot
+                    .buffer_snapshots
+                    .insert(key.buffer_id, buffer.read(cx).snapshot());
+            }
+
             let start_offset = ExcerptOffset {
                 path: key.path.clone(),
                 buffer_id: key.buffer_id,
@@ -98,7 +104,11 @@ impl MultiBuffer {
                 new_tree.append(cursor.slice(&start_offset, Bias::Left, &()), &());
                 if let Some(excerpt) = cursor.item() {
                     if excerpt.key.intersects(&key) {
-                        push_excerpt(&mut new_tree, excerpt.clone());
+                        push_excerpt(
+                            &mut new_tree,
+                            &self.snapshot.buffer_snapshots,
+                            excerpt.clone(),
+                        );
                         cursor.next(&());
                     }
                 }
@@ -106,9 +116,9 @@ impl MultiBuffer {
 
             push_excerpt(
                 &mut new_tree,
+                &self.snapshot.buffer_snapshots,
                 Excerpt {
                     key: key.clone(),
-                    snapshot: buffer.read(cx).snapshot(),
                     text_summary: buffer.read(cx).text_summary_for_range(key.range.clone()),
                 },
             );
@@ -120,7 +130,11 @@ impl MultiBuffer {
                 cursor.seek(&end_offset, Bias::Left, &());
                 if let Some(excerpt) = cursor.item() {
                     if excerpt.key.intersects(&key) {
-                        push_excerpt(&mut new_tree, excerpt.clone());
+                        push_excerpt(
+                            &mut new_tree,
+                            &self.snapshot.buffer_snapshots,
+                            excerpt.clone(),
+                        );
                         cursor.next(&());
                     }
                 }
@@ -190,7 +204,6 @@ impl MultiBuffer {
                             buffer_id,
                             range: excerpt.key.range.clone(),
                         },
-                        snapshot: excerpt.snapshot.clone(),
                         text_summary: excerpt.text_summary.clone(),
                     });
                     cursor.next(&());
@@ -231,18 +244,22 @@ impl MultiBuffer {
     }
 }
 
-fn push_excerpt(excerpts: &mut SumTree<Excerpt>, excerpt: Excerpt) {
+fn push_excerpt(
+    excerpts: &mut SumTree<Excerpt>,
+    buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
+    excerpt: Excerpt,
+) {
     let mut merged = false;
     excerpts.update_last(
         |last_excerpt| {
             if last_excerpt.key.intersects(&excerpt.key) {
+                let snapshot = buffer_snapshots.get(&excerpt.key.buffer_id).unwrap();
                 last_excerpt.key.range.start =
                     cmp::min(last_excerpt.key.range.start, excerpt.key.range.start);
                 last_excerpt.key.range.end =
                     cmp::max(last_excerpt.key.range.end, excerpt.key.range.end);
-                last_excerpt.text_summary = last_excerpt
-                    .snapshot
-                    .text_summary_for_range(last_excerpt.key.range.clone());
+                last_excerpt.text_summary =
+                    snapshot.text_summary_for_range(last_excerpt.key.range.clone());
                 merged = true;
             }
         },
@@ -265,8 +282,9 @@ impl MultiBufferSnapshot {
     fn text(&self) -> String {
         let mut text = String::new();
         for excerpt in self.excerpts.iter() {
+            let snapshot = self.buffer_snapshots.get(&excerpt.key.buffer_id).unwrap();
             text.push('\n');
-            text.extend(excerpt.snapshot.text_for_range(excerpt.key.range.clone()));
+            text.extend(snapshot.text_for_range(excerpt.key.range.clone()));
         }
         text
     }
@@ -279,7 +297,6 @@ impl MultiBufferSnapshot {
 #[derive(Clone)]
 struct Excerpt {
     key: ExcerptKey,
-    snapshot: BufferSnapshot,
     text_summary: TextSummary,
 }
 
