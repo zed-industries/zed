@@ -227,10 +227,10 @@ impl ActivityIndicator {
         for status in &self.statuses {
             match status.status {
                 LanguageServerBinaryStatus::CheckingForUpdate => {
-                    checking_for_update.push(status.name.0.as_ref())
+                    checking_for_update.push(status.name.clone())
                 }
-                LanguageServerBinaryStatus::Downloading => downloading.push(status.name.0.as_ref()),
-                LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.0.as_ref()),
+                LanguageServerBinaryStatus::Downloading => downloading.push(status.name.clone()),
+                LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.clone()),
                 LanguageServerBinaryStatus::None => {}
             }
         }
@@ -242,8 +242,22 @@ impl ActivityIndicator {
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
-                message: format!("Downloading {}...", downloading.join(", "),),
-                on_click: Some(Arc::new(|this, cx| {
+                message: format!(
+                    "Downloading {}...",
+                    downloading.iter().map(|name| name.0.as_ref()).fold(
+                        String::new(),
+                        |mut acc, s| {
+                            if !acc.is_empty() {
+                                acc.push_str(", ");
+                            }
+                            acc.push_str(s);
+                            acc
+                        }
+                    )
+                ),
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.statuses
+                        .retain(|status| !downloading.contains(&status.name));
                     this.dismiss_error_message(&DismissErrorMessage, cx)
                 })),
             });
@@ -258,9 +272,20 @@ impl ActivityIndicator {
                 ),
                 message: format!(
                     "Checking for updates to {}...",
-                    checking_for_update.join(", "),
+                    checking_for_update.iter().map(|name| name.0.as_ref()).fold(
+                        String::new(),
+                        |mut acc, s| {
+                            if !acc.is_empty() {
+                                acc.push_str(", ");
+                            }
+                            acc.push_str(s);
+                            acc
+                        }
+                    ),
                 ),
-                on_click: Some(Arc::new(|this, cx| {
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.statuses
+                        .retain(|status| !checking_for_update.contains(&status.name));
                     this.dismiss_error_message(&DismissErrorMessage, cx)
                 })),
             });
@@ -275,7 +300,16 @@ impl ActivityIndicator {
                 ),
                 message: format!(
                     "Failed to download {}. Click to show error.",
-                    failed.join(", "),
+                    failed
+                        .iter()
+                        .map(|name| name.0.as_ref())
+                        .fold(String::new(), |mut acc, s| {
+                            if !acc.is_empty() {
+                                acc.push_str(", ");
+                            }
+                            acc.push_str(s);
+                            acc
+                        }),
                 ),
                 on_click: Some(Arc::new(|this, cx| {
                     this.show_error_message(&Default::default(), cx)
