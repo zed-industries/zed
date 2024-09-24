@@ -243,7 +243,9 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!("Downloading {}...", downloading.join(", "),),
-                on_click: None,
+                on_click: Some(Arc::new(|this, cx| {
+                    this.dismiss_error_message(&DismissErrorMessage, cx)
+                })),
             });
         }
 
@@ -258,7 +260,9 @@ impl ActivityIndicator {
                     "Checking for updates to {}...",
                     checking_for_update.join(", "),
                 ),
-                on_click: None,
+                on_click: Some(Arc::new(|this, cx| {
+                    this.dismiss_error_message(&DismissErrorMessage, cx)
+                })),
             });
         }
 
@@ -304,7 +308,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: "Checking for Zed updates…".to_string(),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 }),
                 AutoUpdateStatus::Downloading => Some(Content {
                     icon: Some(
@@ -313,7 +319,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: "Downloading Zed update…".to_string(),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 }),
                 AutoUpdateStatus::Installing => Some(Content {
                     icon: Some(
@@ -322,7 +330,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: "Installing Zed update…".to_string(),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 }),
                 AutoUpdateStatus::Updated { binary_path } => Some(Content {
                     icon: None,
@@ -342,7 +352,7 @@ impl ActivityIndicator {
                     ),
                     message: "Auto update failed".to_string(),
                     on_click: Some(Arc::new(|this, cx| {
-                        this.dismiss_error_message(&Default::default(), cx)
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
                     })),
                 }),
                 AutoUpdateStatus::Idle => None,
@@ -360,7 +370,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: format!("Updating {extension_id} extension…"),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 });
             }
         }
