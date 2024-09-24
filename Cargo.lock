@@ -10993,6 +10993,7 @@ dependencies = [
  "text",
  "theme",
  "ui",
+ "unicode-segmentation",
  "util",
  "windows 0.58.0",
 ]
