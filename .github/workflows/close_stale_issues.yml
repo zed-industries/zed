@@ -25,7 +25,7 @@ jobs:
           days-before-stale: 180
           days-before-close: 7
           any-of-issue-labels: "defect,panic / crash"
-          operations-per-run: 200
+          operations-per-run: 1000
           ascending: true
           enable-statistics: true
           stale-issue-label: "stale"
