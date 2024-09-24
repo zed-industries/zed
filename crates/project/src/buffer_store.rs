@@ -77,6 +77,7 @@ struct LocalBufferStore {
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
     buffer_store: WeakModel<BufferStore>,
+    worktree_store: Model<WorktreeStore>,
     _subscription: Subscription,
 }
 
@@ -119,17 +120,23 @@ impl RemoteBufferStore {
         id: BufferId,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
-        if let Some(buffer) = self
-            .buffer_store
-            .update(cx, |buffer_store, _| buffer_store.get(id))
-            .ok()
-            .flatten()
-        {
-            return Task::ready(Ok(buffer));
-        }
+        let buffer_store = self.buffer_store.clone();
         let (tx, rx) = oneshot::channel();
         self.remote_buffer_listeners.entry(id).or_default().push(tx);
-        cx.background_executor().spawn(async move { rx.await? })
+
+        cx.spawn(|cx| async move {
+            if let Some(buffer) = buffer_store
+                .read_with(&cx, |buffer_store, _| buffer_store.get(id))
+                .ok()
+                .flatten()
+            {
+                return Ok(buffer);
+            }
+
+            cx.background_executor()
+                .spawn(async move { rx.await? })
+                .await
+        })
     }
 
     fn save_remote_buffer(
@@ -245,6 +252,12 @@ impl RemoteBufferStore {
                         // retain buffers sent by peers to avoid races.
                         self.shared_with_me.insert(buffer.clone());
                     }
+
+                    if let Some(senders) = self.remote_buffer_listeners.remove(&buffer_id) {
+                        for sender in senders {
+                            sender.send(Ok(buffer.clone())).ok();
+                        }
+                    }
                     return Ok(Some(buffer));
                 }
             }
@@ -354,19 +367,6 @@ impl BufferStoreImpl for Model<RemoteBufferStore> {
                     })?
                     .await?;
 
-                this.update(&mut cx, |this, cx| {
-                    this.buffer_store.update(cx, |buffer_store, cx| {
-                        buffer_store.add_buffer(buffer.clone(), cx)
-                    })??;
-
-                    if let Some(senders) = this.remote_buffer_listeners.remove(&buffer_id) {
-                        for sender in senders {
-                            sender.send(Ok(buffer.clone())).ok();
-                        }
-                    }
-                    anyhow::Ok(())
-                })??;
-
                 Ok(buffer)
             })
         })
@@ -422,16 +422,12 @@ impl LocalBufferStore {
     fn save_local_buffer(
         &self,
         buffer_handle: Model<Buffer>,
-        path: Option<Arc<Path>>,
+        worktree: Model<Worktree>,
+        path: Arc<Path>,
+        mut has_changed_file: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
-        let Some(file) = File::from_dyn(buffer.file()) else {
-            return Task::ready(Err(anyhow!("buffer doesn't have a file")));
-        };
-        let mut has_changed_file = path == None;
-        let path = path.unwrap_or_else(|| file.path.clone());
-        let worktree = file.worktree.clone();
 
         let text = buffer.as_rope().clone();
         let line_ending = buffer.line_ending();
@@ -802,7 +798,13 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
         buffer: Model<Buffer>,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<()>> {
-        self.update(cx, |this, cx| this.save_local_buffer(buffer, None, cx))
+        self.update(cx, |this, cx| {
+            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+                return Task::ready(Err(anyhow!("buffer doesn't have a file")));
+            };
+            let worktree = file.worktree.clone();
+            this.save_local_buffer(buffer, worktree, file.path.clone(), false, cx)
+        })
     }
 
     fn save_buffer_as(
@@ -812,7 +814,14 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<()>> {
         self.update(cx, |this, cx| {
-            this.save_local_buffer(buffer, Some(path.path), cx)
+            let Some(worktree) = this
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(path.worktree_id, cx)
+            else {
+                return Task::ready(Err(anyhow!("no such worktree")));
+            };
+            this.save_local_buffer(buffer, worktree, path.path.clone(), true, cx)
         })
     }
 
@@ -982,6 +991,7 @@ impl BufferStore {
                     local_buffer_ids_by_path: Default::default(),
                     local_buffer_ids_by_entry_id: Default::default(),
                     buffer_store: this,
+                    worktree_store: worktree_store.clone(),
                     _subscription: subscription,
                 }
             })),

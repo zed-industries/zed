@@ -3,6 +3,7 @@ use call::ActiveCall;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
 use language::language_settings::all_language_settings;
+use project::ProjectPath;
 use remote::SshSession;
 use remote_server::HeadlessProject;
 use serde_json::json;
@@ -110,10 +111,10 @@ async fn test_sharing_an_ssh_remote_project(
     project_b
         .update(cx_b, |project, cx| {
             project.save_buffer_as(
-                buffer_b,
+                buffer_b.clone(),
                 ProjectPath {
                     worktree_id: worktree_id.to_owned(),
-                    path: Path::new("/code/project1/src/renamed.rs"),
+                    path: Arc::from(Path::new("/code/project1/src/renamed.rs")),
                 },
                 cx,
             )
@@ -127,12 +128,17 @@ async fn test_sharing_an_ssh_remote_project(
             .unwrap(),
         "fn one() -> usize { 100 }"
     );
-    cx.run_until_parked();
-    cx.update(|cx| {
+    cx_b.run_until_parked();
+    cx_b.update(|cx| {
         assert_eq!(
-            buffer.read(cx).file().abs_path(),
-            "/code/project1/src/renamed.rs"
+            buffer_b
+                .read(cx)
+                .file()
+                .unwrap()
+                .path()
+                .to_string_lossy()
+                .to_string(),
+            "/code/project1/src/renamed.rs".to_string()
         );
     });
-    assert_eq()
 }

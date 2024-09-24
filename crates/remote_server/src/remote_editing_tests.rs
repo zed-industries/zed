@@ -56,6 +56,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         })
         .await
         .unwrap();
+
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         assert_eq!(
