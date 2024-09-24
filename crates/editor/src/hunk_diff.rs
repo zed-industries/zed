@@ -279,8 +279,12 @@ impl Editor {
                                 ..Point::new(remaining_hunk.row_range.end.0, 0);
                         hunks_to_expand.push(HoveredHunk {
                             status: hunk_status(&remaining_hunk),
-                            multi_buffer_range: remaining_hunk_point_range
-                                .to_anchors(&snapshot.buffer_snapshot),
+                            multi_buffer_range: snapshot
+                                .buffer_snapshot
+                                .anchor_before(remaining_hunk_point_range.start)
+                                ..snapshot
+                                    .buffer_snapshot
+                                    .anchor_after(remaining_hunk_point_range.end),
                             diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
                         });
                     }
