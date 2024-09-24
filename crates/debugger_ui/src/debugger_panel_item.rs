@@ -566,7 +566,7 @@ impl Render for DebugPanelItem {
                                 IconButton::new("debug-step-in", IconName::DebugStepInto)
                                     .icon_size(IconSize::Small)
                                     .on_click(cx.listener(|this, _, cx| {
-                                        this.step_over(cx);
+                                        this.step_in(cx);
                                     }))
                                     .disabled(thread_status != ThreadStatus::Stopped)
                                     .tooltip(move |cx| Tooltip::text("Step in", cx)),
