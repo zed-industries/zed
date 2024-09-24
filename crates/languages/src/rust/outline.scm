@@ -4,8 +4,7 @@
 (struct_item
     (visibility_modifier)? @context
     "struct" @context
-    name: (_) @name
-    body: (_ "{" @open (_)* "}" @close)) @item
+    name: (_) @name) @item
 
 (enum_item
     (visibility_modifier)? @context
