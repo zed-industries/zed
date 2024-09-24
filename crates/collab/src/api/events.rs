@@ -369,6 +369,10 @@ fn report_to_slack(panic: &Panic) -> bool {
             return false;
         }
 
+        if panic.payload.contains("ERROR_INITIALIZATION_FAILED") {
+            return false;
+        }
+
         if panic
             .payload
             .contains("GPU has crashed, and no debug information is available")
