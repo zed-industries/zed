@@ -6,14 +6,14 @@ use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, merge_json_value_into, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -212,11 +212,12 @@ impl LspAdapter for VtslsLspAdapter {
         })
     }
 
-    async fn initialization_options(
+    async fn workspace_configuration(
         self: Arc<Self>,
-        adapter: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(adapter).await;
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let tsdk_path = Self::tsdk_path(delegate).await;
         let config = serde_json::json!({
             "tsdk": tsdk_path,
             "suggest": {
@@ -243,10 +244,13 @@ impl LspAdapter for VtslsLspAdapter {
                 "enumMemberValues": {
                     "enabled": true
                 }
-            }
+            },
+            "tsserver": {
+                "maxTsServerMemory": 8092
+            },
         });
 
-        Ok(Some(json!({
+        let mut default_workspace_configuration = serde_json::json!({
             "typescript": config,
             "javascript": config,
             "vtsls": {
@@ -258,33 +262,18 @@ impl LspAdapter for VtslsLspAdapter {
                 },
                "autoUseWorkspaceTsdk": true
             }
-        })))
-    }
+        });
 
-    async fn workspace_configuration(
-        self: Arc<Self>,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Value> {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
         })?;
 
-        if let Some(options) = override_options {
-            return Ok(options);
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut default_workspace_configuration)
         }
 
-        let config = serde_json::json!({
-            "tsserver": {
-                "maxTsServerMemory": 8092
-            },
-        });
-
-        Ok(serde_json::json!({
-            "typescript": config,
-            "javascript": config
-        }))
+        Ok(default_workspace_configuration)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
