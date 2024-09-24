@@ -158,11 +158,10 @@ impl MultiBuffer {
 }
 
 fn push_excerpt(excerpts: &mut SumTree<Excerpt>, excerpt: Excerpt) {
-    let mut excerpt = Some(excerpt);
+    let mut merged = false;
     excerpts.update_last(
         |last_excerpt| {
-            if last_excerpt.key.intersects(&excerpt.as_ref().unwrap().key) {
-                let excerpt = excerpt.take().unwrap();
+            if last_excerpt.key.intersects(&excerpt.key) {
                 last_excerpt.key.range.start =
                     cmp::min(last_excerpt.key.range.start, excerpt.key.range.start);
                 last_excerpt.key.range.end =
@@ -170,12 +169,13 @@ fn push_excerpt(excerpts: &mut SumTree<Excerpt>, excerpt: Excerpt) {
                 last_excerpt.text_summary = last_excerpt
                     .snapshot
                     .text_summary_for_range(last_excerpt.key.range.clone());
+                merged = true;
             }
         },
         &(),
     );
 
-    if let Some(excerpt) = excerpt {
+    if !merged {
         excerpts.push(excerpt, &());
     }
 }
