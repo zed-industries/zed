@@ -6,6 +6,7 @@ mod project_index;
 mod project_index_debug_view;
 mod summary_backlog;
 mod summary_index;
+mod tfidf_index;
 mod worktree_index;
 
 use anyhow::{Context as _, Result};

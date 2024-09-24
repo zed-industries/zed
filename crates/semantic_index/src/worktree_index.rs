@@ -2,6 +2,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::embedding_index::EmbeddingIndex;
 use crate::indexing::IndexingEntrySet;
 use crate::summary_index::SummaryIndex;
+use crate::tfidf_index::TfidfIndex;
 use anyhow::Result;
 use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
@@ -14,6 +15,7 @@ use log;
 use project::{UpdatedEntriesSet, Worktree};
 use smol::channel;
 use std::sync::Arc;
+use tokenizers::tokenizer::Tokenizer;
 use util::ResultExt;
 
 #[derive(Clone)]
@@ -31,6 +33,7 @@ pub struct WorktreeIndex {
     db_connection: heed::Env,
     embedding_index: EmbeddingIndex,
     summary_index: SummaryIndex,
+    tfidf_index: TfidfIndex,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
     _index_entries: Task<Result<()>>,
     _subscription: Subscription,
@@ -48,12 +51,14 @@ impl WorktreeIndex {
     ) -> Task<Result<Model<Self>>> {
         let worktree_for_index = worktree.clone();
         let worktree_for_summary = worktree.clone();
+        let worktree_for_embedding = worktree.clone();
         let worktree_abs_path = worktree.read(cx).abs_path();
         let embedding_fs = Arc::clone(&fs);
         let summary_fs = fs;
+        let tfidf_fs = fs;
         cx.spawn(|mut cx| async move {
             let entries_being_indexed = Arc::new(IndexingEntrySet::new(status_tx));
-            let (embedding_index, summary_index) = cx
+            let (embedding_index, summary_index, tfidf_index) = cx
                 .background_executor()
                 .spawn({
                     let entries_being_indexed = Arc::clone(&entries_being_indexed);
@@ -65,7 +70,7 @@ impl WorktreeIndex {
                             let db = db_connection.create_database(&mut txn, Some(&db_name))?;
 
                             EmbeddingIndex::new(
-                                worktree_for_index,
+                                worktree_for_embedding,
                                 embedding_fs,
                                 db_connection.clone(),
                                 db,
@@ -100,8 +105,24 @@ impl WorktreeIndex {
                                 Arc::clone(&entries_being_indexed),
                             )
                         };
+                        let tfidf_index = {
+                            let tfidf_db = {
+                                let db_name =
+                                    format!("tfidfstat-{}", worktree_abs_path.to_string_lossy());
+                                db_connection.create_database(&mut txn, Some(&db_name))?
+                            };
+                            let tokenizer =
+                                Tokenizer::from_pretrained("meta-llama/Meta-Llama-3.1-8B");
+                            TfidfIndex::new(
+                                worktree_for_index,
+                                tfidf_fs,
+                                db_connection.clone(),
+                                tfidf_db,
+                                tokenizer,
+                            )
+                        };
                         txn.commit()?;
-                        anyhow::Ok((embedding_index, summary_index))
+                        anyhow::Ok((embedding_index, summary_index, tfidf_index))
                     }
                 })
                 .await?;
@@ -112,6 +133,7 @@ impl WorktreeIndex {
                     db_connection,
                     embedding_index,
                     summary_index,
+                    tfidf_index,
                     entries_being_indexed,
                     cx,
                 )
@@ -125,6 +147,7 @@ impl WorktreeIndex {
         db_connection: heed::Env,
         embedding_index: EmbeddingIndex,
         summary_index: SummaryIndex,
+        tfidf_index: TfidfIndex,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -140,6 +163,7 @@ impl WorktreeIndex {
             db_connection,
             embedding_index,
             summary_index,
+            tfidf_index,
             worktree,
             entry_ids_being_indexed,
             _index_entries: cx.spawn(|this, cx| Self::index_entries(this, updated_entries_rx, cx)),

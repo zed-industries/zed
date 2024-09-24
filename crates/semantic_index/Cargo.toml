@@ -43,6 +43,7 @@ serde_json.workspace = true
 sha2.workspace = true
 smol.workspace = true
 theme.workspace = true
+tokenizers.workspace = true
 tree-sitter.workspace = true
 ui. workspace = true
 util. workspace = true
