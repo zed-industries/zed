@@ -884,7 +884,7 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || (project.is_local_or_ssh() && history_item.absolute.is_some())
+                            || (project.is_local() && history_item.absolute.is_some())
                     }),
                     self.currently_opened_path.as_ref(),
                     None,

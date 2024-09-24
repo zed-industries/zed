@@ -487,7 +487,7 @@ impl DirectoryLister {
     pub fn is_local(&self, cx: &AppContext) -> bool {
         match self {
             DirectoryLister::Local(_) => true,
-            DirectoryLister::Project(project) => project.read(cx).is_local_or_ssh(),
+            DirectoryLister::Project(project) => project.read(cx).is_local(),
         }
     }
 
@@ -1213,10 +1213,6 @@ impl Project {
     }
 
     pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
-        if self.is_local_or_ssh() {
-            return None;
-        }
-
         let dev_server_id = self.dev_server_project_id()?;
         dev_server_projects::Store::global(cx)
             .read(cx)
@@ -1857,7 +1853,7 @@ impl Project {
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let is_local = this.update(&mut cx, |this, _| this.is_local_or_ssh())?;
+            let is_local = this.update(&mut cx, |this, _| this.is_local())?;
 
             for change in changes {
                 match change {
@@ -2001,7 +1997,7 @@ impl Project {
                 language_server_id,
                 message,
             } => {
-                if self.is_local_or_ssh() {
+                if self.is_local() {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,
@@ -3039,8 +3035,19 @@ impl Project {
         query: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<PathBuf>>> {
-        if self.is_local_or_ssh() {
+        if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
+        } else if let Some(session) = self.ssh_session.as_ref() {
+            let request = proto::ListRemoteDirectory {
+                dev_server_id: SSH_PROJECT_ID,
+                path: query,
+            };
+
+            let response = session.request(request);
+            cx.background_executor().spawn(async move {
+                let response = response.await?;
+                Ok(response.entries.into_iter().map(PathBuf::from).collect())
+            })
         } else if let Some(dev_server) = self.dev_server_project_id().and_then(|id| {
             dev_server_projects::Store::global(cx)
                 .read(cx)
