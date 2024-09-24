@@ -2722,10 +2722,13 @@ impl Render for ProjectPanel {
                             }
                         }))
                 })
-                .when(project.is_local_or_ssh(), |el| {
+                .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
+                })
+                .when(project.is_via_ssh(), |el| {
+                    el.on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(
                     MouseButton::Right,

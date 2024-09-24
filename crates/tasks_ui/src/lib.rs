@@ -94,7 +94,7 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
         workspace
             .update(&mut cx, |workspace, cx| {
                 if workspace.project().update(cx, |project, cx| {
-                    project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
+                    project.is_local() || project.ssh_connection_string(cx).is_some()
                 }) {
                     workspace.toggle_modal(cx, |cx| {
                         TasksModal::new(project, task_context, workspace_handle, cx)

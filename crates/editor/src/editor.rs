@@ -11819,7 +11819,7 @@ impl Editor {
                             .filter_map(|buffer| {
                                 let buffer = buffer.read(cx);
                                 let language = buffer.language()?;
-                                if project.is_local_or_ssh()
+                                if project.is_local()
                                     && project.language_servers_for_buffer(buffer, cx).count() == 0
                                 {
                                     None

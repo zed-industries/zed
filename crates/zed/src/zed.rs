@@ -230,7 +230,7 @@ pub fn initialize_workspace(
 
         let project = workspace.project().clone();
         if project.update(cx, |project, cx| {
-            project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
+            project.is_local() || project.is_via_ssh() || project.ssh_connection_string(cx).is_some()
         }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();

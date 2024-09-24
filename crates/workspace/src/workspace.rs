@@ -1891,7 +1891,11 @@ impl Workspace {
                 directories: true,
                 multiple: true,
             },
-            DirectoryLister::Local(self.app_state.fs.clone()),
+            if self.project.read(cx).is_via_ssh() {
+                DirectoryLister::Project(self.project.clone())
+            } else {
+                DirectoryLister::Local(self.app_state.fs.clone())
+            },
             cx,
         );
 
@@ -3956,7 +3960,7 @@ impl Workspace {
     fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
-        if project.is_local_or_ssh() {
+        if project.is_local() {
             Some(
                 project
                     .visible_worktrees(cx)
@@ -5160,7 +5164,7 @@ async fn join_channel_internal(
                         return None;
                     }
 
-                    if (project.is_local_or_ssh() || is_dev_server)
+                    if (project.is_local() || project.is_via_ssh() || is_dev_server)
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -5314,7 +5318,7 @@ pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> 
         .filter(|workspace| {
             workspace
                 .read(cx)
-                .is_ok_and(|workspace| workspace.project.read(cx).is_local_or_ssh())
+                .is_ok_and(|workspace| workspace.project.read(cx).is_local())
         })
         .collect()
 }
