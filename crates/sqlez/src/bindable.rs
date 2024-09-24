@@ -406,8 +406,8 @@ impl Column for BreakpointKind {
     fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
         let kind = statement.column_int(start_index)?;
         match kind {
-            -1 => Ok((BreakpointKind::Standard, start_index + 2)),
-            0 => {
+            0 => Ok((BreakpointKind::Standard, start_index + 2)),
+            1 => {
                 let message = statement.column_text(start_index + 1)?.to_string();
                 Ok((BreakpointKind::Log(message.into()), start_index + 1))
             }
