@@ -247,7 +247,6 @@ impl Editor {
                                     display_row_range,
                                     multi_buffer_range,
                                     status,
-                                    ..
                                 } => {
                                     let hunk_to_toggle_row_range = display_row_range;
                                     if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end
@@ -415,9 +414,6 @@ impl Editor {
                 style: BlockStyle::Flex,
                 disposition: BlockDisposition::Above,
                 render: Box::new(move |cx| {
-                    // let Some(gutter_bounds) = editor.read(cx).gutter_bounds() else {
-                    //     return div().into_any_element();
-                    // };
                     let width = EditorElement::diff_hunk_strip_width(cx.line_height());
                     let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 
