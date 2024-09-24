@@ -46,12 +46,11 @@ pub struct BufferStore {
     loading_remote_buffers_by_id: HashMap<BufferId, Model<Buffer>>,
     remote_buffer_listeners:
         HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
-    shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
+    shared_buffers: HashMap<proto::PeerId, HashSet<Model<Buffer>>>,
 }
 
 enum OpenBuffer {
-    Strong(Model<Buffer>),
-    Weak(WeakModel<Buffer>),
+    Buffer(WeakModel<Buffer>),
     Operations(Vec<Operation>),
 }
 
@@ -650,11 +649,7 @@ impl BufferStore {
     fn add_buffer(&mut self, buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Result<()> {
         let remote_id = buffer.read(cx).remote_id();
         let is_remote = buffer.read(cx).replica_id() != 0;
-        let open_buffer = if self.should_retain_buffers() {
-            OpenBuffer::Strong(buffer.clone())
-        } else {
-            OpenBuffer::Weak(buffer.downgrade())
-        };
+        let open_buffer = OpenBuffer::Buffer(buffer.downgrade());
 
         let handle = cx.handle().downgrade();
         buffer.update(cx, move |_, cx| {
@@ -818,22 +813,11 @@ impl BufferStore {
         _cx: &mut AppContext,
     ) {
         self.downstream_client = Some((downstream_client, remote_id));
-        if self.should_retain_buffers() {
-            for open_buffer in self.opened_buffers.values_mut() {
-                if let OpenBuffer::Weak(buffer) = open_buffer {
-                    if let Some(buffer) = buffer.upgrade() {
-                        *open_buffer = OpenBuffer::Strong(buffer);
-                    }
-                }
-            }
-        }
     }
 
-    pub fn unshared(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn unshared(&mut self, _cx: &mut ModelContext<Self>) {
         self.downstream_client.take();
-        if !self.should_retain_buffers() {
-            self.drop_unnecessary_buffers(cx);
-        }
+        self.forget_shared_buffers();
     }
 
     fn drop_unnecessary_buffers(&mut self, cx: &mut AppContext) {
@@ -841,21 +825,6 @@ impl BufferStore {
             if let Some(buffer) = open_buffer.upgrade() {
                 buffer.update(cx, |buffer, _| buffer.give_up_waiting());
             }
-            if let OpenBuffer::Strong(buffer) = open_buffer {
-                *open_buffer = OpenBuffer::Weak(buffer.downgrade());
-            }
-        }
-    }
-
-    fn should_retain_buffers(&self) -> bool {
-        match &self.state {
-            BufferStoreState::Remote {
-                upstream_client, ..
-            } if upstream_client.is_via_collab() => true,
-            _ => self
-                .downstream_client
-                .as_ref()
-                .is_some_and(|(client, _)| client.is_via_collab()),
         }
     }
 
@@ -1109,11 +1078,8 @@ impl BufferStore {
         this.update(&mut cx, |this, cx| {
             match this.opened_buffers.entry(buffer_id) {
                 hash_map::Entry::Occupied(mut e) => match e.get_mut() {
-                    OpenBuffer::Strong(buffer) => {
-                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
-                    }
                     OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
-                    OpenBuffer::Weak(buffer) => {
+                    OpenBuffer::Buffer(buffer) => {
                         if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
                         }
@@ -1149,7 +1115,7 @@ impl BufferStore {
                 self.shared_buffers
                     .entry(guest_id)
                     .or_default()
-                    .insert(buffer_id);
+                    .insert(buffer.clone());
 
                 let buffer = buffer.read(cx);
                 response.buffers.push(proto::BufferVersion {
@@ -1402,12 +1368,14 @@ impl BufferStore {
         let peer_id = envelope.sender_id;
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         this.update(&mut cx, |this, _| {
-            if let Some(shared) = this.shared_buffers.get_mut(&peer_id) {
-                if shared.remove(&buffer_id) {
-                    if shared.is_empty() {
-                        this.shared_buffers.remove(&peer_id);
+            if let Some(buffer) = this.get(buffer_id) {
+                if let Some(shared) = this.shared_buffers.get_mut(&peer_id) {
+                    if shared.remove(&buffer) {
+                        if shared.is_empty() {
+                            this.shared_buffers.remove(&peer_id);
+                        }
+                        return;
                     }
-                    return;
                 }
             };
             debug_panic!(
@@ -1594,7 +1562,7 @@ impl BufferStore {
             .shared_buffers
             .entry(peer_id)
             .or_default()
-            .insert(buffer_id)
+            .insert(buffer.clone())
         {
             return Task::ready(Ok(()));
         }
@@ -1670,7 +1638,7 @@ impl BufferStore {
         }
     }
 
-    pub fn shared_buffers(&self) -> &HashMap<proto::PeerId, HashSet<BufferId>> {
+    pub fn shared_buffers(&self) -> &HashMap<proto::PeerId, HashSet<Model<Buffer>>> {
         &self.shared_buffers
     }
 
@@ -1736,8 +1704,7 @@ impl BufferStore {
 impl OpenBuffer {
     fn upgrade(&self) -> Option<Model<Buffer>> {
         match self {
-            OpenBuffer::Strong(handle) => Some(handle.clone()),
-            OpenBuffer::Weak(handle) => handle.upgrade(),
+            OpenBuffer::Buffer(handle) => handle.upgrade(),
             OpenBuffer::Operations(_) => None,
         }
     }
