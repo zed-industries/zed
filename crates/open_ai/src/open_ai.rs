@@ -495,6 +495,9 @@ pub struct OpenAiEmbedding {
     pub embedding: Vec<f32>,
 }
 
+// We've seen embeddings time out with the default timeout.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub fn embed<'a>(
     client: &dyn HttpClient,
     api_url: &str,
@@ -512,6 +515,7 @@ pub fn embed<'a>(
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
+        .timeout(HTTP_TIMEOUT)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .body(body)

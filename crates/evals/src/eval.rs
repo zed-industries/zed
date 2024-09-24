@@ -110,7 +110,7 @@ fn main() -> Result<()> {
                     .clone()
                     .spawn(async move {
                         if let Err(err) = fetch_evaluation_resources(client, &executor).await {
-                            eprintln!("Error: {}", err);
+                            eprintln!("Error fetching eval resources: {}", err);
                             exit(1);
                         }
                         exit(0);
@@ -120,7 +120,7 @@ fn main() -> Result<()> {
             Commands::Run { repo } => {
                 cx.spawn(|mut cx| async move {
                     if let Err(err) = run_evaluation(repo, &executor, &mut cx).await {
-                        eprintln!("Error: {}", err);
+                        eprintln!("Error running eval: {}", err);
                         exit(1);
                     }
                     exit(0);
@@ -296,8 +296,8 @@ async fn run_evaluation(
         .unwrap();
     let node_runtime = NodeRuntime::unavailable();
 
-    let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
-    let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).unwrap();
+    let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json - run `cargo run -p evals --bin eval fetch` to fetch evaluations.json.");
+    let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).expect("evaluations.json was not valid JSON. It may have been corrupted; try deleting it and then running `cargo run -p evals --bin eval fetch` to fetch a new copy.");
 
     let embedding_provider = Arc::new(OpenAiEmbeddingProvider::new(
         http_client.clone(),
@@ -324,7 +324,7 @@ async fn run_evaluation(
         }
 
         eprint!("\r\x1B[2K");
-        eprint!(
+        eprintln!(
             "Running evals. {}/{} covered. {}/{} overlapped. {}/{} files captured. Project: {}...",
             counts.covered_results,
             counts.total_results,
