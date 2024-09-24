@@ -22,7 +22,7 @@ pub struct ProjectPanelSettings {
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
-    pub show_diagnostic_errors: bool,
+    pub show_diagnostics: ShowDiagnostics,
 }
 
 /// When to show the scrollbar in the project panel.
@@ -52,6 +52,21 @@ pub struct ScrollbarSettingsContent {
     ///
     /// Default: always
     pub show: Option<ShowScrollbar>,
+}
+
+/// Which files to mark containing diagnostic errors/warnings in the project panel.
+///
+/// Default: errors
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowDiagnostics {
+    /// Never mark the diagnostic errors/warnings in the project panel.
+    Off,
+    /// Mark files containing diagnostic errors or warnings in the project panel.
+    All,
+    #[default]
+    /// Mark files containing diagnostic errors in the project panel.
+    Errors,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -97,10 +112,10 @@ pub struct ProjectPanelSettingsContent {
     pub auto_fold_dirs: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
-    /// Whether to mark the files containing diagnostic errors in the project panel.
+    /// Which files to mark containing diagnostic errors/warnings in the project panel.
     ///
-    /// Default: true
-    pub show_diagnostic_errors: Option<bool>,
+    /// Default: errors
+    pub show_diagnostics: Option<ShowDiagnostics>,
 }
 
 impl Settings for ProjectPanelSettings {

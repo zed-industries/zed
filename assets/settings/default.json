@@ -358,8 +358,10 @@
       /// Default: always
       "show": "always"
     },
-    /// Whether to show errors in the project panel.
-    "show_diagnostic_errors": true
+    /// Which files to mark containing diagnostic errors/warnings in the project panel.
+    ///
+    /// Default: "errors"
+    "show_diagnostics": "errors"
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

@@ -1,6 +1,7 @@
 mod project_panel_settings;
 mod scrollbar;
 use client::{ErrorCode, ErrorExt};
+use language::DiagnosticSeverity;
 use scrollbar::ProjectPanelScrollbar;
 use settings::{Settings, SettingsStore};
 
@@ -29,7 +30,9 @@ use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
+use project_panel_settings::{
+    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowScrollbar,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Cell, OnceCell},
@@ -82,7 +85,7 @@ pub struct ProjectPanel {
     show_scrollbar: bool,
     scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     hide_scrollbar_task: Option<Task<()>>,
-    diagnostic_error_paths: HashSet<PathBuf>,
+    diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
 }
 
 #[derive(Clone, Debug)]
@@ -114,7 +117,7 @@ struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
-    is_diagnostic_error: bool,
+    diagnostics_color: Option<Color>,
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
@@ -241,7 +244,8 @@ impl ProjectPanel {
                 }
                 project::Event::DiskBasedDiagnosticsFinished { .. }
                 | project::Event::DiagnosticsUpdated { .. } => {
-                    if ProjectPanelSettings::get_global(cx).show_diagnostic_errors {
+                    if ProjectPanelSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off
+                    {
                         this.update_diagnostics(cx);
                         cx.notify();
                     }
@@ -291,10 +295,12 @@ impl ProjectPanel {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
-                    if new_settings.show_diagnostic_errors
-                        && !project_panel_settings.show_diagnostic_errors
-                    {
-                        this.update_diagnostics(cx);
+                    if new_settings.show_diagnostics != project_panel_settings.show_diagnostics {
+                        if new_settings.show_diagnostics != ShowDiagnostics::Off {
+                            this.update_diagnostics(cx);
+                        } else {
+                            this.diagnostics = Default::default();
+                        }
                     }
                     project_panel_settings = new_settings;
                     cx.notify();
@@ -326,7 +332,7 @@ impl ProjectPanel {
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 scrollbar_drag_thumb_offset: Default::default(),
-                diagnostic_error_paths: Default::default(),
+                diagnostics: Default::default(),
             };
             this.update_visible_entries(None, cx);
 
@@ -449,30 +455,53 @@ impl ProjectPanel {
     }
 
     fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
-        self.diagnostic_error_paths = self
-            .project
+        let show_warnings =
+            ProjectPanelSettings::get_global(cx).show_diagnostics == ShowDiagnostics::All;
+        self.diagnostics = Default::default();
+        self.project
             .read(cx)
             .diagnostic_summaries(false, cx)
             .filter_map(|(path, _, diagnostic_summary)| {
                 if diagnostic_summary.error_count > 0 {
-                    Some(path)
+                    Some((path, DiagnosticSeverity::ERROR))
+                } else if show_warnings && diagnostic_summary.warning_count > 0 {
+                    Some((path, DiagnosticSeverity::WARNING))
                 } else {
                     None
                 }
             })
-            .flat_map(|project_path| {
-                let mut path_buf = PathBuf::new();
-                project_path
-                    .path
-                    .components()
-                    .map(|component| {
-                        path_buf.push(component);
-                        path_buf.clone()
-                    })
-                    .chain(std::iter::once(PathBuf::from("")))
-                    .collect::<Vec<_>>()
+            .for_each(|(project_path, diagnostic_severity)| {
+                let mut path_buffer = PathBuf::new();
+                self.update_highest_diagnostic_severity(
+                    &project_path,
+                    path_buffer.clone(),
+                    diagnostic_severity,
+                );
+
+                for component in project_path.path.components() {
+                    path_buffer.push(component);
+                    self.update_highest_diagnostic_severity(
+                        &project_path,
+                        path_buffer.clone(),
+                        diagnostic_severity,
+                    );
+                }
+            });
+    }
+
+    fn update_highest_diagnostic_severity(
+        &mut self,
+        project_path: &ProjectPath,
+        path_buffer: PathBuf,
+        diagnostic_severity: DiagnosticSeverity,
+    ) {
+        self.diagnostics
+            .entry((project_path.worktree_id, path_buffer.clone()))
+            .and_modify(|max_diagnostic_severity| {
+                *max_diagnostic_severity =
+                    std::cmp::min(*max_diagnostic_severity, diagnostic_severity);
             })
-            .collect();
+            .or_insert(diagnostic_severity);
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
@@ -2066,13 +2095,13 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let (git_status_setting, show_file_icons, show_folder_icons, show_diagnostic_errors) = {
+            let (git_status_setting, show_file_icons, show_folder_icons, show_diagnostics) = {
                 let settings = ProjectPanelSettings::get_global(cx);
                 (
                     settings.git_status,
                     settings.file_icons,
                     settings.folder_icons,
-                    settings.show_diagnostic_errors,
+                    settings.show_diagnostics != ShowDiagnostics::Off,
                 )
             };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
@@ -2133,6 +2162,19 @@ impl ProjectPanel {
                         worktree_id: snapshot.id(),
                         entry_id: entry.id,
                     };
+
+                    let diagnostics_color = if show_diagnostics {
+                        self.diagnostics
+                            .get(&(*worktree_id, entry.path.to_path_buf()))
+                            .and_then(|diagnostic_severity| match *diagnostic_severity {
+                                DiagnosticSeverity::ERROR => Some(Color::Error),
+                                DiagnosticSeverity::WARNING => Some(Color::Warning),
+                                _ => None,
+                            })
+                    } else {
+                        None
+                    };
+
                     let mut details = EntryDetails {
                         filename,
                         icon,
@@ -2149,10 +2191,7 @@ impl ProjectPanel {
                             .clipboard
                             .as_ref()
                             .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
-                        is_diagnostic_error: show_diagnostic_errors
-                            && self
-                                .diagnostic_error_paths
-                                .contains(&entry.path.to_path_buf()),
+                        diagnostics_color,
                         git_status: status,
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
@@ -2242,8 +2281,10 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color = if details.is_diagnostic_error {
-            Color::Error
+        let filename_text_color = if settings.show_diagnostics != ShowDiagnostics::Off
+            && details.diagnostics_color.is_some()
+        {
+            details.diagnostics_color.unwrap()
         } else {
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked)
         };
