@@ -12473,11 +12473,6 @@ impl Editor {
         Some(gpui::Point::new(source_x, source_y))
     }
 
-    fn gutter_bounds(&self) -> Option<Bounds<Pixels>> {
-        let bounds = self.last_bounds?;
-        Some(element::gutter_bounds(bounds, self.gutter_dimensions))
-    }
-
     pub fn has_active_completions_menu(&self) -> bool {
         self.context_menu.read().as_ref().map_or(false, |menu| {
             menu.visible() && matches!(menu, ContextMenu::Completions(_))
