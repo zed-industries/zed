@@ -16,13 +16,23 @@ struct GithubUser {
     created_at: DateTime<Utc>,
 }
 
+/// A GitHub user returned from the [List users](https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#list-users) endpoint.
+///
+/// Notably, this data type does not have the `created_at` field.
+#[derive(Debug, Deserialize)]
+struct ListGithubUser {
+    id: i32,
+    login: String,
+    email: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct SeedConfig {
-    // Which users to create as admins.
+    /// Which users to create as admins.
     admins: Vec<String>,
-    // Which channels to create (all admins are invited to all channels)
+    /// Which channels to create (all admins are invited to all channels).
     channels: Vec<String>,
-    // Number of random users to create from the Github API
+    /// Number of random users to create from the Github API.
     number_of_users: Option<usize>,
 }
 
@@ -47,11 +57,21 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
     let flag_names = ["remoting", "language-models"];
     let mut flags = Vec::new();
 
+    let existing_feature_flags = db.list_feature_flags().await?;
+
     for flag_name in flag_names {
+        if existing_feature_flags
+            .iter()
+            .any(|flag| flag.flag == flag_name)
+        {
+            log::info!("Flag {flag_name:?} already exists");
+            continue;
+        }
+
         let flag = db
             .create_user_flag(flag_name, false)
             .await
-            .unwrap_or_else(|_| panic!("failed to create flag: '{flag_name}'"));
+            .unwrap_or_else(|err| panic!("failed to create flag: '{flag_name}': {err}"));
         flags.push(flag);
     }
 
@@ -121,9 +141,19 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
             if let Some(last_user_id) = last_user_id {
                 write!(&mut uri, "&since={}", last_user_id).unwrap();
             }
-            let users = fetch_github::<Vec<GithubUser>>(&client, &uri).await;
+            let users = fetch_github::<Vec<ListGithubUser>>(&client, &uri).await;
 
             for github_user in users {
+                log::info!("Seeding {:?} from GitHub", github_user.login);
+
+                // Fetch the user to get their `created_at` timestamp, since it
+                // isn't on the list response.
+                let github_user: GithubUser = fetch_github(
+                    &client,
+                    &format!("https://api.github.com/user/{}", github_user.id),
+                )
+                .await;
+
                 last_user_id = Some(github_user.id);
                 user_count += 1;
                 let user = db
@@ -143,6 +173,9 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
                         flag, user.id
                     ))?;
                 }
+
+                // Sleep to avoid getting rate-limited by GitHub.
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
         }
     }
