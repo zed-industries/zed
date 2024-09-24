@@ -50,8 +50,7 @@ impl HeadlessProject {
             store
         });
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store =
-                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });

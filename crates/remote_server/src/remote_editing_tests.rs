@@ -7,6 +7,7 @@ use http_client::FakeHttpClient;
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
+    LineEnding,
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
 use node_runtime::NodeRuntime;
@@ -18,7 +19,10 @@ use remote::SshSession;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -441,6 +445,54 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, fs) = init_test(cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a")], None, cx);
+    });
+
+    fs.save(
+        &PathBuf::from("/code/project1/src/lib.rs"),
+        &("bloop".to_string().into()),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(buffer.read(cx).has_conflict());
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert!(!buffer.read(cx).has_conflict());
+    });
+}
+
+#[gpui::test]
 async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let (project, _headless, _fs) = init_test(cx, server_cx).await;
     let (worktree, _) = project
@@ -481,6 +533,34 @@ async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut 
         path.project_path().unwrap().clone(),
         ProjectPath::from((worktree_id, "README.md"))
     );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+
+    // Open a buffer on the client but cancel after a random amount of time.
+    let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx));
+    cx.executor().simulate_random_delay().await;
+    drop(buffer);
+
+    // Try opening the same buffer again as the client, and ensure we can
+    // still do it despite the cancellation above.
+    let buffer = project
+        .update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buf, _| {
+        assert_eq!(buf.text(), "fn one() -> usize { 1 }")
+    });
 }
 
 fn init_logger() {
