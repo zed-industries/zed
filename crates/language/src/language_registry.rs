@@ -4,14 +4,13 @@ use crate::{
     },
     task_context::ContextProvider,
     with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, LspAdapterDelegate, PLAIN_TEXT,
+    LanguageServerName, LspAdapter, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map, HashMap, HashSet};
 
 use futures::{
     channel::{mpsc, oneshot},
-    future::Shared,
     Future,
 };
 use globset::GlobSet;
@@ -882,123 +881,48 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.send(server_name, status);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_pending_language_server(
-        self: &Arc<Self>,
-        stderr_capture: Arc<Mutex<Option<String>>>,
-        _language_name_for_tests: LanguageName,
-        adapter: Arc<CachedLspAdapter>,
-        root_path: Arc<Path>,
-        delegate: Arc<dyn LspAdapterDelegate>,
-        project_environment: Shared<Task<Option<HashMap<String, String>>>>,
-        cx: &mut AppContext,
-    ) -> Option<PendingLanguageServer> {
-        let server_id = self.state.write().next_language_server_id();
-        log::info!(
-            "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
-            adapter.name.0
-        );
+    pub fn next_language_server_id(self: &Self) -> LanguageServerId {
+        self.state.write().next_language_server_id()
+    }
 
-        let container_dir: Option<Arc<Path>> = self
-            .language_server_download_dir
+    pub fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
+        self.language_server_download_dir
             .as_ref()
-            .map(|dir| Arc::from(dir.join(adapter.name.0.as_ref())));
-        let root_path = root_path.clone();
-        let this = Arc::downgrade(self);
+            .map(|dir| Arc::from(dir.join(name.0.as_ref())))
+    }
 
-        let task = cx.spawn({
-            let container_dir = container_dir.clone();
-            move |mut cx| async move {
-                let project_environment = project_environment.await;
-
-                let binary_result = adapter
-                    .clone()
-                    .get_language_server_command(container_dir, delegate.clone(), &mut cx)
-                    .await;
-
-                delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
-
-                let mut binary = binary_result?;
-
-                // If we do have a project environment (either by spawning a shell in in the project directory
-                // or by getting it from the CLI) and the language server command itself
-                // doesn't have an environment (which it would have, if it was found in $PATH), then
-                // we use the project environment.
-                if binary.env.is_none() && project_environment.is_some() {
-                    log::info!(
-                        "using project environment for language server {:?}, id: {server_id}",
-                        adapter.name.0
-                    );
-                    binary.env = project_environment.clone();
-                }
-
-                let options = adapter
-                    .adapter
-                    .clone()
-                    .initialization_options(&delegate)
-                    .await?;
-
-                #[cfg(any(test, feature = "test-support"))]
-                if true {
-                    if let Some(this) = this.upgrade() {
-                        if let Some(fake_entry) = this
-                            .state
-                            .write()
-                            .fake_server_entries
-                            .get_mut(&adapter.name)
-                        {
-                            let (server, mut fake_server) = lsp::FakeLanguageServer::new(
-                                server_id,
-                                binary,
-                                adapter.name.0.to_string(),
-                                fake_entry.capabilities.clone(),
-                                cx.clone(),
-                            );
-                            fake_entry._server = Some(fake_server.clone());
-
-                            if let Some(initializer) = &fake_entry.initializer {
-                                initializer(&mut fake_server);
-                            }
-
-                            let tx = fake_entry.tx.clone();
-                            cx.background_executor()
-                                .spawn(async move {
-                                    if fake_server
-                                        .try_receive_notification::<lsp::notification::Initialized>(
-                                        )
-                                        .await
-                                        .is_some()
-                                    {
-                                        tx.unbounded_send(fake_server.clone()).ok();
-                                    }
-                                })
-                                .detach();
-
-                            return Ok((server, options));
-                        }
-                    }
-                }
-
-                drop(this);
-                Ok((
-                    lsp::LanguageServer::new(
-                        stderr_capture,
-                        server_id,
-                        binary,
-                        &root_path,
-                        adapter.code_action_kinds(),
-                        cx,
-                    )?,
-                    options,
-                ))
-            }
-        });
-
-        Some(PendingLanguageServer {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn create_fake_langauge_server(&self, name: &LanguageServerName) -> Option<LanguageServer> {
+        let Some(fake_entry) = self.state.write().fake_server_entries.get_mut(&name) else {
+            return None;
+        };
+        let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
-            task,
-            container_dir,
-        })
+            binary,
+            name.0.to_string(),
+            fake_entry.capabilities.clone(),
+            cx.clone(),
+        );
+        fake_entry._server = Some(fake_server.clone());
+
+        if let Some(initializer) = &fake_entry.initializer {
+            initializer(&mut fake_server);
+        }
+
+        let tx = fake_entry.tx.clone();
+        cx.background_executor()
+            .spawn(async move {
+                if fake_server
+                    .try_receive_notification::<lsp::notification::Initialized>()
+                    .await
+                    .is_some()
+                {
+                    tx.unbounded_send(fake_server.clone()).ok();
+                }
+            })
+            .detach();
+
+        Some(server)
     }
 
     pub fn language_server_binary_statuses(
@@ -1026,10 +950,6 @@ impl LanguageRegistry {
                 .context("server container removal")
                 .log_err();
         })
-    }
-
-    pub fn next_language_server_id(&self) -> LanguageServerId {
-        self.state.write().next_language_server_id()
     }
 }
 

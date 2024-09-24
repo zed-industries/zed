@@ -37,9 +37,9 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageConfig,
-    LanguageMatcher, LanguageName, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    LanguageMatcher, LanguageName, LanguageRegistry, LanguageServerBinaryStatus,
+    LanguageServerName, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PendingLanguageServer,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
@@ -5511,25 +5511,6 @@ impl LspStore {
 
         let local = self.as_local().unwrap();
 
-        let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
-        let lsp_adapter_delegate = LocalLspAdapterDelegate::for_local(self, worktree_handle, cx);
-        let project_environment = local.environment.update(cx, |environment, cx| {
-            environment.get_environment(Some(worktree_id), Some(worktree_path.clone()), cx)
-        });
-
-        let pending_server = match self.languages.create_pending_language_server(
-            stderr_capture.clone(),
-            language.clone(),
-            adapter.clone(),
-            Arc::clone(&worktree_path),
-            lsp_adapter_delegate.clone(),
-            project_environment,
-            cx,
-        ) {
-            Some(pending_server) => pending_server,
-            None => return,
-        };
-
         let project_settings = ProjectSettings::get(
             Some(SettingsLocation {
                 worktree_id,
@@ -5541,27 +5522,131 @@ impl LspStore {
         // We need some on the SSH client, and some on SSH host
         let lsp = project_settings.lsp.get(&adapter.name);
         let override_options = lsp.and_then(|s| s.initialization_options.clone());
+        let binary = lsp.and_then(|s| s.binary.clone());
 
-        let server_id = pending_server.server_id;
+        let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
+        let delegate = LocalLspAdapterDelegate::for_local(self, worktree_handle, cx);
+        let project_environment = local.environment.update(cx, |environment, cx| {
+            environment.get_environment(Some(worktree_id), Some(worktree_path.clone()), cx)
+        });
+
+        let server_id = self.languages.next_language_server_id();
+        let container_dir = self.languages.language_server_download_dir(&adapter.name);
+        let root_path = worktree_path.clone();
+        log::info!(
+            "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
+            adapter.name.0
+        );
+
+        let pending_server = {
+            let task = cx.spawn({
+                let container_dir = container_dir.clone();
+                let delegate = delegate.clone();
+                let adapter = adapter.clone();
+                let stderr_capture = stderr_capture.clone();
+                move |_lsp_store, mut cx| async move {
+                    let project_environment = project_environment.await;
+
+                    let binary_result = adapter
+                        .clone()
+                        .get_language_server_command(
+                            container_dir.clone(),
+                            delegate.clone(),
+                            &mut cx,
+                        )
+                        .await;
+
+                    delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
+
+                    let mut binary = binary_result?;
+
+                    // If we do have a project environment (either by spawning a shell in in the project directory
+                    // or by getting it from the CLI) and the language server command itself
+                    // doesn't have an environment (which it would have, if it was found in $PATH), then
+                    // we use the project environment.
+                    if binary.env.is_none() && project_environment.is_some() {
+                        log::info!(
+                            "using project environment for language server {:?}, id: {server_id}",
+                            adapter.name.0
+                        );
+                        binary.env = project_environment.clone();
+                    }
+
+                    let options = adapter
+                        .adapter
+                        .clone()
+                        .initialization_options(&(delegate as Arc<dyn LspAdapterDelegate>))
+                        .await?;
+
+                    #[cfg(any(test, feature = "test-support"))]
+                    if let Some(server) = _lsp_store.update(&mut cx, |this, cx| {
+                        this.languages.create_fake_language_server(&adapter.name)
+                    }) {
+                        return Ok((server, options));
+                    }
+
+                    Ok((
+                        lsp::LanguageServer::new(
+                            stderr_capture,
+                            server_id,
+                            binary,
+                            &root_path,
+                            adapter.code_action_kinds(),
+                            cx,
+                        )?,
+                        options,
+                    ))
+                }
+            });
+
+            PendingLanguageServer {
+                server_id,
+                task,
+                container_dir,
+            }
+        };
+
         let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
             let adapter = adapter.clone();
+            let delegate = delegate.clone();
             let server_name = adapter.name.0.clone();
             let language = language.clone();
             let key = key.clone();
 
             cx.spawn(move |this, mut cx| async move {
-                let result = Self::setup_and_insert_language_server(
-                    this.clone(),
-                    lsp_adapter_delegate,
-                    override_options,
-                    pending_server,
-                    adapter.clone(),
-                    language.clone(),
-                    server_id,
-                    key,
-                    &mut cx,
-                )
+                let result = {
+                    let this = this.clone();
+                    let adapter = adapter.clone();
+                    let language = language.clone();
+                    let cx: &mut AsyncAppContext = &mut cx;
+                    async move {
+                        let language_server = Self::setup_pending_language_server(
+                            this.clone(),
+                            override_options,
+                            pending_server,
+                            delegate,
+                            adapter.clone(),
+                            cx,
+                        )
+                        .await?;
+                        let this = match this.upgrade() {
+                            Some(this) => this,
+                            None => return Err(anyhow!("failed to upgrade project handle")),
+                        };
+                        this.update(cx, |this, cx| {
+                            this.insert_newly_running_language_server(
+                                language,
+                                adapter,
+                                language_server.clone(),
+                                server_id,
+                                key,
+                                cx,
+                            )
+                        })??;
+                        Ok(Some(language_server))
+                    }
+                }
                 .await;
 
                 match result {
@@ -5618,48 +5703,6 @@ impl LspStore {
             .language_servers
             .insert(server_id, state);
         self.language_server_ids.insert(key, server_id);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn setup_and_insert_language_server(
-        this: WeakModel<Self>,
-        delegate: Arc<dyn LspAdapterDelegate>,
-        override_initialization_options: Option<serde_json::Value>,
-        pending_server: PendingLanguageServer,
-        adapter: Arc<CachedLspAdapter>,
-        language: LanguageName,
-        server_id: LanguageServerId,
-        key: (WorktreeId, LanguageServerName),
-        cx: &mut AsyncAppContext,
-    ) -> Result<Option<Arc<LanguageServer>>> {
-        let language_server = Self::setup_pending_language_server(
-            this.clone(),
-            override_initialization_options,
-            pending_server,
-            delegate,
-            adapter.clone(),
-            server_id,
-            cx,
-        )
-        .await?;
-
-        let this = match this.upgrade() {
-            Some(this) => this,
-            None => return Err(anyhow!("failed to upgrade project handle")),
-        };
-
-        this.update(cx, |this, cx| {
-            this.insert_newly_running_language_server(
-                language,
-                adapter,
-                language_server.clone(),
-                server_id,
-                key,
-                cx,
-            )
-        })??;
-
-        Ok(Some(language_server))
     }
 
     fn reinstall_language_server(
@@ -6026,9 +6069,9 @@ impl LspStore {
         pending_server: PendingLanguageServer,
         delegate: Arc<dyn LspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
-        server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
+        let server_id = pending_server.server_id;
         let workspace_config = adapter
             .adapter
             .clone()
