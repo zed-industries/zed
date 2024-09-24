@@ -99,8 +99,10 @@ fn main() -> Result<()> {
     env_logger::init();
 
     gpui::App::headless().run(move |cx| {
+        const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+
         let executor = cx.background_executor().clone();
-        let client = isahc_http_client::IsahcHttpClient::new(None, None);
+        let client = isahc_http_client::IsahcHttpClient::new(None, None, HTTP_TIMEOUT);
         cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {
