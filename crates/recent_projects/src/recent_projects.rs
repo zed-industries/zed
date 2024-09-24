@@ -403,7 +403,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 password: None,
                             };
 
-                            let paths = ssh_project.paths.iter().map(|path| PathBuf::from(path)).collect();
+                            let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
                             cx.spawn(|_, mut cx| async move {
                                 open_ssh_project(connection_options, paths, app_state, open_options, &mut cx).await
