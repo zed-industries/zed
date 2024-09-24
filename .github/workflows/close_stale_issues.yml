@@ -18,7 +18,7 @@ jobs:
 
             Thanks for your help!
           close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
-          # We will increase days-before-stale to 365 on or after Jan 24th,
+          # We will increase `days-before-stale` to 365 on or after Jan 24th,
           # 2024. This date marks one year since migrating issues from
           # 'community' to 'zed' repository. The migration added activity to all
           # issues, preventing 365 days from working until then.
