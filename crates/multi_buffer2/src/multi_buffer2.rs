@@ -10,8 +10,6 @@ use std::{
 use sum_tree::{SeekTarget, SumTree, TreeMap};
 use text::TextSummary;
 
-const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct BufferId {
     remote_id: text::BufferId,
@@ -69,6 +67,14 @@ impl MultiBuffer {
 
         let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
         let mut new_tree = SumTree::<Excerpt>::default();
+        if let Some((_, key)) = new_excerpts.first() {
+            let start_offset = ExcerptOffset {
+                path: key.path.clone(),
+                buffer_id: key.buffer_id,
+                offset: key.range.start,
+            };
+            new_tree = cursor.slice(&start_offset, Bias::Left, &());
+        }
 
         for (buffer, key) in new_excerpts {
             let start_offset = ExcerptOffset {
@@ -82,7 +88,10 @@ impl MultiBuffer {
                 offset: key.range.end,
             };
 
-            if start_offset.cmp(cursor.start(), &()).is_ge() {
+            if start_offset
+                .cmp(&cursor.item().map(|item| item.key.clone()), &())
+                .is_ge()
+            {
                 new_tree.append(cursor.slice(&start_offset, Bias::Left, &()), &());
                 if let Some(excerpt) = cursor.item() {
                     if excerpt.key.intersects(&key) {
@@ -101,7 +110,10 @@ impl MultiBuffer {
                 },
             );
 
-            if end_offset.cmp(cursor.start(), &()).is_ge() {
+            if end_offset
+                .cmp(&cursor.item().map(|item| item.key.clone()), &())
+                .is_ge()
+            {
                 cursor.seek(&end_offset, Bias::Left, &());
                 if let Some(excerpt) = cursor.item() {
                     if excerpt.key.intersects(&key) {
@@ -115,11 +127,31 @@ impl MultiBuffer {
         new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.snapshot.excerpts = new_tree;
+        self.check_invariants();
     }
 
-    fn sync(&mut self, cx: &mut ModelContext<Self>) {}
+    fn check_invariants(&self) {
+        #[cfg(debug_assertions)]
+        {
+            let mut cursor = self.snapshot.excerpts.cursor::<()>(&());
+            cursor.next(&());
+            while let Some(excerpt) = cursor.item() {
+                if let Some(prev_excerpt) = cursor.prev_item() {
+                    assert!(
+                        !excerpt.key.intersects(&prev_excerpt.key),
+                        "excerpts are not disjoint {:?}, {:?}",
+                        prev_excerpt.key.range,
+                        excerpt.key.range,
+                    );
+                }
+                cursor.next(&());
+            }
+        }
+    }
 
-    fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
+    fn sync(&mut self, _cx: &mut ModelContext<Self>) {}
+
+    pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
         self.sync(cx);
         self.snapshot.clone()
     }
@@ -151,7 +183,7 @@ fn push_excerpt(excerpts: &mut SumTree<Excerpt>, excerpt: Excerpt) {
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
-    snapshots: TreeMap<BufferId, BufferSnapshot>,
+    _snapshots: TreeMap<BufferId, BufferSnapshot>,
 }
 
 impl MultiBufferSnapshot {
@@ -167,10 +199,6 @@ impl MultiBufferSnapshot {
 
     pub fn len(&self) -> usize {
         self.excerpts.summary().text.len
-    }
-
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) {
-        todo!()
     }
 }
 
@@ -250,7 +278,15 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for Excerp
             self.path
                 .cmp(&cursor_location.path)
                 .then_with(|| self.buffer_id.cmp(&cursor_location.buffer_id))
-                .then_with(|| Ord::cmp(&self.offset, &cursor_location.range.end))
+                .then_with(|| {
+                    if Ord::cmp(&self.offset, &cursor_location.range.start).is_lt() {
+                        Ordering::Less
+                    } else if Ord::cmp(&self.offset, &cursor_location.range.end).is_gt() {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Equal
+                    }
+                })
         } else {
             Ordering::Greater
         }
@@ -359,6 +395,7 @@ mod tests {
             let mut multibuffer = MultiBuffer::new();
             let excerpts1 = generate_excerpts(&mut rng);
             let excerpts2 = generate_excerpts(&mut rng);
+
             multibuffer.insert_excerpts(
                 excerpts1
                     .iter()
@@ -388,7 +425,6 @@ mod tests {
                 }
             });
 
-            dbg!(&excerpts1, &excerpts2, &excerpt_ranges);
             let expected_text = excerpt_ranges
                 .into_iter()
                 .filter_map(|range| {
