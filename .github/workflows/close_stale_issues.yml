@@ -18,10 +18,14 @@ jobs:
 
             Thanks for your help!
           close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
+          # We will increase `days-before-stale` to 365 on or after Jan 24th,
+          # 2024. This date marks one year since migrating issues from
+          # 'community' to 'zed' repository. The migration added activity to all
+          # issues, preventing 365 days from working until then.
           days-before-stale: 180
           days-before-close: 7
           any-of-issue-labels: "defect,panic / crash"
-          operations-per-run: 100
+          operations-per-run: 200
           ascending: true
           enable-statistics: true
           stale-issue-label: "stale"
