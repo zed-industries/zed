@@ -113,7 +113,6 @@ fn compute_indent_guides(items: &[usize], offset: usize) -> SmallVec<[IndentGuid
         }
     }
 
-    // Handle any remaining guides
     let total_lines = items.len();
     for (depth, start) in stack {
         if total_lines > start + 1 {

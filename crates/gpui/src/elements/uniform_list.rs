@@ -101,8 +101,11 @@ pub struct UniformListScrollState {
 }
 
 /// A struct representing a decoration for a uniform list.
+/// This can be used for various things, such as rendering a checkered background, adding indent guides, etc.
 pub struct UniformListDecoration<T> {
     /// A function that prepares the decoration data for painting.
+    /// Takes the range of items that are currently visible, the bounds of the list, and the height of a single item.
+    /// Returns the data that will be passed to the paint function.
     pub prepaint_fn: Box<dyn Fn(Range<usize>, Bounds<Pixels>, Pixels, &mut WindowContext) -> T>,
 
     /// A function that paints the decoration using the prepared data.
@@ -136,11 +139,6 @@ impl UniformListScrollHandle {
         let this = self.0.borrow();
         this.deferred_scroll_to_item
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
-    }
-
-    /// Get the current scroll offset.
-    pub fn offset(&self) -> Point<Pixels> {
-        self.0.borrow().base_handle.offset()
     }
 }
 
