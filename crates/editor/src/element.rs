@@ -3363,7 +3363,9 @@ impl EditorElement {
         }
     }
 
+    /// Returns the width of the diff strip that will be displayed in the gutter.
     pub(super) fn diff_hunk_strip_width(line_height: Pixels) -> Pixels {
+        // We floor the value to prevent pixel rounding.
         (0.275 * line_height).floor()
     }
 

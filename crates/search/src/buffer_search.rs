@@ -440,7 +440,7 @@ impl ToolbarItemView for BufferSearchBar {
                 ));
 
             self.active_searchable_item = Some(searchable_item_handle);
-            drop(self.update_matches(cx));
+            drop(self.update_matches(true, cx));
             if !self.dismissed {
                 return ToolbarItemLocation::Secondary;
             }
@@ -701,7 +701,8 @@ impl BufferSearchBar {
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<()> {
         let options = options.unwrap_or(self.default_options);
-        if query != self.query(cx) || self.search_options != options {
+        let updated = query != self.query(cx) || self.search_options != options;
+        if updated {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
                     let len = query_buffer.len(cx);
@@ -712,7 +713,7 @@ impl BufferSearchBar {
             self.clear_matches(cx);
             cx.notify();
         }
-        self.update_matches(cx)
+        self.update_matches(!updated, cx)
     }
 
     fn render_search_option_button(
@@ -738,7 +739,7 @@ impl BufferSearchBar {
     ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-        drop(self.update_matches(cx));
+        drop(self.update_matches(false, cx));
         cx.notify();
     }
 
@@ -841,7 +842,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(cx);
                 self.clear_matches(cx);
-                let search = self.update_matches(cx);
+                let search = self.update_matches(false, cx);
 
                 let width = editor.update(cx, |editor, cx| {
                     let text_layout_details = editor.text_layout_details(cx);
@@ -879,7 +880,7 @@ impl BufferSearchBar {
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
             SearchEvent::MatchesInvalidated => {
-                drop(self.update_matches(cx));
+                drop(self.update_matches(false, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(cx),
         }
@@ -897,7 +898,7 @@ impl BufferSearchBar {
         if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
             active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
-            drop(self.update_matches(cx));
+            drop(self.update_matches(false, cx));
             cx.notify();
         }
     }
@@ -937,7 +938,11 @@ impl BufferSearchBar {
             .extend(active_item_matches);
     }
 
-    fn update_matches(&mut self, cx: &mut ViewContext<Self>) -> oneshot::Receiver<()> {
+    fn update_matches(
+        &mut self,
+        reuse_existing_query: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> oneshot::Receiver<()> {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
@@ -949,44 +954,51 @@ impl BufferSearchBar {
                 let _ = done_tx.send(());
                 cx.notify();
             } else {
-                let query: Arc<_> = if self.search_options.contains(SearchOptions::REGEX) {
-                    match SearchQuery::regex(
-                        query,
-                        self.search_options.contains(SearchOptions::WHOLE_WORD),
-                        self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                        false,
-                        Default::default(),
-                        Default::default(),
-                        None,
-                    ) {
-                        Ok(query) => query.with_replacement(self.replacement(cx)),
-                        Err(_) => {
-                            self.query_contains_error = true;
-                            self.clear_active_searchable_item_matches(cx);
-                            cx.notify();
-                            return done_rx;
-                        }
-                    }
+                let query: Arc<_> = if let Some(search) =
+                    self.active_search.take().filter(|_| reuse_existing_query)
+                {
+                    search
                 } else {
-                    match SearchQuery::text(
-                        query,
-                        self.search_options.contains(SearchOptions::WHOLE_WORD),
-                        self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                        false,
-                        Default::default(),
-                        Default::default(),
-                        None,
-                    ) {
-                        Ok(query) => query.with_replacement(self.replacement(cx)),
-                        Err(_) => {
-                            self.query_contains_error = true;
-                            self.clear_active_searchable_item_matches(cx);
-                            cx.notify();
-                            return done_rx;
+                    if self.search_options.contains(SearchOptions::REGEX) {
+                        match SearchQuery::regex(
+                            query,
+                            self.search_options.contains(SearchOptions::WHOLE_WORD),
+                            self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                            false,
+                            Default::default(),
+                            Default::default(),
+                            None,
+                        ) {
+                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Err(_) => {
+                                self.query_contains_error = true;
+                                self.clear_active_searchable_item_matches(cx);
+                                cx.notify();
+                                return done_rx;
+                            }
+                        }
+                    } else {
+                        match SearchQuery::text(
+                            query,
+                            self.search_options.contains(SearchOptions::WHOLE_WORD),
+                            self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                            false,
+                            Default::default(),
+                            Default::default(),
+                            None,
+                        ) {
+                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Err(_) => {
+                                self.query_contains_error = true;
+                                self.clear_active_searchable_item_matches(cx);
+                                cx.notify();
+                                return done_rx;
+                            }
                         }
                     }
-                }
-                .into();
+                    .into()
+                };
+
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
 

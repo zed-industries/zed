@@ -14,8 +14,8 @@ use multi_buffer::{
 use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
-    div, h_flex, ActiveTheme, Context as _, ContextMenu, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Styled, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, ContextMenu, InteractiveElement, IntoElement, ParentElement, Pixels,
+    Styled, ViewContext, VisualContext,
 };
 use util::{debug_panic, RangeExt};
 
