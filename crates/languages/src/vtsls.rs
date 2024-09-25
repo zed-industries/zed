@@ -157,13 +157,6 @@ impl LspAdapter for VtslsLspAdapter {
         get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &self.node).await
-    }
-
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![
             CodeActionKind::QUICKFIX,

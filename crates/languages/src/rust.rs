@@ -186,18 +186,6 @@ impl LspAdapter for RustLspAdapter {
         get_cached_server_binary(container_dir).await
     }
 
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir)
-            .await
-            .map(|mut binary| {
-                binary.arguments = vec!["--help".into()];
-                binary
-            })
-    }
-
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         vec!["rustc".into()]
     }

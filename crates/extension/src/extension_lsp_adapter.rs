@@ -124,10 +124,6 @@ impl LspAdapter for ExtensionLspAdapter {
         unreachable!("get_language_server_command is overridden")
     }
 
-    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
-        None
-    }
-
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         let code_action_kinds = self
             .extension

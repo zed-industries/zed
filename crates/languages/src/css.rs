@@ -84,13 +84,6 @@ impl LspAdapter for CssLspAdapter {
         get_cached_server_binary(container_dir, &self.node).await
     }
 
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
-    }
-
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,

@@ -97,13 +97,6 @@ impl LspAdapter for PythonLspAdapter {
         get_cached_server_binary(container_dir, &self.node).await
     }
 
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
-    }
-
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
         // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
         // Where `XX` is the sorting category, `YYYY` is based on most recent usage,

@@ -14,7 +14,7 @@ use futures::{
     Future,
 };
 use globset::GlobSet;
-use gpui::{AppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, BackgroundExecutor};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -875,7 +875,7 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.send(server_name, status);
     }
 
-    pub fn next_language_server_id(self: &Self) -> LanguageServerId {
+    pub fn next_language_server_id(&self) -> LanguageServerId {
         self.state.write().next_language_server_id()
     }
 
@@ -894,9 +894,7 @@ impl LanguageRegistry {
         cx: gpui::AsyncAppContext,
     ) -> Option<lsp::LanguageServer> {
         let mut state = self.state.write();
-        let Some(fake_entry) = state.fake_server_entries.get_mut(&name) else {
-            return None;
-        };
+        let fake_entry = state.fake_server_entries.get_mut(&name)?;
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
             binary,
@@ -932,25 +930,16 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.subscribe()
     }
 
-    pub fn delete_server_container(
-        &self,
-        adapter: Arc<CachedLspAdapter>,
-        cx: &mut AppContext,
-    ) -> Task<()> {
+    pub async fn delete_server_container(&self, name: LanguageServerName) {
         log::info!("deleting server container");
+        let Some(dir) = self.language_server_download_dir(&name) else {
+            return;
+        };
 
-        let download_dir = self
-            .language_server_download_dir
-            .clone()
-            .expect("language server download directory has not been assigned before deleting server container");
-
-        cx.spawn(|_| async move {
-            let container_dir = download_dir.join(adapter.name.0.as_ref());
-            smol::fs::remove_dir_all(container_dir)
-                .await
-                .context("server container removal")
-                .log_err();
-        })
+        smol::fs::remove_dir_all(dir)
+            .await
+            .context("server container removal")
+            .log_err();
     }
 }
 

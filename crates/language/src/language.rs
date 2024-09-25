@@ -260,17 +260,6 @@ impl CachedLspAdapter {
             .await
     }
 
-    pub fn can_be_reinstalled(&self) -> bool {
-        self.adapter.can_be_reinstalled()
-    }
-
-    pub async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        self.adapter.installation_test_binary(container_dir).await
-    }
-
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         self.adapter.code_action_kinds()
     }
@@ -441,21 +430,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary>;
-
-    /// Returns `true` if a language server can be reinstalled.
-    ///
-    /// If language server initialization fails, a reinstallation will be attempted unless the value returned from this method is `false`.
-    ///
-    /// Implementations that rely on software already installed on user's system
-    /// should have [`can_be_reinstalled`](Self::can_be_reinstalled) return `false`.
-    fn can_be_reinstalled(&self) -> bool {
-        true
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
     ) -> Option<LanguageServerBinary>;
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
@@ -1740,10 +1714,6 @@ impl LspAdapter for FakeLspAdapter {
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        unreachable!();
-    }
-
-    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         unreachable!();
     }
 
