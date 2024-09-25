@@ -576,7 +576,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     }
 }
 
-async fn read_package_installed_version(
+pub async fn read_package_installed_version(
     node_module_directory: PathBuf,
     name: &str,
 ) -> Result<Option<String>> {

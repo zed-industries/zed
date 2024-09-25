@@ -48,6 +48,7 @@ use lsp::{
     LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus, ServerStatus,
     SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
+use node_runtime::read_package_installed_version;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;
@@ -66,6 +67,7 @@ use std::{
     ffi::OsStr,
     iter, mem,
     ops::{ControlFlow, Range},
+    os::unix::ffi::OsStrExt,
     path::{self, Path, PathBuf},
     str,
     sync::Arc,
@@ -7801,6 +7803,43 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         task.await.unwrap_or_default()
     }
 
+    async fn npm_package_installed_version(
+        &self,
+        package_name: &str,
+    ) -> Result<Option<(PathBuf, String)>> {
+        let local_package_directory = self.worktree_root_path();
+        let node_modules_directory = local_package_directory.join("node_modules");
+
+        if let Some(version) =
+            read_package_installed_version(node_modules_directory.clone(), package_name).await?
+        {
+            return Ok(Some((node_modules_directory, version)));
+        }
+        let Some(npm) = self.which("npm".as_ref()).await else {
+            log::warn!(
+                "Failed to find npm executable for {:?}",
+                local_package_directory
+            );
+            return Ok(None);
+        };
+
+        let env = self.shell_env().await;
+        let output = smol::process::Command::new(&npm)
+            .args(["root", "-g"])
+            .envs(env)
+            .current_dir(local_package_directory)
+            .output()
+            .await?;
+        let global_node_modules = PathBuf::from(OsStr::from_bytes(output.stdout.as_ref()));
+
+        if let Some(version) =
+            read_package_installed_version(global_node_modules.clone(), package_name).await?
+        {
+            return Ok(Some((global_node_modules, version)));
+        }
+        return Ok(None);
+    }
+
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
@@ -7881,6 +7920,14 @@ impl LspAdapterDelegate for SshLspAdapterDelegate {
                 cx.emit(LspStoreEvent::Notification(message.to_owned()))
             })
             .ok();
+    }
+
+    async fn npm_package_installed_version(
+        &self,
+        package_name: &str,
+    ) -> Result<Option<(PathBuf, String)>> {
+        //TODO(ssh)
+        Err(anyhow!("Oh no"))
     }
 
     fn http_client(&self) -> Arc<dyn HttpClient> {
