@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 use gpui::{fill, point, size, Bounds, Point, UniformListDecoration, View};
 use smallvec::SmallVec;
@@ -35,7 +35,7 @@ impl IndentGuides {
 }
 
 pub struct IndentGuidesLayoutState {
-    guides: SmallVec<[(Bounds<Pixels>, Color); 8]>,
+    guides: SmallVec<[(Bounds<Pixels>, Color); 16]>,
 }
 
 impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
@@ -49,7 +49,7 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
                 let visible_entries = &(compute_fn)(visible_range.clone(), cx);
                 let indent_guides = compute_indent_guides(&visible_entries, visible_range.start);
 
-                let guides: SmallVec<[(Bounds<Pixels>, Color); 8]> = indent_guides
+                let guides: SmallVec<[(Bounds<Pixels>, Color); 16]> = indent_guides
                     .into_iter()
                     .map(|layout| {
                         (
@@ -77,51 +77,116 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 struct IndentGuideLayout {
     offset: Point<usize>,
     length: usize,
 }
 
-fn compute_indent_guides(items: &[usize], offset: usize) -> SmallVec<[IndentGuideLayout; 8]> {
-    let mut guides = SmallVec::new();
-    let mut stack: Vec<(usize, usize)> = Vec::new();
+fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGuideLayout; 16]> {
+    let mut indent_guides = SmallVec::<[IndentGuideLayout; 16]>::new();
+    let mut indent_stack = SmallVec::<[IndentGuideLayout; 8]>::new();
 
-    for (mut y, &depth) in items.iter().enumerate() {
-        y += offset;
-        while let Some(&(last_depth, start)) = stack.last() {
-            if depth <= last_depth {
-                if y > start + 1 {
-                    guides.push(IndentGuideLayout {
-                        offset: Point::new(last_depth, start + 1),
-                        length: y - start - 1,
+    for (row, &depth) in indents.iter().enumerate() {
+        let current_row = row + offset;
+        let current_depth = indent_stack.len();
+
+        match depth.cmp(&current_depth) {
+            Ordering::Less => {
+                for _ in 0..(current_depth - depth) {
+                    if let Some(guide) = indent_stack.pop() {
+                        indent_guides.push(guide);
+                    }
+                }
+            }
+            Ordering::Greater => {
+                for new_depth in current_depth..depth {
+                    indent_stack.push(IndentGuideLayout {
+                        offset: Point::new(new_depth, current_row),
+                        length: current_row,
                     });
                 }
-                stack.pop();
-            } else {
-                break;
             }
+            _ => {}
         }
 
-        if depth > 0
-            && stack
-                .last()
-                .map(|&(last_depth, _)| depth > last_depth)
-                .unwrap_or(true)
-        {
-            stack.push((depth, y));
+        for indent in indent_stack.iter_mut() {
+            indent.length = current_row - indent.offset.y + 1;
         }
     }
 
-    let total_lines = items.len();
-    for (depth, start) in stack {
-        if total_lines > start + 1 {
-            guides.push(IndentGuideLayout {
-                offset: Point::new(depth, start + 1),
-                length: total_lines - start - 1,
-            });
-        }
-    }
+    indent_guides.extend(indent_stack);
+    indent_guides
+}
 
-    guides
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_indent_guides() {
+        fn assert_compute_indent_guides(
+            input: &[usize],
+            offset: usize,
+            expected: Vec<IndentGuideLayout>,
+        ) {
+            use std::collections::HashSet;
+            assert_eq!(
+                compute_indent_guides(input, offset)
+                    .into_vec()
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+                expected.into_iter().collect::<HashSet<_>>(),
+            );
+        }
+
+        assert_compute_indent_guides(
+            &vec![0, 1, 2, 2, 1, 0],
+            0,
+            vec![
+                IndentGuideLayout {
+                    offset: Point::new(0, 1),
+                    length: 4,
+                },
+                IndentGuideLayout {
+                    offset: Point::new(1, 2),
+                    length: 2,
+                },
+            ],
+        );
+
+        assert_compute_indent_guides(
+            &vec![2, 2, 2, 1, 1],
+            0,
+            vec![
+                IndentGuideLayout {
+                    offset: Point::new(0, 0),
+                    length: 5,
+                },
+                IndentGuideLayout {
+                    offset: Point::new(1, 0),
+                    length: 3,
+                },
+            ],
+        );
+
+        assert_compute_indent_guides(
+            &vec![1, 2, 3, 2, 1],
+            0,
+            vec![
+                IndentGuideLayout {
+                    offset: Point::new(0, 0),
+                    length: 5,
+                },
+                IndentGuideLayout {
+                    offset: Point::new(1, 1),
+                    length: 3,
+                },
+                IndentGuideLayout {
+                    offset: Point::new(2, 2),
+                    length: 1,
+                },
+            ],
+        );
+    }
 }
