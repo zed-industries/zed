@@ -121,7 +121,7 @@ impl BufferStore {
         let buffer = self.get_by_path(&project_path, cx);
         if let Some(existing_buffer) = buffer {
             self.dap_store.update(cx, |store, cx| {
-                store.set_active_breakpoints(&project_path, &existing_buffer.read(cx));
+                store.on_open_buffer(&project_path, &existing_buffer, cx);
             });
             return Task::ready(Ok(existing_buffer));
         }
@@ -162,7 +162,7 @@ impl BufferStore {
                         let buffer = load_result.map_err(Arc::new)?;
 
                         this.dap_store.update(cx, |store, cx| {
-                            store.set_active_breakpoints(&project_path, buffer.read(cx));
+                            store.on_open_buffer(&project_path, &buffer, cx);
                         });
 
                         Ok(buffer)

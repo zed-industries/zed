@@ -9,7 +9,6 @@ use dap::{
     Capabilities, ContinuedEvent, ExitedEvent, OutputEvent, Scope, StackFrame, StoppedEvent,
     TerminatedEvent, ThreadEvent, ThreadEventReason, Variable,
 };
-use editor::Editor;
 use futures::future::try_join_all;
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
@@ -18,7 +17,6 @@ use gpui::{
 use project::dap_store::DapStore;
 use settings::Settings;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 use std::u64;
 use ui::prelude::*;
@@ -28,11 +26,14 @@ use workspace::{
 };
 use workspace::{pane, Pane, Start};
 
-enum DebugCurrentRowHighlight {}
-
 pub enum DebugPanelEvent {
     Exited(DebugAdapterClientId),
-    Stopped((DebugAdapterClientId, StoppedEvent)),
+    Terminated(DebugAdapterClientId),
+    Stopped {
+        client_id: DebugAdapterClientId,
+        event: StoppedEvent,
+        go_to_stack_frame: bool,
+    },
     Thread((DebugAdapterClientId, ThreadEvent)),
     Continued((DebugAdapterClientId, ContinuedEvent)),
     Output((DebugAdapterClientId, OutputEvent)),
@@ -213,6 +214,19 @@ impl DebugPanel {
                     })
                     .ok();
             }
+            pane::Event::ActivateItem { local } => {
+                if !local {
+                    return;
+                }
+
+                if let Some(active_item) = self.pane.read(cx).active_item() {
+                    if let Some(debug_item) = active_item.downcast::<DebugPanelItem>() {
+                        debug_item.update(cx, |panel, cx| {
+                            panel.go_to_stack_frame(cx);
+                        });
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -254,129 +268,6 @@ impl DebugPanel {
             Events::Other(_) => {}
         }
     }
-
-    pub async fn go_to_stack_frame(
-        workspace: WeakView<Workspace>,
-        stack_frame: StackFrame,
-        clear_highlights: bool,
-        mut cx: AsyncWindowContext,
-    ) -> Result<()> {
-        let Some(path) = &stack_frame.source.and_then(|s| s.path) else {
-            return Err(anyhow::anyhow!(
-                "Cannot go to stack frame, path doesn't exist"
-            ));
-        };
-
-        let row = (stack_frame.line.saturating_sub(1)) as u32;
-        let column = (stack_frame.column.saturating_sub(1)) as u32;
-
-        if clear_highlights {
-            Self::remove_highlights(workspace.clone(), cx.clone())?;
-        }
-
-        let task = workspace.update(&mut cx, |workspace, cx| {
-            let project_path = workspace.project().read_with(cx, |project, cx| {
-                project.project_path_for_absolute_path(&Path::new(&path), cx)
-            });
-
-            if let Some(project_path) = project_path {
-                workspace.open_path_preview(project_path, None, false, true, cx)
-            } else {
-                Task::ready(Err(anyhow::anyhow!(
-                    "No project path found for path: {}",
-                    path
-                )))
-            }
-        })?;
-
-        let editor = task.await?.downcast::<Editor>().unwrap();
-
-        workspace.update(&mut cx, |_, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.go_to_line::<DebugCurrentRowHighlight>(
-                    row,
-                    column,
-                    Some(cx.theme().colors().editor_debugger_active_line_background),
-                    cx,
-                );
-            })
-        })
-    }
-
-    fn remove_highlights(workspace: WeakView<Workspace>, mut cx: AsyncWindowContext) -> Result<()> {
-        workspace.update(&mut cx, |workspace, cx| {
-            let editor_views = workspace
-                .items_of_type::<Editor>(cx)
-                .collect::<Vec<View<Editor>>>();
-
-            for editor_view in editor_views {
-                editor_view.update(cx, |editor, _| {
-                    editor.clear_row_highlights::<DebugCurrentRowHighlight>();
-                });
-            }
-        })
-    }
-
-    // async fn remove_highlights_for_thread(
-    //     workspace: WeakView<Workspace>,
-    //     client: Arc<DebugAdapterClient>,
-    //     thread_id: u64,
-    //     cx: AsyncWindowContext,
-    // ) -> Result<()> {
-    //     let mut tasks = Vec::new();
-    //     let mut paths: HashSet<String> = HashSet::new();
-    //     let thread_state = client.thread_state_by_id(thread_id);
-
-    //     for stack_frame in thread_state.stack_frames.into_iter() {
-    //         let Some(path) = stack_frame.source.clone().and_then(|s| s.path.clone()) else {
-    //             continue;
-    //         };
-
-    //         if paths.contains(&path) {
-    //             continue;
-    //         }
-
-    //         paths.insert(path.clone());
-    //         tasks.push(Self::remove_editor_highlight(
-    //             workspace.clone(),
-    //             path,
-    //             cx.clone(),
-    //         ));
-    //     }
-
-    //     if !tasks.is_empty() {
-    //         try_join_all(tasks).await?;
-    //     }
-
-    //     anyhow::Ok(())
-    // }
-
-    // async fn remove_editor_highlight(
-    //     workspace: WeakView<Workspace>,
-    //     path: String,
-    //     mut cx: AsyncWindowContext,
-    // ) -> Result<()> {
-    //     let task = workspace.update(&mut cx, |workspace, cx| {
-    //         let project_path = workspace.project().read_with(cx, |project, cx| {
-    //             project.project_path_for_absolute_path(&Path::new(&path), cx)
-    //         });
-
-    //         if let Some(project_path) = project_path {
-    //             workspace.open_path(project_path, None, false, cx)
-    //         } else {
-    //             Task::ready(Err(anyhow::anyhow!(
-    //                 "No project path found for path: {}",
-    //                 path
-    //             )))
-    //         }
-    //     })?;
-
-    //     let editor = task.await?.downcast::<Editor>().unwrap();
-
-    //     editor.update(&mut cx, |editor, _| {
-    //         editor.clear_row_highlights::<DebugCurrentRowHighlight>();
-    //     })
-    // }
 
     fn handle_initialized_event(
         &mut self,
@@ -561,31 +452,24 @@ impl DebugPanel {
                         });
                     }
 
-                    cx.emit(DebugPanelEvent::Stopped((client_id, event)));
+                    let go_to_stack_frame = if let Some(item) = this.pane.read(cx).active_item() {
+                        item.downcast::<DebugPanelItem>().map_or(false, |pane| {
+                            let pane = pane.read(cx);
+
+                            pane.thread_id() == thread_id && pane.client_id() == client_id
+                        })
+                    } else {
+                        true
+                    };
+
+                    cx.emit(DebugPanelEvent::Stopped {
+                        client_id,
+                        event,
+                        go_to_stack_frame,
+                    });
 
                     cx.notify();
-
-                    if let Some(item) = this.pane.read(cx).active_item() {
-                        if let Some(pane) = item.downcast::<DebugPanelItem>() {
-                            let pane = pane.read(cx);
-                            if pane.thread_id() == thread_id && pane.client_id() == client_id {
-                                let workspace = this.workspace.clone();
-                                return cx.spawn(|_, cx| async move {
-                                    Self::go_to_stack_frame(
-                                        workspace,
-                                        current_stack_frame.clone(),
-                                        true,
-                                        cx,
-                                    )
-                                    .await
-                                });
-                            }
-                        }
-                    }
-
-                    Task::ready(anyhow::Ok(()))
-                })?
-                .await
+                })
             }
         })
         .detach_and_log_err(cx);
@@ -611,19 +495,6 @@ impl DebugPanel {
                 (*client_id, thread_id),
                 cx.new_model(|_| ThreadState::default()),
             );
-        } else {
-            // TODO debugger: we want to figure out for witch clients/threads we should remove the highlights
-            // cx.spawn({
-            //     let client = client.clone();
-            //     |this, mut cx| async move {
-            //         let workspace = this.update(&mut cx, |this, _| this.workspace.clone())?;
-
-            //         Self::remove_highlights_for_thread(workspace, client, thread_id, cx).await?;
-
-            //         anyhow::Ok(())
-            //     }
-            // })
-            // .detach_and_log_err(cx);
         }
 
         cx.emit(DebugPanelEvent::Thread((*client_id, event.clone())));
@@ -646,8 +517,6 @@ impl DebugPanel {
     ) {
         let restart_args = event.clone().and_then(|e| e.restart);
 
-        // TODO debugger: remove current highlights
-
         self.dap_store.update(cx, |store, cx| {
             if restart_args.is_some() {
                 store
@@ -657,6 +526,8 @@ impl DebugPanel {
                 store.shutdown_client(&client_id, cx).detach_and_log_err(cx);
             }
         });
+
+        cx.emit(DebugPanelEvent::Terminated(*client_id));
     }
 
     fn handle_output_event(

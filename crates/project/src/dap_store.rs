@@ -17,7 +17,7 @@ use dap::{
     SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
     VariablesArguments,
 };
-use gpui::{EventEmitter, ModelContext, Task};
+use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -49,11 +49,18 @@ pub enum DebugAdapterClientState {
     Running(Arc<DebugAdapterClient>),
 }
 
+#[derive(Clone, Debug)]
+pub struct DebugPosition {
+    pub row: u32,
+    pub column: u32,
+}
+
 pub struct DapStore {
     next_client_id: AtomicUsize,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
     capabilities: HashMap<DebugAdapterClientId, Capabilities>,
+    active_debug_line: Option<(ProjectPath, DebugPosition)>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -63,9 +70,10 @@ impl DapStore {
         cx.on_app_quit(Self::shutdown_clients).detach();
 
         Self {
+            active_debug_line: None,
             clients: Default::default(),
-            capabilities: HashMap::default(),
             breakpoints: Default::default(),
+            capabilities: HashMap::default(),
             next_client_id: Default::default(),
         }
     }
@@ -108,13 +116,40 @@ impl DapStore {
         }
     }
 
+    pub fn active_debug_line(&self) -> Option<(ProjectPath, DebugPosition)> {
+        self.active_debug_line.clone()
+    }
+
+    pub fn set_active_debug_line(
+        &mut self,
+        project_path: &ProjectPath,
+        row: u32,
+        column: u32,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.active_debug_line = Some((project_path.clone(), DebugPosition { row, column }));
+
+        cx.notify();
+    }
+
+    pub fn remove_active_debug_line(&mut self) {
+        self.active_debug_line.take();
+    }
+
     pub fn breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
         &self.breakpoints
     }
 
-    pub fn set_active_breakpoints(&mut self, project_path: &ProjectPath, buffer: &Buffer) {
+    pub fn on_open_buffer(
+        &mut self,
+        project_path: &ProjectPath,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let entry = self.breakpoints.remove(project_path).unwrap_or_default();
         let mut set_bp: HashSet<Breakpoint> = HashSet::default();
+
+        let buffer = buffer.read(cx);
 
         for mut bp in entry.into_iter() {
             bp.set_active_position(&buffer);
@@ -122,6 +157,8 @@ impl DapStore {
         }
 
         self.breakpoints.insert(project_path.clone(), set_bp);
+
+        cx.notify();
     }
 
     pub fn deserialize_breakpoints(
