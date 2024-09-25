@@ -5607,6 +5607,9 @@ pub fn join_dev_server_project(
             })
         });
 
+        let serialized_workspace: Option<SerializedWorkspace> =
+            persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
+
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace
         } else {
@@ -5620,10 +5623,7 @@ pub fn join_dev_server_project(
             )
             .await?;
 
-            let serialized_workspace: Option<SerializedWorkspace> =
-                persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
-
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
+            let workspace_id = if let Some(ref serialized_workspace) = serialized_workspace {
                 serialized_workspace.id
             } else {
                 persistence::DB.next_id().await?
@@ -5650,10 +5650,13 @@ pub fn join_dev_server_project(
             }
         };
 
-        workspace.update(&mut cx, |_, cx| {
-            cx.activate(true);
-            cx.activate_window();
-        })?;
+        workspace
+            .update(&mut cx, |_, cx| {
+                cx.activate(true);
+                cx.activate_window();
+                open_items(serialized_workspace, vec![], app_state, cx)
+            })?
+            .await?;
 
         anyhow::Ok(workspace)
     })
