@@ -334,17 +334,20 @@ impl SettingsObserver {
             .log_err();
         }
 
+        let weak_client = ssh.downgrade();
         cx.observe_global::<SettingsStore>(move |_, cx| {
             let new_settings = cx.global::<SettingsStore>().raw_user_settings();
             if &settings != new_settings {
                 settings = new_settings.clone()
             }
             if let Some(content) = serde_json::to_string(&settings).log_err() {
-                ssh.send(proto::UpdateUserSettings {
-                    project_id: 0,
-                    content,
-                })
-                .log_err();
+                if let Some(ssh) = weak_client.upgrade() {
+                    ssh.send(proto::UpdateUserSettings {
+                        project_id: 0,
+                        content,
+                    })
+                    .log_err();
+                }
             }
         })
         .detach();

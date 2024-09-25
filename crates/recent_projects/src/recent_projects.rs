@@ -509,7 +509,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         .color(Color::Muted)
                                         .into_any_element()
                                 }
-                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Screen)
+                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
                                     .color(Color::Muted)
                                     .into_any_element(),
                                 SerializedWorkspaceLocation::DevServer(_) => {
