@@ -130,6 +130,7 @@ async fn initial_scan(
 pub struct SnippetProvider {
     fs: Arc<dyn Fs>,
     snippets: HashMap<SnippetKind, BTreeMap<PathBuf, Vec<Arc<Snippet>>>>,
+    watch_tasks: Vec<Task<Result<()>>>,
 }
 
 impl SnippetProvider {
@@ -141,27 +142,23 @@ impl SnippetProvider {
         cx.new_model(move |cx| {
             let mut this = Self {
                 fs,
+                watch_tasks: Vec::new(),
                 snippets: Default::default(),
             };
 
-            let mut task_handles = vec![];
             for dir in dirs_to_watch {
-                task_handles.push(this.watch_directory(&dir, cx));
+                this.watch_directory(&dir, cx);
             }
-            cx.spawn(|_, _| async move {
-                futures::future::join_all(task_handles).await;
-            })
-            .detach();
 
             this
         })
     }
 
     /// Add directory to be watched for content changes
-    fn watch_directory(&mut self, path: &Path, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn watch_directory(&mut self, path: &Path, cx: &mut ModelContext<Self>) {
         let path: Arc<Path> = Arc::from(path);
 
-        cx.spawn(|this, mut cx| async move {
+        self.watch_tasks.push(cx.spawn(|this, mut cx| async move {
             let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
             let watched_path = path.clone();
             let watcher = fs.watch(&watched_path, Duration::from_secs(1));
@@ -177,7 +174,7 @@ impl SnippetProvider {
                 .await?;
             }
             Ok(())
-        })
+        }));
     }
 
     fn lookup_snippets<'a>(
