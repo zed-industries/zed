@@ -2472,8 +2472,15 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
 
     // Merging the branch applies all of its changes to the base.
     base_buffer.update(cx, |base_buffer, cx| {
-        base_buffer.merge(&branch_buffer, cx);
-        assert_eq!(base_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+        base_buffer.merge(&branch_buffer, None, cx);
+    });
+
+    branch_buffer.update(cx, |branch_buffer, cx| {
+        assert_eq!(
+            base_buffer.read(cx).text(),
+            "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n"
+        );
+        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 }
 

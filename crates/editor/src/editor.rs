@@ -98,7 +98,9 @@ use language::{
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
-use proposed_changes_editor::{ProposedChangesBuffer, ProposedChangesEditor};
+pub use proposed_changes_editor::{
+    ProposedChangesBuffer, ProposedChangesEditor, ProposedChangesEditorToolbar,
+};
 use similar::{ChangeTag, TextDiff};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 

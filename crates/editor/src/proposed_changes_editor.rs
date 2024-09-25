@@ -9,7 +9,10 @@ use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, time::Duration};
 use text::ToOffset;
 use ui::prelude::*;
-use workspace::{searchable::SearchableItemHandle, Item, ItemHandle as _};
+use workspace::{
+    searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView,
+};
 
 pub struct ProposedChangesEditor {
     editor: View<Editor>,
@@ -21,6 +24,10 @@ pub struct ProposedChangesEditor {
 pub struct ProposedChangesBuffer<T> {
     pub buffer: Model<Buffer>,
     pub ranges: Vec<Range<T>>,
+}
+
+pub struct ProposedChangesEditorToolbar {
+    current_editor: Option<View<ProposedChangesEditor>>,
 }
 
 impl ProposedChangesEditor {
@@ -96,6 +103,17 @@ impl ProposedChangesEditor {
             self.recalculate_diffs_tx.unbounded_send(buffer).ok();
         }
     }
+
+    fn apply_all_changes(&self, cx: &mut ViewContext<Self>) {
+        let buffers = self.editor.read(cx).buffer.read(cx).all_buffers();
+        for branch_buffer in buffers {
+            if let Some(base_buffer) = branch_buffer.read(cx).diff_base_buffer() {
+                base_buffer.update(cx, |base_buffer, cx| {
+                    base_buffer.merge(&branch_buffer, None, cx)
+                });
+            }
+        }
+    }
 }
 
 impl Render for ProposedChangesEditor {
@@ -140,5 +158,48 @@ impl Item for ProposedChangesEditor {
         } else {
             None
         }
+    }
+}
+
+impl ProposedChangesEditorToolbar {
+    pub fn new() -> Self {
+        Self {
+            current_editor: None,
+        }
+    }
+
+    fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
+        if self.current_editor.is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+
+impl Render for ProposedChangesEditorToolbar {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let editor = self.current_editor.clone();
+        Button::new("apply-changes", "Apply All").on_click(move |_, cx| {
+            if let Some(editor) = &editor {
+                editor.update(cx, |editor, cx| {
+                    editor.apply_all_changes(cx);
+                });
+            }
+        })
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for ProposedChangesEditorToolbar {}
+
+impl ToolbarItemView for ProposedChangesEditorToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn workspace::ItemHandle>,
+        _cx: &mut ViewContext<Self>,
+    ) -> workspace::ToolbarItemLocation {
+        self.current_editor =
+            active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());
+        self.get_toolbar_item_location()
     }
 }
