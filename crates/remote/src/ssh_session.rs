@@ -56,7 +56,7 @@ pub struct SshSession {
 
 struct SshClientState {
     socket: SshSocket,
-    _master_process: process::Child,
+    master_process: process::Child,
     _temp_dir: TempDir,
 }
 
@@ -593,7 +593,7 @@ impl SshClientState {
                 connection_options,
                 socket_path,
             },
-            _master_process: master_process,
+            master_process,
             _temp_dir: temp_dir,
         })
     }
@@ -712,6 +712,14 @@ impl SshClientState {
                 dest_path.display(),
                 String::from_utf8_lossy(&output.stderr)
             ))
+        }
+    }
+}
+
+impl Drop for SshClientState {
+    fn drop(&mut self) {
+        if let Err(error) = self.master_process.kill() {
+            log::error!("failed to kill SSH master process: {}", error);
         }
     }
 }
