@@ -327,7 +327,14 @@ impl SshClientDelegate {
             cx,
         )
         .await
-        .map_err(|e| anyhow::anyhow!("failed to download remote server binary: {}", e))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to download remote server binary (os: {}, arch: {}): {}",
+                platform.os,
+                platform.arch,
+                e
+            )
+        })?;
 
         Ok((binary_path, version))
     }
