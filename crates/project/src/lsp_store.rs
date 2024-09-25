@@ -5594,7 +5594,7 @@ impl LspStore {
 
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = _lsp_store
-                    .update(&mut cx, |this, cx| {
+                    .update(&mut cx.clone(), |this, cx| {
                         this.languages.create_fake_language_server(
                             server_id,
                             &adapter.name,
