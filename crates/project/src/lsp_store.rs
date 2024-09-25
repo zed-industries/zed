@@ -154,6 +154,7 @@ impl LocalLspStore {
             futures::future::join_all(shutdown_futures).await;
         }
     }
+
     async fn format_locally(
         lsp_store: WeakModel<LspStore>,
         mut buffers_with_paths: Vec<(Model<Buffer>, Option<PathBuf>)>,
@@ -5402,9 +5403,6 @@ impl LspStore {
             language_registry: self.languages.clone(),
         }) as Arc<dyn LspAdapterDelegate>;
 
-        // TODO: We should use `adapter` here instead of reaching through the `CachedLspAdapter`.
-        let lsp_adapter = adapter.adapter.clone();
-
         let Some((upstream_client, project_id)) = self.upstream_client() else {
             return;
         };
@@ -5416,17 +5414,11 @@ impl LspStore {
             return;
         };
 
-        let task = cx.spawn(|_, cx| async move {
-            let user_binary_task = lsp_adapter.check_if_user_installed(delegate.as_ref(), &cx);
-            let binary = match user_binary_task.await {
-                Some(binary) => binary,
-                None => {
-                    return Err(anyhow!(
-                        "Downloading language server for ssh host is not supported yet"
-                    ))
-                }
-            };
+        let user_binary_task =
+            self.get_language_server_binary(adapter.clone(), delegate.clone(), false, cx);
 
+        let task = cx.spawn(|_, _| async move {
+            let binary = user_binary_task.await?;
             let name = adapter.name();
             let code_action_kinds = adapter
                 .adapter
@@ -5478,6 +5470,73 @@ impl LspStore {
         .detach();
     }
 
+    fn get_language_server_binary(
+        &self,
+        adapter: Arc<CachedLspAdapter>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        allow_binary_download: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<LanguageServerBinary>> {
+        let settings = ProjectSettings::get(
+            Some(SettingsLocation {
+                worktree_id: delegate.worktree_id(),
+                path: Path::new(""),
+            }),
+            cx,
+        )
+        .lsp
+        .get(&adapter.name)
+        .and_then(|s| s.binary.clone());
+
+        if settings.as_ref().is_some_and(|b| b.path.is_some()) {
+            let settings = settings.unwrap();
+            return cx.spawn(|_, _| async move {
+                Ok(LanguageServerBinary {
+                    path: PathBuf::from(&settings.path.unwrap()),
+                    env: Some(delegate.shell_env().await),
+                    arguments: settings
+                        .arguments
+                        .unwrap_or_default()
+                        .iter()
+                        .map(Into::into)
+                        .collect(),
+                })
+            });
+        }
+        let lsp_binary_options = LanguageServerBinaryOptions {
+            allow_path_lookup: !settings
+                .as_ref()
+                .and_then(|b| b.disable_path_lookup)
+                .unwrap_or_default(),
+            allow_binary_download,
+        };
+        cx.spawn(|_, mut cx| async move {
+            let binary_result = adapter
+                .clone()
+                .get_language_server_command(delegate.clone(), lsp_binary_options, &mut cx)
+                .await;
+
+            delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
+
+            let mut binary = binary_result?;
+            if let Some(arguments) = settings.and_then(|b| b.arguments) {
+                binary.arguments = arguments.into_iter().map(Into::into).collect();
+            }
+
+            // If we do have a project environment (either by spawning a shell in in the project directory
+            // or by getting it from the CLI) and the language server command itself
+            // doesn't have an environment, then we use the project environment.
+            if binary.env.is_none() {
+                log::info!(
+                    "using project environment for language server {:?}",
+                    adapter.name()
+                );
+                binary.env = Some(delegate.shell_env().await);
+            }
+            Ok(binary)
+        })
+    }
+
     fn start_language_server(
         &mut self,
         worktree_handle: &Model<Worktree>,
@@ -5503,8 +5562,6 @@ impl LspStore {
             return;
         }
 
-        let local = self.as_local().unwrap();
-
         let project_settings = ProjectSettings::get(
             Some(SettingsLocation {
                 worktree_id,
@@ -5512,18 +5569,12 @@ impl LspStore {
             }),
             cx,
         );
-
-        // We need some on the SSH client, and some on SSH host
         let lsp = project_settings.lsp.get(&adapter.name);
         let override_options = lsp.and_then(|s| s.initialization_options.clone());
-        let binary_options = lsp.and_then(|s| s.binary.clone());
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let delegate = LocalLspAdapterDelegate::for_local(self, worktree_handle, cx)
             as Arc<dyn LspAdapterDelegate>;
-        let project_environment = local.environment.update(cx, |environment, cx| {
-            environment.get_environment(Some(worktree_id), Some(worktree_path.clone()), cx)
-        });
 
         let server_id = self.languages.next_language_server_id();
         let root_path = worktree_path.clone();
@@ -5532,59 +5583,14 @@ impl LspStore {
             adapter.name.0
         );
 
+        let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), true, cx);
+
         let pending_server = cx.spawn({
-            let delegate = delegate.clone();
             let adapter = adapter.clone();
             let stderr_capture = stderr_capture.clone();
 
-            move |_lsp_store, mut cx| async move {
-                let project_environment = project_environment.await;
-
-                let mut binary = if binary_options.as_ref().is_some_and(|b| b.path.is_some()) {
-                    let binary_options = binary_options.unwrap();
-                    LanguageServerBinary {
-                        path: PathBuf::from(&binary_options.path.unwrap()),
-                        env: None,
-                        arguments: binary_options
-                            .arguments
-                            .unwrap_or_default()
-                            .iter()
-                            .map(Into::into)
-                            .collect(),
-                    }
-                } else {
-                    let lsp_binary_options = LanguageServerBinaryOptions {
-                        allow_path_lookup: !binary_options
-                            .as_ref()
-                            .and_then(|b| b.disable_path_lookup)
-                            .unwrap_or_default(),
-                        allow_binary_download: true, // todo
-                    };
-                    let binary_result = adapter
-                        .clone()
-                        .get_language_server_command(delegate.clone(), lsp_binary_options, &mut cx)
-                        .await;
-
-                    delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
-
-                    let mut binary = binary_result?;
-                    if let Some(arguments) = binary_options.and_then(|b| b.arguments) {
-                        binary.arguments = arguments.into_iter().map(Into::into).collect();
-                    }
-                    binary
-                };
-
-                // If we do have a project environment (either by spawning a shell in in the project directory
-                // or by getting it from the CLI) and the language server command itself
-                // doesn't have an environment (which it would have, if it was found in $PATH), then
-                // we use the project environment.
-                if binary.env.is_none() && project_environment.is_some() {
-                    log::info!(
-                        "using project environment for language server {:?}, id: {server_id}",
-                        adapter.name.0
-                    );
-                    binary.env = project_environment.clone();
-                }
+            move |_lsp_store, cx| async move {
+                let binary = binary.await?;
 
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = _lsp_store
