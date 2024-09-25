@@ -369,6 +369,7 @@ impl Editor {
                         editor.read(cx).hunk_controls_menu_handle.clone();
 
                     h_flex()
+                        .id(cx.block_id)
                         .w_full()
                         .h(cx.line_height())
                         .justify_between()
@@ -529,7 +530,7 @@ impl Editor {
                 let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 
                 h_flex()
-                    .id("gutter with editor")
+                    .id(cx.block_id)
                     .bg(deleted_hunk_color)
                     .h(height as f32 * cx.line_height())
                     .w_full()
