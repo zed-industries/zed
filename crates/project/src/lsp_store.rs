@@ -67,7 +67,6 @@ use std::{
     ffi::OsStr,
     iter, mem,
     ops::{ControlFlow, Range},
-    os::unix::ffi::OsStrExt,
     path::{self, Path, PathBuf},
     str,
     sync::Arc,
@@ -7830,7 +7829,8 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .current_dir(local_package_directory)
             .output()
             .await?;
-        let global_node_modules = PathBuf::from(OsStr::from_bytes(output.stdout.as_ref()));
+        let global_node_modules =
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
 
         if let Some(version) =
             read_package_installed_version(global_node_modules.clone(), package_name).await?
