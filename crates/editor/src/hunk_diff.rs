@@ -1,6 +1,6 @@
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::DiffHunkStatus;
-use gpui::{AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
+use gpui::{Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
@@ -11,15 +11,15 @@ use std::{
     sync::Arc,
 };
 use ui::{
-    prelude::*, ActiveTheme, IconButtonShape, InteractiveElement, IntoElement, ParentElement,
-    Styled, Tooltip, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
+    ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::RangeExt;
 
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, BlockDisposition,
     BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow, DisplaySnapshot,
-    Editor, EditorElement, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    Editor, EditorElement, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertFile,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -391,6 +391,28 @@ impl Editor {
                             h_flex()
                                 .gap_2()
                                 .pr_6()
+                                .child({
+                                    let focus = editor.focus_handle(cx);
+                                    PopoverMenu::new("hunk-controls-dropdown")
+                                        .trigger(
+                                            IconButton::new(
+                                                "toggle_editor_selections_icon",
+                                                IconName::EllipsisVertical,
+                                            )
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .style(ButtonStyle::Subtle),
+                                        )
+                                        .anchor(AnchorCorner::TopRight)
+                                        .menu(move |cx| {
+                                            let focus = focus.clone();
+                                            let menu = ContextMenu::build(cx, move |menu, _| {
+                                                menu.context(focus.clone())
+                                                    .action("Discard All", RevertFile.boxed_clone())
+                                            });
+                                            Some(menu)
+                                        })
+                                })
                                 .child(
                                     IconButton::new("discard", IconName::RotateCcw)
                                         .shape(IconButtonShape::Square)
