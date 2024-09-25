@@ -44,9 +44,9 @@ use language::{
 use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileSystemWatcher, InsertTextFormat,
-    LanguageServer, LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem,
-    MessageType, OneOf, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
-    WorkDoneProgressCancelParams, WorkspaceFolder,
+    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus, ServerStatus,
+    SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -5526,7 +5526,6 @@ impl LspStore {
         });
 
         let server_id = self.languages.next_language_server_id();
-        let container_dir = self.languages.language_server_download_dir(&adapter.name);
         let root_path = worktree_path.clone();
         log::info!(
             "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
@@ -5534,7 +5533,6 @@ impl LspStore {
         );
 
         let pending_server = cx.spawn({
-            let container_dir = container_dir.clone();
             let delegate = delegate.clone();
             let adapter = adapter.clone();
             let stderr_capture = stderr_capture.clone();
@@ -5555,14 +5553,23 @@ impl LspStore {
                             .collect(),
                     }
                 } else {
+                    let lsp_binary_options = LanguageServerBinaryOptions {
+                        allow_path_lookup: binary_options.is_none()
+                            || binary_options.as_ref().unwrap().path_lookup.unwrap_or(true),
+                        allow_binary_download: true, // todo
+                    };
                     let binary_result = adapter
                         .clone()
-                        .get_language_server_command(container_dir, delegate.clone(), &mut cx)
+                        .get_language_server_command(delegate.clone(), lsp_binary_options, &mut cx)
                         .await;
 
                     delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
 
-                    binary_result?
+                    let mut binary = binary_result?;
+                    if let Some(arguments) = binary_options.and_then(|b| b.arguments) {
+                        binary.arguments = arguments.into_iter().map(Into::into).collect();
+                    }
+                    binary
                 };
 
                 // If we do have a project environment (either by spawning a shell in in the project directory
@@ -7830,6 +7837,19 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .update_lsp_status(server_name, status);
     }
 
+    async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
+        let dir = self.language_registry.language_server_download_dir(name)?;
+
+        if !dir.exists() {
+            smol::fs::create_dir_all(&dir)
+                .await
+                .context("failed to create container directory")
+                .log_err()?;
+        }
+
+        Some(dir)
+    }
+
     async fn read_text_file(&self, path: PathBuf) -> Result<String> {
         if self.worktree.entry_for_path(&path).is_none() {
             return Err(anyhow!("no such path {path:?}"));
@@ -7912,6 +7932,10 @@ impl LspAdapterDelegate for SshLspAdapterDelegate {
             })
             .await?;
         Ok(())
+    }
+
+    async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
+        None
     }
 
     fn update_status(

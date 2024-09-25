@@ -485,7 +485,7 @@ impl LspAdapter for EsLintLspAdapter {
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             env: None,
-            arguments: eslint_server_binary_arguments(&server_path.join("oops")),
+            arguments: eslint_server_binary_arguments(&server_path),
         })
     }
 

@@ -29,7 +29,7 @@ use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::LanguageName;
-use lsp::{CodeActionKind, LanguageServerBinary};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -249,14 +249,14 @@ impl CachedLspAdapter {
 
     pub async fn get_language_server_command(
         self: Arc<Self>,
-        container_dir: Option<Arc<Path>>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncAppContext,
     ) -> Result<LanguageServerBinary> {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
             .clone()
-            .get_language_server_command(container_dir, delegate, cached_binary, cx)
+            .get_language_server_command(delegate, binary_options, cached_binary, cx)
             .await
     }
 
@@ -311,6 +311,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+    async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
@@ -324,8 +325,8 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        container_dir: Option<Arc<Path>>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
@@ -341,29 +342,29 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
-                log::info!(
-                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                    self.name().0,
-                    binary.path,
-                    binary.arguments
-                );
-                return Ok(binary);
+            if binary_options.allow_path_lookup {
+                if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
+                    log::info!(
+                        "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                        self.name().0,
+                        binary.path,
+                        binary.arguments
+                    );
+                    return Ok(binary);
+                }
+            }
+
+            if !binary_options.allow_binary_download {
+                return Err(anyhow!("downloading language servers disabled"));
             }
 
             if let Some(cached_binary) = cached_binary.as_ref() {
                 return Ok(cached_binary.clone());
             }
 
-            let Some(container_dir) = container_dir else {
+            let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await else {
                 anyhow::bail!("cannot download language servers for remotes (yet)")
             };
-
-            if !container_dir.exists() {
-                smol::fs::create_dir_all(&container_dir)
-                    .await
-                    .context("failed to create container directory")?;
-            }
 
             let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
 
@@ -1685,8 +1686,8 @@ impl LspAdapter for FakeLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Option<Arc<Path>>,
         _: Arc<dyn LspAdapterDelegate>,
+        _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {

@@ -64,6 +64,15 @@ pub struct LanguageServerBinary {
     pub env: Option<HashMap<String, String>>,
 }
 
+/// Configures the search (and installation) of language servers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageServerBinaryOptions {
+    /// Whether the adapter should look at the users system
+    pub allow_path_lookup: bool,
+    /// Whether the adapter should download its own version
+    pub allow_binary_download: bool,
+}
+
 /// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
