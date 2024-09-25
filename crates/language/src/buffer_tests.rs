@@ -2413,17 +2413,29 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Edits to the branch are not applied to the base.
-    branch_buffer.update(cx, |buffer, cx| {
-        buffer.edit(
-            [(Point::new(1, 0)..Point::new(1, 0), "ONE_POINT_FIVE\n")],
+    branch_buffer.update(cx, |branch_buffer, cx| {
+        branch_buffer.edit(
+            [
+                (Point::new(1, 0)..Point::new(1, 0), "1.5\n"),
+                (Point::new(2, 0)..Point::new(2, 5), "THREE"),
+            ],
             None,
             cx,
         )
     });
     branch_buffer.read_with(cx, |branch_buffer, cx| {
         assert_eq!(base_buffer.read(cx).text(), "one\ntwo\nthree\n");
-        assert_eq!(branch_buffer.text(), "one\nONE_POINT_FIVE\ntwo\nthree\n");
+        assert_eq!(branch_buffer.text(), "one\n1.5\ntwo\nTHREE\n");
     });
+
+    // The branch buffer maintains a diff with respect to its base buffer.
+    start_recalculating_diff(&branch_buffer, cx);
+    cx.run_until_parked();
+    assert_diff_hunks(
+        &branch_buffer,
+        cx,
+        &[(1..2, "", "1.5\n"), (3..4, "three\n", "THREE\n")],
+    );
 
     // Edits to the base are applied to the branch.
     base_buffer.update(cx, |buffer, cx| {
@@ -2431,62 +2443,68 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
     branch_buffer.read_with(cx, |branch_buffer, cx| {
         assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\nthree\n");
-        assert_eq!(
-            branch_buffer.text(),
-            "ZERO\none\nONE_POINT_FIVE\ntwo\nthree\n"
-        );
+        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\nTHREE\n");
     });
 
-    assert_diff_hunks(&branch_buffer, cx, &[(2..3, "", "ONE_POINT_FIVE\n")]);
+    // Until the git diff recalculation is complete, the git diff references
+    // the previous content of the base buffer, so that it stays in sync.
+    start_recalculating_diff(&branch_buffer, cx);
+    assert_diff_hunks(
+        &branch_buffer,
+        cx,
+        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
+    );
+    cx.run_until_parked();
+    assert_diff_hunks(
+        &branch_buffer,
+        cx,
+        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
+    );
 
     // Edits to any replica of the base are applied to the branch.
     base_buffer_replica.update(cx, |buffer, cx| {
-        buffer.edit(
-            [(Point::new(2, 0)..Point::new(2, 0), "TWO_POINT_FIVE\n")],
-            None,
-            cx,
-        )
+        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "2.5\n")], None, cx)
     });
     branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(
-            base_buffer.read(cx).text(),
-            "ZERO\none\ntwo\nTWO_POINT_FIVE\nthree\n"
-        );
-        assert_eq!(
-            branch_buffer.text(),
-            "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
-        );
+        assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\n2.5\nthree\n");
+        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 
     // Merging the branch applies all of its changes to the base.
     base_buffer.update(cx, |base_buffer, cx| {
-        base_buffer.merge(&branch_buffer, cx);
+        base_buffer.merge(&branch_buffer, None, cx);
+    });
+
+    branch_buffer.update(cx, |branch_buffer, cx| {
         assert_eq!(
-            base_buffer.text(),
-            "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
+            base_buffer.read(cx).text(),
+            "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n"
         );
+        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 }
 
+fn start_recalculating_diff(buffer: &Model<Buffer>, cx: &mut TestAppContext) {
+    buffer
+        .update(cx, |buffer, cx| buffer.recalculate_diff(cx).unwrap())
+        .detach();
+}
+
+#[track_caller]
 fn assert_diff_hunks(
     buffer: &Model<Buffer>,
     cx: &mut TestAppContext,
     expected_hunks: &[(Range<u32>, &str, &str)],
 ) {
-    buffer
-        .update(cx, |buffer, cx| buffer.recalculate_diff(cx).unwrap())
-        .detach();
-    cx.executor().run_until_parked();
-
-    buffer.read_with(cx, |buffer, _| {
-        let snapshot = buffer.snapshot();
-        assert_hunks(
-            snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
-            &snapshot,
-            &buffer.diff_base().unwrap().to_string(),
-            expected_hunks,
-        );
+    let (snapshot, diff_base) = buffer.read_with(cx, |buffer, _| {
+        (buffer.snapshot(), buffer.diff_base().unwrap().to_string())
     });
+    assert_hunks(
+        snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
+        &snapshot,
+        &diff_base,
+        expected_hunks,
+    );
 }
 
 #[gpui::test(iterations = 100)]
