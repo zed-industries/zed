@@ -201,7 +201,7 @@ impl SnippetProvider {
         }));
     }
 
-    fn lookup_snippets<'a>(
+    fn lookup_snippets<'a, const LOOKUP_GLOBALS: bool>(
         &'a self,
         language: &'a SnippetKind,
         cx: &AppContext,
@@ -214,9 +214,17 @@ impl SnippetProvider {
             .into_iter()
             .flat_map(|(_, snippets)| snippets.into_iter())
             .collect();
-        if let Some(global_watcher) = cx.try_global::<GlobalSnippetWatcher>() {
-            user_snippets.extend(global_watcher.0.read(cx).lookup_snippets(language, cx));
+        if LOOKUP_GLOBALS {
+            if let Some(global_watcher) = cx.try_global::<GlobalSnippetWatcher>() {
+                user_snippets.extend(
+                    global_watcher
+                        .0
+                        .read(cx)
+                        .lookup_snippets::<false>(language, cx),
+                );
+            }
         }
+
         let Some(registry) = SnippetRegistry::try_global(cx) else {
             return user_snippets;
         };
@@ -228,11 +236,11 @@ impl SnippetProvider {
     }
 
     pub fn snippets_for(&self, language: SnippetKind, cx: &AppContext) -> Vec<Arc<Snippet>> {
-        let mut requested_snippets = self.lookup_snippets(&language, cx);
+        let mut requested_snippets = self.lookup_snippets::<true>(&language, cx);
 
         if language.is_some() {
             // Look up global snippets as well.
-            requested_snippets.extend(self.lookup_snippets(&None, cx));
+            requested_snippets.extend(self.lookup_snippets::<true>(&None, cx));
         }
         requested_snippets
     }
