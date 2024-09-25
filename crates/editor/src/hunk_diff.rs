@@ -6,7 +6,6 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToPoint,
 };
-use settings::SettingsStore;
 use std::{
     ops::{Range, RangeInclusive},
     sync::Arc,
@@ -348,6 +347,13 @@ impl Editor {
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> BlockProperties<Anchor> {
+        let border_color = cx.theme().colors().border_disabled;
+        let gutter_color = match hunk.status {
+            DiffHunkStatus::Added => cx.theme().status().created,
+            DiffHunkStatus::Modified => cx.theme().status().modified,
+            DiffHunkStatus::Removed => cx.theme().status().deleted,
+        };
+
         BlockProperties {
             position: hunk.multi_buffer_range.start,
             height: 1,
@@ -360,45 +366,17 @@ impl Editor {
                 move |cx| {
                     h_flex()
                         .w_full()
-                        .justify_end()
                         .h(cx.line_height())
-                        .gap_2()
-                        .pr_6()
+                        .justify_between()
+                        .border_t_1()
+                        .border_color(border_color)
                         .child(
-                            IconButton::new("discard", IconName::RotateCcw)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Small)
-                                .on_click({
-                                    let editor = editor.clone();
-                                    let hunk = hunk.clone();
-                                    move |_event, cx| {
-                                        let multi_buffer = editor.read(cx).buffer().clone();
-                                        let multi_buffer_snapshot =
-                                            multi_buffer.read(cx).snapshot(cx);
-                                        let mut revert_changes = HashMap::default();
-                                        if let Some(hunk) = crate::hunk_diff::to_diff_hunk(
-                                            &hunk,
-                                            &multi_buffer_snapshot,
-                                        ) {
-                                            Editor::prepare_revert_change(
-                                                &mut revert_changes,
-                                                &multi_buffer,
-                                                &hunk,
-                                                cx,
-                                            );
-                                        }
-                                        if !revert_changes.is_empty() {
-                                            editor.update(cx, |editor, cx| {
-                                                editor.revert(revert_changes, cx)
-                                            });
-                                        }
-                                    }
-                                }),
-                        )
-                        .child(
-                            IconButton::new("collapse", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Small)
+                            div()
+                                .id("gutter-strip")
+                                .w(EditorElement::diff_hunk_strip_width(cx.line_height()))
+                                .h_full()
+                                .bg(gutter_color)
+                                .cursor(CursorStyle::PointingHand)
                                 .on_click({
                                     let editor = editor.clone();
                                     let hunk = hunk.clone();
@@ -408,6 +386,56 @@ impl Editor {
                                         });
                                     }
                                 }),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .pr_6()
+                                .child(
+                                    IconButton::new("discard", IconName::RotateCcw)
+                                        .shape(IconButtonShape::Square)
+                                        .icon_size(IconSize::Small)
+                                        .on_click({
+                                            let editor = editor.clone();
+                                            let hunk = hunk.clone();
+                                            move |_event, cx| {
+                                                let multi_buffer = editor.read(cx).buffer().clone();
+                                                let multi_buffer_snapshot =
+                                                    multi_buffer.read(cx).snapshot(cx);
+                                                let mut revert_changes = HashMap::default();
+                                                if let Some(hunk) = crate::hunk_diff::to_diff_hunk(
+                                                    &hunk,
+                                                    &multi_buffer_snapshot,
+                                                ) {
+                                                    Editor::prepare_revert_change(
+                                                        &mut revert_changes,
+                                                        &multi_buffer,
+                                                        &hunk,
+                                                        cx,
+                                                    );
+                                                }
+                                                if !revert_changes.is_empty() {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.revert(revert_changes, cx)
+                                                    });
+                                                }
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    IconButton::new("collapse", IconName::Close)
+                                        .shape(IconButtonShape::Square)
+                                        .icon_size(IconSize::Small)
+                                        .on_click({
+                                            let editor = editor.clone();
+                                            let hunk = hunk.clone();
+                                            move |_event, cx| {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.toggle_hovered_hunk(&hunk, cx);
+                                                });
+                                            }
+                                        }),
+                                ),
                         )
                         .into_any_element()
                 }
@@ -421,6 +449,11 @@ impl Editor {
         deleted_text_height: u32,
         cx: &mut ViewContext<'_, Editor>,
     ) -> BlockProperties<Anchor> {
+        let gutter_color = match hunk.status {
+            DiffHunkStatus::Added => unreachable!(),
+            DiffHunkStatus::Modified => cx.theme().status().modified,
+            DiffHunkStatus::Removed => cx.theme().status().deleted,
+        };
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
@@ -451,7 +484,7 @@ impl Editor {
                             .child(
                                 h_flex()
                                     .id("gutter hunk")
-                                    .bg(cx.theme().status().deleted)
+                                    .bg(gutter_color)
                                     .pl(gutter_dimensions.margin
                                         + gutter_dimensions
                                             .git_blame_entries_width
@@ -712,7 +745,7 @@ fn added_hunk_color(cx: &AppContext) -> Hsla {
 }
 
 fn deleted_hunk_color(cx: &AppContext) -> Hsla {
-    let mut deleted_color = cx.theme().status().git().deleted;
+    let mut deleted_color = cx.theme().status().deleted;
     deleted_color.fade_out(0.7);
     deleted_color
 }
@@ -751,32 +784,15 @@ fn editor_with_deleted_text(
             false,
             cx,
         );
-
-        let subscription_editor = parent_editor.clone();
-        editor._subscriptions.extend([
-            cx.on_blur(&editor.focus_handle, |editor, cx| {
-                editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
+        editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
+        editor
+            ._subscriptions
+            .extend([cx.on_blur(&editor.focus_handle, |editor, cx| {
                 editor.change_selections(None, cx, |s| {
                     s.try_cancel();
                 });
-                cx.notify();
-            }),
-            cx.on_focus(&editor.focus_handle, move |editor, cx| {
-                let restored_highlight = if let Some(parent_editor) = subscription_editor.upgrade()
-                {
-                    parent_editor.read(cx).current_line_highlight
-                } else {
-                    None
-                };
-                editor.set_current_line_highlight(restored_highlight);
-                cx.notify();
-            }),
-            cx.observe_global::<SettingsStore>(|editor, cx| {
-                if !editor.is_focused(cx) {
-                    editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                }
-            }),
-        ]);
+            })]);
+
         let parent_editor_for_reverts = parent_editor.clone();
         let original_multi_buffer_range = hunk.multi_buffer_range.clone();
         let diff_base_range = hunk.diff_base_byte_range.clone();

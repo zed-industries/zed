@@ -1282,13 +1282,13 @@ impl EditorElement {
             let display_hunks = buffer_snapshot
                 .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
                 .filter_map(|hunk| {
-                    let mut display_hunk = diff_hunk_to_display(&hunk, snapshot);
+                    let display_hunk = diff_hunk_to_display(&hunk, snapshot);
 
                     if let DisplayDiffHunk::Unfolded {
                         multi_buffer_range,
                         status,
                         ..
-                    } = &mut display_hunk
+                    } = &display_hunk
                     {
                         let mut is_expanded = false;
                         while let Some(expanded_hunk) = expanded_hunks.peek() {
@@ -1311,11 +1311,7 @@ impl EditorElement {
                         }
                         match status {
                             DiffHunkStatus::Added => {}
-                            DiffHunkStatus::Modified => {
-                                if is_expanded {
-                                    *status = DiffHunkStatus::Added;
-                                }
-                            }
+                            DiffHunkStatus::Modified => {}
                             DiffHunkStatus::Removed => {
                                 if is_expanded {
                                     return None;
