@@ -9623,7 +9623,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
     cx.update_editor(|editor, cx| {
         //Wrap around the bottom of the buffer
         for _ in 0..3 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
         }
     });
 
@@ -9709,7 +9709,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
         //Make sure that the fold only gets one hunk
         for _ in 0..4 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
         }
     });
 
@@ -11226,7 +11226,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
 
     cx.update_editor(|editor, cx| {
         for _ in 0..4 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
             editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
         }
     });
@@ -11250,17 +11250,12 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(1)..=DisplayRow(1), DisplayRow(7)..=DisplayRow(7), DisplayRow(9)..=DisplayRow(9)],
-            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
-        );
-        assert_eq!(
             all_hunks,
             vec![
-                ("use some::mod;\n".to_string(), DiffHunkStatus::Modified, DisplayRow(1)..DisplayRow(2)),
-                ("const A: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(4)..DisplayRow(4)),
-                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(7)..DisplayRow(8)),
-                ("".to_string(), DiffHunkStatus::Added, DisplayRow(9)..DisplayRow(10)),
+                ("use some::mod;\n".to_string(), DiffHunkStatus::Modified, DisplayRow(2)..DisplayRow(3)),
+                ("const A: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(6)..DisplayRow(6)),
+                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(10)..DisplayRow(11)),
+                ("".to_string(), DiffHunkStatus::Added, DisplayRow(13)..DisplayRow(14)),
             ],
             "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
             (from modified and removed hunks)"
@@ -11268,6 +11263,11 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         assert_eq!(
             all_hunks, all_expanded_hunks,
             "Editor hunks should not change and all be expanded"
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(2)..=DisplayRow(2), DisplayRow(10)..=DisplayRow(10), DisplayRow(13)..=DisplayRow(13)],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
     });
 
@@ -11311,7 +11311,7 @@ async fn test_toggled_diff_base_change(
         const B: u32 = 42;
         const C: u32 = 42;
 
-        fn main(ˇ) {
+        fn main() {
             println!("hello");
 
             println!("world");
@@ -11356,9 +11356,9 @@ async fn test_toggled_diff_base_change(
                     DisplayRow(3)..DisplayRow(3)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(5)..DisplayRow(7)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "".to_string(),
@@ -11390,22 +11390,18 @@ async fn test_toggled_diff_base_change(
         "#
         .unindent(),
     );
+
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(9)..=DisplayRow(10), DisplayRow(13)..=DisplayRow(14)],
-            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
-        );
-        assert_eq!(
             all_hunks,
             vec![
-                ("use some::mod1;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(1)..DisplayRow(1)),
-                ("const B: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(5)..DisplayRow(5)),
-                ("fn main(ˇ) {\n    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(9)..DisplayRow(11)),
-                ("".to_string(), DiffHunkStatus::Added, DisplayRow(13)..DisplayRow(15)),
+                ("use some::mod1;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(2)..DisplayRow(2)),
+                ("const B: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(7)..DisplayRow(7)),
+                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(12)..DisplayRow(13)),
+                ("".to_string(), DiffHunkStatus::Added, DisplayRow(16)..DisplayRow(18)),
             ],
             "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
             (from modified and removed hunks)"
@@ -11413,6 +11409,11 @@ async fn test_toggled_diff_base_change(
         assert_eq!(
             all_hunks, all_expanded_hunks,
             "Editor hunks should not change and all be expanded"
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(12)..=DisplayRow(12), DisplayRow(16)..=DisplayRow(17)],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
     });
 
@@ -11459,7 +11460,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         const B: u32 = 42;
         const C: u32 = 42;
 
-        fn main(ˇ) {
+        fn main() {
             println!("hello");
 
             println!("world");
@@ -11520,9 +11521,9 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                     DisplayRow(3)..DisplayRow(3)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(5)..DisplayRow(7)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "".to_string(),
@@ -11577,49 +11578,49 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![
-                DisplayRow(9)..=DisplayRow(10),
-                DisplayRow(13)..=DisplayRow(14),
-                DisplayRow(19)..=DisplayRow(19)
-            ]
-        );
-        assert_eq!(
             all_hunks,
             vec![
                 (
                     "use some::mod1;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(1)..DisplayRow(1)
+                    DisplayRow(2)..DisplayRow(2)
                 ),
                 (
                     "const B: u32 = 42;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(5)..DisplayRow(5)
+                    DisplayRow(7)..DisplayRow(7)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(9)..DisplayRow(11)
+                    DisplayRow(12)..DisplayRow(13)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(13)..DisplayRow(15)
+                    DisplayRow(16)..DisplayRow(18)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(19)..DisplayRow(20)
+                    DisplayRow(23)..DisplayRow(24)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(23)..DisplayRow(23)
+                    DisplayRow(28)..DisplayRow(28)
                 ),
             ],
         );
         assert_eq!(all_hunks, all_expanded_hunks);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(12)..=DisplayRow(12),
+                DisplayRow(16)..=DisplayRow(17),
+                DisplayRow(23)..=DisplayRow(23)
+            ]
+        );
     });
 
     cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
@@ -11654,11 +11655,6 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(0)..=DisplayRow(0), DisplayRow(5)..=DisplayRow(5)],
-            "Only one hunk is left not folded, its highlight should be visible"
-        );
-        assert_eq!(
             all_hunks,
             vec![
                 (
@@ -11672,7 +11668,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                     DisplayRow(0)..DisplayRow(0)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
                     DisplayRow(0)..DisplayRow(0)
                 ),
@@ -11684,12 +11680,12 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(5)..DisplayRow(6)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(9)..DisplayRow(9)
+                    DisplayRow(11)..DisplayRow(11)
                 ),
             ],
             "Hunk list should still return shifted folded hunks"
@@ -11700,15 +11696,20 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(5)..DisplayRow(6)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(9)..DisplayRow(9)
+                    DisplayRow(11)..DisplayRow(11)
                 ),
             ],
             "Only non-folded hunks should be left expanded"
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(0)..=DisplayRow(0), DisplayRow(6)..=DisplayRow(6)],
+            "Only one hunk is left not folded, its highlight should be visible"
         );
     });
 
@@ -11747,50 +11748,50 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![
-                DisplayRow(9)..=DisplayRow(10),
-                DisplayRow(13)..=DisplayRow(14),
-                DisplayRow(19)..=DisplayRow(19)
-            ],
-            "After unfolding, all hunk diffs should be visible again"
-        );
-        assert_eq!(
             all_hunks,
             vec![
                 (
                     "use some::mod1;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(1)..DisplayRow(1)
+                    DisplayRow(2)..DisplayRow(2)
                 ),
                 (
                     "const B: u32 = 42;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(5)..DisplayRow(5)
+                    DisplayRow(7)..DisplayRow(7)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(9)..DisplayRow(11)
+                    DisplayRow(12)..DisplayRow(13)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(13)..DisplayRow(15)
+                    DisplayRow(16)..DisplayRow(18)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(19)..DisplayRow(20)
+                    DisplayRow(23)..DisplayRow(24)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(23)..DisplayRow(23)
+                    DisplayRow(28)..DisplayRow(28)
                 ),
             ],
         );
         assert_eq!(all_hunks, all_expanded_hunks);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(12)..=DisplayRow(12),
+                DisplayRow(16)..=DisplayRow(17),
+                DisplayRow(23)..=DisplayRow(23)
+            ],
+            "After unfolding, all hunk diffs should be visible again"
+        );
     });
 }
 
@@ -11940,17 +11941,17 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         (
             "bbbb\n".to_string(),
             DiffHunkStatus::Removed,
-            DisplayRow(5)..DisplayRow(5),
+            DisplayRow(6)..DisplayRow(6),
         ),
         (
             "nnnn\n".to_string(),
             DiffHunkStatus::Modified,
-            DisplayRow(23)..DisplayRow(24),
+            DisplayRow(25)..DisplayRow(26),
         ),
         (
             "".to_string(),
             DiffHunkStatus::Added,
-            DisplayRow(43)..DisplayRow(44),
+            DisplayRow(46)..DisplayRow(47),
         ),
     ];
 
@@ -11975,8 +11976,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(23)..=DisplayRow(23),
-                DisplayRow(43)..=DisplayRow(43)
+                DisplayRow(25)..=DisplayRow(25),
+                DisplayRow(46)..=DisplayRow(46)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -12007,8 +12008,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(23)..=DisplayRow(23),
-                DisplayRow(43)..=DisplayRow(43)
+                DisplayRow(25)..=DisplayRow(25),
+                DisplayRow(46)..=DisplayRow(46)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -12116,12 +12117,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(7)
+                DisplayRow(5)..DisplayRow(8)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)]
+            vec![DisplayRow(5)..=DisplayRow(7)]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -12156,12 +12157,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(8)
+                DisplayRow(5)..DisplayRow(9)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)],
+            vec![DisplayRow(5)..=DisplayRow(7)],
             "Edited hunk should have one more line added"
         );
         assert_eq!(
@@ -12201,12 +12202,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(9)
+                DisplayRow(5)..DisplayRow(10)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)],
+            vec![DisplayRow(5)..=DisplayRow(7)],
             "Edited hunk should have one more line added"
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12245,12 +12246,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(8)
+                DisplayRow(5)..DisplayRow(9)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)],
+            vec![DisplayRow(5)..=DisplayRow(7)],
             "Deleting a line should shrint the hunk"
         );
         assert_eq!(
@@ -12293,12 +12294,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(5)..DisplayRow(6)
+                DisplayRow(6)..DisplayRow(7)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(5)..=DisplayRow(5)]
+            vec![DisplayRow(6)..=DisplayRow(6)]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -12335,7 +12336,7 @@ async fn test_edits_around_toggled_additions(
                 (
                     "const A: u32 = 42;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(2)..DisplayRow(2)
+                    DisplayRow(3)..DisplayRow(3)
                 )
             ]
         );
@@ -12349,7 +12350,7 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "const A: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(2)..DisplayRow(2)
+                DisplayRow(3)..DisplayRow(3)
             )],
             "Should open hunks that were adjacent to the stale addition one"
         );
@@ -12445,7 +12446,7 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(4)..DisplayRow(4)
+                DisplayRow(5)..DisplayRow(5)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12485,7 +12486,7 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(5)..DisplayRow(5)
+                DisplayRow(6)..DisplayRow(6)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12520,7 +12521,7 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(6)..DisplayRow(6)
+                DisplayRow(7)..DisplayRow(7)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12554,12 +12555,12 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(7)..DisplayRow(8)
+                DisplayRow(8)..DisplayRow(9)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(7)..=DisplayRow(7)],
+            vec![DisplayRow(8)..=DisplayRow(8)],
             "Modified expanded hunks should display additions and highlight their background"
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12653,14 +12654,14 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(6)],
+            vec![DisplayRow(7)..=DisplayRow(7)],
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "const C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(7)
+                DisplayRow(7)..DisplayRow(8)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12696,7 +12697,7 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(6)],
+            vec![DisplayRow(7)..=DisplayRow(7)],
             "Modified hunk should grow highlighted lines on more text additions"
         );
         assert_eq!(
@@ -12704,7 +12705,7 @@ async fn test_edits_around_toggled_modifications(
             vec![(
                 "const C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(9)
+                DisplayRow(7)..DisplayRow(10)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12742,14 +12743,14 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(8)],
+            vec![DisplayRow(7)..=DisplayRow(9)],
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "const B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(9)
+                DisplayRow(7)..DisplayRow(10)
             )],
             "Modified hunk should grow deleted lines on text deletions above"
         );
@@ -12786,7 +12787,7 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(9)],
+            vec![DisplayRow(7)..=DisplayRow(10)],
             "Modified hunk should grow deleted lines on text modifications above"
         );
         assert_eq!(
@@ -12794,7 +12795,7 @@ async fn test_edits_around_toggled_modifications(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(10)
+                DisplayRow(7)..DisplayRow(11)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12830,7 +12831,7 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(8)],
+            vec![DisplayRow(7)..=DisplayRow(9)],
             "Modified hunk should grow shrink lines on modification lines removal"
         );
         assert_eq!(
@@ -12838,7 +12839,7 @@ async fn test_edits_around_toggled_modifications(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(9)
+                DisplayRow(7)..DisplayRow(10)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12880,7 +12881,7 @@ async fn test_edits_around_toggled_modifications(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\nconst D: u32 = 42;\n"
                     .to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(7)..DisplayRow(7)
+                DisplayRow(8)..DisplayRow(8)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12974,14 +12975,14 @@ async fn test_multiple_expanded_hunks_merge(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(6)],
+            vec![DisplayRow(7)..=DisplayRow(7)],
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "const C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(7)
+                DisplayRow(7)..DisplayRow(8)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
