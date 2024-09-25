@@ -261,6 +261,8 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         cx,
     );
 
+    // TODO: think about replacing with absolute length so table will not full width, but there are will not be large spaces in cells
+
     let body: Vec<AnyElement> = parsed
         .body
         .iter()

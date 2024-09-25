@@ -55,6 +55,10 @@ url.workspace = true
 util.workspace = true
 worktree.workspace = true
 
+# fix for https://github.com/zed-industries/zed/actions/runs/11025748924/job/30632735188?pr=18315
+[package.metadata.cargo-machete]
+ignored = ["fs"]
+
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
