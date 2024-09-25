@@ -12,7 +12,7 @@ use std::{
 };
 use ui::{
     prelude::*, ActiveTheme, IconButtonShape, InteractiveElement, IntoElement, ParentElement,
-    Styled, ViewContext, VisualContext,
+    Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::RangeExt;
 
@@ -395,6 +395,13 @@ impl Editor {
                                     IconButton::new("discard", IconName::RotateCcw)
                                         .shape(IconButtonShape::Square)
                                         .icon_size(IconSize::Small)
+                                        .tooltip(move |cx| {
+                                            Tooltip::for_action(
+                                                "Discard Hunk",
+                                                &RevertSelectedHunks,
+                                                cx,
+                                            )
+                                        })
                                         .on_click({
                                             let editor = editor.clone();
                                             let hunk = hunk.clone();
@@ -426,6 +433,13 @@ impl Editor {
                                     IconButton::new("collapse", IconName::Close)
                                         .shape(IconButtonShape::Square)
                                         .icon_size(IconSize::Small)
+                                        .tooltip(move |cx| {
+                                            Tooltip::for_action(
+                                                "Collapse Hunk",
+                                                &ToggleHunkDiff,
+                                                cx,
+                                            )
+                                        })
                                         .on_click({
                                             let editor = editor.clone();
                                             let hunk = hunk.clone();
