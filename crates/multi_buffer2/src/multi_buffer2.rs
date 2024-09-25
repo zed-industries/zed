@@ -1,4 +1,4 @@
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use gpui::{Model, ModelContext};
 use language::{Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, ReplicaId};
 use std::{
@@ -149,7 +149,8 @@ impl MultiBuffer {
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
         let mut renames = Vec::new();
-        let mut edits = Vec::new();
+        let mut edits =
+            BTreeMap::<(Option<Arc<Path>>, BufferId), Vec<language::Edit<usize>>>::new();
 
         for (buffer_id, old_snapshot) in self.snapshot.buffer_snapshots.clone().iter() {
             let new_snapshot = self.buffers[buffer_id].read(cx).snapshot();
@@ -170,7 +171,10 @@ impl MultiBuffer {
 
             for edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
                 changed = true;
-                edits.push((*buffer_id, new_path.clone(), edit));
+                edits
+                    .entry((new_path.clone(), *buffer_id))
+                    .or_default()
+                    .push(edit);
             }
 
             if changed {
@@ -236,7 +240,61 @@ impl MultiBuffer {
         self.snapshot.excerpts = new_tree;
     }
 
-    fn apply_edits(&mut self, _edits: Vec<(BufferId, Option<Arc<Path>>, language::Edit<usize>)>) {}
+    fn apply_edits(
+        &mut self,
+        edits: BTreeMap<(Option<Arc<Path>>, BufferId), Vec<language::Edit<usize>>>,
+    ) {
+        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+        let mut new_tree = SumTree::default();
+
+        for ((path, buffer_id), buffer_edits) in edits {
+            let buffer_start = ExcerptOffset {
+                path: path.clone(),
+                buffer_id,
+                offset: 0,
+            };
+            new_tree.append(cursor.slice(&buffer_start, Bias::Left, &()), &());
+
+            let mut buffer_old_start = cursor.item().unwrap().key.range.start;
+            let mut buffer_new_start = buffer_old_start;
+            for buffer_edit in buffer_edits {
+                let buffer_old_end = cursor.item().unwrap().key.range.end;
+                if buffer_edit.old.start > buffer_old_start {
+                    if buffer_edit.old.start < buffer_old_end {
+                        push_excerpt(
+                            &mut new_tree,
+                            &self.snapshot.buffer_snapshots,
+                            Excerpt {
+                                key: ExcerptKey {
+                                    path: path.clone(),
+                                    buffer_id,
+                                    range: buffer_new_start..buffer_edit.new.start,
+                                },
+                                text_summary: TextSummary::default(), // todo!(change this)
+                            },
+                        );
+                    } else {
+                        push_excerpt(
+                            &mut new_tree,
+                            &self.snapshot.buffer_snapshots,
+                            Excerpt {
+                                key: ExcerptKey {
+                                    path: path.clone(),
+                                    buffer_id,
+                                    range: buffer_new_start
+                                        ..buffer_new_start + (buffer_old_end - buffer_old_start),
+                                },
+                                text_summary: TextSummary::default(), // todo!(change this)
+                            },
+                        );
+                    }
+
+                    buffer_old_start = buffer_edit.old.start;
+                    buffer_new_start = buffer_edit.new.start;
+                }
+            }
+        }
+    }
 
     pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
         self.sync(cx);
@@ -268,6 +326,10 @@ fn push_excerpt(
     buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
     excerpt: Excerpt,
 ) {
+    if excerpt.key.range.is_empty() {
+        return;
+    }
+
     let mut merged = false;
     excerpts.update_last(
         |last_excerpt| {
