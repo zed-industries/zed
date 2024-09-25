@@ -6,10 +6,10 @@ use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::Project;
 use smol::stream::StreamExt;
-use std::{ops::Range, time::Duration};
+use std::{any::TypeId, ops::Range, time::Duration};
 use text::ToOffset;
 use ui::prelude::*;
-use workspace::Item;
+use workspace::{searchable::SearchableItemHandle, Item, ItemHandle as _};
 
 pub struct ProposedChangesEditor {
     editor: View<Editor>,
@@ -121,5 +121,24 @@ impl Item for ProposedChangesEditor {
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("Proposed changes".into())
+    }
+
+    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a View<Self>,
+        _: &'a AppContext,
+    ) -> Option<gpui::AnyView> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.to_any())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.to_any())
+        } else {
+            None
+        }
     }
 }
