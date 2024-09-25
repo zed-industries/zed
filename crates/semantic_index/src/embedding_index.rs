@@ -2,6 +2,7 @@ use crate::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
+    tfidf::{ChunkTermFrequency, SimpleTokenizer, TermFrequency, TfIdfMetadata},
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
@@ -15,25 +16,41 @@ use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use std::{
-    cmp::Ordering,
-    future::Future,
-    iter,
-    path::Path,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
-use util::ResultExt;
+use std::{cmp::Ordering, future::Future, path::Path, sync::Arc, time::SystemTime};
 use worktree::Snapshot;
+
+#[derive(Debug, Clone, Copy)]
+pub struct EmbeddingIndexSettings {
+    pub scan_entries_bound: usize,
+    pub deleted_entries_bound: usize,
+    pub chunk_files_bound: usize,
+    pub chunk_files_batch_size: usize,
+    pub embed_files_bound: usize,
+}
+
+impl Default for EmbeddingIndexSettings {
+    fn default() -> Self {
+        Self {
+            scan_entries_bound: 512,
+            deleted_entries_bound: 128,
+            chunk_files_bound: 16,
+            chunk_files_batch_size: 32,
+            embed_files_bound: 16,
+        }
+    }
+}
 
 pub struct EmbeddingIndex {
     worktree: Model<Worktree>,
     db_connection: heed::Env,
-    db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+    embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+    tfidf_metadata_db: heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
+    tokenizer: SimpleTokenizer,
+    settings: EmbeddingIndexSettings,
 }
 
 impl EmbeddingIndex {
@@ -42,6 +59,7 @@ impl EmbeddingIndex {
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
         embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        tfidf_metadata_db: heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
         language_registry: Arc<LanguageRegistry>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
@@ -50,15 +68,18 @@ impl EmbeddingIndex {
             worktree,
             fs,
             db_connection,
-            db: embedding_db,
+            embedding_db,
             language_registry,
             embedding_provider,
             entry_ids_being_indexed,
+            tokenizer: SimpleTokenizer::new(),
+            tfidf_metadata_db,
+            settings: EmbeddingIndexSettings::default(),
         }
     }
 
-    pub fn db(&self) -> &heed::Database<Str, SerdeBincode<EmbeddedFile>> {
-        &self.db
+    pub fn embedding_db(&self) -> &heed::Database<Str, SerdeBincode<EmbeddedFile>> {
+        &self.embedding_db
     }
 
     pub fn index_entries_changed_on_disk(
@@ -69,7 +90,13 @@ impl EmbeddingIndex {
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
+        let embed = Self::embed_files(
+            self.embedding_provider.clone(),
+            chunk.files,
+            self.tokenizer.clone(),
+            self.settings,
+            cx,
+        );
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
@@ -86,7 +113,13 @@ impl EmbeddingIndex {
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
+        let embed = Self::embed_files(
+            self.embedding_provider.clone(),
+            chunk.files,
+            self.tokenizer.clone(),
+            self.settings,
+            cx,
+        );
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
@@ -95,10 +128,12 @@ impl EmbeddingIndex {
     }
 
     fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
-        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
-        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
+        let (updated_entries_tx, updated_entries_rx) =
+            channel::bounded(self.settings.scan_entries_bound);
+        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) =
+            channel::bounded(self.settings.deleted_entries_bound);
         let db_connection = self.db_connection.clone();
-        let db = self.db;
+        let db = self.embedding_db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
@@ -180,8 +215,10 @@ impl EmbeddingIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> ScanEntries {
-        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
-        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
+        let (updated_entries_tx, updated_entries_rx) =
+            channel::bounded(self.settings.scan_entries_bound);
+        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) =
+            channel::bounded(self.settings.deleted_entries_bound);
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             for (path, entry_id, status) in updated_entries.iter() {
@@ -226,41 +263,44 @@ impl EmbeddingIndex {
     ) -> ChunkFiles {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
-        let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
-        let task = cx.spawn(|cx| async move {
-            cx.background_executor()
-                .scoped(|cx| {
-                    for _ in 0..cx.num_cpus() {
-                        cx.spawn(async {
-                            while let Ok((entry, handle)) = entries.recv().await {
-                                let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                if let Some(text) = fs.load(&entry_abs_path).await.ok() {
-                                    let language = language_registry
-                                        .language_for_file_path(&entry.path)
-                                        .await
-                                        .ok();
-                                    let chunked_file = ChunkedFile {
-                                        chunks: chunking::chunk_text(
-                                            &text,
-                                            language.as_ref(),
-                                            &entry.path,
-                                        ),
-                                        handle,
-                                        path: entry.path,
-                                        mtime: entry.mtime,
-                                        text,
-                                    };
+        let (chunked_files_tx, chunked_files_rx) =
+            channel::bounded(self.settings.chunk_files_bound);
+        let batch_size = self.settings.chunk_files_batch_size;
+        let task = cx.spawn(|cx| {
+            cx.background_executor().spawn(async move {
+                let mut current_batch = Vec::new();
 
-                                    if chunked_files_tx.send(chunked_file).await.is_err() {
-                                        return;
-                                    }
-                                }
-                            }
-                        });
+                while let Ok((entry, handle)) = entries.recv().await {
+                    let entry_abs_path = worktree_abs_path.join(&entry.path);
+                    if let Some(text) = fs.load(&entry_abs_path).await.ok() {
+                        let language = language_registry
+                            .language_for_file_path(&entry.path)
+                            .await
+                            .ok();
+                        let chunks = chunking::chunk_text(&text, language.as_ref(), &entry.path);
+                        let chunked_file = ChunkedFile {
+                            chunks,
+                            handle,
+                            path: entry.path,
+                            mtime: entry.mtime,
+                            text,
+                        };
+
+                        current_batch.push(chunked_file);
+
+                        if current_batch.len() >= batch_size {
+                            chunked_files_tx.send(current_batch).await?;
+                            current_batch = Vec::new();
+                        }
                     }
-                })
-                .await;
-            Ok(())
+                }
+
+                if !current_batch.is_empty() {
+                    chunked_files_tx.send(current_batch).await?;
+                }
+
+                Ok(())
+            })
         });
 
         ChunkFiles {
@@ -271,21 +311,15 @@ impl EmbeddingIndex {
 
     pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        chunked_files: channel::Receiver<ChunkedFile>,
+        chunked_files: channel::Receiver<Vec<ChunkedFile>>,
+        tokenizer: SimpleTokenizer,
+        settings: EmbeddingIndexSettings,
         cx: &AppContext,
     ) -> EmbedFiles {
-        let embedding_provider = embedding_provider.clone();
-        let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
+        let (embedded_files_tx, embedded_files_rx) = channel::bounded(settings.embed_files_bound);
         let task = cx.background_executor().spawn(async move {
-            let mut chunked_file_batches =
-                chunked_files.chunks_timeout(512, Duration::from_secs(2));
-            while let Some(chunked_files) = chunked_file_batches.next().await {
-                // View the batch of files as a vec of chunks
-                // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
-                // Once those are done, reassemble them back into the files in which they belong
-                // If any embeddings fail for a file, the entire file is discarded
-
-                let chunks: Vec<TextToEmbed> = chunked_files
+            while let Ok(batch) = chunked_files.recv().await {
+                let chunks: Vec<TextToEmbed> = batch
                     .iter()
                     .flat_map(|file| {
                         file.chunks.iter().map(|chunk| TextToEmbed {
@@ -293,53 +327,45 @@ impl EmbeddingIndex {
                             digest: chunk.digest,
                         })
                     })
-                    .collect::<Vec<_>>();
+                    .collect();
 
-                let mut embeddings: Vec<Option<Embedding>> = Vec::new();
-                for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
-                    if let Some(batch_embeddings) =
-                        embedding_provider.embed(embedding_batch).await.log_err()
-                    {
-                        if batch_embeddings.len() == embedding_batch.len() {
-                            embeddings.extend(batch_embeddings.into_iter().map(Some));
-                            continue;
-                        }
-                        log::error!(
-                            "embedding provider returned unexpected embedding count {}, expected {}",
-                            batch_embeddings.len(), embedding_batch.len()
-                        );
-                    }
+                let embeddings = embedding_provider.embed(&chunks).await?;
 
-                    embeddings.extend(iter::repeat(None).take(embedding_batch.len()));
-                }
+                let embedded_batch: Vec<_> = batch
+                    .iter()
+                    .zip(chunks.chunks(batch.len()))
+                    .zip(embeddings.chunks(batch.len()))
+                    .map(|((chunked_file, file_chunks), file_embeddings)| {
+                        let embedded_chunks: Vec<_> = chunked_file
+                            .chunks
+                            .iter()
+                            .zip(file_chunks)
+                            .zip(file_embeddings)
+                            .map(|((chunk, text_to_embed), embedding)| {
+                                let term_frequencies =
+                                    ChunkTermFrequency::from_text(&text_to_embed.text, &tokenizer);
+                                let chunk_length = term_frequencies.total_terms();
+                                EmbeddedChunk {
+                                    chunk: chunk.clone(),
+                                    embedding: embedding.clone(),
+                                    term_frequencies,
+                                    chunk_length,
+                                }
+                            })
+                            .collect();
 
-                let mut embeddings = embeddings.into_iter();
-                for chunked_file in chunked_files {
-                    let mut embedded_file = EmbeddedFile {
-                        path: chunked_file.path,
-                        mtime: chunked_file.mtime,
-                        chunks: Vec::new(),
-                    };
+                        (
+                            EmbeddedFile {
+                                path: chunked_file.path.clone(),
+                                mtime: chunked_file.mtime,
+                                chunks: embedded_chunks,
+                            },
+                            chunked_file.handle.clone(),
+                        )
+                    })
+                    .collect();
 
-                    let mut embedded_all_chunks = true;
-                    for (chunk, embedding) in
-                        chunked_file.chunks.into_iter().zip(embeddings.by_ref())
-                    {
-                        if let Some(embedding) = embedding {
-                            embedded_file
-                                .chunks
-                                .push(EmbeddedChunk { chunk, embedding });
-                        } else {
-                            embedded_all_chunks = false;
-                        }
-                    }
-
-                    if embedded_all_chunks {
-                        embedded_files_tx
-                            .send((embedded_file, chunked_file.handle))
-                            .await?;
-                    }
-                }
+                embedded_files_tx.send(embedded_batch).await?;
             }
             Ok(())
         });
@@ -353,33 +379,24 @@ impl EmbeddingIndex {
     fn persist_embeddings(
         &self,
         mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
-        mut embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
+        mut embedded_files: channel::Receiver<Vec<(EmbeddedFile, IndexingEntryHandle)>>,
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
-        let db = self.db;
+        let embedding_db = self.embedding_db;
+        let tfidf_metadata_db = self.tfidf_metadata_db;
 
         cx.background_executor().spawn(async move {
             loop {
-                // Interleave deletions and persists of embedded files
                 futures::select_biased! {
                     deletion_range = deleted_entry_ranges.next() => {
                         if let Some(deletion_range) = deletion_range {
-                            let mut txn = db_connection.write_txn()?;
-                            let start = deletion_range.0.as_ref().map(|start| start.as_str());
-                            let end = deletion_range.1.as_ref().map(|end| end.as_str());
-                            log::debug!("deleting embeddings in range {:?}", &(start, end));
-                            db.delete_range(&mut txn, &(start, end))?;
-                            txn.commit()?;
+                            Self::apply_deletion(&db_connection, &embedding_db, &tfidf_metadata_db, deletion_range)?;
                         }
                     },
-                    file = embedded_files.next() => {
-                        if let Some((file, _)) = file {
-                            let mut txn = db_connection.write_txn()?;
-                            log::debug!("saving embedding for file {:?}", file.path);
-                            let key = db_key_for_path(&file.path);
-                            db.put(&mut txn, &key, &file)?;
-                            txn.commit()?;
+                    batch = embedded_files.next() => {
+                        if let Some(batch) = batch {
+                            Self::apply_batch(&db_connection, &embedding_db, &tfidf_metadata_db, batch)?;
                         }
                     },
                     complete => break,
@@ -390,9 +407,85 @@ impl EmbeddingIndex {
         })
     }
 
+    fn apply_deletion(
+        db_connection: &heed::Env,
+        embedding_db: &heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        tfidf_metadata_db: &heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
+        deletion_range: (Bound<String>, Bound<String>),
+    ) -> Result<()> {
+        let mut txn = db_connection.write_txn()?;
+        let start = deletion_range.0.as_ref().map(|s| s.as_str());
+        let end = deletion_range.1.as_ref().map(|s| s.as_str());
+
+        let mut metadata = tfidf_metadata_db
+            .get(&txn, "__tfidf_metadata__")?
+            .unwrap_or_else(TfIdfMetadata::new);
+
+        let deleted_files = embedding_db.range(&txn, &(start, end))?;
+        for result in deleted_files {
+            let (_, embedded_file) = result?;
+            for chunk in &embedded_file.chunks {
+                metadata.remove_chunk(&chunk.term_frequencies);
+            }
+        }
+
+        embedding_db.delete_range(&mut txn, &(start, end))?;
+        tfidf_metadata_db.put(&mut txn, "__tfidf_metadata__", &metadata)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    fn apply_batch(
+        db_connection: &heed::Env,
+        embedding_db: &heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        tfidf_metadata_db: &heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
+        batch: Vec<(EmbeddedFile, IndexingEntryHandle)>,
+    ) -> Result<()> {
+        let mut txn = db_connection.write_txn()?;
+        let mut metadata = tfidf_metadata_db
+            .get(&txn, "__tfidf_metadata__")?
+            .unwrap_or_else(TfIdfMetadata::new);
+
+        for (file, _) in batch {
+            let key = db_key_for_path(&file.path);
+            embedding_db.put(&mut txn, &key, &file)?;
+            for chunk in &file.chunks {
+                metadata.add_chunk(&chunk.term_frequencies);
+            }
+        }
+
+        tfidf_metadata_db.put(&mut txn, "__tfidf_metadata__", &metadata)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    pub fn reconcile_tfidf_metadata(&self, cx: &AppContext) -> Task<Result<()>> {
+        let db_connection = self.db_connection.clone();
+        let embedding_db = self.embedding_db;
+        let tfidf_metadata_db = self.tfidf_metadata_db;
+
+        cx.background_executor().spawn(async move {
+            let mut txn = db_connection.write_txn()?;
+            let mut metadata = TfIdfMetadata::new();
+
+            let all_embeddings = embedding_db.iter(&txn)?;
+            for result in all_embeddings {
+                let (_, embedded_file) = result?;
+                for chunk in &embedded_file.chunks {
+                    metadata.add_chunk(&chunk.term_frequencies);
+                }
+            }
+
+            tfidf_metadata_db.put(&mut txn, "__tfidf_metadata__", &metadata)?;
+            txn.commit()?;
+
+            Ok(())
+        })
+    }
+
     pub fn paths(&self, cx: &AppContext) -> Task<Result<Vec<Arc<Path>>>> {
         let connection = self.db_connection.clone();
-        let db = self.db;
+        let db = self.embedding_db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
@@ -412,7 +505,7 @@ impl EmbeddingIndex {
         cx: &AppContext,
     ) -> Task<Result<Vec<EmbeddedChunk>>> {
         let connection = self.db_connection.clone();
-        let db = self.db;
+        let db = self.embedding_db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
@@ -433,7 +526,7 @@ struct ScanEntries {
 }
 
 struct ChunkFiles {
-    files: channel::Receiver<ChunkedFile>,
+    files: channel::Receiver<Vec<ChunkedFile>>,
     task: Task<Result<()>>,
 }
 
@@ -446,7 +539,7 @@ pub struct ChunkedFile {
 }
 
 pub struct EmbedFiles {
-    pub files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
+    pub files: channel::Receiver<Vec<(EmbeddedFile, IndexingEntryHandle)>>,
     pub task: Task<Result<()>>,
 }
 
@@ -461,6 +554,8 @@ pub struct EmbeddedFile {
 pub struct EmbeddedChunk {
     pub chunk: Chunk,
     pub embedding: Embedding,
+    pub term_frequencies: ChunkTermFrequency,
+    pub chunk_length: u32,
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {

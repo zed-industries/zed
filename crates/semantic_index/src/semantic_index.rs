@@ -6,7 +6,7 @@ mod project_index;
 mod project_index_debug_view;
 mod summary_backlog;
 mod summary_index;
-mod tfidf_index;
+mod tfidf;
 mod worktree_index;
 
 use anyhow::{Context as _, Result};
@@ -269,7 +269,9 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use chunking::Chunk;
-    use embedding_index::{ChunkedFile, EmbeddingIndex};
+    use embedding_index::{
+        ChunkedFile, EmbeddingIndex, SimpleTokenizer, DEFAULT_EMBEDDING_INDEX_SETTINGS,
+    };
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use futures::{future::BoxFuture, FutureExt};
@@ -488,8 +490,18 @@ mod tests {
             .unwrap();
         chunked_files_tx.close();
 
-        let embed_files_task =
-            cx.update(|cx| EmbeddingIndex::embed_files(provider.clone(), chunked_files_rx, cx));
+        let tokenizer = SimpleTokenizer::new();
+        let embedding_settings = DEFAULT_EMBEDDING_INDEX_SETTINGS;
+
+        let embed_files_task = cx.update(|cx| {
+            EmbeddingIndex::embed_files(
+                provider.clone(),
+                chunked_files_rx,
+                tokenizer,
+                embedding_settings,
+                cx,
+            )
+        });
         embed_files_task.task.await.unwrap();
 
         let mut embedded_files_rx = embed_files_task.files;
