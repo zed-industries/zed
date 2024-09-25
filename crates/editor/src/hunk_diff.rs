@@ -395,12 +395,16 @@ impl Editor {
                                     IconButton::new("discard", IconName::RotateCcw)
                                         .shape(IconButtonShape::Square)
                                         .icon_size(IconSize::Small)
-                                        .tooltip(move |cx| {
-                                            Tooltip::for_action(
-                                                "Discard Hunk",
-                                                &RevertSelectedHunks,
-                                                cx,
-                                            )
+                                        .tooltip({
+                                            let focus_handle = editor.focus_handle(cx);
+                                            move |cx| {
+                                                Tooltip::for_action_in(
+                                                    "Discard Hunk",
+                                                    &RevertSelectedHunks,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
                                         })
                                         .on_click({
                                             let editor = editor.clone();
@@ -433,12 +437,16 @@ impl Editor {
                                     IconButton::new("collapse", IconName::Close)
                                         .shape(IconButtonShape::Square)
                                         .icon_size(IconSize::Small)
-                                        .tooltip(move |cx| {
-                                            Tooltip::for_action(
-                                                "Collapse Hunk",
-                                                &ToggleHunkDiff,
-                                                cx,
-                                            )
+                                        .tooltip({
+                                            let focus_handle = editor.focus_handle(cx);
+                                            move |cx| {
+                                                Tooltip::for_action_in(
+                                                    "Collapse Hunk",
+                                                    &ToggleHunkDiff,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
                                         })
                                         .on_click({
                                             let editor = editor.clone();
