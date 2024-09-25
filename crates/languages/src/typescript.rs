@@ -164,13 +164,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &self.node).await
-    }
-
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![
             CodeActionKind::QUICKFIX,
@@ -500,19 +493,6 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path =
-            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
-        Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         let server_path =
             Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);

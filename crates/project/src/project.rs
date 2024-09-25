@@ -3958,14 +3958,6 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn language_server_adapter_for_id(
-        &self,
-        id: LanguageServerId,
-        cx: &AppContext,
-    ) -> Option<Arc<CachedLspAdapter>> {
-        self.lsp_store.read(cx).language_server_adapter_for_id(id)
-    }
-
     pub fn language_server_for_id(
         &self,
         id: LanguageServerId,

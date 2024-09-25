@@ -481,7 +481,7 @@ fn main() {
         cx.observe_global::<SettingsStore>(move |cx| {
             let settings = &ProjectSettings::get_global(cx).node;
             let options = NodeBinaryOptions {
-                allow_path_lookup: !settings.disable_path_lookup.unwrap_or_default(),
+                allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
                 // TODO: Expose this setting
                 allow_binary_download: true,
                 use_paths: settings.path.as_ref().map(|node_path| {
