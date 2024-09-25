@@ -177,6 +177,7 @@ impl NodeRuntime {
             "5000",
         ]);
 
+        // This is also wrong because the directory is wrong.
         self.run_npm_subcommand(directory, "install", &arguments)
             .await?;
         Ok(())

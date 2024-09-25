@@ -7924,10 +7924,9 @@ impl LspAdapterDelegate for SshLspAdapterDelegate {
 
     async fn npm_package_installed_version(
         &self,
-        package_name: &str,
+        _package_name: &str,
     ) -> Result<Option<(PathBuf, String)>> {
-        //TODO(ssh)
-        Err(anyhow!("Oh no"))
+        Ok(None)
     }
 
     fn http_client(&self) -> Arc<dyn HttpClient> {
