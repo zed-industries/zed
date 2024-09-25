@@ -28,8 +28,8 @@ use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use project::{
-    search::SearchQuery, search::SearchResult, DiagnosticSummary, FormatTrigger, HoverBlockKind,
-    Project, ProjectPath,
+    lsp_store::FormatTrigger, search::SearchQuery, search::SearchResult, DiagnosticSummary,
+    HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
 use serde_json::json;

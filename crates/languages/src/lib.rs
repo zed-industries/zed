@@ -30,11 +30,7 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(
-    languages: Arc<LanguageRegistry>,
-    node_runtime: Arc<dyn NodeRuntime>,
-    cx: &mut AppContext,
-) {
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut AppContext) {
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
         ("c", tree_sitter_c::LANGUAGE),

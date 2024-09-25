@@ -292,6 +292,8 @@
       "g ctrl-x": ["vim::Decrement", { "step": true }],
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
+      "g I": "vim::VisualInsertFirstNonWhiteSpace",
+      "g A": "vim::VisualInsertEndOfLine",
       "shift-j": "vim::JoinLines",
       "r": ["vim::PushOperator", "Replace"],
       "ctrl-c": ["vim::SwitchMode", "Normal"],

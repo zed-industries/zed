@@ -29,6 +29,7 @@ supermaven_api.workspace = true
 smol.workspace = true
 text.workspace = true
 ui.workspace = true
+unicode-segmentation.workspace = true
 util.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

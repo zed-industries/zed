@@ -18,7 +18,7 @@ use gpui::{
 use postage::oneshot;
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
-    AnyProtoClient, TypedEnvelope,
+    AnyProtoClient, ErrorExt, TypedEnvelope,
 };
 use smol::{
     channel::{Receiver, Sender},
@@ -207,7 +207,7 @@ impl WorktreeStore {
         cx.background_executor().spawn(async move {
             match task.await {
                 Ok(worktree) => Ok(worktree),
-                Err(err) => Err(anyhow!("{}", err)),
+                Err(err) => Err((*err).cloned()),
             }
         })
     }
@@ -221,10 +221,11 @@ impl WorktreeStore {
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
         let mut abs_path = abs_path.as_ref().to_string_lossy().to_string();
         // If we start with `/~` that means the ssh path was something like `ssh://user@host/~/home-dir-folder/`
-        // in which case want to strip the leading the `/` and expand the tilde.
+        // in which case want to strip the leading the `/`.
+        // On the host-side, the `~` will get expanded.
         // That's what git does too: https://github.com/libgit2/libgit2/issues/3345#issuecomment-127050850
         if abs_path.starts_with("/~") {
-            abs_path = shellexpand::tilde(&abs_path[1..]).to_string();
+            abs_path = abs_path[1..].to_string();
         }
         let root_name = PathBuf::from(abs_path.clone())
             .file_name()

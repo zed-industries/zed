@@ -18,8 +18,7 @@ use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
-use workspace::notifications::NotificationId;
-use workspace::{DismissDecision, ModalView, Toast, Workspace};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
 
@@ -120,44 +119,34 @@ impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         let _handle = cx.view().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, cx| {
-            let markdown = workspace
-                .app_state()
-                .languages
-                .language_for_name("Markdown");
+            workspace
+                .with_local_workspace(cx, |workspace, cx| {
+                    let markdown = workspace
+                        .app_state()
+                        .languages
+                        .language_for_name("Markdown");
 
-            let project = workspace.project().clone();
-            let is_local_project = project.read(cx).is_local_or_ssh();
+                    let project = workspace.project().clone();
 
-            if !is_local_project {
-                struct FeedbackInRemoteProject;
+                    let system_specs = SystemSpecs::new(cx);
+                    cx.spawn(|workspace, mut cx| async move {
+                        let markdown = markdown.await.log_err();
+                        let buffer = project.update(&mut cx, |project, cx| {
+                            project.create_local_buffer("", markdown, cx)
+                        })?;
+                        let system_specs = system_specs.await;
 
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<FeedbackInRemoteProject>(),
-                        "You can only submit feedback in your own project.",
-                    ),
-                    cx,
-                );
-                return;
-            }
+                        workspace.update(&mut cx, |workspace, cx| {
+                            workspace.toggle_modal(cx, move |cx| {
+                                FeedbackModal::new(system_specs, project, buffer, cx)
+                            });
+                        })?;
 
-            let system_specs = SystemSpecs::new(cx);
-            cx.spawn(|workspace, mut cx| async move {
-                let markdown = markdown.await.log_err();
-                let buffer = project.update(&mut cx, |project, cx| {
-                    project.create_local_buffer("", markdown, cx)
-                })?;
-                let system_specs = system_specs.await;
-
-                workspace.update(&mut cx, |workspace, cx| {
-                    workspace.toggle_modal(cx, move |cx| {
-                        FeedbackModal::new(system_specs, project, buffer, cx)
-                    });
-                })?;
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                })
+                .detach_and_log_err(cx);
         });
     }
 
