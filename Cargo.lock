@@ -9122,6 +9122,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "languages",
  "log",
  "lsp",
  "node_runtime",
