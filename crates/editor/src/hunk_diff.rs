@@ -296,7 +296,7 @@ impl Editor {
             DiffHunkStatus::Removed => {
                 blocks = self.insert_blocks(
                     [
-                        Self::hunk_header_block(&hunk, cx),
+                        self.hunk_header_block(&hunk, cx),
                         Self::deleted_text_block(hunk, diff_base_buffer, deleted_text_lines, cx),
                     ],
                     None,
@@ -310,7 +310,7 @@ impl Editor {
                     false,
                     cx,
                 );
-                blocks = self.insert_blocks([Self::hunk_header_block(&hunk, cx)], None, cx);
+                blocks = self.insert_blocks([self.hunk_header_block(&hunk, cx)], None, cx);
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
@@ -321,7 +321,7 @@ impl Editor {
                 );
                 blocks = self.insert_blocks(
                     [
-                        Self::hunk_header_block(&hunk, cx),
+                        self.hunk_header_block(&hunk, cx),
                         Self::deleted_text_block(hunk, diff_base_buffer, deleted_text_lines, cx),
                     ],
                     None,
@@ -344,6 +344,7 @@ impl Editor {
     }
 
     fn hunk_header_block(
+        &self,
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> BlockProperties<Anchor> {
@@ -364,6 +365,9 @@ impl Editor {
                 let editor = cx.view().clone();
                 let hunk = hunk.clone();
                 move |cx| {
+                    let hunk_controls_menu_handle =
+                        editor.read(cx).hunk_controls_menu_handle.clone();
+
                     h_flex()
                         .w_full()
                         .h(cx.line_height())
@@ -401,9 +405,19 @@ impl Editor {
                                             )
                                             .shape(IconButtonShape::Square)
                                             .icon_size(IconSize::Small)
-                                            .style(ButtonStyle::Subtle),
+                                            .style(ButtonStyle::Subtle)
+                                            .selected(hunk_controls_menu_handle.is_deployed())
+                                            .when(
+                                                !hunk_controls_menu_handle.is_deployed(),
+                                                |this| {
+                                                    this.tooltip(|cx| {
+                                                        Tooltip::text("Selection Controls", cx)
+                                                    })
+                                                },
+                                            ),
                                         )
                                         .anchor(AnchorCorner::TopRight)
+                                        .with_handle(hunk_controls_menu_handle)
                                         .menu(move |cx| {
                                             let focus = focus.clone();
                                             let menu = ContextMenu::build(cx, move |menu, _| {

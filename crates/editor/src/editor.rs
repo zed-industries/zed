@@ -154,7 +154,7 @@ use theme::{
 };
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
-    ListItem, Popover, Tooltip,
+    ListItem, Popover, PopoverMenuHandle, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -562,6 +562,7 @@ pub struct Editor {
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
+    hunk_controls_menu_handle: PopoverMenuHandle<ui::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
@@ -1938,6 +1939,7 @@ impl Editor {
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
+            hunk_controls_menu_handle: PopoverMenuHandle::default(),
             completion_tasks: Default::default(),
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
