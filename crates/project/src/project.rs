@@ -706,11 +706,12 @@ impl Project {
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
             let lsp_store = cx.new_model(|cx| {
-                LspStore::new_ssh(
+                LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
                     languages.clone(),
                     ssh.clone().into(),
+                    SSH_PROJECT_ID,
                     cx,
                 )
             });

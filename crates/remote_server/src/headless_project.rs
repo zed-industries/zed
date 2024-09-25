@@ -44,6 +44,10 @@ impl HeadlessProject {
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
+        let node_runtime = NodeRuntime::unavailable();
+
+        languages::init(languages.clone(), node_runtime.clone(), cx);
+
         let worktree_store = cx.new_model(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
             store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
@@ -56,7 +60,7 @@ impl HeadlessProject {
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                NodeRuntime::unavailable(),
+                node_runtime,
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
@@ -115,12 +119,6 @@ impl HeadlessProject {
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
-
-        client.add_model_request_handler(LspStore::handle_create_language_server);
-        client.add_model_request_handler(LspStore::handle_which_command);
-        client.add_model_request_handler(LspStore::handle_shell_env);
-        client.add_model_request_handler(LspStore::handle_try_exec);
-        client.add_model_request_handler(LspStore::handle_read_text_file);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);

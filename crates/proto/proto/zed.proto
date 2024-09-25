@@ -283,18 +283,6 @@ message Envelope {
         CloseBuffer close_buffer = 245;
         UpdateUserSettings update_user_settings = 246;
 
-        CreateLanguageServer create_language_server = 247;
-
-        WhichCommand which_command = 248;
-        WhichCommandResponse which_command_response = 249;
-
-        ShellEnv shell_env = 250;
-        ShellEnvResponse shell_env_response = 251;
-
-        TryExec try_exec = 252;
-        ReadTextFile read_text_file = 253;
-        ReadTextFileResponse read_text_file_response = 254;
-
         CheckFileExists check_file_exists = 255;
         CheckFileExistsResponse check_file_exists_response = 256; // current max
     }
@@ -302,6 +290,7 @@ message Envelope {
     reserved 158 to 161;
     reserved 166 to 169;
     reserved 224 to 229;
+    reserved 247 to 254;
 }
 
 // Messages
@@ -2515,67 +2504,6 @@ message AddWorktreeResponse {
 message UpdateUserSettings {
     uint64 project_id = 1;
     string content = 2;
-}
-
-message LanguageServerCommand {
-   string path = 1;
-   repeated string arguments = 2;
-   map<string, string> env = 3;
-}
-
-message AvailableLanguage {
-    string name = 7;
-    string matcher = 8;
-}
-
-message CreateLanguageServer {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string name = 3;
-
-    LanguageServerCommand binary = 4;
-    optional string initialization_options = 5;
-    optional string code_action_kinds = 6;
-
-    AvailableLanguage language = 7;
-}
-
-message WhichCommand {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string command = 3;
-}
-
-message WhichCommandResponse {
-    optional string path = 1;
-}
-
-message ShellEnv {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-}
-
-message ShellEnvResponse {
-    map<string, string> env = 1;
-}
-
-message ReadTextFile {
-    uint64 project_id = 1;
-    ProjectPath path = 2;
-}
-
-message ReadTextFileResponse {
-    string text = 1;
-}
-
-message TryExec {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    LanguageServerCommand binary = 3;
-}
-
-message TryExecResponse {
-    string text = 1;
 }
 
 message CheckFileExists {
