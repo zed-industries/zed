@@ -7,7 +7,9 @@ use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    items::entry_git_aware_label_color,
+    items::{
+        entry_diagnostic_and_git_aware_extra_icon_name, entry_diagnostic_and_git_aware_label_color,
+    },
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor,
 };
@@ -117,7 +119,8 @@ struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
-    diagnostics_color: Option<Color>,
+    filename_text_color: Color,
+    extra_icon_name: Option<IconName>,
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
@@ -2163,17 +2166,27 @@ impl ProjectPanel {
                         entry_id: entry.id,
                     };
 
-                    let diagnostics_color = if show_diagnostics {
+                    let is_marked = self.marked_entries.contains(&selection);
+
+                    let diagnostic_severity = if show_diagnostics {
                         self.diagnostics
                             .get(&(*worktree_id, entry.path.to_path_buf()))
-                            .and_then(|diagnostic_severity| match *diagnostic_severity {
-                                DiagnosticSeverity::ERROR => Some(Color::Error),
-                                DiagnosticSeverity::WARNING => Some(Color::Warning),
-                                _ => None,
-                            })
                     } else {
                         None
                     };
+
+                    let filename_text_color = entry_diagnostic_and_git_aware_label_color(
+                        diagnostic_severity,
+                        status,
+                        entry.is_ignored,
+                        is_marked,
+                    );
+
+                    let extra_icon_name = entry_diagnostic_and_git_aware_extra_icon_name(
+                        diagnostic_severity,
+                        status,
+                        entry.is_ignored,
+                    );
 
                     let mut details = EntryDetails {
                         filename,
@@ -2184,14 +2197,15 @@ impl ProjectPanel {
                         is_ignored: entry.is_ignored,
                         is_expanded,
                         is_selected: self.selection == Some(selection),
-                        is_marked: self.marked_entries.contains(&selection),
+                        is_marked,
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
                             .clipboard
                             .as_ref()
                             .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
-                        diagnostics_color,
+                        filename_text_color,
+                        extra_icon_name,
                         git_status: status,
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
@@ -2281,13 +2295,7 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color = details
-            .diagnostics_color
-            .unwrap_or(entry_git_aware_label_color(
-                details.git_status,
-                details.is_ignored,
-                is_marked,
-            ));
+        let filename_text_color = details.filename_text_color;
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
@@ -2311,6 +2319,8 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
+        let extra_icon_name = details.extra_icon_name;
+
         div()
             .id(entry_id.to_proto() as usize)
             .on_drag_move::<ExternalPaths>(cx.listener(
@@ -2487,6 +2497,15 @@ impl ProjectPanel {
                         }
                         .ml_1(),
                     )
+                    .child(if let Some(icon_name) = extra_icon_name {
+                        h_flex().child(
+                            Icon::new(icon_name)
+                                .size(IconSize::XSmall)
+                                .color(filename_text_color),
+                        )
+                    } else {
+                        div()
+                    }) // TODO(nilskch)
                     .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                         if event.down.button == MouseButton::Right || event.down.first_mouse {
                             return;

@@ -18,6 +18,7 @@ use gpui::{
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
 };
+use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
 use project::{
     project_settings::ProjectSettings, search::SearchQuery, FormatTrigger, Item as _, Project,
@@ -1479,6 +1480,43 @@ pub fn entry_label_color(selected: bool) -> Color {
     } else {
         Color::Muted
     }
+}
+
+pub fn entry_diagnostic_and_git_aware_extra_icon_name(
+    diagnostic_severity: Option<&DiagnosticSeverity>,
+    git_status: Option<GitFileStatus>,
+    ignored: bool,
+) -> Option<IconName> {
+    if let Some(diagnostic_severity) = diagnostic_severity {
+        if *diagnostic_severity == DiagnosticSeverity::ERROR {
+            return Some(IconName::XCircle);
+        }
+        if *diagnostic_severity == DiagnosticSeverity::WARNING {
+            return Some(IconName::Warning);
+        }
+    }
+    if !ignored && git_status.is_some() {
+        Some(IconName::Dot)
+    } else {
+        None
+    }
+}
+
+pub fn entry_diagnostic_and_git_aware_label_color(
+    diagnostic_severity: Option<&DiagnosticSeverity>,
+    git_status: Option<GitFileStatus>,
+    ignored: bool,
+    selected: bool,
+) -> Color {
+    if let Some(diagnostic_severity) = diagnostic_severity {
+        if *diagnostic_severity == DiagnosticSeverity::ERROR {
+            return Color::Error;
+        }
+        if *diagnostic_severity == DiagnosticSeverity::WARNING {
+            return Color::Warning;
+        }
+    }
+    entry_git_aware_label_color(git_status, ignored, selected)
 }
 
 pub fn entry_git_aware_label_color(
