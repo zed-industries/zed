@@ -2409,7 +2409,6 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "feature_flags",
- "fs",
  "futures 0.3.30",
  "gpui",
  "http_client",
