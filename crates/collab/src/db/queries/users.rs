@@ -298,6 +298,12 @@ impl Database {
         result
     }
 
+    /// Returns all feature flags.
+    pub async fn list_feature_flags(&self) -> Result<Vec<feature_flag::Model>> {
+        self.transaction(|tx| async move { Ok(feature_flag::Entity::find().all(&*tx).await?) })
+            .await
+    }
+
     /// Creates a new feature flag.
     pub async fn create_user_flag(&self, flag: &str, enabled_for_all: bool) -> Result<FlagId> {
         self.transaction(|tx| async move {

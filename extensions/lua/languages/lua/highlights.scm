@@ -196,3 +196,4 @@
 (number) @number
 
 (string) @string
+(escape_sequence) @string.escape

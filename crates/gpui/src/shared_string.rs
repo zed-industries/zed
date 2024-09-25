@@ -10,9 +10,9 @@ use util::arc_cow::ArcCow;
 pub struct SharedString(ArcCow<'static, str>);
 
 impl SharedString {
-    /// creates a static SharedString
-    pub const fn new_static(s: &'static str) -> Self {
-        Self(ArcCow::Borrowed(s))
+    /// Creates a static [`SharedString`] from a `&'static str`.
+    pub const fn new_static(str: &'static str) -> Self {
+        Self(ArcCow::Borrowed(str))
     }
 }
 

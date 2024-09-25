@@ -1,10 +1,9 @@
 mod signature_help;
 
 use crate::{
-    buffer_store::BufferStore, lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight,
-    Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
-    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, MarkupContent,
-    ProjectTransaction, ResolveState,
+    lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
+    InlayHintTooltip, Location, LocationLink, MarkupContent, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -417,18 +416,18 @@ impl LspCommand for PerformRename {
         message: proto::PerformRenameResponse,
         lsp_store: Model<LspStore>,
         _: Model<Buffer>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         let message = message
             .transaction
             .ok_or_else(|| anyhow!("missing transaction"))?;
-        BufferStore::deserialize_project_transaction(
-            lsp_store.read_with(&cx, |lsp_store, _| lsp_store.buffer_store().downgrade())?,
-            message,
-            self.push_to_history,
-            cx,
-        )
-        .await
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.deserialize_project_transaction(message, self.push_to_history, cx)
+                })
+            })?
+            .await
     }
 
     fn buffer_id_from_proto(message: &proto::PerformRename) -> Result<BufferId> {

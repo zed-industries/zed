@@ -145,6 +145,9 @@ impl GitHostingProvider for Github {
             .base_url()
             .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
             .unwrap();
+        if path.ends_with(".md") {
+            permalink.set_query(Some("plain=1"));
+        }
         permalink.set_fragment(
             selection
                 .map(|selection| self.line_fragment(&selection))

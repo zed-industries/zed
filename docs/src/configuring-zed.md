@@ -93,6 +93,62 @@ Extensions that provide language servers may also provide default settings for t
 
 `boolean` values
 
+## Base Keymap
+
+- Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
+- Setting: `base_keymap`
+- Default: `VSCode`
+
+**Options**
+
+1. VSCode
+
+```json
+{
+  "base_keymap": "VSCode"
+}
+```
+
+2. Atom
+
+```json
+{
+  "base_keymap": "Atom"
+}
+```
+
+3. JetBrains
+
+```json
+{
+  "base_keymap": "JetBrains"
+}
+```
+
+4. None
+
+```json
+{
+  "base_keymap": "None"
+}
+```
+
+5. SublimeText
+
+```json
+{
+  "base_keymap": "SublimeText"
+}
+```
+
+6. TextMate
+
+```json
+{
+  "base_keymap": "TextMate"
+}
+```
+
 ## Buffer Font Family
 
 - Description: The name of a font to use for rendering text in the editor.
@@ -159,7 +215,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values
+`integer` values from `6` to `100` pixels (inclusive)
 
 ## Buffer Font Weight
 
@@ -324,12 +380,6 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
-
-## Default Dock Anchor
-
-- Description: The default anchor for new docks.
-- Setting: `default_dock_anchor`
-- Default: `bottom`
 
 **Options**
 
@@ -857,7 +907,50 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-### Indent Guides
+### Inline Git Blame
+
+- Description: Whether or not to show git blame information inline, on the currently focused line.
+- Setting: `inline_blame`
+- Default:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Options**
+
+1. Disable inline git blame:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  }
+}
+```
+
+2. Only show inline git blame after a delay (that starts after cursor stops moving):
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "delay_ms": 500
+    }
+  }
+}
+```
+
+## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
@@ -922,49 +1015,6 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "enabled": true,
     "coloring": "indent_aware",
     "background_coloring": "indent_aware"
-  }
-}
-```
-
-### Inline Git Blame
-
-- Description: Whether or not to show git blame information inline, on the currently focused line.
-- Setting: `inline_blame`
-- Default:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true
-    }
-  }
-}
-```
-
-**Options**
-
-1. Disable inline git blame:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": false
-    }
-  }
-}
-```
-
-2. Only show inline git blame after a delay (that starts after cursor stops moving):
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true,
-      "delay_ms": 500
-    }
   }
 }
 ```
@@ -2127,6 +2177,16 @@ Float values between `0.0` and `0.9`, where:
   "unnecessary_code_fade": 0.5
 }
 ```
+
+## UI Font Size
+
+- Description: The default font size for text in the UI.
+- Setting: `ui_font_size`
+- Default: `16`
+
+**Options**
+
+`integer` values from `6` to `100` pixels (inclusive)
 
 ## An example configuration:
 
