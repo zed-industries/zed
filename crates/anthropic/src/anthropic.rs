@@ -7,7 +7,6 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
 use isahc::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};

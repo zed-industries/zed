@@ -129,6 +129,7 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
+    "crates/hyper_client",
 
     #
     # Extensions
@@ -356,7 +357,9 @@ git2 = { version = "0.19", default-features = false }
 globset = "0.4"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
-hyper = "0.14"
+hyper = "1.4.1"
+hyper-util = "0.1.9"
+hyper-rustls = "0.27.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
 image = "0.25.1"

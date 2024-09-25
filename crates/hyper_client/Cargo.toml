@@ -1,5 +1,5 @@
 [package]
-name = "http_client"
+name = "hyper_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,11 +12,14 @@ workspace = true
 test-support = []
 
 [lib]
-path = "src/http_client.rs"
+path = "src/hyper_client.rs"
 doctest = true
 
+[[example]]
+name = "client"
+path = "examples/client.rs"
+
 [dependencies]
-http = "1.1.0"
 anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true
@@ -25,3 +28,11 @@ serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 url.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+
+ureq = "2.10.1"
+
+hyper.workspace = true
+hyper-util = {workspace = true, features = ["client", "http1", "http2", "client-legacy"]}
+hyper-rustls.workspace = true
