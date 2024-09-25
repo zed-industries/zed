@@ -13,6 +13,7 @@ mod undo_map;
 pub use anchor::*;
 use anyhow::{anyhow, Context as _, Result};
 pub use clock::ReplicaId;
+use clock::LOCAL_BRANCH_REPLICA_ID;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;
@@ -38,7 +39,6 @@ pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree, TreeMap};
 use undo_map::UndoMap;
-use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
@@ -716,6 +716,19 @@ impl Buffer {
         self.snapshot.clone()
     }
 
+    pub fn branch(&self) -> Self {
+        Self {
+            snapshot: self.snapshot.clone(),
+            history: History::new(self.base_text().clone()),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: HashSet::default(),
+            lamport_clock: clock::Lamport::new(LOCAL_BRANCH_REPLICA_ID),
+            subscriptions: Default::default(),
+            edit_id_resolvers: Default::default(),
+            wait_for_version_txs: Default::default(),
+        }
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         self.lamport_clock.replica_id
     }
@@ -927,23 +940,22 @@ impl Buffer {
         self.snapshot.line_ending = line_ending;
     }
 
-    pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I) -> Result<()> {
+    pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I) {
         let mut deferred_ops = Vec::new();
         for op in ops {
             self.history.push(op.clone());
             if self.can_apply_op(&op) {
-                self.apply_op(op)?;
+                self.apply_op(op);
             } else {
                 self.deferred_replicas.insert(op.replica_id());
                 deferred_ops.push(op);
             }
         }
         self.deferred_ops.insert(deferred_ops);
-        self.flush_deferred_ops()?;
-        Ok(())
+        self.flush_deferred_ops();
     }
 
-    fn apply_op(&mut self, op: Operation) -> Result<()> {
+    fn apply_op(&mut self, op: Operation) {
         match op {
             Operation::Edit(edit) => {
                 if !self.version.observed(edit.timestamp) {
@@ -960,7 +972,7 @@ impl Buffer {
             }
             Operation::Undo(undo) => {
                 if !self.version.observed(undo.timestamp) {
-                    self.apply_undo(&undo)?;
+                    self.apply_undo(&undo);
                     self.snapshot.version.observe(undo.timestamp);
                     self.lamport_clock.observe(undo.timestamp);
                 }
@@ -974,7 +986,6 @@ impl Buffer {
                 true
             }
         });
-        Ok(())
     }
 
     fn apply_remote_edit(
@@ -1217,7 +1228,7 @@ impl Buffer {
         fragment_ids
     }
 
-    fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
+    fn apply_undo(&mut self, undo: &UndoOperation) {
         self.snapshot.undo_map.insert(undo);
 
         let mut edits = Patch::default();
@@ -1268,22 +1279,20 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.subscriptions.publish_mut(&edits);
-        Ok(())
     }
 
-    fn flush_deferred_ops(&mut self) -> Result<()> {
+    fn flush_deferred_ops(&mut self) {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
             if self.can_apply_op(&op) {
-                self.apply_op(op)?;
+                self.apply_op(op);
             } else {
                 self.deferred_replicas.insert(op.replica_id());
                 deferred_ops.push(op);
             }
         }
         self.deferred_ops.insert(deferred_ops);
-        Ok(())
     }
 
     fn can_apply_op(&self, op: &Operation) -> bool {
@@ -1352,7 +1361,7 @@ impl Buffer {
         if let Some(entry) = self.history.pop_undo() {
             let transaction = entry.transaction.clone();
             let transaction_id = transaction.id;
-            let op = self.undo_or_redo(transaction).unwrap();
+            let op = self.undo_or_redo(transaction);
             Some((transaction_id, op))
         } else {
             None
@@ -1365,7 +1374,7 @@ impl Buffer {
             .remove_from_undo(transaction_id)?
             .transaction
             .clone();
-        self.undo_or_redo(transaction).log_err()
+        Some(self.undo_or_redo(transaction))
     }
 
     pub fn undo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
@@ -1378,7 +1387,7 @@ impl Buffer {
 
         transactions
             .into_iter()
-            .map(|transaction| self.undo_or_redo(transaction).unwrap())
+            .map(|transaction| self.undo_or_redo(transaction))
             .collect()
     }
 
@@ -1394,7 +1403,7 @@ impl Buffer {
         if let Some(entry) = self.history.pop_redo() {
             let transaction = entry.transaction.clone();
             let transaction_id = transaction.id;
-            let op = self.undo_or_redo(transaction).unwrap();
+            let op = self.undo_or_redo(transaction);
             Some((transaction_id, op))
         } else {
             None
@@ -1411,11 +1420,11 @@ impl Buffer {
 
         transactions
             .into_iter()
-            .map(|transaction| self.undo_or_redo(transaction).unwrap())
+            .map(|transaction| self.undo_or_redo(transaction))
             .collect()
     }
 
-    fn undo_or_redo(&mut self, transaction: Transaction) -> Result<Operation> {
+    fn undo_or_redo(&mut self, transaction: Transaction) -> Operation {
         let mut counts = HashMap::default();
         for edit_id in transaction.edit_ids {
             counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
@@ -1426,11 +1435,11 @@ impl Buffer {
             version: self.version(),
             counts,
         };
-        self.apply_undo(&undo)?;
+        self.apply_undo(&undo);
         self.snapshot.version.observe(undo.timestamp);
         let operation = Operation::Undo(undo);
         self.history.push(operation.clone());
-        Ok(operation)
+        operation
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
@@ -1762,7 +1771,7 @@ impl Buffer {
                     self.replica_id,
                     transaction
                 );
-                ops.push(self.undo_or_redo(transaction).unwrap());
+                ops.push(self.undo_or_redo(transaction));
             }
         }
         ops

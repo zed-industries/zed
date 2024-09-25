@@ -264,6 +264,35 @@ pub fn read_proxy_from_env() -> Option<Uri> {
     None
 }
 
+pub struct BlockedHttpClient;
+
+impl HttpClient for BlockedHttpClient {
+    fn send(
+        &self,
+        _req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+        Box::pin(async {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "BlockedHttpClient disallowed request",
+            )
+            .into())
+        })
+    }
+
+    fn proxy(&self) -> Option<&Uri> {
+        None
+    }
+
+    fn send_with_redirect_policy(
+        &self,
+        req: Request<AsyncBody>,
+        _: bool,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+        self.send(req)
+    }
+}
+
 #[cfg(feature = "test-support")]
 type FakeHttpHandler = Box<
     dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>

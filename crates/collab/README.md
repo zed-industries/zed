@@ -23,8 +23,7 @@ To use a different set of admin users, create `crates/collab/seed.json`.
 ```json
 {
   "admins": ["yourgithubhere"],
-  "channels": ["zed"],
-  "number_of_users": 20
+  "channels": ["zed"]
 }
 ```
 

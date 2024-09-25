@@ -1,24 +1,5 @@
-(parameter (identifier) @variable)
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
-
-; Module imports
-
-(import_statement
-  (dotted_name (identifier) @type))
-
-(import_statement
-  (aliased_import
-    name: (dotted_name (identifier) @type)
-    alias: (identifier) @type))
-
-(import_from_statement
-  (dotted_name (identifier) @type))
-
-(import_from_statement
-  (aliased_import
-    name: (dotted_name (identifier) @type)
-    alias: (identifier) @type))
 
 ; Function calls
 

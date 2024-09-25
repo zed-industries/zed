@@ -75,7 +75,7 @@ impl EditorTestContext {
         cx: &mut gpui::TestAppContext,
         excerpts: [&str; COUNT],
     ) -> EditorTestContext {
-        let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+        let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
         let buffer = cx.new_model(|cx| {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);

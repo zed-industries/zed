@@ -284,7 +284,7 @@ impl TerminalInlineAssistant {
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         })
     }
 

@@ -16,7 +16,7 @@ The Zed installed by the script works best on systems that:
 
 - have a Vulkan compatible GPU available (for example Linux on an M-series macBook)
 - have a system-wide glibc (NixOS and Alpine do not by default)
-  - x86_64 (Intel/AMD): glibc version >= 2.29 (Ubuntu 20 and newer; Amazon Linux >2023)
+  - x86_64 (Intel/AMD): glibc version >= 2.35 (Ubuntu 22 and newer)
   - aarch64 (ARM): glibc version >= 2.35 (Ubuntu 22 and newer)
 
 Both Nix and Alpine have third-party Zed packages available (though they are currently a few weeks out of date). If you'd like to use our builds they do work if you install a glibc compatibility layer. On NixOS you can try [nix-ld](https://github.com/Mic92/nix-ld), and on Alpine [gcompat](https://wiki.alpinelinux.org/wiki/Running_glibc_programs).
@@ -24,7 +24,7 @@ Both Nix and Alpine have third-party Zed packages available (though they are cur
 You will need to build from source for:
 
 - architectures other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
-- Amazon Linux 2 on x86_64
+- Amazon Linux
 - Rocky Linux 9.3
 
 ## Other ways to install Zed on Linux

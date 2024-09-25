@@ -3,6 +3,7 @@ use collections::{btree_map, hash_map, BTreeMap, HashMap};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
+use paths::local_settings_file_relative_path;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
 use smallvec::SmallVec;
@@ -10,7 +11,7 @@ use std::{
     any::{type_name, Any, TypeId},
     fmt::Debug,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
 };
@@ -694,9 +695,14 @@ impl SettingsStore {
                 .deserialize_setting(&self.raw_extension_settings)
                 .log_err();
 
-            let user_settings = setting_value
-                .deserialize_setting(&self.raw_user_settings)
-                .log_err();
+            let user_settings = match setting_value.deserialize_setting(&self.raw_user_settings) {
+                Ok(settings) => Some(settings),
+                Err(error) => {
+                    return Err(anyhow!(InvalidSettingsError::UserSettings {
+                        message: error.to_string()
+                    }));
+                }
+            };
 
             let mut release_channel_settings = None;
             if let Some(release_settings) = &self
@@ -746,34 +752,43 @@ impl SettingsStore {
                     break;
                 }
 
-                if let Some(local_settings) =
-                    setting_value.deserialize_setting(local_settings).log_err()
-                {
-                    paths_stack.push(Some((*root_id, path.as_ref())));
-                    project_settings_stack.push(local_settings);
+                match setting_value.deserialize_setting(local_settings) {
+                    Ok(local_settings) => {
+                        paths_stack.push(Some((*root_id, path.as_ref())));
+                        project_settings_stack.push(local_settings);
 
-                    // If a local settings file changed, then avoid recomputing local
-                    // settings for any path outside of that directory.
-                    if changed_local_path.map_or(false, |(changed_root_id, changed_local_path)| {
-                        *root_id != changed_root_id || !path.starts_with(changed_local_path)
-                    }) {
-                        continue;
-                    }
-
-                    if let Some(value) = setting_value
-                        .load_setting(
-                            SettingsSources {
-                                default: &default_settings,
-                                extensions: extension_settings.as_ref(),
-                                user: user_settings.as_ref(),
-                                release_channel: release_channel_settings.as_ref(),
-                                project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                        // If a local settings file changed, then avoid recomputing local
+                        // settings for any path outside of that directory.
+                        if changed_local_path.map_or(
+                            false,
+                            |(changed_root_id, changed_local_path)| {
+                                *root_id != changed_root_id || !path.starts_with(changed_local_path)
                             },
-                            cx,
-                        )
-                        .log_err()
-                    {
-                        setting_value.set_local_value(*root_id, path.clone(), value);
+                        ) {
+                            continue;
+                        }
+
+                        if let Some(value) = setting_value
+                            .load_setting(
+                                SettingsSources {
+                                    default: &default_settings,
+                                    extensions: extension_settings.as_ref(),
+                                    user: user_settings.as_ref(),
+                                    release_channel: release_channel_settings.as_ref(),
+                                    project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                                },
+                                cx,
+                            )
+                            .log_err()
+                        {
+                            setting_value.set_local_value(*root_id, path.clone(), value);
+                        }
+                    }
+                    Err(error) => {
+                        return Err(anyhow!(InvalidSettingsError::LocalSettings {
+                            path: path.join(local_settings_file_relative_path()),
+                            message: error.to_string()
+                        }));
                     }
                 }
             }
@@ -781,6 +796,24 @@ impl SettingsStore {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InvalidSettingsError {
+    LocalSettings { path: PathBuf, message: String },
+    UserSettings { message: String },
+}
+
+impl std::fmt::Display for InvalidSettingsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InvalidSettingsError::LocalSettings { message, .. }
+            | InvalidSettingsError::UserSettings { message } => {
+                write!(f, "{}", message)
+            }
+        }
+    }
+}
+impl std::error::Error for InvalidSettingsError {}
 
 impl Debug for SettingsStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

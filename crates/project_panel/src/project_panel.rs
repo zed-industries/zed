@@ -484,6 +484,7 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             let is_read_only = project.is_read_only();
             let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
+            let is_local = project.is_local();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -495,13 +496,15 @@ impl ProjectPanel {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
-                            .when(cfg!(target_os = "macos"), |menu| {
+                            .when(is_local && cfg!(target_os = "macos"), |menu| {
                                 menu.action("Reveal in Finder", Box::new(RevealInFileManager))
                             })
-                            .when(cfg!(not(target_os = "macos")), |menu| {
+                            .when(is_local && cfg!(not(target_os = "macos")), |menu| {
                                 menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
                             })
-                            .action("Open in Default App", Box::new(OpenWithSystem))
+                            .when(is_local, |menu| {
+                                menu.action("Open in Default App", Box::new(OpenWithSystem))
+                            })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -2719,10 +2722,13 @@ impl Render for ProjectPanel {
                             }
                         }))
                 })
-                .when(project.is_local_or_ssh(), |el| {
+                .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
+                })
+                .when(project.is_via_ssh(), |el| {
+                    el.on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(
                     MouseButton::Right,

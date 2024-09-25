@@ -37,9 +37,10 @@ pub struct Telemetry {
 
 struct TelemetryState {
     settings: TelemetrySettings,
-    metrics_id: Option<Arc<str>>,      // Per logged-in user
+    system_id: Option<Arc<str>>,       // Per system
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<String>,        // Per app launch
+    metrics_id: Option<Arc<str>>,      // Per logged-in user
     release_channel: Option<&'static str>,
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
@@ -191,9 +192,10 @@ impl Telemetry {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,
             release_channel,
+            system_id: None,
             installation_id: None,
-            metrics_id: None,
             session_id: None,
+            metrics_id: None,
             events_queue: Vec::new(),
             flush_events_task: None,
             log_file: None,
@@ -283,11 +285,13 @@ impl Telemetry {
 
     pub fn start(
         self: &Arc<Self>,
+        system_id: Option<String>,
         installation_id: Option<String>,
         session_id: String,
         cx: &mut AppContext,
     ) {
         let mut state = self.state.lock();
+        state.system_id = system_id.map(|id| id.into());
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
@@ -637,9 +641,10 @@ impl Telemetry {
                         let state = this.state.lock();
 
                         let request_body = EventRequestBody {
+                            system_id: state.system_id.as_deref().map(Into::into),
                             installation_id: state.installation_id.as_deref().map(Into::into),
-                            metrics_id: state.metrics_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
+                            metrics_id: state.metrics_id.as_deref().map(Into::into),
                             is_staff: state.is_staff,
                             app_version: state.app_version.clone(),
                             os_name: state.os_name.clone(),
@@ -711,6 +716,7 @@ mod tests {
             Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
         ));
         let http = FakeHttpClient::with_200_response();
+        let system_id = Some("system_id".to_string());
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
@@ -718,7 +724,7 @@ mod tests {
             let telemetry = Telemetry::new(clock.clone(), http, cx);
 
             telemetry.state.lock().max_queue_size = 4;
-            telemetry.start(installation_id, session_id, cx);
+            telemetry.start(system_id, installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 
@@ -796,13 +802,14 @@ mod tests {
             Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
         ));
         let http = FakeHttpClient::with_200_response();
+        let system_id = Some("system_id".to_string());
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
             let telemetry = Telemetry::new(clock.clone(), http, cx);
             telemetry.state.lock().max_queue_size = 4;
-            telemetry.start(installation_id, session_id, cx);
+            telemetry.start(system_id, installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 

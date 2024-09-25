@@ -87,6 +87,7 @@ pub struct BufferSearchBar {
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
+    configured_options: SearchOptions,
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
@@ -439,7 +440,7 @@ impl ToolbarItemView for BufferSearchBar {
                 ));
 
             self.active_searchable_item = Some(searchable_item_handle);
-            drop(self.update_matches(cx));
+            drop(self.update_matches(true, cx));
             if !self.dismissed {
                 return ToolbarItemLocation::Secondary;
             }
@@ -517,6 +518,7 @@ impl BufferSearchBar {
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
+            configured_options: search_options,
             search_options,
             pending_search: None,
             query_contains_error: false,
@@ -605,10 +607,11 @@ impl BufferSearchBar {
             return false;
         };
 
-        self.default_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-
-        if self.default_options != self.search_options {
-            self.search_options = self.default_options;
+        self.configured_options =
+            SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+        if self.dismissed && self.configured_options != self.default_options {
+            self.search_options = self.configured_options;
+            self.default_options = self.configured_options;
         }
 
         self.dismissed = false;
@@ -627,6 +630,7 @@ impl BufferSearchBar {
             .map(SearchableItemHandle::supported_options)
             .unwrap_or_default()
     }
+
     pub fn search_suggested(&mut self, cx: &mut ViewContext<Self>) {
         let search = self
             .query_suggestion(cx)
@@ -697,7 +701,8 @@ impl BufferSearchBar {
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<()> {
         let options = options.unwrap_or(self.default_options);
-        if query != self.query(cx) || self.search_options != options {
+        let updated = query != self.query(cx) || self.search_options != options;
+        if updated {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
                     let len = query_buffer.len(cx);
@@ -708,7 +713,7 @@ impl BufferSearchBar {
             self.clear_matches(cx);
             cx.notify();
         }
-        self.update_matches(cx)
+        self.update_matches(!updated, cx)
     }
 
     fn render_search_option_button(
@@ -734,7 +739,7 @@ impl BufferSearchBar {
     ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-        drop(self.update_matches(cx));
+        drop(self.update_matches(false, cx));
         cx.notify();
     }
 
@@ -837,7 +842,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(cx);
                 self.clear_matches(cx);
-                let search = self.update_matches(cx);
+                let search = self.update_matches(false, cx);
 
                 let width = editor.update(cx, |editor, cx| {
                     let text_layout_details = editor.text_layout_details(cx);
@@ -875,7 +880,7 @@ impl BufferSearchBar {
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
             SearchEvent::MatchesInvalidated => {
-                drop(self.update_matches(cx));
+                drop(self.update_matches(false, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(cx),
         }
@@ -893,7 +898,7 @@ impl BufferSearchBar {
         if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
             active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
-            drop(self.update_matches(cx));
+            drop(self.update_matches(false, cx));
             cx.notify();
         }
     }
@@ -933,7 +938,11 @@ impl BufferSearchBar {
             .extend(active_item_matches);
     }
 
-    fn update_matches(&mut self, cx: &mut ViewContext<Self>) -> oneshot::Receiver<()> {
+    fn update_matches(
+        &mut self,
+        reuse_existing_query: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> oneshot::Receiver<()> {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
@@ -945,44 +954,51 @@ impl BufferSearchBar {
                 let _ = done_tx.send(());
                 cx.notify();
             } else {
-                let query: Arc<_> = if self.search_options.contains(SearchOptions::REGEX) {
-                    match SearchQuery::regex(
-                        query,
-                        self.search_options.contains(SearchOptions::WHOLE_WORD),
-                        self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                        false,
-                        Default::default(),
-                        Default::default(),
-                        None,
-                    ) {
-                        Ok(query) => query.with_replacement(self.replacement(cx)),
-                        Err(_) => {
-                            self.query_contains_error = true;
-                            self.clear_active_searchable_item_matches(cx);
-                            cx.notify();
-                            return done_rx;
-                        }
-                    }
+                let query: Arc<_> = if let Some(search) =
+                    self.active_search.take().filter(|_| reuse_existing_query)
+                {
+                    search
                 } else {
-                    match SearchQuery::text(
-                        query,
-                        self.search_options.contains(SearchOptions::WHOLE_WORD),
-                        self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                        false,
-                        Default::default(),
-                        Default::default(),
-                        None,
-                    ) {
-                        Ok(query) => query.with_replacement(self.replacement(cx)),
-                        Err(_) => {
-                            self.query_contains_error = true;
-                            self.clear_active_searchable_item_matches(cx);
-                            cx.notify();
-                            return done_rx;
+                    if self.search_options.contains(SearchOptions::REGEX) {
+                        match SearchQuery::regex(
+                            query,
+                            self.search_options.contains(SearchOptions::WHOLE_WORD),
+                            self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                            false,
+                            Default::default(),
+                            Default::default(),
+                            None,
+                        ) {
+                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Err(_) => {
+                                self.query_contains_error = true;
+                                self.clear_active_searchable_item_matches(cx);
+                                cx.notify();
+                                return done_rx;
+                            }
+                        }
+                    } else {
+                        match SearchQuery::text(
+                            query,
+                            self.search_options.contains(SearchOptions::WHOLE_WORD),
+                            self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                            false,
+                            Default::default(),
+                            Default::default(),
+                            None,
+                        ) {
+                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Err(_) => {
+                                self.query_contains_error = true;
+                                self.clear_active_searchable_item_matches(cx);
+                                cx.notify();
+                                return done_rx;
+                            }
                         }
                     }
-                }
-                .into();
+                    .into()
+                };
+
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
 
@@ -1195,10 +1211,11 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer};
-    use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
+    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer, SearchSettings};
+    use gpui::{Context, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
+    use settings::SettingsStore;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -2318,6 +2335,121 @@ mod tests {
             .unwrap_err();
         editor.update(cx, |editor, cx| {
             assert!(display_points_of(editor.all_text_background_highlights(cx)).is_empty(),);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_options_changes(cx: &mut TestAppContext) {
+        let (_editor, search_bar, cx) = init_test(cx);
+        update_search_settings(
+            SearchSettings {
+                whole_word: false,
+                case_sensitive: false,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+
+        let deploy = Deploy {
+            focus: true,
+            replace_enabled: false,
+            selection_search_enabled: true,
+        };
+
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have no search options enabled by default"
+            );
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::WHOLE_WORD,
+                "Should enable the option toggled"
+            );
+            assert!(
+                !search_bar.dismissed,
+                "Search bar should be present and visible"
+            );
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.configured_options,
+                SearchOptions::NONE,
+                "Should have configured search options matching the settings"
+            );
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::WHOLE_WORD,
+                "After (re)deploying, the option should still be enabled"
+            );
+
+            search_bar.dismiss(&Dismiss, cx);
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "After hiding and showing the search bar, default options should be used"
+            );
+
+            search_bar.toggle_search_option(SearchOptions::REGEX, cx);
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Should enable the options toggled"
+            );
+            assert!(
+                !search_bar.dismissed,
+                "Search bar should be present and visible"
+            );
+        });
+
+        update_search_settings(
+            SearchSettings {
+                whole_word: false,
+                case_sensitive: true,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Should have no search options enabled by default"
+            );
+
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.configured_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have configured search options matching the settings"
+            );
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::WHOLE_WORD,
+                "Toggling a non-dismissed search bar with custom options should not change the default options"
+            );
+            search_bar.dismiss(&Dismiss, cx);
+            search_bar.deploy(&deploy, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "After hiding and showing the search bar, default options should be used"
+            );
+        });
+    }
+
+    fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<EditorSettings>(cx, |settings| {
+                    settings.search = Some(search_settings);
+                });
+            });
         });
     }
 }
