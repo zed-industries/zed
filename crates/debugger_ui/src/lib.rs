@@ -3,7 +3,10 @@ use debugger_panel::{DebugPanel, ToggleFocus};
 use gpui::AppContext;
 use settings::Settings;
 use ui::ViewContext;
-use workspace::{Continue, Pause, Restart, Start, StepInto, StepOut, StepOver, Stop, Workspace};
+use workspace::{
+    Continue, Pause, Restart, Start, StepInto, StepOut, StepOver, Stop, StopDebugAdapters,
+    Workspace,
+};
 
 mod console;
 pub mod debugger_panel;
@@ -21,6 +24,13 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .register_action(|workspace: &mut Workspace, _: &Start, cx| {
                     tasks_ui::toggle_modal(workspace, cx, task::TaskModal::DebugModal).detach();
+                })
+                .register_action(|workspace: &mut Workspace, _: &StopDebugAdapters, cx| {
+                    workspace.project().update(cx, |project, cx| {
+                        project.dap_store().update(cx, |store, cx| {
+                            store.shutdown_clients(cx).detach();
+                        })
+                    })
                 })
                 .register_action(|workspace: &mut Workspace, _: &Stop, cx| {
                     let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();

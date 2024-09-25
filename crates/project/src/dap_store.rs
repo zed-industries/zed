@@ -23,7 +23,6 @@ use serde_json::Value;
 use settings::WorktreeId;
 use std::{
     collections::BTreeMap,
-    future::Future,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::{
@@ -653,17 +652,16 @@ impl DapStore {
         })
     }
 
-    fn shutdown_clients(&mut self, cx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
+    pub fn shutdown_clients(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
         let mut tasks = Vec::new();
 
-        let client_ids = self.clients.keys().cloned().collect::<Vec<_>>();
-        for client_id in client_ids {
+        for client_id in self.clients.keys().cloned().collect::<Vec<_>>() {
             tasks.push(self.shutdown_client(&client_id, cx));
         }
 
-        async move {
+        cx.background_executor().spawn(async move {
             futures::future::join_all(tasks).await;
-        }
+        })
     }
 
     pub fn shutdown_client(
