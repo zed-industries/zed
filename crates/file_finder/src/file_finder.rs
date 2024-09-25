@@ -884,7 +884,7 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || (project.is_local_or_ssh() && history_item.absolute.is_some())
+                            || (project.is_local() && history_item.absolute.is_some())
                     }),
                     self.currently_opened_path.as_ref(),
                     None,
@@ -1070,7 +1070,9 @@ impl PickerDelegate for FileFinderDelegate {
             self.labels_for_match(path_match, cx, ix);
 
         let file_icon = if settings.file_icons {
-            FileIcons::get_icon(Path::new(&file_name), cx).map(Icon::from_path)
+            FileIcons::get_icon(Path::new(&file_name), cx)
+                .map(Icon::from_path)
+                .map(|icon| icon.color(Color::Muted))
         } else {
             None
         };

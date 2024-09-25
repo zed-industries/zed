@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 use text::{ToOffset, ToPoint};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -54,33 +55,34 @@ fn completion_state_from_diff(
 ) -> CompletionProposal {
     let buffer_text = snapshot
         .text_for_range(delete_range.clone())
-        .collect::<String>()
-        .chars()
-        .collect::<Vec<char>>();
+        .collect::<String>();
 
     let mut inlays: Vec<InlayProposal> = Vec::new();
 
-    let completion = completion_text.chars().collect::<Vec<char>>();
+    let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
+    let buffer_graphemes: Vec<&str> = buffer_text.graphemes(true).collect();
 
     let mut offset = position.to_offset(&snapshot);
 
     let mut i = 0;
     let mut j = 0;
-    while i < completion.len() && j < buffer_text.len() {
+    while i < completion_graphemes.len() && j < buffer_graphemes.len() {
         // find the next instance of the buffer text in the completion text.
-        let k = completion[i..].iter().position(|c| *c == buffer_text[j]);
+        let k = completion_graphemes[i..]
+            .iter()
+            .position(|c| *c == buffer_graphemes[j]);
         match k {
             Some(k) => {
                 if k != 0 {
                     // the range from the current position to item is an inlay.
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
-                        completion_text[i..i + k].into(),
+                        completion_graphemes[i..i + k].join("").into(),
                     ));
                 }
                 i += k + 1;
                 j += 1;
-                offset.add_assign(1);
+                offset.add_assign(buffer_graphemes[j - 1].len());
             }
             None => {
                 // there are no more matching completions, so drop the remaining
@@ -90,11 +92,11 @@ fn completion_state_from_diff(
         }
     }
 
-    if j == buffer_text.len() && i < completion.len() {
+    if j == buffer_graphemes.len() && i < completion_graphemes.len() {
         // there is leftover completion text, so drop it as an inlay.
         inlays.push(InlayProposal::Suggestion(
             snapshot.anchor_after(offset),
-            completion_text[i..completion_text.len()].into(),
+            completion_graphemes[i..].join("").into(),
         ));
     }
 

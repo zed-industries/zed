@@ -144,7 +144,7 @@ impl TerminalPanel {
             cx.subscribe(&pane, Self::handle_pane_event),
         ];
         let project = workspace.project().read(cx);
-        let enabled = project.is_local_or_ssh() || project.supports_remote_terminal(cx);
+        let enabled = project.supports_terminal(cx);
         let this = Self {
             pane,
             fs: workspace.app_state().fs.clone(),

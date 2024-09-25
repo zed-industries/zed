@@ -7,14 +7,11 @@ use crate::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
         ShowScrollbar,
     },
-    git::{
-        blame::{CommitDetails, GitBlame},
-        diff_hunk_to_display, DisplayDiffHunk,
-    },
+    git::blame::{CommitDetails, GitBlame},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
-    hunk_diff::ExpandedHunk,
+    hunk_diff::{diff_hunk_to_display, DisplayDiffHunk},
     hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
@@ -23,8 +20,8 @@ use crate::{
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, RangeToAnchorExt, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -305,7 +302,7 @@ impl EditorElement {
         }
         register_action(view, cx, Editor::go_to_diagnostic);
         register_action(view, cx, Editor::go_to_prev_diagnostic);
-        register_action(view, cx, Editor::go_to_hunk);
+        register_action(view, cx, Editor::go_to_next_hunk);
         register_action(view, cx, Editor::go_to_prev_hunk);
         register_action(view, cx, |editor, a, cx| {
             editor.go_to_definition(a, cx).detach_and_log_err(cx);
@@ -492,28 +489,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            if modifiers.control || modifiers.platform {
-                editor.toggle_hovered_hunk(&hovered_hunk, cx);
-            } else {
-                let display_range = hovered_hunk
-                    .multi_buffer_range
-                    .clone()
-                    .to_display_points(&position_map.snapshot);
-                let hunk_bounds = Self::diff_hunk_bounds(
-                    &position_map.snapshot,
-                    position_map.line_height,
-                    gutter_hitbox.bounds,
-                    &DisplayDiffHunk::Unfolded {
-                        diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
-                        display_row_range: display_range.start.row()..display_range.end.row(),
-                        multi_buffer_range: hovered_hunk.multi_buffer_range.clone(),
-                        status: hovered_hunk.status,
-                    },
-                );
-                if hunk_bounds.contains(&event.position) {
-                    editor.open_hunk_context_menu(hovered_hunk, event.position, cx);
-                }
-            }
+            editor.toggle_hovered_hunk(&hovered_hunk, cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
@@ -1269,6 +1245,7 @@ impl EditorElement {
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
         display_rows: Range<DisplayRow>,
+        anchor_range: Range<Anchor>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
@@ -1289,30 +1266,84 @@ impl EditorElement {
             .git
             .git_gutter
             .unwrap_or_default();
-        let display_hunks = buffer_snapshot
-            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
-            .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
-            .dedup()
-            .map(|hunk| match git_gutter_setting {
-                GitGutterSetting::TrackedFiles => {
-                    let hitbox = match hunk {
-                        DisplayDiffHunk::Unfolded { .. } => {
-                            let hunk_bounds = Self::diff_hunk_bounds(
-                                snapshot,
-                                line_height,
-                                gutter_hitbox.bounds,
-                                &hunk,
-                            );
-                            Some(cx.insert_hitbox(hunk_bounds, true))
+
+        self.editor.update(cx, |editor, cx| {
+            let expanded_hunks = &editor.expanded_hunks.hunks;
+            let expanded_hunks_start_ix = expanded_hunks
+                .binary_search_by(|hunk| {
+                    hunk.hunk_range
+                        .end
+                        .cmp(&anchor_range.start, &buffer_snapshot)
+                        .then(Ordering::Less)
+                })
+                .unwrap_err();
+            let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
+
+            let display_hunks = buffer_snapshot
+                .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
+                .filter_map(|hunk| {
+                    let display_hunk = diff_hunk_to_display(&hunk, snapshot);
+
+                    if let DisplayDiffHunk::Unfolded {
+                        multi_buffer_range,
+                        status,
+                        ..
+                    } = &display_hunk
+                    {
+                        let mut is_expanded = false;
+                        while let Some(expanded_hunk) = expanded_hunks.peek() {
+                            match expanded_hunk
+                                .hunk_range
+                                .start
+                                .cmp(&multi_buffer_range.start, &buffer_snapshot)
+                            {
+                                Ordering::Less => {
+                                    expanded_hunks.next();
+                                }
+                                Ordering::Equal => {
+                                    is_expanded = true;
+                                    break;
+                                }
+                                Ordering::Greater => {
+                                    break;
+                                }
+                            }
                         }
-                        DisplayDiffHunk::Folded { .. } => None,
-                    };
-                    (hunk, hitbox)
-                }
-                GitGutterSetting::Hide => (hunk, None),
-            })
-            .collect();
-        display_hunks
+                        match status {
+                            DiffHunkStatus::Added => {}
+                            DiffHunkStatus::Modified => {}
+                            DiffHunkStatus::Removed => {
+                                if is_expanded {
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+
+                    Some(display_hunk)
+                })
+                .dedup()
+                .map(|hunk| match git_gutter_setting {
+                    GitGutterSetting::TrackedFiles => {
+                        let hitbox = match hunk {
+                            DisplayDiffHunk::Unfolded { .. } => {
+                                let hunk_bounds = Self::diff_hunk_bounds(
+                                    snapshot,
+                                    line_height,
+                                    gutter_hitbox.bounds,
+                                    &hunk,
+                                );
+                                Some(cx.insert_hitbox(hunk_bounds, true))
+                            }
+                            DisplayDiffHunk::Folded { .. } => None,
+                        };
+                        (hunk, hitbox)
+                    }
+                    GitGutterSetting::Hide => (hunk, None),
+                })
+                .collect();
+            display_hunks
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3187,7 +3218,7 @@ impl EditorElement {
                         Some((
                             hunk_bounds,
                             cx.theme().status().modified,
-                            Corners::all(1. * line_height),
+                            Corners::all(px(0.)),
                         ))
                     }
                     DisplayDiffHunk::Unfolded { status, .. } => {
@@ -3195,12 +3226,12 @@ impl EditorElement {
                             DiffHunkStatus::Added => (
                                 hunk_hitbox.bounds,
                                 cx.theme().status().created,
-                                Corners::all(0.05 * line_height),
+                                Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Modified => (
                                 hunk_hitbox.bounds,
                                 cx.theme().status().modified,
-                                Corners::all(0.05 * line_height),
+                                Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Removed => (
                                 Bounds::new(
@@ -3244,7 +3275,7 @@ impl EditorElement {
                 let start_y = display_row.as_f32() * line_height - scroll_top;
                 let end_y = start_y + line_height;
 
-                let width = 0.275 * line_height;
+                let width = Self::diff_hunk_strip_width(line_height);
                 let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                 let highlight_size = size(width, end_y - start_y);
                 Bounds::new(highlight_origin, highlight_size)
@@ -3277,7 +3308,7 @@ impl EditorElement {
                     let start_y = start_row.as_f32() * line_height - scroll_top;
                     let end_y = end_row_in_current_excerpt.as_f32() * line_height - scroll_top;
 
-                    let width = 0.275 * line_height;
+                    let width = Self::diff_hunk_strip_width(line_height);
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
@@ -3289,13 +3320,19 @@ impl EditorElement {
                     let start_y = row.as_f32() * line_height - offset - scroll_top;
                     let end_y = start_y + line_height;
 
-                    let width = 0.35 * line_height;
+                    let width = (0.35 * line_height).floor();
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
             },
         }
+    }
+
+    /// Returns the width of the diff strip that will be displayed in the gutter.
+    pub(super) fn diff_hunk_strip_width(line_height: Pixels) -> Pixels {
+        // We floor the value to prevent pixel rounding.
+        (0.275 * line_height).floor()
     }
 
     fn paint_gutter_indicators(&self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -3308,9 +3345,6 @@ impl EditorElement {
 
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(cx);
-            }
-            for close_indicator in layout.close_indicators.iter_mut() {
-                close_indicator.paint(cx);
             }
 
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
@@ -4096,46 +4130,6 @@ impl EditorElement {
             .floor() as usize
             + 1;
         self.column_pixels(digit_count, cx)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn layout_hunk_diff_close_indicators(
-        &self,
-        line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
-        expanded_hunks_by_rows: HashMap<DisplayRow, ExpandedHunk>,
-        cx: &mut WindowContext,
-    ) -> Vec<AnyElement> {
-        self.editor.update(cx, |editor, cx| {
-            expanded_hunks_by_rows
-                .into_iter()
-                .map(|(display_row, hunk)| {
-                    let button = editor.close_hunk_diff_button(
-                        HoveredHunk {
-                            multi_buffer_range: hunk.hunk_range,
-                            status: hunk.status,
-                            diff_base_byte_range: hunk.diff_base_byte_range,
-                        },
-                        display_row,
-                        cx,
-                    );
-
-                    prepaint_gutter_button(
-                        button,
-                        display_row,
-                        line_height,
-                        gutter_dimensions,
-                        scroll_pixel_position,
-                        gutter_hitbox,
-                        rows_with_hunk_bounds,
-                        cx,
-                    )
-                })
-                .collect()
-        })
     }
 }
 
@@ -5158,6 +5152,7 @@ impl Element for EditorElement {
                         line_height,
                         &gutter_hitbox,
                         start_row..end_row,
+                        start_anchor..end_anchor,
                         &snapshot,
                         cx,
                     );
@@ -5486,15 +5481,6 @@ impl Element for EditorElement {
                     } else {
                         Vec::new()
                     };
-                    let close_indicators = self.layout_hunk_diff_close_indicators(
-                        line_height,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &rows_with_hunk_bounds,
-                        expanded_add_hunks_by_rows,
-                        cx,
-                    );
 
                     self.layout_signature_help(
                         &hitbox,
@@ -5607,7 +5593,6 @@ impl Element for EditorElement {
                         selections,
                         mouse_context_menu,
                         test_indicators,
-                        close_indicators,
                         code_actions_indicator,
                         gutter_fold_toggles,
                         crease_trailers,
@@ -5749,7 +5734,6 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
-    close_indicators: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,
