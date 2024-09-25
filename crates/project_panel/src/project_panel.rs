@@ -2501,14 +2501,14 @@ impl ProjectPanel {
                         .ml_1(),
                     )
                     .child(if let Some(icon_name) = extra_icon_name {
-                        h_flex().child(
+                        h_flex().size(IconSize::default().rems()).child(
                             Icon::new(icon_name)
                                 .size(IconSize::XSmall)
                                 .color(filename_text_color),
                         )
                     } else {
                         div()
-                    }) // TODO(nilskch)
+                    })
                     .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                         if event.down.button == MouseButton::Right || event.down.first_mouse {
                             return;
