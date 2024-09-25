@@ -9623,7 +9623,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
     cx.update_editor(|editor, cx| {
         //Wrap around the bottom of the buffer
         for _ in 0..3 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
         }
     });
 
@@ -9709,7 +9709,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
         //Make sure that the fold only gets one hunk
         for _ in 0..4 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
         }
     });
 
@@ -11226,7 +11226,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
 
     cx.update_editor(|editor, cx| {
         for _ in 0..4 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
             editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
         }
     });
