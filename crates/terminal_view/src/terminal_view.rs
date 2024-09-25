@@ -1321,11 +1321,7 @@ impl SearchableItem for TerminalView {
 pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => {
-            // Fallback to the first project if the current file is in a project
-            match workspace.project().read(cx).active_project_directory(cx) {
-                Some(dir) => Some(dir),
-                None => first_project_directory(workspace, cx),
-            }
+            workspace.project().read(cx).active_project_directory(cx)
         }
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
