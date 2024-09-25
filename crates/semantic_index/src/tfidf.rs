@@ -34,7 +34,6 @@ pub struct CorpusTermFrequency(TermFrequencyMap);
 
 pub trait TermFrequency {
     fn add_term(&mut self, term: Arc<str>);
-    fn remove_term(&mut self, term: &Arc<str>);
     fn merge(&mut self, other: &Self);
     fn subtract(&mut self, other: &Self);
     fn total_terms(&self) -> u32;
@@ -43,15 +42,6 @@ pub trait TermFrequency {
 impl TermFrequency for TermFrequencyMap {
     fn add_term(&mut self, term: Arc<str>) {
         *self.entry(term).or_insert(0) += 1;
-    }
-
-    fn remove_term(&mut self, term: &Arc<str>) {
-        if let Some(count) = self.get_mut(term) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                self.remove(term);
-            }
-        }
     }
 
     fn merge(&mut self, other: &Self) {

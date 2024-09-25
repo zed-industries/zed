@@ -8,8 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
 use fs::Fs;
 use futures::stream::StreamExt;
-use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{AppContext, Model, Task};
+use gpui::{AppContext, AsyncAppContext, Model, Task};
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use log;
@@ -43,8 +42,7 @@ impl Default for EmbeddingIndexSettings {
 pub struct EmbeddingIndex {
     worktree: Model<Worktree>,
     db_connection: heed::Env,
-    embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-    tfidf_metadata_db: heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
+    db: heed::Database<Str, SerdeBincode<EmbeddingIndexEntry>>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -58,8 +56,7 @@ impl EmbeddingIndex {
         worktree: Model<Worktree>,
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
-        embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-        tfidf_metadata_db: heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
+        db: heed::Database<Str, SerdeBincode<EmbeddingIndexEntry>>,
         language_registry: Arc<LanguageRegistry>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
@@ -68,18 +65,22 @@ impl EmbeddingIndex {
             worktree,
             fs,
             db_connection,
-            embedding_db,
+            db,
             language_registry,
             embedding_provider,
             entry_ids_being_indexed,
             tokenizer: SimpleTokenizer::new(),
-            tfidf_metadata_db,
             settings: EmbeddingIndexSettings::default(),
         }
     }
 
-    pub fn embedding_db(&self) -> &heed::Database<Str, SerdeBincode<EmbeddedFile>> {
-        &self.embedding_db
+    pub fn db(&self) -> &heed::Database<Str, SerdeBincode<EmbeddingIndexEntry>> {
+        &self.db
+    }
+
+    pub async fn initialize(&self, cx: &AsyncAppContext) -> Result<()> {
+        self.reconcile_tfidf_metadata(cx).await?;
+        Ok(())
     }
 
     pub fn index_entries_changed_on_disk(
@@ -133,7 +134,7 @@ impl EmbeddingIndex {
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) =
             channel::bounded(self.settings.deleted_entries_bound);
         let db_connection = self.db_connection.clone();
-        let db = self.embedding_db;
+        let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
@@ -174,7 +175,12 @@ impl EmbeddingIndex {
                                         ))
                                         .await?;
                                 }
-                                saved_mtime = db_embedded_file.mtime;
+                                saved_mtime =
+                                    if let EmbeddingIndexEntry::File(file) = db_embedded_file {
+                                        file.mtime
+                                    } else {
+                                        None
+                                    };
                                 db_entries.next();
                                 break;
                             }
@@ -383,20 +389,19 @@ impl EmbeddingIndex {
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
-        let embedding_db = self.embedding_db;
-        let tfidf_metadata_db = self.tfidf_metadata_db;
+        let db = self.db;
 
         cx.background_executor().spawn(async move {
             loop {
                 futures::select_biased! {
                     deletion_range = deleted_entry_ranges.next() => {
                         if let Some(deletion_range) = deletion_range {
-                            Self::apply_deletion(&db_connection, &embedding_db, &tfidf_metadata_db, deletion_range)?;
+                            Self::apply_deletion(&db_connection, &db, deletion_range).context("failed to apply deletion for embedding batch")?;
                         }
                     },
                     batch = embedded_files.next() => {
                         if let Some(batch) = batch {
-                            Self::apply_batch(&db_connection, &embedding_db, &tfidf_metadata_db, batch)?;
+                            Self::apply_batch(&db_connection, &db, batch).context("failed to apply embedding batch update")?;
                         }
                     },
                     complete => break,
@@ -409,74 +414,101 @@ impl EmbeddingIndex {
 
     fn apply_deletion(
         db_connection: &heed::Env,
-        embedding_db: &heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-        tfidf_metadata_db: &heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
+        db: &heed::Database<Str, SerdeBincode<EmbeddingIndexEntry>>,
         deletion_range: (Bound<String>, Bound<String>),
     ) -> Result<()> {
         let mut txn = db_connection.write_txn()?;
         let start = deletion_range.0.as_ref().map(|s| s.as_str());
         let end = deletion_range.1.as_ref().map(|s| s.as_str());
 
-        let mut metadata = tfidf_metadata_db
-            .get(&txn, "__tfidf_metadata__")?
-            .unwrap_or_else(TfIdfMetadata::new);
+        let mut metadata = if let Some(EmbeddingIndexEntry::Metadata(metadata)) =
+            db.get(&txn, "__tfidf_metadata__")?
+        {
+            metadata
+        } else {
+            TfIdfMetadata::new()
+        };
 
-        let deleted_files = embedding_db.range(&txn, &(start, end))?;
+        let deleted_files = db
+            .range(&txn, &(start, end))
+            .context("failed to infer deleted embedding range")?;
         for result in deleted_files {
-            let (_, embedded_file) = result?;
-            for chunk in &embedded_file.chunks {
-                metadata.remove_chunk(&chunk.term_frequencies);
+            let (_, entry) = result?;
+            if let EmbeddingIndexEntry::File(embedded_file) = entry {
+                for chunk in &embedded_file.chunks {
+                    metadata.remove_chunk(&chunk.term_frequencies);
+                }
             }
         }
 
-        embedding_db.delete_range(&mut txn, &(start, end))?;
-        tfidf_metadata_db.put(&mut txn, "__tfidf_metadata__", &metadata)?;
+        db.delete_range(&mut txn, &(start, end))
+            .context("failed to delete embedding range")?;
+        db.put(
+            &mut txn,
+            "__tfidf_metadata__",
+            &EmbeddingIndexEntry::Metadata(metadata),
+        )
+        .context("failed to update embedding metadata")?;
         txn.commit()?;
         Ok(())
     }
 
     fn apply_batch(
         db_connection: &heed::Env,
-        embedding_db: &heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-        tfidf_metadata_db: &heed::Database<Str, SerdeBincode<TfIdfMetadata>>,
+        db: &heed::Database<Str, SerdeBincode<EmbeddingIndexEntry>>,
         batch: Vec<(EmbeddedFile, IndexingEntryHandle)>,
     ) -> Result<()> {
         let mut txn = db_connection.write_txn()?;
-        let mut metadata = tfidf_metadata_db
-            .get(&txn, "__tfidf_metadata__")?
-            .unwrap_or_else(TfIdfMetadata::new);
+        let mut metadata = if let Some(EmbeddingIndexEntry::Metadata(metadata)) =
+            db.get(&txn, "__tfidf_metadata__")?
+        {
+            metadata
+        } else {
+            TfIdfMetadata::new()
+        };
 
         for (file, _) in batch {
             let key = db_key_for_path(&file.path);
-            embedding_db.put(&mut txn, &key, &file)?;
+            db.put(&mut txn, &key, &EmbeddingIndexEntry::File(file.clone()))
+                .context("failed to write embedded file")?;
             for chunk in &file.chunks {
                 metadata.add_chunk(&chunk.term_frequencies);
             }
         }
 
-        tfidf_metadata_db.put(&mut txn, "__tfidf_metadata__", &metadata)?;
+        db.put(
+            &mut txn,
+            "__tfidf_metadata__",
+            &EmbeddingIndexEntry::Metadata(metadata),
+        )
+        .context("failed to update embedding metadata")?;
         txn.commit()?;
         Ok(())
     }
 
-    pub fn reconcile_tfidf_metadata(&self, cx: &AppContext) -> Task<Result<()>> {
+    pub fn reconcile_tfidf_metadata(&self, cx: &AsyncAppContext) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
-        let embedding_db = self.embedding_db;
-        let tfidf_metadata_db = self.tfidf_metadata_db;
+        let db = self.db;
 
-        cx.background_executor().spawn(async move {
+        cx.spawn(|_| async move {
             let mut txn = db_connection.write_txn()?;
             let mut metadata = TfIdfMetadata::new();
 
-            let all_embeddings = embedding_db.iter(&txn)?;
+            let all_embeddings = db.iter(&txn)?;
             for result in all_embeddings {
-                let (_, embedded_file) = result?;
-                for chunk in &embedded_file.chunks {
-                    metadata.add_chunk(&chunk.term_frequencies);
+                let (_, entry) = result?;
+                if let EmbeddingIndexEntry::File(embedded_file) = entry {
+                    for chunk in &embedded_file.chunks {
+                        metadata.add_chunk(&chunk.term_frequencies);
+                    }
                 }
             }
 
-            tfidf_metadata_db.put(&mut txn, "__tfidf_metadata__", &metadata)?;
+            db.put(
+                &mut txn,
+                "__tfidf_metadata__",
+                &EmbeddingIndexEntry::Metadata(metadata),
+            )?;
             txn.commit()?;
 
             Ok(())
@@ -485,14 +517,20 @@ impl EmbeddingIndex {
 
     pub fn paths(&self, cx: &AppContext) -> Task<Result<Vec<Arc<Path>>>> {
         let connection = self.db_connection.clone();
-        let db = self.embedding_db;
+        let db = self.db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;
             let result = db
                 .iter(&tx)?
-                .map(|entry| Ok(entry?.1.path.clone()))
+                .filter_map(|entry| {
+                    if let Ok((_, EmbeddingIndexEntry::File(file))) = entry {
+                        Some(Ok(file.path.clone()))
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Result<Vec<Arc<Path>>>>();
             drop(tx);
             result
@@ -505,16 +543,15 @@ impl EmbeddingIndex {
         cx: &AppContext,
     ) -> Task<Result<Vec<EmbeddedChunk>>> {
         let connection = self.db_connection.clone();
-        let db = self.embedding_db;
+        let db = self.db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;
-            Ok(db
-                .get(&tx, &db_key_for_path(&path))?
-                .ok_or_else(|| anyhow!("no such path"))?
-                .chunks
-                .clone())
+            match db.get(&tx, &db_key_for_path(&path))? {
+                Some(EmbeddingIndexEntry::File(file)) => Ok(file.chunks.clone()),
+                _ => Err(anyhow!("no such path")),
+            }
         })
     }
 }
@@ -544,6 +581,12 @@ pub struct EmbedFiles {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum EmbeddingIndexEntry {
+    File(EmbeddedFile),
+    Metadata(TfIdfMetadata),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmbeddedFile {
     pub path: Arc<Path>,
     pub mtime: Option<SystemTime>,

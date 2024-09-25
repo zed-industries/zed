@@ -1,5 +1,6 @@
 use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
+    embedding_index::EmbeddingIndexEntry,
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
@@ -251,7 +252,7 @@ impl ProjectIndex {
                     .read_with(&cx, |index, cx| {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
-                        let db = *index.embedding_index().embedding_db();
+                        let db = *index.embedding_index().db();
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()
@@ -259,10 +260,12 @@ impl ProjectIndex {
                             let db_entries = db.iter(&txn).context("failed to iterate database")?;
                             for db_entry in db_entries {
                                 let (_key, db_embedded_file) = db_entry?;
-                                for chunk in db_embedded_file.chunks {
-                                    chunks_tx
-                                        .send((worktree_id, db_embedded_file.path.clone(), chunk))
-                                        .await?;
+                                if let EmbeddingIndexEntry::File(file) = db_embedded_file {
+                                    for chunk in &file.chunks {
+                                        chunks_tx
+                                            .send((worktree_id, file.path.clone(), chunk.clone()))
+                                            .await?;
+                                    }
                                 }
                             }
                             anyhow::Ok(())

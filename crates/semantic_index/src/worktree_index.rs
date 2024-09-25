@@ -62,17 +62,12 @@ impl WorktreeIndex {
                         let mut txn = db_connection.write_txn()?;
                         let embedding_index = {
                             let db_name = worktree_abs_path.to_string_lossy();
-                            let embedding_db =
-                                db_connection.create_database(&mut txn, Some(&db_name))?;
-                            let tfidf_metadata_db =
-                                db_connection.create_database(&mut txn, Some(&db_name))?;
-
+                            let db = db_connection.create_database(&mut txn, Some(&db_name))?;
                             EmbeddingIndex::new(
                                 worktree_for_embedding,
                                 embedding_fs,
                                 db_connection.clone(),
-                                embedding_db,
-                                tfidf_metadata_db,
+                                db,
                                 language_registry,
                                 embedding_provider,
                                 Arc::clone(&entries_being_indexed),
@@ -216,6 +211,6 @@ impl WorktreeIndex {
             .db_connection
             .read_txn()
             .context("failed to create read transaction")?;
-        Ok(self.embedding_index().embedding_db().len(&txn)?)
+        Ok(self.embedding_index().db().len(&txn)?)
     }
 }
