@@ -18,6 +18,9 @@ pub mod repository;
 pub mod status;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
+pub static COOKIES: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("cookies"));
+pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
+    LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]

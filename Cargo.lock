@@ -2409,7 +2409,6 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "feature_flags",
- "fs",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -14389,7 +14388,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.155.0"
+version = "0.156.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
