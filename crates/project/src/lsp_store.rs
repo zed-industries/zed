@@ -5506,7 +5506,7 @@ impl LspStore {
         let lsp_binary_options = LanguageServerBinaryOptions {
             allow_path_lookup: !settings
                 .as_ref()
-                .and_then(|b| b.disable_path_lookup)
+                .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
             allow_binary_download,
         };
