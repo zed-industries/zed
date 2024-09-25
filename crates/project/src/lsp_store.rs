@@ -5554,8 +5554,10 @@ impl LspStore {
                     }
                 } else {
                     let lsp_binary_options = LanguageServerBinaryOptions {
-                        allow_path_lookup: binary_options.is_none()
-                            || binary_options.as_ref().unwrap().path_lookup.unwrap_or(true),
+                        allow_path_lookup: !binary_options
+                            .as_ref()
+                            .and_then(|b| b.disable_path_lookup)
+                            .unwrap_or_default(),
                         allow_binary_download: true, // todo
                     };
                     let binary_result = adapter
@@ -7934,7 +7936,7 @@ impl LspAdapterDelegate for SshLspAdapterDelegate {
         Ok(())
     }
 
-    async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
+    async fn language_server_download_dir(&self, _: &LanguageServerName) -> Option<Arc<Path>> {
         None
     }
 
