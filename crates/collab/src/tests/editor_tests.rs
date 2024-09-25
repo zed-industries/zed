@@ -7,18 +7,12 @@ use collections::HashMap;
 use editor::{
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
-        RevertSelectedHunks, ToggleCodeActions, Undo,
+        ToggleCodeActions, Undo,
     },
-    display_map::DisplayRow,
-    test::{
-        editor_hunks,
-        editor_test_context::{AssertionContextManager, EditorTestContext},
-        expanded_hunks, expanded_hunks_background_highlights,
-    },
+    test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor,
 };
 use futures::StreamExt;
-use git::diff::DiffHunkStatus;
 use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
