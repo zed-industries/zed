@@ -5,13 +5,29 @@ use x11rb::protocol::{
 
 use crate::{Modifiers, MouseButton, NavigationDirection};
 
-pub(crate) fn button_of_key(detail: xproto::Button) -> Option<MouseButton> {
+pub(crate) enum ButtonOrScroll {
+    Button(MouseButton),
+    Scroll(ScrollDirection),
+}
+
+pub(crate) enum ScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+pub(crate) fn button_or_scroll_from_event_detail(detail: u32) -> Option<ButtonOrScroll> {
     Some(match detail {
-        1 => MouseButton::Left,
-        2 => MouseButton::Middle,
-        3 => MouseButton::Right,
-        8 => MouseButton::Navigate(NavigationDirection::Back),
-        9 => MouseButton::Navigate(NavigationDirection::Forward),
+        1 => ButtonOrScroll::Button(MouseButton::Left),
+        2 => ButtonOrScroll::Button(MouseButton::Middle),
+        3 => ButtonOrScroll::Button(MouseButton::Right),
+        4 => ButtonOrScroll::Scroll(ScrollDirection::Up),
+        5 => ButtonOrScroll::Scroll(ScrollDirection::Down),
+        6 => ButtonOrScroll::Scroll(ScrollDirection::Left),
+        7 => ButtonOrScroll::Scroll(ScrollDirection::Right),
+        8 => ButtonOrScroll::Button(MouseButton::Navigate(NavigationDirection::Back)),
+        9 => ButtonOrScroll::Button(MouseButton::Navigate(NavigationDirection::Forward)),
         _ => return None,
     })
 }

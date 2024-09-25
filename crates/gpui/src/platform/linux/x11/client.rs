@@ -42,7 +42,10 @@ use crate::{
     WindowParams, X11Window,
 };
 
-use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
+use super::{
+    button_or_scroll_from_event_detail, modifiers_from_state, pressed_button_from_mask,
+    ButtonOrScroll, ScrollDirection,
+};
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES};
@@ -950,35 +953,73 @@ impl X11Client {
                     window.handle_ime_commit(text);
                     state = self.0.borrow_mut();
                 }
-                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
-                    let click_elapsed = state.last_click.elapsed();
+                match button_or_scroll_from_event_detail(event.detail) {
+                    Some(ButtonOrScroll::Button(button)) => {
+                        let click_elapsed = state.last_click.elapsed();
+                        if click_elapsed < DOUBLE_CLICK_INTERVAL
+                            && state
+                                .last_mouse_button
+                                .is_some_and(|prev_button| prev_button == button)
+                            && is_within_click_distance(state.last_location, position)
+                        {
+                            state.current_count += 1;
+                        } else {
+                            state.current_count = 1;
+                        }
 
-                    if click_elapsed < DOUBLE_CLICK_INTERVAL
-                        && state
-                            .last_mouse_button
-                            .is_some_and(|prev_button| prev_button == button)
-                        && is_within_click_distance(state.last_location, position)
-                    {
-                        state.current_count += 1;
-                    } else {
-                        state.current_count = 1;
+                        state.last_click = Instant::now();
+                        state.last_mouse_button = Some(button);
+                        state.last_location = position;
+                        let current_count = state.current_count;
+
+                        drop(state);
+                        window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: current_count,
+                            first_mouse: false,
+                        }));
                     }
-
-                    state.last_click = Instant::now();
-                    state.last_mouse_button = Some(button);
-                    state.last_location = position;
-                    let current_count = state.current_count;
-
-                    drop(state);
-                    window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
-                        button,
-                        position,
-                        modifiers,
-                        click_count: current_count,
-                        first_mouse: false,
-                    }));
-                } else {
-                    log::warn!("Unknown button press: {event:?}");
+                    Some(ButtonOrScroll::Scroll(direction)) => {
+                        drop(state);
+                        // Emulated scroll button presses are sent simultaneously with smooth scrolling XinputMotion events.
+                        // Since handling those events does the scrolling, they are skipped here.
+                        if !event
+                            .flags
+                            .contains(xinput::PointerEventFlags::POINTER_EMULATED)
+                        {
+                            let delta = match direction {
+                                ScrollDirection::Up => {
+                                    if modifiers.shift {
+                                        Point::new(SCROLL_LINES, 0.0)
+                                    } else {
+                                        Point::new(0.0, SCROLL_LINES)
+                                    }
+                                }
+                                ScrollDirection::Down => {
+                                    if modifiers.shift {
+                                        Point::new(-SCROLL_LINES, 0.0)
+                                    } else {
+                                        Point::new(0.0, -SCROLL_LINES)
+                                    }
+                                }
+                                ScrollDirection::Left => Point::new(SCROLL_LINES, 0.0),
+                                ScrollDirection::Right => Point::new(-SCROLL_LINES, 0.0),
+                            };
+                            window.handle_input(PlatformInput::ScrollWheel(
+                                crate::ScrollWheelEvent {
+                                    position,
+                                    delta: ScrollDelta::Lines(delta),
+                                    modifiers,
+                                    touch_phase: TouchPhase::default(),
+                                },
+                            ));
+                        }
+                    }
+                    None => {
+                        log::error!("Unknown x11 button: {}", event.detail);
+                    }
                 }
             }
             Event::XinputButtonRelease(event) => {
@@ -991,15 +1032,19 @@ impl X11Client {
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
-                    let click_count = state.current_count;
-                    drop(state);
-                    window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
-                        button,
-                        position,
-                        modifiers,
-                        click_count,
-                    }));
+                match button_or_scroll_from_event_detail(event.detail) {
+                    Some(ButtonOrScroll::Button(button)) => {
+                        let click_count = state.current_count;
+                        drop(state);
+                        window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count,
+                        }));
+                    }
+                    Some(ButtonOrScroll::Scroll(_)) => {}
+                    None => {}
                 }
             }
             Event::XinputMotion(event) => {
@@ -1041,7 +1086,7 @@ impl X11Client {
                         {
                             let new_scroll = axisvalues[valuator_idx]
                                 / fp3232_to_f32(scroll_class.increment)
-                                * SCROLL_LINES as f32;
+                                * SCROLL_LINES;
                             let old_scroll = self.0.borrow().scroll_x;
                             self.0.borrow_mut().scroll_x = Some(new_scroll);
 
@@ -1062,7 +1107,7 @@ impl X11Client {
                             // the `increment` is the valuator delta equivalent to one positive unit of scrolling. Here that means SCROLL_LINES lines.
                             let new_scroll = axisvalues[valuator_idx]
                                 / fp3232_to_f32(scroll_class.increment)
-                                * SCROLL_LINES as f32;
+                                * SCROLL_LINES;
                             let old_scroll = self.0.borrow().scroll_y;
                             self.0.borrow_mut().scroll_y = Some(new_scroll);
 

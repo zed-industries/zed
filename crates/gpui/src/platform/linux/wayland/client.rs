@@ -1634,10 +1634,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
-                        scroll_delta.y += discrete as f32 * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.y += discrete as f32 * axis_modifier * SCROLL_LINES;
                     }
                     wl_pointer::Axis::HorizontalScroll => {
-                        scroll_delta.x += discrete as f32 * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.x += discrete as f32 * axis_modifier * SCROLL_LINES;
                     }
                     _ => unreachable!(),
                 }
@@ -1662,10 +1662,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let wheel_percent = value120 as f32 / 120.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
-                        scroll_delta.y += wheel_percent * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.y += wheel_percent * axis_modifier * SCROLL_LINES;
                     }
                     wl_pointer::Axis::HorizontalScroll => {
-                        scroll_delta.x += wheel_percent * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.x += wheel_percent * axis_modifier * SCROLL_LINES;
                     }
                     _ => unreachable!(),
                 }
