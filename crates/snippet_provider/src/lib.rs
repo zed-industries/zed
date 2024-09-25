@@ -133,6 +133,26 @@ pub struct SnippetProvider {
     watch_tasks: Vec<Task<Result<()>>>,
 }
 
+// Watches global snippet directory, is created just once and reused across multiple projects
+struct GlobalSnippetWatcher(Model<SnippetProvider>);
+
+impl GlobalSnippetWatcher {
+    fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Self {
+        let global_snippets_dir = paths::config_dir().join("snippets");
+        let provider = cx.new_model(|_cx| SnippetProvider {
+            fs,
+            snippets: Default::default(),
+            watch_tasks: vec![],
+        });
+        provider.update(cx, |this, cx| {
+            this.watch_directory(&global_snippets_dir, cx)
+        });
+        Self(provider)
+    }
+}
+
+impl gpui::Global for GlobalSnippetWatcher {}
+
 impl SnippetProvider {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -140,6 +160,10 @@ impl SnippetProvider {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(move |cx| {
+            if !cx.has_global::<GlobalSnippetWatcher>() {
+                let global_watcher = GlobalSnippetWatcher::new(fs.clone(), cx);
+                cx.set_global(global_watcher);
+            }
             let mut this = Self {
                 fs,
                 watch_tasks: Vec::new(),
@@ -190,7 +214,9 @@ impl SnippetProvider {
             .into_iter()
             .flat_map(|(_, snippets)| snippets.into_iter())
             .collect();
-
+        if let Some(global_watcher) = cx.try_global::<GlobalSnippetWatcher>() {
+            user_snippets.extend(global_watcher.0.read(cx).lookup_snippets(language, cx));
+        }
         let Some(registry) = SnippetRegistry::try_global(cx) else {
             return user_snippets;
         };

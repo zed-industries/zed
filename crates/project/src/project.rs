@@ -587,10 +587,7 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let tasks = Inventory::new(cx);
-            let global_snippets_dir = paths::config_dir().join("snippets");
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
-
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new_model(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
@@ -875,9 +872,8 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
-            let global_snippets_dir = paths::config_dir().join("snippets");
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
