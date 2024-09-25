@@ -499,6 +499,24 @@ impl DirectoryLister {
         }
     }
 
+    pub fn resolve_new_path<'a>(
+        &self,
+        path: &'a String,
+        target_path: &'a String,
+        cx: &AppContext,
+    ) -> PathBuf {
+        let path = self.resolve_tilde(path, cx);
+        if self.is_local(cx) {
+            let mut path = PathBuf::from(path.as_ref());
+            path.push(target_path);
+            path
+        } else {
+            // TODO is better way?
+            let path_str = format!("{}/{}", path, target_path);
+            PathBuf::from(path_str)
+        }
+    }
+
     pub fn default_query(&self, cx: &mut AppContext) -> String {
         if let DirectoryLister::Project(project) = self {
             if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {

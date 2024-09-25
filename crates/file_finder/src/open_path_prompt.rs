@@ -3,7 +3,7 @@ use fuzzy::StringMatchCandidate;
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{self, AtomicBool},
         Arc,
@@ -236,12 +236,9 @@ impl PickerDelegate for OpenPathDelegate {
         let Some(candidate) = directory_state.match_candidates.get(*m) else {
             return;
         };
-        let result = Path::new(
-            self.lister
-                .resolve_tilde(&directory_state.path, cx)
-                .as_ref(),
-        )
-        .join(&candidate.string);
+        let result = self
+            .lister
+            .resolve_new_path(&directory_state.path, &candidate.string, cx);
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }
