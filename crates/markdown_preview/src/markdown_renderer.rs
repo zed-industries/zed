@@ -6,8 +6,8 @@ use crate::markdown_elements::{
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
-    SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext, Length
+    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
+    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
@@ -16,8 +16,8 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
-    StatefulInteractiveElement, Tooltip, relative
+    h_flex, relative, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
+    StatefulInteractiveElement, Tooltip,
 };
 use workspace::Workspace;
 
@@ -248,16 +248,31 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     }
 
     let total_max_length: usize = max_lengths.iter().sum();
-    let max_column_widths: Vec<f32> = max_lengths.iter()
+    let max_column_widths: Vec<f32> = max_lengths
+        .iter()
         .map(|&length| length as f32 / total_max_length as f32)
         .collect();
 
-    let header = render_markdown_table_row(&parsed.header, &parsed.column_alignments, &max_column_widths, true, cx);
+    let header = render_markdown_table_row(
+        &parsed.header,
+        &parsed.column_alignments,
+        &max_column_widths,
+        true,
+        cx,
+    );
 
     let body: Vec<AnyElement> = parsed
         .body
         .iter()
-        .map(|row| render_markdown_table_row(row, &parsed.column_alignments, &max_column_widths, false, cx))
+        .map(|row| {
+            render_markdown_table_row(
+                row,
+                &parsed.column_alignments,
+                &max_column_widths,
+                false,
+                cx,
+            )
+        })
         .collect();
 
     cx.with_common_p(v_flex())
