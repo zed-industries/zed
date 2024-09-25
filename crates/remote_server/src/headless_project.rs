@@ -189,11 +189,34 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::AddWorktreeResponse> {
+        use client::ErrorCodeExt;
         let path = shellexpand::tilde(&message.payload.path).to_string();
+
+        let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
+        let path = PathBuf::from(path);
+
+        let canonicalized = match fs.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(e) => {
+                let mut parent = path
+                    .parent()
+                    .ok_or(e)
+                    .map_err(|_| anyhow!("{:?} does not exist", path))?;
+                if parent == Path::new("") {
+                    parent = util::paths::home_dir();
+                }
+                let parent = fs.canonicalize(parent).await.map_err(|_| {
+                    anyhow!(proto::ErrorCode::DevServerProjectPathDoesNotExist
+                        .with_tag("path", &path.to_string_lossy().as_ref()))
+                })?;
+                parent.join(path.file_name().unwrap())
+            }
+        };
+
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Path::new(&path),
+                    Arc::from(canonicalized),
                     true,
                     this.fs.clone(),
                     this.next_entry_id.clone(),

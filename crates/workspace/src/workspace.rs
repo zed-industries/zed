@@ -5544,12 +5544,21 @@ pub fn open_ssh_project(
             )
         })?;
 
+        let mut project_paths_to_open = vec![];
+        let mut project_path_errors = vec![];
+
         for path in paths {
-            project
-                .update(&mut cx, |project, cx| {
-                    project.find_or_create_worktree(&path, true, cx)
-                })?
-                .await?;
+            let result = cx
+                .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
+                .await;
+            match result {
+                Ok((_, project_path)) => {
+                    project_paths_to_open.push((path.clone(), Some(project_path)));
+                }
+                Err(error) => {
+                    project_path_errors.push(error);
+                }
+            };
         }
 
         let serialized_workspace =
@@ -5576,11 +5585,21 @@ pub fn open_ssh_project(
             .update(&mut cx, |_, cx| {
                 cx.activate_window();
 
-                open_items(serialized_workspace, vec![], app_state, cx)
+                open_items(serialized_workspace, project_paths_to_open, app_state, cx)
             })?
             .await?;
 
-        Ok(())
+        window.update(&mut cx, |workspace, cx| {
+            for error in project_path_errors {
+                if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
+                    if let Some(path) = error.error_tag("path") {
+                        workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                    }
+                } else {
+                    workspace.show_error(&error, cx)
+                }
+            }
+        })
     })
 }
 
