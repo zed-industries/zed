@@ -103,6 +103,7 @@ field_constant: (IDENTIFIER) @constant
 (BlockLabel (IDENTIFIER) @tag)
 
 [
+  "fn"
   "asm"
   "defer"
   "errdefer"
@@ -112,74 +113,21 @@ field_constant: (IDENTIFIER) @constant
   "enum"
   "opaque"
   "error"
-] @keyword
-
-[
-  "async"
-  "await"
-  "suspend"
-  "nosuspend"
-  "resume"
-] @keyword.coroutine
-
-[
-  "fn"
-] @keyword
-
-[
-  "and"
-  "or"
-  "orelse"
-] @operator
-
-[
-  "return"
-] @keyword.return
-
-[
-  "if"
-  "else"
-  "switch"
-] @keyword.control
-
-[
+  "try"
+  "catch"
   "for"
   "while"
   "break"
   "continue"
-] @keyword
-
-[
-  "usingnamespace"
-] @constant
-
-[
-  "try"
-  "catch"
-] @keyword
-
-[
-  "anytype"
-  "anyframe"
-  (BuildinTypeExpr)
-] @type
-
-[
   "const"
   "var"
   "volatile"
   "allowzero"
   "noalias"
-] @keyword
-
-[
   "addrspace"
   "align"
   "callconv"
   "linksection"
-] @keyword.storage
-
-[
   "comptime"
   "export"
   "extern"
@@ -188,7 +136,29 @@ field_constant: (IDENTIFIER) @constant
   "packed"
   "pub"
   "threadlocal"
+  "async"
+  "await"
+  "suspend"
+  "nosuspend"
+  "resume"
+  "and"
+  "or"
+  "orelse"
+  "return"
+  "if"
+  "else"
+  "switch"
 ] @keyword
+
+[
+  "usingnamespace"
+] @constant
+
+[
+  "anytype"
+  "anyframe"
+  (BuildinTypeExpr)
+] @type
 
 [
   "null"
