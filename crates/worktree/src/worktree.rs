@@ -472,7 +472,7 @@ impl Worktree {
                 disconnected: false,
             };
 
-            // Apply updates to a separate snapshto in a background task, then
+            // Apply updates to a separate snapshot in a background task, then
             // send them to a foreground task which updates the model.
             cx.background_executor()
                 .spawn(async move {
