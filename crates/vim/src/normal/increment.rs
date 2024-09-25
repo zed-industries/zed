@@ -105,6 +105,9 @@ fn increment_decimal_string(mut num: &str, mut delta: i64) -> String {
         delta = 0 - delta;
         num = &num[1..];
     }
+
+    let num_length = num.len();
+
     let result = if let Ok(value) = u64::from_str_radix(num, 10) {
         let wrapped = value.wrapping_add_signed(delta);
         if delta < 0 && wrapped > value {
@@ -120,10 +123,12 @@ fn increment_decimal_string(mut num: &str, mut delta: i64) -> String {
         u64::MAX
     };
 
-    if result == 0 || !negative {
-        format!("{}", result)
+    if result == 0 {
+        '0'.to_string()
+    } else if !negative {
+        format!("{:0>width$}", result, width = num_length)
     } else {
-        format!("-{}", result)
+        format!("-{:0>width$}", result, width = num_length)
     }
 }
 
@@ -289,6 +294,25 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_increment_with_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            000ˇ9
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            001ˇ0
+            "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            000ˇ8
+            "});
+    }
+
+    #[gpui::test]
     async fn test_increment_with_two_dots(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -321,6 +345,23 @@ mod test {
         cx.simulate_shared_keystrokes("2 ctrl-a").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 ˇ1
+                "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_sign_change_with_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                00ˇ0
+                "})
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                -00ˇ1
+                "});
+        cx.simulate_shared_keystrokes("2 ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                00ˇ1
                 "});
     }
 
