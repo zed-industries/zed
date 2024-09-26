@@ -4994,10 +4994,8 @@ impl Element for EditorElement {
                             snapshot
                         } else {
                             let wrap_width = match editor.soft_wrap_mode(cx) {
-                                SoftWrap::None => None,
-                                SoftWrap::PreferLine => {
-                                    Some((MAX_LINE_LEN / 2) as f32 * em_advance)
-                                }
+                                SoftWrap::GitDiff => None,
+                                SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                                 SoftWrap::EditorWidth => Some(editor_width),
                                 SoftWrap::Column(column) => Some(column as f32 * em_advance),
                                 SoftWrap::Bounded(column) => {

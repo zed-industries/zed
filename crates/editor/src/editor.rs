@@ -376,12 +376,20 @@ pub enum EditorMode {
     Full,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum SoftWrap {
+    /// Prefer not to wrap at all.
+    ///
+    /// Note: this is currently internal, as actually limited by [`crate::MAX_LINE_LEN`] until it wraps.
+    /// The mode is used inside git diff hunks, where it's seems currently more useful to not wrap as much as possible.
+    GitDiff,
+    /// Prefer a single line generally, unless an overly long line is encountered.
     None,
-    PreferLine,
+    /// Soft wrap lines that exceed the editor width.
     EditorWidth,
+    /// Soft wrap lines at the preferred line length.
     Column(u32),
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
     Bounded(u32),
 }
 
@@ -1837,7 +1845,7 @@ impl Editor {
         let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
         let soft_wrap_mode_override = matches!(mode, EditorMode::SingleLine { .. })
-            .then(|| language_settings::SoftWrap::PreferLine);
+            .then(|| language_settings::SoftWrap::None);
 
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
@@ -10898,8 +10906,9 @@ impl Editor {
         let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
-            language_settings::SoftWrap::None => SoftWrap::None,
-            language_settings::SoftWrap::PreferLine => SoftWrap::PreferLine,
+            language_settings::SoftWrap::PreferLine | language_settings::SoftWrap::None => {
+                SoftWrap::None
+            }
             language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
             language_settings::SoftWrap::PreferredLineLength => {
                 SoftWrap::Column(settings.preferred_line_length)
@@ -10947,9 +10956,10 @@ impl Editor {
             self.soft_wrap_mode_override.take();
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
-                SoftWrap::None | SoftWrap::PreferLine => language_settings::SoftWrap::EditorWidth,
+                SoftWrap::GitDiff => return,
+                SoftWrap::None => language_settings::SoftWrap::EditorWidth,
                 SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => {
-                    language_settings::SoftWrap::PreferLine
+                    language_settings::SoftWrap::None
                 }
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
