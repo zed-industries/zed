@@ -11925,12 +11925,19 @@ impl Editor {
             )),
             cx,
         );
-        let editor_settings = EditorSettings::get_global(cx);
-        if let Some(cursor_shape) = editor_settings.cursor_shape {
-            self.cursor_shape = cursor_shape;
+
+        let old_cursor_shape = self.cursor_shape;
+
+        {
+            let editor_settings = EditorSettings::get_global(cx);
+            self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+            self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+            self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
         }
-        self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
-        self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+
+        if old_cursor_shape != self.cursor_shape {
+            cx.emit(EditorEvent::CursorShapeChanged);
+        }
 
         let project_settings = ProjectSettings::get_global(cx);
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
@@ -13127,6 +13134,7 @@ pub enum EditorEvent {
     TransactionBegun {
         transaction_id: clock::Lamport,
     },
+    CursorShapeChanged,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
