@@ -419,17 +419,18 @@ fn matching_history_items<'a>(
                 max_results,
             )
             .into_iter()
-            .map(|path_match| {
-                let (_, found_path) = candidates_paths
+            .filter_map(|path_match| {
+                candidates_paths
                     .remove_entry(&path_match.path)
-                    .expect("candidate info not found");
-                (
-                    Arc::clone(&path_match.path),
-                    Match::History {
-                        path: found_path.clone(),
-                        panel_match: Some(ProjectPanelOrdMatch(path_match)),
-                    },
-                )
+                    .map(|(_, found_path)| {
+                        (
+                            Arc::clone(&path_match.path),
+                            Match::History {
+                                path: found_path.clone(),
+                                panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                            },
+                        )
+                    })
             }),
         );
     }
