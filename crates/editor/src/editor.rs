@@ -12970,6 +12970,7 @@ impl EditorSnapshot {
         font_size: Pixels,
         em_width: Pixels,
         em_advance: Pixels,
+        column_pixels: Pixels,
         max_line_number_width: Pixels,
         cx: &AppContext,
     ) -> GutterDimensions {
@@ -13013,7 +13014,7 @@ impl EditorSnapshot {
                         + "60 minutes ago".len()
                         + 3;
 
-                    em_width * max_char_count
+                    column_pixels * max_char_count
                 });
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
@@ -13028,9 +13029,9 @@ impl EditorSnapshot {
         };
 
         let right_padding = if gutter_settings.folds && show_line_numbers {
-            em_width * 3.0
+            em_width * 4.0
         } else if gutter_settings.folds {
-            em_width * 2.0
+            em_width * 3.0
         } else if show_line_numbers {
             em_width
         } else {
