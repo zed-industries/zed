@@ -17,6 +17,8 @@ doctest = true
 
 [dependencies]
 http = "0.2"
+rustls.workspace = true
+rustls-native-certs.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true

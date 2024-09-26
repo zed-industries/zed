@@ -30,7 +30,7 @@ fn main() {
         let http = Arc::new(HttpClientWithUrl::new(
             Arc::new(async_ureq::AsyncUreq::new(
                 None,
-                "zed_semantic_index_example",
+                "Zed semantic index example".to_string(),
                 cx.background_executor().clone(),
             )),
             "http://localhost:11434",

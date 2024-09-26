@@ -100,7 +100,8 @@ fn main() -> Result<()> {
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
-        let client = async_ureq::AsyncUreq::new(None, "Zed LLM evals", executor.clone());
+        let client =
+            async_ureq::AsyncUreq::new(None, "Zed LLM evals".to_string(), executor.clone());
         cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {

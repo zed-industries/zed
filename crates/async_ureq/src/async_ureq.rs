@@ -55,6 +55,7 @@ impl AsyncUreq {
                     .timeout_read(timeout)
                     .timeout_write(timeout)
                     .user_agent(&self.user_agent)
+                    .tls_config(http_client::TLS_CONFIG.clone())
                     .redirects(match redirect_policy {
                         RedirectPolicy::NoFollow => 0,
                         RedirectPolicy::FollowLimit(limit) => limit,
