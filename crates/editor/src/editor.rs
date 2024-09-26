@@ -12956,6 +12956,7 @@ impl EditorSnapshot {
         font_id: FontId,
         font_size: Pixels,
         em_width: Pixels,
+        em_advance: Pixels,
         max_line_number_width: Pixels,
         cx: &AppContext,
     ) -> GutterDimensions {
@@ -12976,7 +12977,7 @@ impl EditorSnapshot {
             .unwrap_or(gutter_settings.line_numbers);
         let line_gutter_width = if show_line_numbers {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
-            let min_width_for_number_on_gutter = em_width * 4.0;
+            let min_width_for_number_on_gutter = em_advance * 4.0;
             max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
             0.0.into()

@@ -4970,6 +4970,7 @@ impl Element for EditorElement {
                         font_id,
                         font_size,
                         em_width,
+                        em_advance,
                         self.max_line_number_width(&snapshot, cx),
                         cx,
                     );
@@ -6283,10 +6284,21 @@ fn compute_auto_height_layout(
         .unwrap()
         .size
         .width;
+    let em_advance = cx
+        .text_system()
+        .advance(font_id, font_size, 'm')
+        .unwrap()
+        .width;
 
     let mut snapshot = editor.snapshot(cx);
-    let gutter_dimensions =
-        snapshot.gutter_dimensions(font_id, font_size, em_width, max_line_number_width, cx);
+    let gutter_dimensions = snapshot.gutter_dimensions(
+        font_id,
+        font_size,
+        em_width,
+        em_advance,
+        max_line_number_width,
+        cx,
+    );
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;
