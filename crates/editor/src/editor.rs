@@ -12970,7 +12970,6 @@ impl EditorSnapshot {
         font_size: Pixels,
         em_width: Pixels,
         em_advance: Pixels,
-        column_pixels: Pixels,
         max_line_number_width: Pixels,
         cx: &AppContext,
     ) -> GutterDimensions {
@@ -13010,11 +13009,11 @@ impl EditorSnapshot {
                     // the spacing and the timestamp.
                     let max_char_count = max_author_length
                         .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
-                        + "ea278cc".len()
-                        + "60 minutes ago".len()
-                        + 4;
+                        + 7 // length of commit sha
+                        + 14 // length of max relative timestamp ("60 minutes ago")
+                        + 4; // gaps and margins
 
-                    column_pixels * max_char_count
+                    em_advance * max_char_count
                 });
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);

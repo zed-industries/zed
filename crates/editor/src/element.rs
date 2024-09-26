@@ -4896,7 +4896,6 @@ impl Element for EditorElement {
                         let editor_handle = cx.view().clone();
                         let max_line_number_width =
                             self.max_line_number_width(&editor.snapshot(cx), cx);
-                        let column_pixels = self.column_pixels(1, cx);
                         cx.request_measured_layout(
                             Style::default(),
                             move |known_dimensions, available_space, cx| {
@@ -4906,7 +4905,6 @@ impl Element for EditorElement {
                                             editor,
                                             max_lines,
                                             max_line_number_width,
-                                            column_pixels,
                                             known_dimensions,
                                             available_space.width,
                                             cx,
@@ -4972,7 +4970,6 @@ impl Element for EditorElement {
                         font_size,
                         em_width,
                         em_advance,
-                        self.column_pixels(1, cx),
                         self.max_line_number_width(&snapshot, cx),
                         cx,
                     );
@@ -6261,7 +6258,6 @@ fn compute_auto_height_layout(
     editor: &mut Editor,
     max_lines: usize,
     max_line_number_width: Pixels,
-    column_pixels: Pixels,
     known_dimensions: Size<Option<Pixels>>,
     available_width: AvailableSpace,
     cx: &mut ViewContext<Editor>,
@@ -6299,7 +6295,6 @@ fn compute_auto_height_layout(
         font_size,
         em_width,
         em_advance,
-        column_pixels,
         max_line_number_width,
         cx,
     );
