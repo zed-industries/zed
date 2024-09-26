@@ -215,6 +215,7 @@ enum ProjectClientState {
         remote_id: u64,
         replica_id: ReplicaId,
         in_room: bool,
+        os: String,
     },
 }
 
@@ -491,6 +492,19 @@ impl DirectoryLister {
         }
     }
 
+    pub fn is_likely_os(&self, cx: &AppContext) -> bool {
+        let current_os = std::env::consts::OS;
+        match self {
+            DirectoryLister::Local(_) => true,
+            DirectoryLister::Project(project) => match &project.read(cx).client_state {
+                ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+                ProjectClientState::Remote { os, .. } => {
+                    !(current_os != os && (current_os == "windows" || os == "windows"))
+                }
+            },
+        }
+    }
+
     pub fn resolve_tilde<'a>(&self, path: &'a String, cx: &AppContext) -> Cow<'a, str> {
         if self.is_local(cx) {
             shellexpand::tilde(path)
@@ -506,13 +520,15 @@ impl DirectoryLister {
         cx: &AppContext,
     ) -> PathBuf {
         let path = self.resolve_tilde(path, cx);
-        if self.is_local(cx) {
+        if self.is_likely_os(cx) {
             let mut path = PathBuf::from(path.as_ref());
             path.push(target_path);
             path
         } else {
-            // TODO is better way?
-            let path_str = format!("{}/{}", path, target_path);
+            let path_str = match std::env::consts::OS {
+                "windows" => format!("{}/{}", path, target_path),
+                _ => format!("{}\\{}", path, target_path),
+            };
             PathBuf::from(path_str)
         }
     }
@@ -934,6 +950,7 @@ impl Project {
                     remote_id,
                     replica_id,
                     in_room: response.payload.dev_server_project_id.is_none(),
+                    os: response.payload.os,
                 },
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),

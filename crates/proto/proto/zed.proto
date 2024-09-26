@@ -619,6 +619,7 @@ message JoinProjectResponse {
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
     optional uint64 dev_server_project_id = 7;
+    string os = 8;
 }
 
 message LeaveProject {

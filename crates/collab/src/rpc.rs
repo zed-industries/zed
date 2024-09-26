@@ -2136,6 +2136,7 @@ fn join_project_internal(
         .collect::<Vec<_>>();
     let project_id = project.id;
     let guest_user_id = session.user_id();
+    let os = std::env::consts::OS;
 
     let worktrees = project
         .worktrees
@@ -2178,6 +2179,7 @@ fn join_project_internal(
         dev_server_project_id: project
             .dev_server_project_id
             .map(|dev_server_project_id| dev_server_project_id.0 as u64),
+        os: os.to_string(),
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
