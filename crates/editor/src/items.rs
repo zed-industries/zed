@@ -1482,41 +1482,20 @@ pub fn entry_label_color(selected: bool) -> Color {
     }
 }
 
-pub fn entry_diagnostic_and_git_aware_extra_icon_name(
-    diagnostic_severity: Option<&DiagnosticSeverity>,
-    git_status: Option<GitFileStatus>,
-    ignored: bool,
-) -> Option<IconName> {
-    if let Some(diagnostic_severity) = diagnostic_severity {
-        if *diagnostic_severity == DiagnosticSeverity::ERROR {
-            return Some(IconName::XCircle);
-        }
-        if *diagnostic_severity == DiagnosticSeverity::WARNING {
-            return Some(IconName::Warning);
-        }
-    }
-    if !ignored && git_status.is_some() {
-        Some(IconName::Dot)
-    } else {
-        None
-    }
-}
-
-pub fn entry_diagnostic_and_git_aware_label_color(
+pub fn entry_text_color_and_extra_icon_name(
     diagnostic_severity: Option<&DiagnosticSeverity>,
     git_status: Option<GitFileStatus>,
     ignored: bool,
     selected: bool,
-) -> Color {
-    if let Some(diagnostic_severity) = diagnostic_severity {
-        if *diagnostic_severity == DiagnosticSeverity::ERROR {
-            return Color::Error;
-        }
-        if *diagnostic_severity == DiagnosticSeverity::WARNING {
-            return Color::Warning;
-        }
+) -> (Color, Option<IconName>) {
+    match diagnostic_severity {
+        Some(&DiagnosticSeverity::ERROR) => (Color::Error, Some(IconName::XCircle)),
+        Some(&DiagnosticSeverity::WARNING) => (Color::Warning, Some(IconName::Warning)),
+        _ => (
+            entry_git_aware_label_color(git_status, ignored, selected),
+            None,
+        ),
     }
-    entry_git_aware_label_color(git_status, ignored, selected)
 }
 
 pub fn entry_git_aware_label_color(

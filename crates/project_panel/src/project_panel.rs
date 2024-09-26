@@ -7,9 +7,7 @@ use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    items::{
-        entry_diagnostic_and_git_aware_extra_icon_name, entry_diagnostic_and_git_aware_label_color,
-    },
+    items::entry_text_color_and_extra_icon_name,
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor,
 };
@@ -298,14 +296,8 @@ impl ProjectPanel {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
-                    if new_settings.show_diagnostics != project_panel_settings.show_diagnostics {
-                        if new_settings.show_diagnostics != ShowDiagnostics::Off {
-                            this.update_diagnostics(cx);
-                        } else {
-                            this.diagnostics = Default::default();
-                        }
-                    }
                     project_panel_settings = new_settings;
+                    this.update_diagnostics(cx);
                     cx.notify();
                 }
             })
@@ -458,47 +450,55 @@ impl ProjectPanel {
     }
 
     fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
-        let show_warnings =
-            ProjectPanelSettings::get_global(cx).show_diagnostics == ShowDiagnostics::All;
-        self.diagnostics = Default::default();
-        self.project
-            .read(cx)
-            .diagnostic_summaries(false, cx)
-            .filter_map(|(path, _, diagnostic_summary)| {
-                if diagnostic_summary.error_count > 0 {
-                    Some((path, DiagnosticSeverity::ERROR))
-                } else if show_warnings && diagnostic_summary.warning_count > 0 {
-                    Some((path, DiagnosticSeverity::WARNING))
-                } else {
-                    None
-                }
-            })
-            .for_each(|(project_path, diagnostic_severity)| {
-                let mut path_buffer = PathBuf::new();
-                self.update_highest_diagnostic_severity(
-                    &project_path,
-                    path_buffer.clone(),
-                    diagnostic_severity,
-                );
+        let mut diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity> =
+            Default::default();
+        let show_diagnostics_setting = ProjectPanelSettings::get_global(cx).show_diagnostics;
 
-                for component in project_path.path.components() {
-                    path_buffer.push(component);
-                    self.update_highest_diagnostic_severity(
+        if show_diagnostics_setting != ShowDiagnostics::Off {
+            self.project
+                .read(cx)
+                .diagnostic_summaries(false, cx)
+                .filter_map(|(path, _, diagnostic_summary)| {
+                    if diagnostic_summary.error_count > 0 {
+                        Some((path, DiagnosticSeverity::ERROR))
+                    } else if show_diagnostics_setting == ShowDiagnostics::All
+                        && diagnostic_summary.warning_count > 0
+                    {
+                        Some((path, DiagnosticSeverity::WARNING))
+                    } else {
+                        None
+                    }
+                })
+                .for_each(|(project_path, diagnostic_severity)| {
+                    let mut path_buffer = PathBuf::new();
+                    Self::update_strongest_diagnostic_severity(
+                        &mut diagnostics,
                         &project_path,
                         path_buffer.clone(),
                         diagnostic_severity,
                     );
-                }
-            });
+
+                    for component in project_path.path.components() {
+                        path_buffer.push(component);
+                        Self::update_strongest_diagnostic_severity(
+                            &mut diagnostics,
+                            &project_path,
+                            path_buffer.clone(),
+                            diagnostic_severity,
+                        );
+                    }
+                });
+        }
+        self.diagnostics = diagnostics;
     }
 
-    fn update_highest_diagnostic_severity(
-        &mut self,
+    fn update_strongest_diagnostic_severity(
+        diagnostics: &mut HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
         project_path: &ProjectPath,
         path_buffer: PathBuf,
         diagnostic_severity: DiagnosticSeverity,
     ) {
-        self.diagnostics
+        diagnostics
             .entry((project_path.worktree_id, path_buffer.clone()))
             .and_modify(|strongest_diagnostic_severity| {
                 *strongest_diagnostic_severity =
@@ -2101,13 +2101,12 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let (git_status_setting, show_file_icons, show_folder_icons, show_diagnostics) = {
+            let (git_status_setting, show_file_icons, show_folder_icons) = {
                 let settings = ProjectPanelSettings::get_global(cx);
                 (
                     settings.git_status,
                     settings.file_icons,
                     settings.folder_icons,
-                    settings.show_diagnostics != ShowDiagnostics::Off,
                 )
             };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
@@ -2171,25 +2170,17 @@ impl ProjectPanel {
 
                     let is_marked = self.marked_entries.contains(&selection);
 
-                    let diagnostic_severity = if show_diagnostics {
-                        self.diagnostics
-                            .get(&(*worktree_id, entry.path.to_path_buf()))
-                    } else {
-                        None
-                    };
+                    let diagnostic_severity = self
+                        .diagnostics
+                        .get(&(*worktree_id, entry.path.to_path_buf()));
 
-                    let filename_text_color = entry_diagnostic_and_git_aware_label_color(
-                        diagnostic_severity,
-                        status,
-                        entry.is_ignored,
-                        is_marked,
-                    );
-
-                    let extra_icon_name = entry_diagnostic_and_git_aware_extra_icon_name(
-                        diagnostic_severity,
-                        status,
-                        entry.is_ignored,
-                    );
+                    let (filename_text_color, extra_icon_name) =
+                        entry_text_color_and_extra_icon_name(
+                            diagnostic_severity,
+                            status,
+                            entry.is_ignored,
+                            is_marked,
+                        );
 
                     let mut details = EntryDetails {
                         filename,
@@ -2500,12 +2491,15 @@ impl ProjectPanel {
                         }
                         .ml_1(),
                     )
-                    .child(if let Some(icon_name) = extra_icon_name {
-                        h_flex().size(IconSize::default().rems()).child(
-                            Icon::new(icon_name)
-                                .size(IconSize::XSmall)
-                                .color(filename_text_color),
-                        )
+                    .end_slot(if let Some(icon_name) = extra_icon_name {
+                        h_flex()
+                            .size(IconSize::default().rems())
+                            .opacity(0.7)
+                            .child(
+                                Icon::new(icon_name)
+                                    .size(IconSize::XSmall)
+                                    .color(filename_text_color),
+                            )
                     } else {
                         div()
                     })

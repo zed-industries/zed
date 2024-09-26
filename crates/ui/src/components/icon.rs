@@ -170,7 +170,6 @@ pub enum IconName {
     DatabaseZap,
     Delete,
     Disconnected,
-    Dot,
     Download,
     Ellipsis,
     EllipsisVertical,
