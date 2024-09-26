@@ -846,6 +846,11 @@ impl ExtensionStore {
                     },
                 )
                 .await;
+            println!(
+                "-> Deleting: {}<->{}",
+                work_dir.display(),
+                extension_dir.display()
+            );
             println!("=> 1: {:?}", ret1);
             println!("=> 1: work dir: {:?}", work_dir.display());
             ret1?;
