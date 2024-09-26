@@ -72,6 +72,7 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
+use text::SelectionGoal;
 use ui::TintColor;
 use ui::{
     prelude::*,
@@ -960,8 +961,7 @@ impl AssistantPanel {
     }
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
-        let project = self.project.read(cx);
-        if project.is_via_collab() && project.dev_server_project_id().is_none() {
+        if self.project.read(cx).is_via_collab() {
             let task = self
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));
@@ -3438,7 +3438,7 @@ impl ContextEditor {
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         if self.editor.read(cx).selections.count() == 1 {
-            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+            let (copied_text, metadata, _) = self.get_clipboard_contents(cx);
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                 copied_text,
                 metadata,
@@ -3452,11 +3452,9 @@ impl ContextEditor {
 
     fn cut(&mut self, _: &editor::actions::Cut, cx: &mut ViewContext<Self>) {
         if self.editor.read(cx).selections.count() == 1 {
-            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+            let (copied_text, metadata, selections) = self.get_clipboard_contents(cx);
 
             self.editor.update(cx, |editor, cx| {
-                let selections = editor.selections.all::<Point>(cx);
-
                 editor.transact(cx, |this, cx| {
                     this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(selections);
@@ -3476,52 +3474,79 @@ impl ContextEditor {
         cx.propagate();
     }
 
-    fn get_clipboard_contents(&mut self, cx: &mut ViewContext<Self>) -> (String, CopyMetadata) {
-        let creases = self.editor.update(cx, |editor, cx| {
+    fn get_clipboard_contents(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
+        let (snapshot, copy_entire_line, creases) = self.editor.update(cx, |editor, cx| {
             let selection = editor.selections.newest::<Point>(cx);
             let selection_start = editor.selections.newest::<usize>(cx).start;
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            editor.display_map.update(cx, |display_map, cx| {
-                display_map
-                    .snapshot(cx)
-                    .crease_snapshot
-                    .creases_in_range(
-                        MultiBufferRow(selection.start.row)..MultiBufferRow(selection.end.row + 1),
-                        &snapshot,
-                    )
-                    .filter_map(|crease| {
-                        if let Some(metadata) = &crease.metadata {
-                            let start = crease
-                                .range
-                                .start
-                                .to_offset(&snapshot)
-                                .saturating_sub(selection_start);
-                            let end = crease
-                                .range
-                                .end
-                                .to_offset(&snapshot)
-                                .saturating_sub(selection_start);
 
-                            let range_relative_to_selection = start..end;
+            let is_entire_line = selection.is_empty() || editor.selections.line_mode;
+            let selection_range = if is_entire_line {
+                Point::new(selection.start.row, 0)
+                    ..cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0))
+            } else {
+                selection.range()
+            };
 
-                            if range_relative_to_selection.is_empty() {
-                                None
+            (
+                snapshot.clone(),
+                is_entire_line,
+                editor.display_map.update(cx, |display_map, cx| {
+                    display_map
+                        .snapshot(cx)
+                        .crease_snapshot
+                        .creases_in_range(
+                            MultiBufferRow(selection_range.start.row)
+                                ..MultiBufferRow(selection_range.end.row + 1),
+                            &snapshot,
+                        )
+                        .filter_map(|crease| {
+                            if let Some(metadata) = &crease.metadata {
+                                let start = crease
+                                    .range
+                                    .start
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
+                                let end = crease
+                                    .range
+                                    .end
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
+
+                                let range_relative_to_selection = start..end;
+
+                                if range_relative_to_selection.is_empty() {
+                                    None
+                                } else {
+                                    Some(SelectedCreaseMetadata {
+                                        range_relative_to_selection,
+                                        crease: metadata.clone(),
+                                    })
+                                }
                             } else {
-                                Some(SelectedCreaseMetadata {
-                                    range_relative_to_selection,
-                                    crease: metadata.clone(),
-                                })
+                                None
                             }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
         });
 
         let context = self.context.read(cx);
-        let selection = self.editor.read(cx).selections.newest::<usize>(cx);
+        let mut selection = self.editor.read(cx).selections.newest::<usize>(cx);
+
+        if copy_entire_line {
+            let selection_start = self.editor.read(cx).selections.newest::<Point>(cx).start;
+            let adjusted_range = Point::new(selection_start.row, 0)
+                ..cmp::min(snapshot.max_point(), Point::new(selection_start.row + 1, 0));
+            selection.start = snapshot.point_to_offset(adjusted_range.start);
+            selection.end = snapshot.point_to_offset(adjusted_range.end);
+            selection.goal = SelectionGoal::None;
+        }
+
         let mut text = String::new();
         for message in context.messages(cx) {
             if message.offset_range.start >= selection.range().end {
@@ -3540,7 +3565,7 @@ impl ContextEditor {
             }
         }
 
-        (text, CopyMetadata { creases })
+        (text, CopyMetadata { creases }, vec![selection])
     }
 
     fn paste(&mut self, action: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
