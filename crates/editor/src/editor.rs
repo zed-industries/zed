@@ -663,7 +663,7 @@ pub struct EditorSnapshot {
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
-    render_git_blame_gutter: bool,
+    git_blame_gutter_max_author_length: Option<usize>,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -673,7 +673,7 @@ pub struct EditorSnapshot {
     gutter_hovered: bool,
 }
 
-const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
+const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
@@ -2211,6 +2211,19 @@ impl Editor {
     }
 
     pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
+        let git_blame_gutter_max_author_length = self
+            .render_git_blame_gutter(cx)
+            .then(|| {
+                if let Some(blame) = self.blame.as_ref() {
+                    let max_author_length =
+                        blame.update(cx, |blame, cx| blame.max_author_length(cx));
+                    Some(max_author_length)
+                } else {
+                    None
+                }
+            })
+            .flatten();
+
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
@@ -2218,7 +2231,7 @@ impl Editor {
             show_git_diff_gutter: self.show_git_diff_gutter,
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
-            render_git_blame_gutter: self.render_git_blame_gutter(cx),
+            git_blame_gutter_max_author_length,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -12989,9 +13002,19 @@ impl EditorSnapshot {
 
         let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
 
-        let git_blame_entries_width = self
-            .render_git_blame_gutter
-            .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
+        let git_blame_entries_width =
+            self.git_blame_gutter_max_author_length
+                .map(|max_author_length| {
+                    // Length of the author name, but also space for the commit hash,
+                    // the spacing and the timestamp.
+                    let max_char_count = max_author_length
+                        .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
+                        + 7 // length of commit sha
+                        + 14 // length of max relative timestamp ("60 minutes ago")
+                        + 4; // gaps and margins
+
+                    em_advance * max_char_count
+                });
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if show_code_actions || show_runnables {
