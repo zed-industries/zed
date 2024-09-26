@@ -3442,7 +3442,7 @@ impl Editor {
                 s.select(new_selections)
             });
 
-            if !bracket_inserted && EditorSettings::get_global(cx).use_on_type_format {
+            if !bracket_inserted {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
@@ -4190,6 +4190,15 @@ impl Editor {
             .buffer
             .read(cx)
             .text_anchor_for_position(position, cx)?;
+
+        let settings = language_settings::language_settings(
+            buffer.read(cx).language_at(buffer_position).as_ref(),
+            buffer.read(cx).file(),
+            cx,
+        );
+        if !settings.use_on_type_format {
+            return None;
+        }
 
         // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
         // hence we do LSP request & edit on host side only — add formats to host's history.
