@@ -2295,7 +2295,7 @@ async fn list_remote_directory(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(dev_server_id, ZedVersion::with_list_directory())?;
+        .online_dev_server_connection_id(dev_server_id)?;
 
     session
         .db()
@@ -2334,10 +2334,7 @@ async fn update_dev_server_project(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(
-            dev_server_project.dev_server_id,
-            ZedVersion::with_list_directory(),
-        )?;
+        .online_dev_server_connection_id(dev_server_project.dev_server_id)?;
 
     session.peer.send(
         dev_server_connection_id,
