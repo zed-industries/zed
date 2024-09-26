@@ -1264,10 +1264,10 @@ mod tests {
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
+        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla, Hsla)>| {
             background_highlights
                 .into_iter()
-                .map(|(range, _)| range)
+                .map(|(range, _, _)| range)
                 .collect::<Vec<_>>()
         };
         // Search for a string that appears with different casing.
@@ -1529,11 +1529,11 @@ mod tests {
     }
 
     fn display_points_of(
-        background_highlights: Vec<(Range<DisplayPoint>, Hsla)>,
+        background_highlights: Vec<(Range<DisplayPoint>, Hsla, Hsla)>,
     ) -> Vec<Range<DisplayPoint>> {
         background_highlights
             .into_iter()
-            .map(|(range, _)| range)
+            .map(|(range, _, _)| range)
             .collect::<Vec<_>>()
     }
 
