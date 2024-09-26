@@ -162,7 +162,7 @@ mod tests {
         }
 
         assert_compute_indent_guides(
-            &vec![0, 1, 2, 2, 1, 0],
+            &[0, 1, 2, 2, 1, 0],
             0,
             vec![
                 IndentGuideLayout {
@@ -177,7 +177,7 @@ mod tests {
         );
 
         assert_compute_indent_guides(
-            &vec![2, 2, 2, 1, 1],
+            &[2, 2, 2, 1, 1],
             0,
             vec![
                 IndentGuideLayout {
@@ -192,7 +192,7 @@ mod tests {
         );
 
         assert_compute_indent_guides(
-            &vec![1, 2, 3, 2, 1],
+            &[1, 2, 3, 2, 1],
             0,
             vec![
                 IndentGuideLayout {
