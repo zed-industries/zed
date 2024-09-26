@@ -204,8 +204,11 @@ impl WorktreeStore {
             self.loading_worktrees.insert(path.clone(), task.shared());
         }
         let task = self.loading_worktrees.get(&path).unwrap().clone();
-        cx.background_executor().spawn(async move {
-            match task.await {
+        cx.spawn(|this, mut cx| async move {
+            let result = task.await;
+            this.update(&mut cx, |this, _| this.loading_worktrees.remove(&path))
+                .ok();
+            match result {
                 Ok(worktree) => Ok(worktree),
                 Err(err) => Err((*err).cloned()),
             }
@@ -219,7 +222,8 @@ impl WorktreeStore {
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
-        let mut abs_path = abs_path.as_ref().to_string_lossy().to_string();
+        let path_key: Arc<Path> = abs_path.as_ref().into();
+        let mut abs_path = path_key.clone().to_string_lossy().to_string();
         // If we start with `/~` that means the ssh path was something like `ssh://user@host/~/home-dir-folder/`
         // in which case want to strip the leading the `/`.
         // On the host-side, the `~` will get expanded.
@@ -261,8 +265,9 @@ impl WorktreeStore {
                 )
             })?;
 
-            this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
-
+            this.update(&mut cx, |this, cx| {
+                this.add(&worktree, cx);
+            })?;
             Ok(worktree)
         })
     }
@@ -279,10 +284,6 @@ impl WorktreeStore {
 
         cx.spawn(move |this, mut cx| async move {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
-
-            this.update(&mut cx, |project, _| {
-                project.loading_worktrees.remove(&path);
-            })?;
 
             let worktree = worktree?;
             this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
@@ -317,7 +318,7 @@ impl WorktreeStore {
         });
 
         let abs_path = abs_path.as_ref().to_path_buf();
-        cx.spawn(move |project, mut cx| async move {
+        cx.spawn(move |project, cx| async move {
             let (tx, rx) = futures::channel::oneshot::channel();
             let tx = RefCell::new(Some(tx));
             let Some(project) = project.upgrade() else {
@@ -339,14 +340,10 @@ impl WorktreeStore {
             request.await?;
             let worktree = rx.await.map_err(|e| anyhow!(e))?;
             drop(observer);
-            project.update(&mut cx, |project, _| {
-                project.loading_worktrees.remove(&path);
-            })?;
             Ok(worktree)
         })
     }
 
-    #[track_caller]
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         let worktree_id = worktree.read(cx).id();
         debug_assert!(self.worktrees().all(|w| w.read(cx).id() != worktree_id));
@@ -553,9 +550,12 @@ impl WorktreeStore {
                                 let client = client.clone();
                                 async move {
                                     if client.is_via_collab() {
-                                        client.request(update).map(|result| result.is_ok()).await
+                                        client
+                                            .request(update)
+                                            .map(|result| result.log_err().is_some())
+                                            .await
                                     } else {
-                                        client.send(update).is_ok()
+                                        client.send(update).log_err().is_some()
                                     }
                                 }
                             }

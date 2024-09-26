@@ -76,7 +76,7 @@ async fn test_host_disconnect(
         .await
         .unwrap();
 
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     cx_a.background_executor.run_until_parked();
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
@@ -192,7 +192,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .await
         .unwrap();
 
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open a buffer as client A
     let buffer_a = project_a
@@ -308,7 +308,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
@@ -565,7 +565,7 @@ async fn test_collaborating_with_code_actions(
         .unwrap();
 
     // Join the project as client B.
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -780,7 +780,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
@@ -1030,7 +1030,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .await
         .unwrap();
     executor.run_until_parked();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
@@ -1126,9 +1126,7 @@ async fn test_share_project(
         .await
         .unwrap();
     let client_b_peer_id = client_b.peer_id().unwrap();
-    let project_b = client_b
-        .build_dev_server_project(initial_project.id, cx_b)
-        .await;
+    let project_b = client_b.join_remote_project(initial_project.id, cx_b).await;
 
     let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
 
@@ -1230,9 +1228,7 @@ async fn test_share_project(
         .update(cx_c, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
-    let _project_c = client_c
-        .build_dev_server_project(initial_project.id, cx_c)
-        .await;
+    let _project_c = client_c.join_remote_project(initial_project.id, cx_c).await;
 
     // Client B closes the editor, and client A sees client B's selections removed.
     cx_b.update(move |_| drop(editor_b));
@@ -1291,7 +1287,7 @@ async fn test_on_input_format_from_host_to_guest(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open a file in an editor as the host.
     let buffer_a = project_a
@@ -1411,7 +1407,7 @@ async fn test_on_input_format_from_guest_to_host(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
@@ -1574,7 +1570,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
 
     // Client B joins the project
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1836,7 +1832,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .await
         .unwrap();
 
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -2050,7 +2046,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .unwrap();
 
     // Join the project as client B.
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {

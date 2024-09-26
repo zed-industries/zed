@@ -1826,10 +1826,13 @@ impl RemoteWorktree {
         let initial_update = self
             .snapshot
             .build_initial_update(project_id, self.id().to_proto());
-        self.updates_tx = Some(tx);
+        self.update_observer = Some(tx);
         cx.spawn(|this, mut cx| async move {
             let mut update = initial_update;
             loop {
+                // SSH projects use a special project ID of 0, and we need to
+                // remap it to the correct one here.
+                update.project_id = project_id;
                 if !callback(update).await {
                     break;
                 }
@@ -1841,7 +1844,7 @@ impl RemoteWorktree {
             }
             this.update(&mut cx, |this, _| {
                 let this = this.as_remote_mut().unwrap();
-                this.updates_tx.take();
+                this.update_observer.take();
             })
         })
         .detach();

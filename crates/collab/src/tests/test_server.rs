@@ -921,7 +921,7 @@ impl TestClient {
         })
     }
 
-    pub async fn build_dev_server_project(
+    pub async fn join_remote_project(
         &self,
         host_project_id: u64,
         guest_cx: &mut TestAppContext,
