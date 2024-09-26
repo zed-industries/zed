@@ -664,7 +664,7 @@ impl ExtensionStore {
 
             let content_length = response
                 .headers()
-                .get(isahc::http::header::CONTENT_LENGTH)
+                .get(http_client::http::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
             let mut body = BufReader::new(response.body_mut());

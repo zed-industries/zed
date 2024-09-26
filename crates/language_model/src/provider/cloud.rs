@@ -18,8 +18,7 @@ use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
     Subscription, Task,
 };
-use http_client::{AsyncBody, HttpClient, Method, Response};
-use isahc::config::Configurable;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response};
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -396,7 +395,7 @@ impl CloudLanguageModel {
         let response = loop {
             let mut request_builder = http_client::Request::builder();
             if let Some(low_speed_timeout) = low_speed_timeout {
-                request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+                request_builder = request_builder.read_timeout(low_speed_timeout);
             };
             let request = request_builder
                 .method(Method::POST)
