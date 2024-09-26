@@ -1524,10 +1524,9 @@ pub struct KeystrokeEvent {
 struct NullHttpClient;
 
 impl HttpClient for NullHttpClient {
-    fn send_with_redirect_policy(
+    fn send(
         &self,
         _req: http_client::Request<http_client::AsyncBody>,
-        _follow_redirects: bool,
     ) -> futures::future::BoxFuture<
         'static,
         Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
