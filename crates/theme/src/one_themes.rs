@@ -82,6 +82,7 @@ pub(crate) fn one_dark() -> Theme {
                 tab_inactive_background: bg,
                 tab_active_background: editor,
                 search_match_background: bg,
+                search_match_border: SystemColors::default().transparent,
 
                 editor_background: editor,
                 editor_gutter_background: editor,

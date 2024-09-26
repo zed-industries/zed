@@ -1131,7 +1131,7 @@ impl ProjectSearchView {
                 }
                 editor.highlight_background::<Self>(
                     &match_ranges,
-                    |theme| (theme.search_match_background, theme.border_selected),
+                    |theme| (theme.search_match_background, theme.search_match_border),
                     cx,
                 );
             });
