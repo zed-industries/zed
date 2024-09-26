@@ -757,7 +757,7 @@ mod test {
 
         cx.simulate_shared_keystrokes(": j enter").await;
 
-        // hack: our cursor positionining after a join command is wrong
+        // hack: our cursor positioning after a join command is wrong
         cx.simulate_shared_keystrokes("^").await;
         cx.shared_state().await.assert_eq(indoc! {
             "ˇa b

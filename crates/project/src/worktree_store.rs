@@ -18,7 +18,7 @@ use gpui::{
 use postage::oneshot;
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
-    AnyProtoClient, TypedEnvelope,
+    AnyProtoClient, ErrorExt, TypedEnvelope,
 };
 use smol::{
     channel::{Receiver, Sender},
@@ -207,7 +207,7 @@ impl WorktreeStore {
         cx.background_executor().spawn(async move {
             match task.await {
                 Ok(worktree) => Ok(worktree),
-                Err(err) => Err(anyhow!("{}", err)),
+                Err(err) => Err((*err).cloned()),
             }
         })
     }

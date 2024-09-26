@@ -22,6 +22,7 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+client.workspace = true
 env_logger.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -38,6 +39,7 @@ shellexpand.workspace = true
 smol.workspace = true
 worktree.workspace = true
 language.workspace = true
+languages.workspace = true
 util.workspace = true
 
 [dev-dependencies]

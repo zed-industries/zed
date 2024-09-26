@@ -960,7 +960,8 @@ impl AssistantPanel {
     }
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
-        if self.project.read(cx).is_via_collab() {
+        let project = self.project.read(cx);
+        if project.is_via_collab() && project.dev_server_project_id().is_none() {
             let task = self
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));

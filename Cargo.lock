@@ -9122,6 +9122,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "languages",
  "log",
  "lsp",
  "node_runtime",
@@ -10498,6 +10499,7 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "parking_lot",
+ "paths",
  "serde",
  "serde_json",
  "snippet",
@@ -14388,7 +14390,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.155.0"
+version = "0.156.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

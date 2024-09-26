@@ -20,6 +20,7 @@ use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
+const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -41,6 +42,26 @@ impl PythonLspAdapter {
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME.clone()
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let node = delegate.which("node".as_ref()).await?;
+        let (node_modules_path, _) = delegate
+            .npm_package_installed_version(Self::SERVER_NAME.as_ref())
+            .await
+            .log_err()??;
+
+        let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
+
+        Some(LanguageServerBinary {
+            path: node,
+            env: None,
+            arguments: server_binary_arguments(&path),
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -93,13 +114,6 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &self.node).await
     }

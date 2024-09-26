@@ -365,14 +365,6 @@ messages!(
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
-    (CreateLanguageServer, Foreground),
-    (WhichCommand, Foreground),
-    (WhichCommandResponse, Foreground),
-    (ShellEnv, Foreground),
-    (ShellEnvResponse, Foreground),
-    (TryExec, Foreground),
-    (ReadTextFile, Foreground),
-    (ReadTextFileResponse, Foreground),
     (CheckFileExists, Background),
     (CheckFileExistsResponse, Background)
 );
@@ -498,11 +490,6 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CreateLanguageServer, Ack),
-    (WhichCommand, WhichCommandResponse),
-    (ShellEnv, ShellEnvResponse),
-    (ReadTextFile, ReadTextFileResponse),
-    (TryExec, Ack),
     (CheckFileExists, CheckFileExistsResponse)
 );
 
@@ -577,11 +564,6 @@ entity_messages!(
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
-    CreateLanguageServer,
-    WhichCommand,
-    ShellEnv,
-    TryExec,
-    ReadTextFile,
     CheckFileExists,
 );
 

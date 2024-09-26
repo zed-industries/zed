@@ -299,7 +299,7 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!(
-                    "Failed to download {}. Click to show error.",
+                    "Failed to run {}. Click to show error.",
                     failed
                         .iter()
                         .map(|name| name.0.as_ref())

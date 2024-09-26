@@ -177,6 +177,7 @@ impl NodeRuntime {
             "5000",
         ]);
 
+        // This is also wrong because the directory is wrong.
         self.run_npm_subcommand(directory, "install", &arguments)
             .await?;
         Ok(())
@@ -576,7 +577,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     }
 }
 
-async fn read_package_installed_version(
+pub async fn read_package_installed_version(
     node_module_directory: PathBuf,
     name: &str,
 ) -> Result<Option<String>> {
