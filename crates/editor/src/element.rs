@@ -1448,7 +1448,6 @@ impl EditorElement {
         let start_x = em_width;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
-        println!("em_width: {:?}, width: {:?}", em_width, width);
 
         let shaped_lines = blamed_rows
             .into_iter()
@@ -4241,22 +4240,20 @@ fn render_blame_entry(
 
     h_flex()
         .w_full()
+        .justify_between()
         .font_family(style.text.font().family)
         .line_height(style.text.line_height)
         .id(("blame", ix))
-        .children([
-            div()
-                .text_color(sha_color.cursor)
-                .child(short_commit_id)
-                .mr_2(),
-            div()
-                .w_full()
-                .h_flex()
-                .justify_between()
-                .text_color(cx.theme().status().hint)
-                .child(name)
-                .child(relative_timestamp),
-        ])
+        .text_color(cx.theme().status().hint)
+        .pr_2()
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(div().text_color(sha_color.cursor).child(short_commit_id))
+                .child(name),
+        )
+        .child(relative_timestamp)
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
             let details = details.clone();

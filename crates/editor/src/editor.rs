@@ -13007,8 +13007,12 @@ impl EditorSnapshot {
                 .map(|max_author_length| {
                     // Length of the author name, but also space for the commit hash,
                     // the spacing and the timestamp.
-                    let max_char_count =
-                        max_author_length.min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED) + 22;
+                    let max_char_count = max_author_length
+                        .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
+                        + "ea278cc".len()
+                        + "60 minutes ago".len()
+                        + 3;
+
                     em_width * max_char_count
                 });
 
@@ -13024,9 +13028,9 @@ impl EditorSnapshot {
         };
 
         let right_padding = if gutter_settings.folds && show_line_numbers {
-            em_width * 4.0
-        } else if gutter_settings.folds {
             em_width * 3.0
+        } else if gutter_settings.folds {
+            em_width * 2.0
         } else if show_line_numbers {
             em_width
         } else {
