@@ -94,7 +94,7 @@ impl Bookmarks {
                         .map(|buffer| buffer.read(cx).remote_id())
                     {
                         bookmark_store
-                            .update(cx, |store, cx| store.clear_current_editor(buffer_id, cx));
+                            .update(cx, |store, cx| store.clear_by_buffer_id(buffer_id, cx));
                     }
                 }
                 OperatorType::Worktree => {
@@ -103,7 +103,7 @@ impl Bookmarks {
                         .and_then(|item| item.project_path(cx))
                     {
                         bookmark_store.update(cx, |store, cx| {
-                            store.clear_current_worktree(project_path.worktree_id, cx);
+                            store.clear_by_worktree_id(project_path.worktree_id, cx);
                         });
                     }
                 }
@@ -118,9 +118,9 @@ impl Bookmarks {
             let bookmark_store = project.bookmark_store();
             bookmark_store.update(cx, |store, cx| {
                 if reverse {
-                    store.prev().clone()
+                    store.prev_bookmark().clone()
                 } else {
-                    store.next().clone()
+                    store.next_bookmark().clone()
                 }
             })
         });
@@ -169,8 +169,9 @@ impl Bookmarks {
                         .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
                         .map(|buffer| buffer.read(cx).remote_id())
                     {
-                        bookmark_store
-                            .update(cx, |store, cx| store.get_current_editor(buffer_id, cx))
+                        bookmark_store.update(cx, |store, cx| {
+                            store.get_bookmark_by_buffer_id(buffer_id, cx)
+                        })
                     } else {
                         vec![]
                     }
@@ -181,13 +182,13 @@ impl Bookmarks {
                         .and_then(|item| item.project_path(cx))
                     {
                         bookmark_store.update(cx, |store, cx| {
-                            store.get_current_worktree(project_path.worktree_id, cx)
+                            store.get_bookmark_by_worktree_id(project_path.worktree_id, cx)
                         })
                     } else {
                         vec![]
                     }
                 }
-                OperatorType::Workspace => bookmark_store.read(cx).get_all(),
+                OperatorType::Workspace => bookmark_store.read(cx).get_bookmark_all(),
             }
         });
         workspace.toggle_modal(cx, |cx| {

@@ -1271,7 +1271,7 @@ impl Project {
         };
 
         self.bookmark_store
-            .update(cx, |store, _cx| store.toggle(buffer, anchor, Some(content)));
+            .update(cx, |store, _cx| store.toggle_bookmark(buffer, anchor, Some(content)));
     }
 
     pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {

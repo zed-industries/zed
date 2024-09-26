@@ -40,7 +40,12 @@ impl BookmarkStore {
         }
     }
 
-    pub fn toggle(&mut self, buffer: Model<Buffer>, anchor: Anchor, annotation: Option<String>) {
+    pub fn toggle_bookmark(
+        &mut self,
+        buffer: Model<Buffer>,
+        anchor: Anchor,
+        annotation: Option<String>,
+    ) {
         let id = self
             .bookmark_map
             .iter()
@@ -103,7 +108,7 @@ impl BookmarkStore {
         next
     }
 
-    pub fn prev(&mut self) -> Option<Bookmark> {
+    pub fn prev_bookmark(&mut self) -> Option<Bookmark> {
         if let Some(id) = self.find_previous_id(self.current_id) {
             self.current_id = id;
             return self.bookmark_map.get(&id).cloned();
@@ -111,7 +116,7 @@ impl BookmarkStore {
         None
     }
 
-    pub fn next(&mut self) -> Option<Bookmark> {
+    pub fn next_bookmark(&mut self) -> Option<Bookmark> {
         if let Some(id) = self.find_next_id(self.current_id) {
             self.current_id = id;
             return self.bookmark_map.get(&id).cloned();
@@ -119,7 +124,7 @@ impl BookmarkStore {
         None
     }
 
-    pub fn clear_current_editor(&mut self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
+    pub fn clear_by_buffer_id(&mut self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
         let ids_will_remove = self
             .bookmark_map
             .iter()
@@ -141,7 +146,7 @@ impl BookmarkStore {
         }
     }
 
-    pub fn clear_current_worktree(&mut self, worktree_id: WorktreeId, cx: &mut ModelContext<Self>) {
+    pub fn clear_by_worktree_id(&mut self, worktree_id: WorktreeId, cx: &mut ModelContext<Self>) {
         let ids_will_remove = self
             .bookmark_map
             .iter()
@@ -174,7 +179,7 @@ impl BookmarkStore {
         self.bookmark_map.clear();
     }
 
-    pub fn get_current_editor(
+    pub fn get_bookmark_by_buffer_id(
         &self,
         buffer_id: BufferId,
         cx: &mut ModelContext<Self>,
@@ -191,7 +196,7 @@ impl BookmarkStore {
             .collect_vec()
     }
 
-    pub fn get_current_worktree(
+    pub fn get_bookmark_by_worktree_id(
         &self,
         worktree_id: WorktreeId,
         cx: &mut ModelContext<Self>,
@@ -208,7 +213,7 @@ impl BookmarkStore {
             .collect_vec()
     }
 
-    pub fn get_all(&self) -> Vec<Bookmark> {
+    pub fn get_bookmark_all(&self) -> Vec<Bookmark> {
         self.bookmark_map
             .values()
             .map(|bm| bm.clone())
