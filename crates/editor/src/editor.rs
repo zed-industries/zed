@@ -6153,6 +6153,36 @@ impl Editor {
         }
     }
 
+    pub fn reload_file(&mut self, _: &ReloadFile, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            let cursor_position = self.selections.newest::<Point>(cx).head();
+            let transaction_id = buffer.update(cx, |buffer, cx| {
+                buffer.file()
+                    .and_then(|f| f.as_local())
+                    .and_then(|file| std::fs::read_to_string(file.abs_path(cx)).ok())
+                    .and_then(|content| buffer.set_text(content, cx))
+            });
+
+            if let Some(transaction_id) = transaction_id {
+                cx.emit(EditorEvent::Edited { transaction_id });
+            }
+
+            let clipped_cursor_position = {
+                let buffer = self.buffer.read(cx).read(cx);
+                let max_point = buffer.max_point();
+                let clipped_row = cursor_position.row.min(max_point.row);
+                let clipped_column = cursor_position
+                    .column
+                    .min(buffer.line_len(MultiBufferRow(clipped_row)));
+                Point::new(clipped_row, clipped_column)
+            };
+
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges([clipped_cursor_position..clipped_cursor_position]);
+            });
+        }
+    }
+
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
         let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
         if !revert_changes.is_empty() {
@@ -13127,6 +13157,7 @@ pub enum EditorEvent {
     TransactionBegun {
         transaction_id: clock::Lamport,
     },
+    Reloaded,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
