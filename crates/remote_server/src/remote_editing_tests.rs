@@ -595,7 +595,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
         .unwrap();
 
     cx.run_until_parked();
-    worktree_2.update(cx, |worktree, cx| {
+    worktree_2.update(cx, |worktree, _cx| {
         assert!(worktree.is_visible());
         let entries = worktree.entries(true, 0).collect::<Vec<_>>();
         assert_eq!(entries.len(), 2);
