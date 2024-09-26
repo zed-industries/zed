@@ -4246,6 +4246,7 @@ fn render_blame_entry(
         .id(("blame", ix))
         .text_color(cx.theme().status().hint)
         .pr_2()
+        .gap_2()
         .child(
             h_flex()
                 .items_center()

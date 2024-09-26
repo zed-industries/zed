@@ -13012,7 +13012,7 @@ impl EditorSnapshot {
                         .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
                         + "ea278cc".len()
                         + "60 minutes ago".len()
-                        + 3;
+                        + 4;
 
                     column_pixels * max_char_count
                 });
