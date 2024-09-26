@@ -740,13 +740,8 @@ impl MetalRenderer {
                             size: tile.bounds.size.map(Into::into),
                         },
                         color: path.color,
+                        border_color: path.border_color,
                         tile: (*tile).clone(),
-                        border_color: Hsla {
-                            h: 0.946,
-                            s: 1.0,
-                            l: 0.933,
-                            a: 1.0,
-                        },
                     });
                     paths_and_tiles.next();
                     continue;
@@ -1249,8 +1244,8 @@ enum PathRasterizationInputIndex {
 pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
     pub color: Hsla,
-    pub tile: AtlasTile,
     pub border_color: Hsla,
+    pub tile: AtlasTile,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

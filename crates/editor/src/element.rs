@@ -3457,10 +3457,11 @@ impl EditorElement {
         cx.paint_layer(layout.text_hitbox.bounds, |cx| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
             let line_end_overshoot = 0.15 * layout.position_map.line_height;
-            for (range, color) in &layout.highlighted_ranges {
+            for (range, color, border_color) in &layout.highlighted_ranges {
                 self.paint_highlighted_range(
                     range.clone(),
                     *color,
+                    *border_color,
                     Pixels::ZERO,
                     line_end_overshoot,
                     layout,
@@ -3475,6 +3476,7 @@ impl EditorElement {
                     self.paint_highlighted_range(
                         selection.range.clone(),
                         player_color.selection,
+                        Hsla::green(),
                         corner_radius,
                         corner_radius * 2.,
                         layout,
@@ -3536,6 +3538,7 @@ impl EditorElement {
                 self.paint_highlighted_range(
                     range.clone(),
                     redaction_color.into(),
+                    Hsla::transparent_black(),
                     Pixels::ZERO,
                     line_end_overshoot,
                     layout,
@@ -3868,6 +3871,7 @@ impl EditorElement {
         &self,
         range: Range<DisplayPoint>,
         color: Hsla,
+        border_color: Hsla,
         corner_radius: Pixels,
         line_end_overshoot: Pixels,
         layout: &EditorLayout,
@@ -3885,6 +3889,7 @@ impl EditorElement {
 
             let highlighted_range = HighlightedRange {
                 color,
+                border_color,
                 line_height: layout.position_map.line_height,
                 corner_radius,
                 start_y: layout.content_origin.y
@@ -5726,7 +5731,7 @@ pub struct EditorLayout {
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
-    highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla, Hsla)>,
     highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
     cursors: Vec<(DisplayPoint, Hsla)>,
@@ -6100,6 +6105,7 @@ pub struct HighlightedRange {
     pub line_height: Pixels,
     pub lines: Vec<HighlightedRangeLine>,
     pub color: Hsla,
+    pub border_color: Hsla,
     pub corner_radius: Pixels,
 }
 
@@ -6226,7 +6232,7 @@ impl HighlightedRange {
         }
         path.line_to(first_top_right - top_curve_width);
 
-        cx.paint_path(path, self.color);
+        cx.paint_path(path, self.color, self.border_color);
     }
 }
 

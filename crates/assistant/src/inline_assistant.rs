@@ -27,8 +27,8 @@ use futures::{
 };
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    FocusableView, FontWeight, Global, HighlightStyle, Hsla, Model, ModelContext, Subscription,
+    Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -1109,7 +1109,12 @@ impl InlineAssistant {
             } else {
                 editor.highlight_gutter::<GutterPendingRange>(
                     &gutter_pending_ranges,
-                    |cx| cx.theme().status().info_background,
+                    |cx| {
+                        (
+                            cx.theme().status().info_background,
+                            Hsla::transparent_black(),
+                        )
+                    },
                     cx,
                 )
             }
@@ -1120,7 +1125,7 @@ impl InlineAssistant {
             } else {
                 editor.highlight_gutter::<GutterTransformedRange>(
                     &gutter_transformed_ranges,
-                    |cx| cx.theme().status().info,
+                    |cx| (cx.theme().status().info, Hsla::transparent_black()),
                     cx,
                 )
             }

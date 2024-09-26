@@ -8,7 +8,7 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
-use gpui::ViewContext;
+use gpui::{Hsla, ViewContext};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 
@@ -177,7 +177,12 @@ impl Vim {
 
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
-            |colors| colors.editor_document_highlight_read_background,
+            |colors| {
+                (
+                    colors.editor_document_highlight_read_background,
+                    Hsla::transparent_black(),
+                )
+            },
             cx,
         );
         cx.spawn(|this, mut cx| async move {

@@ -1178,7 +1178,7 @@ impl SearchableItem for Editor {
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.search_match_background,
+            |theme| (theme.search_match_background, theme.border_selected),
             cx,
         );
         if updated {

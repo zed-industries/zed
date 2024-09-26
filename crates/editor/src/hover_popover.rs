@@ -435,7 +435,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
-                        |theme| theme.element_hover, // todo update theme
+                        |theme| (theme.element_hover, Hsla::transparent_black()), // todo update theme
                         cx,
                     );
                 }

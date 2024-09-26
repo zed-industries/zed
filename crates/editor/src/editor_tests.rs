@@ -9067,7 +9067,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
                 anchor_range(Point::new(6, 3)..Point::new(6, 5)),
                 anchor_range(Point::new(8, 4)..Point::new(8, 6)),
             ],
-            |_| Hsla::red(),
+            |_| (Hsla::red(), Hsla::blue()),
             cx,
         );
         editor.highlight_background::<Type2>(
@@ -9077,7 +9077,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
                 anchor_range(Point::new(7, 4)..Point::new(7, 7)),
                 anchor_range(Point::new(9, 5)..Point::new(9, 8)),
             ],
-            |_| Hsla::green(),
+            |_| (Hsla::green(), Hsla::black()),
             cx,
         );
 
@@ -9089,25 +9089,29 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         );
         // Enforce a consistent ordering based on color without relying on the ordering of the
         // highlight's `TypeId` which is non-executor.
-        highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
+        highlighted_ranges.sort_unstable_by_key(|(_, color, border_color)| (*color, *border_color));
         assert_eq!(
             highlighted_ranges,
             &[
                 (
                     DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
                     Hsla::red(),
+                    Hsla::blue(),
                 ),
                 (
                     DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
                     Hsla::red(),
+                    Hsla::blue(),
                 ),
                 (
                     DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 5),
                     Hsla::green(),
+                    Hsla::black(),
                 ),
                 (
                     DisplayPoint::new(DisplayRow(5), 3)..DisplayPoint::new(DisplayRow(5), 6),
                     Hsla::green(),
+                    Hsla::black(),
                 ),
             ]
         );
@@ -9120,6 +9124,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             &[(
                 DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
                 Hsla::red(),
+                Hsla::blue(),
             )]
         );
     });
