@@ -5,7 +5,6 @@
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
-use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::{self, PartialOrd},
@@ -2202,7 +2201,6 @@ impl From<Percentage> for Radians {
     PartialEq,
     Serialize,
     Deserialize,
-    JsonSchema,
 )]
 #[repr(transparent)]
 pub struct Pixels(pub f32);

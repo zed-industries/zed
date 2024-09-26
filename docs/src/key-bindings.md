@@ -177,8 +177,10 @@ See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
 
 #### Global
 
+<!--
 TBD: Update these to reflect current bindings
 TBD: Add Column with Linux shortcuts
+-->
 
 | **Command**               | **Target**   | **Default Shortcut**    |
 | ------------------------- | ------------ | ----------------------- |
@@ -405,46 +407,48 @@ TBD: Add Column with Linux shortcuts
 
 #### Pane
 
-| **Command**                   | **Target**     | **Default Shortcut**    |
-| ----------------------------- | -------------- | ----------------------- |
-| Activate item 1               | Pane           | `Control + 1`           |
-| Activate item 2               | Pane           | `Control + 2`           |
-| Activate item 3               | Pane           | `Control + 3`           |
-| Activate item 4               | Pane           | `Control + 4`           |
-| Activate item 5               | Pane           | `Control + 5`           |
-| Activate item 6               | Pane           | `Control + 6`           |
-| Activate item 7               | Pane           | `Control + 7`           |
-| Activate item 8               | Pane           | `Control + 8`           |
-| Activate item 9               | Pane           | `Control + 9`           |
-| Activate last item            | Pane           | `Control + 0`           |
-| Activate next item            | Pane           | `Alt + ⌘ + Right`       |
-| Activate next item            | Pane           | `⌘ + }`                 |
-| Activate prev item            | Pane           | `Alt + ⌘ + Left`        |
-| Activate prev item            | Pane           | `⌘ + {`                 |
-| Close active item             | Pane           | `⌘ + W`                 |
-| Close all items               | Pane           | `⌘ + K, ⌘ + W`          |
-| Close clean items             | Pane           | `⌘ + K, U`              |
-| Close inactive items          | Pane           | `Alt + ⌘ + T`           |
-| Go back                       | Pane           | `Control + -`           |
-| Go forward                    | Pane           | `Control + Shift + _`   |
-| Reopen closed item            | Pane           | `⌘ + Shift + T`         |
-| Split down                    | Pane           | `⌘ + K, Down`           |
-| Split left                    | Pane           | `⌘ + K, Left`           |
-| Split right                   | Pane           | `⌘ + K, Right`          |
-| Split up                      | Pane           | `⌘ + K, Up`             |
-| Toggle filters                | Project Search | `Alt + ⌘ + F`           |
-| Toggle focus                  | Project Search | `⌘ + F`                 |
-| Toggle focus                  | Project Search | `⌘ + Shift + F`         |
-| Activate regex mode           | Search         | `Alt + ⌘ + G`           |
-| Activate text mode            | Search         | `Alt + ⌘ + X`           |
-| Cycle mode                    | Search         | `Alt + Tab`             |
-| Select all matches            | Search         | `Alt + Enter`           |
-| Select next match             | Search         | `⌘ + G`                 |
-| Select prev match             | Search         | `⌘ + Shift + G`         |
-| Toggle case sensitive         | Search         | `Alt + ⌘ + C`           |
-| Toggle replace                | Search         | `⌘ + Shift + H`         |
-| Toggle whole word             | Search         | `Alt + ⌘ + W`           |
-| Close inactive tabs and panes | Workspace      | `Control + Alt + ⌘ + W` |
+| **Command**                   | **Target**     | **Default Shortcut**          |
+| ----------------------------- | -------------- | ----------------------------- |
+| Activate item 1               | Pane           | `Control + 1`                 |
+| Activate item 2               | Pane           | `Control + 2`                 |
+| Activate item 3               | Pane           | `Control + 3`                 |
+| Activate item 4               | Pane           | `Control + 4`                 |
+| Activate item 5               | Pane           | `Control + 5`                 |
+| Activate item 6               | Pane           | `Control + 6`                 |
+| Activate item 7               | Pane           | `Control + 7`                 |
+| Activate item 8               | Pane           | `Control + 8`                 |
+| Activate item 9               | Pane           | `Control + 9`                 |
+| Activate last item            | Pane           | `Control + 0`                 |
+| Activate next item            | Pane           | `Alt + ⌘ + Right`             |
+| Activate next item            | Pane           | `⌘ + }`                       |
+| Activate prev item            | Pane           | `Alt + ⌘ + Left`              |
+| Activate prev item            | Pane           | `⌘ + {`                       |
+| Swap item to left             | Pane           | `Control + Shift + Page Up`   |
+| Swap item to right            | Pane           | `Control + Shift + Page Down` |
+| Close active item             | Pane           | `⌘ + W`                       |
+| Close all items               | Pane           | `⌘ + K, ⌘ + W`                |
+| Close clean items             | Pane           | `⌘ + K, U`                    |
+| Close inactive items          | Pane           | `Alt + ⌘ + T`                 |
+| Go back                       | Pane           | `Control + -`                 |
+| Go forward                    | Pane           | `Control + Shift + _`         |
+| Reopen closed item            | Pane           | `⌘ + Shift + T`               |
+| Split down                    | Pane           | `⌘ + K, Down`                 |
+| Split left                    | Pane           | `⌘ + K, Left`                 |
+| Split right                   | Pane           | `⌘ + K, Right`                |
+| Split up                      | Pane           | `⌘ + K, Up`                   |
+| Toggle filters                | Project Search | `Alt + ⌘ + F`                 |
+| Toggle focus                  | Project Search | `⌘ + F`                       |
+| Toggle focus                  | Project Search | `⌘ + Shift + F`               |
+| Activate regex mode           | Search         | `Alt + ⌘ + G`                 |
+| Activate text mode            | Search         | `Alt + ⌘ + X`                 |
+| Cycle mode                    | Search         | `Alt + Tab`                   |
+| Select all matches            | Search         | `Alt + Enter`                 |
+| Select next match             | Search         | `⌘ + G`                       |
+| Select prev match             | Search         | `⌘ + Shift + G`               |
+| Toggle case sensitive         | Search         | `Alt + ⌘ + C`                 |
+| Toggle replace                | Search         | `⌘ + Shift + H`               |
+| Toggle whole word             | Search         | `Alt + ⌘ + W`                 |
+| Close inactive tabs and panes | Workspace      | `Control + Alt + ⌘ + W`       |
 
 #### Buffer Search Bar
 

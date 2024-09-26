@@ -1108,7 +1108,7 @@ impl Panel for ChatPanel {
         settings::update_settings_file::<ChatPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings, _| settings.dock = position,
+            move |settings, _| settings.dock = Some(position),
         );
     }
 

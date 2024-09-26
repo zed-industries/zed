@@ -283,18 +283,14 @@ message Envelope {
         CloseBuffer close_buffer = 245;
         UpdateUserSettings update_user_settings = 246;
 
-        CreateLanguageServer create_language_server = 247;
-
-        WhichCommand which_command = 248;
-        WhichCommandResponse which_command_response = 249;
-
-        ShellEnv shell_env = 250;
-        ShellEnvResponse shell_env_response = 251; // current max
+        CheckFileExists check_file_exists = 255;
+        CheckFileExistsResponse check_file_exists_response = 256; // current max
     }
 
     reserved 158 to 161;
     reserved 166 to 169;
     reserved 224 to 229;
+    reserved 247 to 254;
 }
 
 // Messages
@@ -497,6 +493,7 @@ message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     optional uint64 dev_server_project_id = 3;
+    bool is_ssh_project = 4;
 }
 
 message ShareProjectResponse {
@@ -1214,6 +1211,7 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    bytes lsp_completion = 6;
 }
 
 message ResolveInlayHint {
@@ -1855,6 +1853,7 @@ message Entry {
     bool is_external = 8;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
+    optional uint64 size = 11;
 }
 
 message RepositoryEntry {
@@ -2388,6 +2387,7 @@ message SlashCommandOutputSection {
     AnchorRange range = 1;
     string icon_name = 2;
     string label = 3;
+    optional string metadata = 4;
 }
 
 message ContextOperation {
@@ -2506,55 +2506,12 @@ message UpdateUserSettings {
     string content = 2;
 }
 
-message LanguageServerCommand {
-   string path = 1;
-   repeated string arguments = 2;
-   map<string, string> env = 3;
-}
-
-message AvailableLanguage {
-    string name = 7;
-    string matcher = 8;
-}
-
-message CreateLanguageServer {
+message CheckFileExists {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string name = 3;
-
-    LanguageServerCommand binary = 4;
-    optional string initialization_options = 5;
-    optional string code_action_kinds = 6;
-
-    AvailableLanguage language = 7;
+    string path = 2;
 }
 
-message WhichCommand {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string command = 3;
+message CheckFileExistsResponse {
+    bool exists = 1;
+    string path = 2;
 }
-
-message WhichCommandResponse {
-    optional string path = 1;
-}
-
-message ShellEnv {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-}
-
-message ShellEnvResponse {
-    map<string, string> env = 1;
-}
-
-// message RestartLanguageServer {
-
-// }
-// message DestroyLanguageServer {
-
-// }
-
-// message LspWorkspaceConfiguration {
-
-// }

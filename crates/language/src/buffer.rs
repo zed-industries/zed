@@ -21,11 +21,13 @@ use async_watch as watch;
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Pixels, Task, TaskLabel,
-    WindowContext,
+    AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
+    Pixels, Task, TaskLabel, WindowContext,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
 use similar::{ChangeTag, TextDiff};
@@ -82,11 +84,21 @@ pub enum Capability {
 
 pub type BufferRow = u32;
 
+#[derive(Clone)]
+enum BufferDiffBase {
+    Git(Rope),
+    PastBufferVersion {
+        buffer: Model<Buffer>,
+        rope: Rope,
+        operations_to_ignore: Vec<clock::Lamport>,
+    },
+}
+
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
     text: TextBuffer,
-    diff_base: Option<Rope>,
+    diff_base: Option<BufferDiffBase>,
     git_diff: git::diff::BufferDiff,
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
@@ -119,6 +131,7 @@ pub struct Buffer {
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -142,7 +155,7 @@ pub struct BufferSnapshot {
 
 /// The kind and amount of indentation in a particular line. For now,
 /// assumes that indentation is all the same character.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct IndentSize {
     /// The number of bytes that comprise the indentation.
     pub len: u32,
@@ -151,7 +164,7 @@ pub struct IndentSize {
 }
 
 /// A whitespace character that's used for indentation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum IndentKind {
     /// An ASCII space character.
     #[default]
@@ -161,7 +174,8 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
     #[default]
@@ -302,10 +316,13 @@ pub enum Operation {
 
 /// An event that occurs in a buffer.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Event {
+pub enum BufferEvent {
     /// The buffer was changed in a way that must be
     /// propagated to its other replicas.
-    Operation(Operation),
+    Operation {
+        operation: Operation,
+        is_local: bool,
+    },
     /// The buffer was edited.
     Edited,
     /// The buffer's `dirty` bit changed.
@@ -641,7 +658,7 @@ impl Buffer {
             id: self.remote_id().into(),
             file: self.file.as_ref().map(|f| f.to_proto(cx)),
             base_text: self.base_text().to_string(),
-            diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
+            diff_base: self.diff_base().as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_mtime: self.saved_mtime.map(|time| time.into()),
@@ -719,7 +736,9 @@ impl Buffer {
         capability: Capability,
     ) -> Self {
         let saved_mtime = file.as_ref().and_then(|file| file.mtime());
-
+        let snapshot = buffer.snapshot();
+        let git_diff = git::diff::BufferDiff::new(&snapshot);
+        let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
         Self {
             saved_mtime,
             saved_version: buffer.version(),
@@ -729,17 +748,15 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             has_unsaved_edits: Cell::new((buffer.version(), false)),
             text: buffer,
-            diff_base: diff_base
-                .map(|mut raw_diff_base| {
-                    LineEnding::normalize(&mut raw_diff_base);
-                    raw_diff_base
-                })
-                .map(Rope::from),
+            diff_base: diff_base.map(|mut raw_diff_base| {
+                LineEnding::normalize(&mut raw_diff_base);
+                BufferDiffBase::Git(Rope::from(raw_diff_base))
+            }),
             diff_base_version: 0,
-            git_diff: git::diff::BufferDiff::new(),
+            git_diff,
             file,
             capability,
-            syntax_map: Mutex::new(SyntaxMap::new()),
+            syntax_map,
             parsing_in_background: false,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
@@ -754,6 +771,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
+            _subscriptions: Vec::new(),
         }
     }
 
@@ -774,6 +792,104 @@ impl Buffer {
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
+        }
+    }
+
+    pub fn branch(&mut self, cx: &mut ModelContext<Self>) -> Model<Self> {
+        let this = cx.handle();
+        cx.new_model(|cx| {
+            let mut branch = Self {
+                diff_base: Some(BufferDiffBase::PastBufferVersion {
+                    buffer: this.clone(),
+                    rope: self.as_rope().clone(),
+                    operations_to_ignore: Vec::new(),
+                }),
+                language: self.language.clone(),
+                has_conflict: self.has_conflict,
+                has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
+                _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
+                ..Self::build(
+                    self.text.branch(),
+                    None,
+                    self.file.clone(),
+                    self.capability(),
+                )
+            };
+            if let Some(language_registry) = self.language_registry() {
+                branch.set_language_registry(language_registry);
+            }
+
+            branch
+        })
+    }
+
+    /// Applies all of the changes in `branch` buffer that intersect the given `range`
+    /// to this buffer.
+    pub fn merge(
+        &mut self,
+        branch: &Model<Self>,
+        range: Option<Range<Anchor>>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let edits = branch.read_with(cx, |branch, _| {
+            branch
+                .edits_since_in_range::<usize>(
+                    &self.version,
+                    range.unwrap_or(Anchor::MIN..Anchor::MAX),
+                )
+                .map(|edit| {
+                    (
+                        edit.old,
+                        branch.text_for_range(edit.new).collect::<String>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        let operation = self.edit(edits, None, cx);
+
+        // Prevent this operation from being reapplied to the branch.
+        branch.update(cx, |branch, cx| {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                operations_to_ignore,
+                ..
+            }) = &mut branch.diff_base
+            {
+                operations_to_ignore.extend(operation);
+            }
+            cx.emit(BufferEvent::Edited)
+        });
+    }
+
+    fn on_base_buffer_event(
+        &mut self,
+        _: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let BufferEvent::Operation { operation, .. } = event {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                operations_to_ignore,
+                ..
+            }) = &mut self.diff_base
+            {
+                let mut is_ignored = false;
+                if let Operation::Buffer(text::Operation::Edit(buffer_operation)) = &operation {
+                    operations_to_ignore.retain(|operation_to_ignore| {
+                        match buffer_operation.timestamp.cmp(&operation_to_ignore) {
+                            Ordering::Less => true,
+                            Ordering::Equal => {
+                                is_ignored = true;
+                                false
+                            }
+                            Ordering::Greater => false,
+                        }
+                    });
+                }
+                if !is_ignored {
+                    self.apply_ops([operation.clone()], cx);
+                    self.diff_base_version += 1;
+                }
+            }
         }
     }
 
@@ -806,10 +922,10 @@ impl Buffer {
     /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
         self.non_text_state_update_count += 1;
-        self.syntax_map.lock().clear();
+        self.syntax_map.lock().clear(&self.text);
         self.language = language;
         self.reparse(cx);
-        cx.emit(Event::LanguageChanged);
+        cx.emit(BufferEvent::LanguageChanged);
     }
 
     /// Assign a language registry to the buffer. This allows the buffer to retrieve
@@ -827,7 +943,7 @@ impl Buffer {
     /// Assign the buffer a new [Capability].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
-        cx.emit(Event::CapabilityChanged)
+        cx.emit(BufferEvent::CapabilityChanged)
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -842,13 +958,13 @@ impl Buffer {
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
-        cx.emit(Event::Saved);
+        cx.emit(BufferEvent::Saved);
         cx.notify();
     }
 
     /// This method is called to signal that the buffer has been discarded.
     pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::Discarded);
+        cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
@@ -911,7 +1027,7 @@ impl Buffer {
             .set((self.saved_version.clone(), false));
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
-        cx.emit(Event::Reloaded);
+        cx.emit(BufferEvent::Reloaded);
         cx.notify();
     }
 
@@ -929,7 +1045,7 @@ impl Buffer {
                 if !old_file.is_deleted() {
                     file_changed = true;
                     if !self.is_dirty() {
-                        cx.emit(Event::DirtyChanged);
+                        cx.emit(BufferEvent::DirtyChanged);
                     }
                 }
             } else {
@@ -949,32 +1065,34 @@ impl Buffer {
         self.file = Some(new_file);
         if file_changed {
             self.non_text_state_update_count += 1;
-            cx.emit(Event::FileHandleChanged);
+            cx.emit(BufferEvent::FileHandleChanged);
             cx.notify();
         }
     }
 
     /// Returns the current diff base, see [Buffer::set_diff_base].
     pub fn diff_base(&self) -> Option<&Rope> {
-        self.diff_base.as_ref()
+        match self.diff_base.as_ref()? {
+            BufferDiffBase::Git(rope) | BufferDiffBase::PastBufferVersion { rope, .. } => {
+                Some(rope)
+            }
+        }
     }
 
     /// Sets the text that will be used to compute a Git diff
     /// against the buffer text.
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
-        self.diff_base = diff_base
-            .map(|mut raw_diff_base| {
-                LineEnding::normalize(&mut raw_diff_base);
-                raw_diff_base
-            })
-            .map(Rope::from);
+        self.diff_base = diff_base.map(|mut raw_diff_base| {
+            LineEnding::normalize(&mut raw_diff_base);
+            BufferDiffBase::Git(Rope::from(raw_diff_base))
+        });
         self.diff_base_version += 1;
-        if let Some(recalc_task) = self.git_diff_recalc(cx) {
+        if let Some(recalc_task) = self.recalculate_diff(cx) {
             cx.spawn(|buffer, mut cx| async move {
                 recalc_task.await;
                 buffer
                     .update(&mut cx, |_, cx| {
-                        cx.emit(Event::DiffBaseChanged);
+                        cx.emit(BufferEvent::DiffBaseChanged);
                     })
                     .ok();
             })
@@ -987,23 +1105,37 @@ impl Buffer {
         self.diff_base_version
     }
 
-    /// Recomputes the Git diff status.
-    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base = self.diff_base.clone()?;
-        let snapshot = self.snapshot();
+    pub fn diff_base_buffer(&self) -> Option<Model<Self>> {
+        match self.diff_base.as_ref()? {
+            BufferDiffBase::Git(_) => None,
+            BufferDiffBase::PastBufferVersion { buffer, .. } => Some(buffer.clone()),
+        }
+    }
 
+    /// Recomputes the diff.
+    pub fn recalculate_diff(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
+        let diff_base_rope = match self.diff_base.as_ref()? {
+            BufferDiffBase::Git(rope) => rope.clone(),
+            BufferDiffBase::PastBufferVersion { buffer, .. } => buffer.read(cx).as_rope().clone(),
+        };
+
+        let snapshot = self.snapshot();
         let mut diff = self.git_diff.clone();
         let diff = cx.background_executor().spawn(async move {
-            diff.update(&diff_base, &snapshot).await;
-            diff
+            diff.update(&diff_base_rope, &snapshot).await;
+            (diff, diff_base_rope)
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            let buffer_diff = diff.await;
+            let (buffer_diff, diff_base_rope) = diff.await;
             this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
                 this.non_text_state_update_count += 1;
-                cx.emit(Event::DiffUpdated);
+                if let Some(BufferDiffBase::PastBufferVersion { rope, .. }) = &mut this.diff_base {
+                    *rope = diff_base_rope;
+                    cx.emit(BufferEvent::DiffBaseChanged);
+                }
+                cx.emit(BufferEvent::DiffUpdated);
             })
             .ok();
         }))
@@ -1142,7 +1274,7 @@ impl Buffer {
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
-        cx.emit(Event::Reparsed);
+        cx.emit(BufferEvent::Reparsed);
         cx.notify();
     }
 
@@ -1164,7 +1296,7 @@ impl Buffer {
             lamport_timestamp,
         };
         self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, cx);
-        self.send_operation(op, cx);
+        self.send_operation(op, true, cx);
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -1738,6 +1870,7 @@ impl Buffer {
                 lamport_timestamp,
                 cursor_shape,
             },
+            true,
             cx,
         );
         self.non_text_state_update_count += 1;
@@ -1884,7 +2017,7 @@ impl Buffer {
         }
 
         self.end_transaction(cx);
-        self.send_operation(Operation::Buffer(edit_operation), cx);
+        self.send_operation(Operation::Buffer(edit_operation), true, cx);
         Some(edit_id)
     }
 
@@ -1900,9 +2033,9 @@ impl Buffer {
 
         self.reparse(cx);
 
-        cx.emit(Event::Edited);
+        cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
-            cx.emit(Event::DirtyChanged);
+            cx.emit(BufferEvent::DirtyChanged);
         }
         cx.notify();
     }
@@ -1967,7 +2100,7 @@ impl Buffer {
         &mut self,
         ops: I,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) {
         self.pending_autoindent.take();
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1986,14 +2119,16 @@ impl Buffer {
                 }
             })
             .collect::<Vec<_>>();
-        self.text.apply_ops(buffer_ops)?;
+        for operation in buffer_ops.iter() {
+            self.send_operation(Operation::Buffer(operation.clone()), false, cx);
+        }
+        self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
-        Ok(())
     }
 
     fn flush_deferred_ops(&mut self, cx: &mut ModelContext<Self>) {
@@ -2106,12 +2241,20 @@ impl Buffer {
             self.non_text_state_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
             cx.notify();
-            cx.emit(Event::DiagnosticsUpdated);
+            cx.emit(BufferEvent::DiagnosticsUpdated);
         }
     }
 
-    fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::Operation(operation));
+    fn send_operation(
+        &mut self,
+        operation: Operation,
+        is_local: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(BufferEvent::Operation {
+            operation,
+            is_local,
+        });
     }
 
     /// Removes the selections for a given peer.
@@ -2126,7 +2269,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         if let Some((transaction_id, operation)) = self.text.undo() {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
@@ -2143,7 +2286,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
         if let Some(operation) = self.text.undo_transaction(transaction_id) {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             true
         } else {
@@ -2163,7 +2306,7 @@ impl Buffer {
         let operations = self.text.undo_to_transaction(transaction_id);
         let undone = !operations.is_empty();
         for operation in operations {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if undone {
             self.did_edit(&old_version, was_dirty, cx)
@@ -2177,7 +2320,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         if let Some((transaction_id, operation)) = self.text.redo() {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
@@ -2197,7 +2340,7 @@ impl Buffer {
         let operations = self.text.redo_to_transaction(transaction_id);
         let redone = !operations.is_empty();
         for operation in operations {
-            self.send_operation(Operation::Buffer(operation), cx);
+            self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if redone {
             self.did_edit(&old_version, was_dirty, cx)
@@ -2214,6 +2357,7 @@ impl Buffer {
                 triggers,
                 lamport_timestamp: self.completion_triggers_timestamp,
             },
+            true,
             cx,
         );
         cx.notify();
@@ -2293,14 +2437,14 @@ impl Buffer {
         let ops = self.text.randomly_undo_redo(rng);
         if !ops.is_empty() {
             for op in ops {
-                self.send_operation(Operation::Buffer(op), cx);
+                self.send_operation(Operation::Buffer(op), true, cx);
                 self.did_edit(&old_version, was_dirty, cx);
             }
         }
     }
 }
 
-impl EventEmitter<Event> for Buffer {}
+impl EventEmitter<BufferEvent> for Buffer {}
 
 impl Deref for Buffer {
     type Target = TextBuffer;
@@ -3022,7 +3166,7 @@ impl BufferSnapshot {
                 let mut start = text.len();
                 let end = start + buffer_range.len();
 
-                // When multiple names are captured, then the matcheable text
+                // When multiple names are captured, then the matchable text
                 // includes the whitespace in between the names.
                 if !name_ranges.is_empty() {
                     start -= 1;
@@ -3634,12 +3778,12 @@ impl BufferSnapshot {
         !self.git_diff.is_empty()
     }
 
-    /// Returns all the Git diff hunks intersecting the given
-    /// row range.
+    /// Returns all the Git diff hunks intersecting the given row range.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn git_diff_hunks_in_row_range(
         &self,
         range: Range<BufferRow>,
-    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk> {
         self.git_diff.hunks_in_row_range(range, self)
     }
 
@@ -3648,7 +3792,7 @@ impl BufferSnapshot {
     pub fn git_diff_hunks_intersecting_range(
         &self,
         range: Range<Anchor>,
-    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk> {
         self.git_diff.hunks_intersecting_range(range, self)
     }
 
@@ -3657,7 +3801,7 @@ impl BufferSnapshot {
     pub fn git_diff_hunks_intersecting_range_rev(
         &self,
         range: Range<Anchor>,
-    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk> {
         self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 

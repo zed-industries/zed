@@ -484,6 +484,7 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             let is_read_only = project.is_read_only();
             let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
+            let is_local = project.is_local();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -495,13 +496,15 @@ impl ProjectPanel {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
-                            .when(cfg!(target_os = "macos"), |menu| {
+                            .when(is_local && cfg!(target_os = "macos"), |menu| {
                                 menu.action("Reveal in Finder", Box::new(RevealInFileManager))
                             })
-                            .when(cfg!(not(target_os = "macos")), |menu| {
+                            .when(is_local && cfg!(not(target_os = "macos")), |menu| {
                                 menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
                             })
-                            .action("Open in Default App", Box::new(OpenWithSystem))
+                            .when(is_local, |menu| {
+                                menu.action("Open in Default App", Box::new(OpenWithSystem))
+                            })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -1823,6 +1826,7 @@ impl ProjectPanel {
                         path: entry.path.join("\0").into(),
                         inode: 0,
                         mtime: entry.mtime,
+                        size: entry.size,
                         is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,
@@ -2289,7 +2293,7 @@ impl ProjectPanel {
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
-                    .indent_step_size(settings.indent_size)
+                    .indent_step_size(px(settings.indent_size))
                     .selected(is_marked || is_active)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
@@ -2297,7 +2301,7 @@ impl ProjectPanel {
                                 .id("symlink_icon")
                                 .pr_3()
                                 .tooltip(move |cx| {
-                                    Tooltip::text(format!("{path} • Symbolic Link"), cx)
+                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
                                 })
                                 .child(
                                     Icon::new(IconName::ArrowUpRight)
@@ -2718,10 +2722,13 @@ impl Render for ProjectPanel {
                             }
                         }))
                 })
-                .when(project.is_local_or_ssh(), |el| {
+                .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
+                })
+                .when(project.is_via_ssh(), |el| {
+                    el.on_action(cx.listener(Self::open_in_terminal))
                 })
                 .on_mouse_down(
                     MouseButton::Right,
@@ -2766,7 +2773,6 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle)
                 .child(
                     Button::new("open_project", "Open a project")
-                        .style(ButtonStyle::Filled)
                         .full_width()
                         .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(cx.listener(|this, _, cx| {
@@ -2817,7 +2823,7 @@ impl Render for DraggedProjectEntryView {
                 this.bg(cx.theme().colors().background).w(self.width).child(
                     ListItem::new(self.selection.entry_id.to_proto() as usize)
                         .indent_level(self.details.depth)
-                        .indent_step_size(settings.indent_size)
+                        .indent_step_size(px(settings.indent_size))
                         .child(if let Some(icon) = &self.details.icon {
                             div().child(Icon::from_path(icon.clone()))
                         } else {
@@ -2855,7 +2861,7 @@ impl Panel for ProjectPanel {
                     DockPosition::Left | DockPosition::Bottom => ProjectPanelDockPosition::Left,
                     DockPosition::Right => ProjectPanelDockPosition::Right,
                 };
-                settings.dock = dock;
+                settings.dock = Some(dock);
             },
         );
     }
@@ -3029,7 +3035,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions =
-                        vec!["**/.git".to_string(), "**/4/**".to_string()];
+                        Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
                 });
             });
         });
@@ -4818,10 +4824,10 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Vec::new();
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = false
+                    project_panel_settings.auto_reveal_entries = Some(false)
                 });
             })
         });
@@ -4940,7 +4946,7 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = true
+                    project_panel_settings.auto_reveal_entries = Some(true)
                 });
             })
         });
@@ -5054,10 +5060,10 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Vec::new();
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = false
+                    project_panel_settings.auto_reveal_entries = Some(false)
                 });
             })
         });
@@ -5256,7 +5262,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                     project_settings.file_scan_exclusions =
-                        vec!["excluded_dir".to_string(), "**/.git".to_string()];
+                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
                 });
             });
         });
@@ -5569,10 +5575,10 @@ mod tests {
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_fold_dirs = false;
+                    project_panel_settings.auto_fold_dirs = Some(false);
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Vec::new();
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
             });
         });
@@ -5591,10 +5597,10 @@ mod tests {
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_fold_dirs = false;
+                    project_panel_settings.auto_fold_dirs = Some(false);
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Vec::new();
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
             });
         });

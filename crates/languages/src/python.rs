@@ -1,13 +1,14 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use serde_json::Value;
-use settings::Settings;
+
 use std::{
     any::Any,
     borrow::Cow,
@@ -19,19 +20,20 @@ use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
+const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
 pub struct PythonLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl PythonLspAdapter {
-    const SERVER_NAME: &'static str = "pyright";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         PythonLspAdapter { node }
     }
 }
@@ -39,7 +41,27 @@ impl PythonLspAdapter {
 #[async_trait(?Send)]
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let node = delegate.which("node".as_ref()).await?;
+        let (node_modules_path, _) = delegate
+            .npm_package_installed_version(Self::SERVER_NAME.as_ref())
+            .await
+            .log_err()??;
+
+        let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
+
+        Some(LanguageServerBinary {
+            path: node,
+            env: None,
+            arguments: server_binary_arguments(&path),
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -48,7 +70,7 @@ impl LspAdapter for PythonLspAdapter {
     ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version(Self::SERVER_NAME)
+                .npm_package_latest_version(Self::SERVER_NAME.as_ref())
                 .await?,
         ) as Box<_>)
     }
@@ -61,16 +83,23 @@ impl LspAdapter for PythonLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = Self::SERVER_NAME;
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .should_install_npm_package(
+                Self::SERVER_NAME.as_ref(),
+                &server_path,
+                &container_dir,
+                &latest_version,
+            )
             .await;
 
         if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
+                .npm_install_packages(
+                    &container_dir,
+                    &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
+                )
                 .await?;
         }
 
@@ -86,14 +115,7 @@ impl LspAdapter for PythonLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &self.node).await
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
@@ -177,13 +199,11 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
+            language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })
@@ -192,7 +212,7 @@ impl LspAdapter for PythonLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     let server_path = container_dir.join(SERVER_PATH);
     if server_path.exists() {
@@ -217,6 +237,7 @@ impl ContextProvider for PythonContextProvider {
         &self,
         variables: &task::TaskVariables,
         _location: &project::Location,
+        _: Option<&HashMap<String, String>>,
         _cx: &mut gpui::AppContext,
     ) -> Result<task::TaskVariables> {
         let python_module_name = python_module_name_from_relative_path(
@@ -309,7 +330,7 @@ mod tests {
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let language = crate::language("python", tree_sitter_python::language());
+        let language = crate::language("python", tree_sitter_python::LANGUAGE.into());
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);

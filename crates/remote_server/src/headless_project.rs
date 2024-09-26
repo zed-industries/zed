@@ -1,21 +1,26 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
-use language::LanguageRegistry;
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use node_runtime::NodeRuntime;
 use project::{
-    buffer_store::BufferStore, project_settings::SettingsObserver, search::SearchQuery,
-    worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId,
+    buffer_store::{BufferStore, BufferStoreEvent},
+    project_settings::SettingsObserver,
+    search::SearchQuery,
+    worktree_store::WorktreeStore,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::SshSession;
 use rpc::{
-    proto::{self, AnyProtoClient, SSH_PEER_ID, SSH_PROJECT_ID},
-    TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
+    AnyProtoClient, TypedEnvelope,
 };
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt;
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -26,6 +31,7 @@ pub struct HeadlessProject {
     pub lsp_store: Model<LspStore>,
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
+    pub languages: Arc<LanguageRegistry>,
 }
 
 impl HeadlessProject {
@@ -36,21 +42,32 @@ impl HeadlessProject {
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        // TODO: we should load the env correctly (as we do in login_shell_env_loaded when stdout is not a pty). Can we re-use the ProjectEnvironment for that?
-        let mut languages =
-            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
-        languages
-            .set_language_server_download_dir(PathBuf::from("/Users/conrad/what-could-go-wrong"));
+        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
-        let languages = Arc::new(languages);
+        let node_runtime = NodeRuntime::unavailable();
 
-        let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
+        languages::init(languages.clone(), node_runtime.clone(), cx);
+
+        let worktree_store = cx.new_model(|cx| {
+            let mut store = WorktreeStore::local(true, fs.clone());
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
+        });
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store =
-                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+        let prettier_store = cx.new_model(|cx| {
+            PrettierStore::new(
+                node_runtime,
+                fs.clone(),
+                languages.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
         let settings_observer = cx.new_model(|cx| {
             let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
@@ -61,8 +78,9 @@ impl HeadlessProject {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
+                prettier_store.clone(),
                 environment,
-                languages,
+                languages.clone(),
                 None,
                 fs.clone(),
                 cx,
@@ -70,6 +88,19 @@ impl HeadlessProject {
             lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             lsp_store
         });
+
+        cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+        cx.subscribe(
+            &buffer_store,
+            |_this, _buffer_store, event, cx| match event {
+                BufferStoreEvent::BufferAdded(buffer) => {
+                    cx.subscribe(buffer, Self::on_buffer_event).detach();
+                }
+                _ => {}
+            },
+        )
+        .detach();
 
         let client: AnyProtoClient = session.clone().into();
 
@@ -80,6 +111,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
+        client.add_request_handler(cx.weak_model(), Self::handle_check_file_exists);
 
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
@@ -87,10 +119,6 @@ impl HeadlessProject {
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
-
-        client.add_model_request_handler(LspStore::handle_create_language_server);
-        client.add_model_request_handler(LspStore::handle_which_command);
-        client.add_model_request_handler(LspStore::handle_shell_env);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
@@ -105,6 +133,52 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             next_entry_id: Default::default(),
+            languages,
+        }
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx
+                .background_executor()
+                .spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: SSH_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(operation)],
+                }))
+                .detach(),
+            _ => {}
+        }
+    }
+
+    fn on_lsp_store_event(
+        &mut self,
+        _lsp_store: Model<LspStore>,
+        event: &LspStoreEvent,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            LspStoreEvent::LanguageServerUpdate {
+                language_server_id,
+                message,
+            } => {
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: SSH_PROJECT_ID,
+                        language_server_id: language_server_id.to_proto(),
+                        variant: Some(message.clone()),
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 
@@ -113,11 +187,34 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::AddWorktreeResponse> {
+        use client::ErrorCodeExt;
         let path = shellexpand::tilde(&message.payload.path).to_string();
+
+        let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
+        let path = PathBuf::from(path);
+
+        let canonicalized = match fs.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(e) => {
+                let mut parent = path
+                    .parent()
+                    .ok_or(e)
+                    .map_err(|_| anyhow!("{:?} does not exist", path))?;
+                if parent == Path::new("") {
+                    parent = util::paths::home_dir();
+                }
+                let parent = fs.canonicalize(parent).await.map_err(|_| {
+                    anyhow!(proto::ErrorCode::DevServerProjectPathDoesNotExist
+                        .with_tag("path", &path.to_string_lossy().as_ref()))
+                })?;
+                parent.join(path.file_name().unwrap())
+            }
+        };
+
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Path::new(&path),
+                    Arc::from(canonicalized),
                     true,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
@@ -127,18 +224,11 @@ impl HeadlessProject {
             .await?;
 
         this.update(&mut cx, |this, cx| {
-            let session = this.session.clone();
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.add(&worktree, cx);
             });
-            worktree.update(cx, |worktree, cx| {
-                worktree.observe_updates(0, cx, move |update| {
-                    session.send(update).ok();
-                    futures::future::ready(true)
-                });
-                proto::AddWorktreeResponse {
-                    worktree_id: worktree.id().to_proto(),
-                }
+            worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
+                worktree_id: worktree.id().to_proto(),
             })
         })
     }
@@ -228,5 +318,21 @@ impl HeadlessProject {
             }
         }
         Ok(proto::ListRemoteDirectoryResponse { entries })
+    }
+
+    pub async fn handle_check_file_exists(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::CheckFileExists>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::CheckFileExistsResponse> {
+        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+
+        let exists = fs.is_file(&PathBuf::from(expanded.clone())).await;
+
+        Ok(proto::CheckFileExistsResponse {
+            exists,
+            path: expanded,
+        })
     }
 }

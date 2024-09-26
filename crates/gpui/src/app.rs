@@ -117,7 +117,7 @@ impl App {
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http_client::client(None, None),
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -128,7 +128,7 @@ impl App {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http_client::client(None, None),
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -138,6 +138,14 @@ impl App {
         let asset_source = Arc::new(asset_source);
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
+        drop(context_lock);
+        self
+    }
+
+    /// Set the http client for the application
+    pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
+        let mut context_lock = self.0.borrow_mut();
+        context_lock.http_client = http_client;
         drop(context_lock);
         self
     }
@@ -204,7 +212,8 @@ impl App {
 
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
-type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
+pub(crate) type KeystrokeObserver =
+    Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
@@ -1050,7 +1059,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
@@ -1060,7 +1069,14 @@ impl AppContext {
             activate();
             subscription
         }
-        inner(&mut self.keystroke_observers, Box::new(f))
+
+        inner(
+            &mut self.keystroke_observers,
+            Box::new(move |event, cx| {
+                f(event, cx);
+                true
+            }),
+        )
     }
 
     /// Register key bindings.
@@ -1505,8 +1521,21 @@ pub struct KeystrokeEvent {
     pub action: Option<Box<dyn Action>>,
 }
 
-impl Drop for AppContext {
-    fn drop(&mut self) {
-        println!("Dropping the App Context");
+struct NullHttpClient;
+
+impl HttpClient for NullHttpClient {
+    fn send_with_redirect_policy(
+        &self,
+        _req: http_client::Request<http_client::AsyncBody>,
+        _follow_redirects: bool,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+    > {
+        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+    }
+
+    fn proxy(&self) -> Option<&http_client::Uri> {
+        None
     }
 }

@@ -28,21 +28,21 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
-    pub fn new(tree: &'a SumTree<T>) -> Self {
+    pub fn new(tree: &'a SumTree<T>, cx: &<T::Summary as Summary>::Context) -> Self {
         Self {
             tree,
             stack: ArrayVec::new(),
-            position: D::default(),
+            position: D::zero(cx),
             did_seek: false,
             at_end: tree.is_empty(),
         }
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.did_seek = false;
         self.at_end = self.tree.is_empty();
         self.stack.truncate(0);
-        self.position = D::default();
+        self.position = D::zero(cx);
     }
 
     pub fn start(&self) -> &D {
@@ -192,7 +192,7 @@ where
         }
 
         if self.at_end {
-            self.position = D::default();
+            self.position = D::zero(cx);
             self.at_end = self.tree.is_empty();
             if !self.tree.is_empty() {
                 self.stack.push(StackEntry {
@@ -208,7 +208,7 @@ where
             if let Some(StackEntry { position, .. }) = self.stack.iter().rev().nth(1) {
                 self.position = position.clone();
             } else {
-                self.position = D::default();
+                self.position = D::zero(cx);
             }
 
             let entry = self.stack.last_mut().unwrap();
@@ -232,7 +232,7 @@ where
                     if descending {
                         let tree = &child_trees[entry.index];
                         self.stack.push(StackEntry {
-                            position: D::default(),
+                            position: D::zero(cx),
                             tree,
                             index: tree.0.child_summaries().len() - 1,
                         })
@@ -264,7 +264,7 @@ where
                 self.stack.push(StackEntry {
                     tree: self.tree,
                     index: 0,
-                    position: D::default(),
+                    position: D::zero(cx),
                 });
                 descend = true;
             }
@@ -364,7 +364,7 @@ where
     where
         Target: SeekTarget<'a, T::Summary, D>,
     {
-        self.reset();
+        self.reset(cx);
         self.seek_internal(pos, bias, &mut (), cx)
     }
 
@@ -392,10 +392,10 @@ where
         Target: SeekTarget<'a, T::Summary, D>,
     {
         let mut slice = SliceSeekAggregate {
-            tree: SumTree::new(),
+            tree: SumTree::new(cx),
             leaf_items: ArrayVec::new(),
             leaf_item_summaries: ArrayVec::new(),
-            leaf_summary: T::Summary::default(),
+            leaf_summary: <T::Summary as Summary>::zero(cx),
         };
         self.seek_internal(end, bias, &mut slice, cx);
         slice.tree
@@ -417,7 +417,7 @@ where
         Target: SeekTarget<'a, T::Summary, D>,
         Output: Dimension<'a, T::Summary>,
     {
-        let mut summary = SummarySeekAggregate(Output::default());
+        let mut summary = SummarySeekAggregate(Output::zero(cx));
         self.seek_internal(end, bias, &mut summary, cx);
         summary.0
     }
@@ -431,11 +431,9 @@ where
         aggregate: &mut dyn SeekAggregate<'a, T>,
         cx: &<T::Summary as Summary>::Context,
     ) -> bool {
-        debug_assert!(
+        assert!(
             target.cmp(&self.position, cx) >= Ordering::Equal,
-            "cannot seek backward from {:?} to {:?}",
-            self.position,
-            target
+            "cannot seek backward",
         );
 
         if !self.did_seek {
@@ -443,7 +441,7 @@ where
             self.stack.push(StackEntry {
                 tree: self.tree,
                 index: 0,
-                position: Default::default(),
+                position: D::zero(cx),
             });
         }
 
@@ -633,8 +631,12 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
-    pub fn new(tree: &'a SumTree<T>, filter_node: F) -> Self {
-        let cursor = tree.cursor::<D>();
+    pub fn new(
+        tree: &'a SumTree<T>,
+        cx: &<T::Summary as Summary>::Context,
+        filter_node: F,
+    ) -> Self {
+        let cursor = tree.cursor::<D>(cx);
         Self {
             cursor,
             filter_node,
@@ -727,7 +729,7 @@ impl<'a, T: Item> SeekAggregate<'a, T> for SliceSeekAggregate<T> {
     fn end_leaf(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.tree.append(
             SumTree(Arc::new(Node::Leaf {
-                summary: mem::take(&mut self.leaf_summary),
+                summary: mem::replace(&mut self.leaf_summary, <T::Summary as Summary>::zero(cx)),
                 items: mem::take(&mut self.leaf_items),
                 item_summaries: mem::take(&mut self.leaf_item_summaries),
             })),

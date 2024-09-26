@@ -1,0 +1,19 @@
+[package]
+name = "ui_macros"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/ui_macros.rs"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.66"
+quote = "1.0.9"
+syn = { version = "1.0.72", features = ["full", "extra-traits"] }
+convert_case.workspace = true

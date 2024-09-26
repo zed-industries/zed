@@ -236,11 +236,12 @@ pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
     pub stop: Vec<String>,
-    pub temperature: f32,
+    pub temperature: Option<f32>,
 }
 
 impl LanguageModelRequest {
     pub fn into_open_ai(self, model: String, max_output_tokens: Option<u32>) -> open_ai::Request {
+        let stream = !model.starts_with("o1-");
         open_ai::Request {
             model,
             messages: self
@@ -259,9 +260,9 @@ impl LanguageModelRequest {
                     },
                 })
                 .collect(),
-            stream: true,
+            stream,
             stop: self.stop,
-            temperature: self.temperature,
+            temperature: self.temperature.unwrap_or(1.0),
             max_tokens: max_output_tokens,
             tools: Vec::new(),
             tool_choice: None,
@@ -289,7 +290,7 @@ impl LanguageModelRequest {
                 candidate_count: Some(1),
                 stop_sequences: Some(self.stop),
                 max_output_tokens: None,
-                temperature: Some(self.temperature as f64),
+                temperature: self.temperature.map(|t| t as f64).or(Some(1.0)),
                 top_p: None,
                 top_k: None,
             }),
@@ -297,7 +298,12 @@ impl LanguageModelRequest {
         }
     }
 
-    pub fn into_anthropic(self, model: String, max_output_tokens: u32) -> anthropic::Request {
+    pub fn into_anthropic(
+        self,
+        model: String,
+        default_temperature: f32,
+        max_output_tokens: u32,
+    ) -> anthropic::Request {
         let mut new_messages: Vec<anthropic::Message> = Vec::new();
         let mut system_message = String::new();
 
@@ -399,7 +405,7 @@ impl LanguageModelRequest {
             tool_choice: None,
             metadata: None,
             stop_sequences: Vec::new(),
-            temperature: Some(self.temperature),
+            temperature: self.temperature.or(Some(default_temperature)),
             top_k: None,
             top_p: None,
         }

@@ -57,7 +57,7 @@ pub fn init(
     new_server_id: LanguageServerId,
     fs: Arc<dyn Fs>,
     http: Arc<dyn HttpClient>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     cx: &mut AppContext,
 ) {
     copilot_chat::init(fs, http.clone(), cx);
@@ -302,7 +302,7 @@ pub struct Completion {
 
 pub struct Copilot {
     http: Arc<dyn HttpClient>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     server: CopilotServer,
     buffers: HashSet<WeakModel<Buffer>>,
     server_id: LanguageServerId,
@@ -334,7 +334,7 @@ impl Copilot {
     fn start(
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut this = Self {
@@ -392,7 +392,7 @@ impl Copilot {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Model<Self>, lsp::FakeLanguageServer) {
         use lsp::FakeLanguageServer;
-        use node_runtime::FakeNodeRuntime;
+        use node_runtime::NodeRuntime;
 
         let (server, fake_server) = FakeLanguageServer::new(
             LanguageServerId(0),
@@ -406,7 +406,7 @@ impl Copilot {
             cx.to_async(),
         );
         let http = http_client::FakeHttpClient::create(|_| async { unreachable!() });
-        let node_runtime = FakeNodeRuntime::new();
+        let node_runtime = NodeRuntime::unavailable();
         let this = cx.new_model(|cx| Self {
             server_id: LanguageServerId(0),
             http: http.clone(),
@@ -425,7 +425,7 @@ impl Copilot {
     async fn start_language_server(
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         this: WeakModel<Self>,
         mut cx: AsyncAppContext,
     ) {
@@ -691,17 +691,17 @@ impl Copilot {
     fn handle_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running() {
             if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
             {
                 match event {
-                    language::Event::Edited => {
+                    language::BufferEvent::Edited => {
                         drop(registered_buffer.report_changes(&buffer, cx));
                     }
-                    language::Event::Saved => {
+                    language::BufferEvent::Saved => {
                         server
                             .lsp
                             .notify::<lsp::notification::DidSaveTextDocument>(
@@ -713,7 +713,8 @@ impl Copilot {
                                 },
                             )?;
                     }
-                    language::Event::FileHandleChanged | language::Event::LanguageChanged => {
+                    language::BufferEvent::FileHandleChanged
+                    | language::BufferEvent::LanguageChanged => {
                         let new_language_id = id_for_language(buffer.read(cx).language());
                         let new_uri = uri_for_buffer(&buffer, cx);
                         if new_uri != registered_buffer.uri

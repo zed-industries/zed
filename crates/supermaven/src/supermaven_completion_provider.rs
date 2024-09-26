@@ -1,12 +1,18 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use editor::{Direction, InlineCompletionProvider};
+use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use language::{language_settings::all_language_settings, Anchor, Buffer};
-use std::{ops::Range, path::Path, sync::Arc, time::Duration};
-use text::ToPoint;
+use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
+use std::{
+    ops::{AddAssign, Range},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
+use text::{ToOffset, ToPoint};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -34,6 +40,70 @@ impl SupermavenCompletionProvider {
     pub fn with_telemetry(mut self, telemetry: Arc<Telemetry>) -> Self {
         self.telemetry = Some(telemetry);
         self
+    }
+}
+
+// Computes the completion state from the difference between the completion text.
+// this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
+// for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
+// the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
+fn completion_state_from_diff(
+    snapshot: BufferSnapshot,
+    completion_text: &str,
+    position: Anchor,
+    delete_range: Range<Anchor>,
+) -> CompletionProposal {
+    let buffer_text = snapshot
+        .text_for_range(delete_range.clone())
+        .collect::<String>();
+
+    let mut inlays: Vec<InlayProposal> = Vec::new();
+
+    let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
+    let buffer_graphemes: Vec<&str> = buffer_text.graphemes(true).collect();
+
+    let mut offset = position.to_offset(&snapshot);
+
+    let mut i = 0;
+    let mut j = 0;
+    while i < completion_graphemes.len() && j < buffer_graphemes.len() {
+        // find the next instance of the buffer text in the completion text.
+        let k = completion_graphemes[i..]
+            .iter()
+            .position(|c| *c == buffer_graphemes[j]);
+        match k {
+            Some(k) => {
+                if k != 0 {
+                    // the range from the current position to item is an inlay.
+                    inlays.push(InlayProposal::Suggestion(
+                        snapshot.anchor_after(offset),
+                        completion_graphemes[i..i + k].join("").into(),
+                    ));
+                }
+                i += k + 1;
+                j += 1;
+                offset.add_assign(buffer_graphemes[j - 1].len());
+            }
+            None => {
+                // there are no more matching completions, so drop the remaining
+                // completion text as an inlay.
+                break;
+            }
+        }
+    }
+
+    if j == buffer_graphemes.len() && i < completion_graphemes.len() {
+        // there is leftover completion text, so drop it as an inlay.
+        inlays.push(InlayProposal::Suggestion(
+            snapshot.anchor_after(offset),
+            completion_graphemes[i..].join("").into(),
+        ));
+    }
+
+    CompletionProposal {
+        inlays,
+        text: completion_text.into(),
+        delete_range: Some(delete_range),
     }
 }
 
@@ -138,7 +208,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &'a AppContext,
-    ) -> Option<(&'a str, Option<Range<Anchor>>)> {
+    ) -> Option<CompletionProposal> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -153,7 +223,12 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
-            Some((completion_text, Some(range)))
+            Some(completion_state_from_diff(
+                snapshot,
+                completion_text,
+                cursor_position,
+                range,
+            ))
         } else {
             None
         }

@@ -12,6 +12,12 @@ use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
 use std::{fmt, future};
 
+/// Trait for embedding providers. Texts in, vectors out.
+pub trait EmbeddingProvider: Sync + Send {
+    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>>;
+    fn batch_size(&self) -> usize;
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Embedding(Vec<f32>);
 
@@ -36,14 +42,23 @@ impl Embedding {
         self.0.len()
     }
 
-    pub fn similarity(self, other: &Embedding) -> f32 {
-        debug_assert_eq!(self.0.len(), other.0.len());
-        self.0
+    pub fn similarity(&self, others: &[Embedding]) -> (f32, usize) {
+        debug_assert!(others.iter().all(|other| self.0.len() == other.0.len()));
+        others
             .iter()
-            .copied()
-            .zip(other.0.iter().copied())
-            .map(|(a, b)| a * b)
-            .sum()
+            .enumerate()
+            .map(|(index, other)| {
+                let dot_product: f32 = self
+                    .0
+                    .iter()
+                    .copied()
+                    .zip(other.0.iter().copied())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                (dot_product, index)
+            })
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or((0.0, 0))
     }
 }
 
@@ -66,12 +81,6 @@ impl fmt::Display for Embedding {
         }
         write!(f, "])")
     }
-}
-
-/// Trait for embedding providers. Texts in, vectors out.
-pub trait EmbeddingProvider: Sync + Send {
-    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>>;
-    fn batch_size(&self) -> usize;
 }
 
 #[derive(Debug)]
