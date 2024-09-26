@@ -227,6 +227,7 @@ pub struct AppContext {
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
+    keyboard_layout_id: String,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) background_executor: BackgroundExecutor,
@@ -274,11 +275,13 @@ impl AppContext {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
+        let keyboard_layout_id = platform.keyboard_layout_id();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
                 platform: platform.clone(),
+                keyboard_layout_id,
                 text_system,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -313,6 +316,14 @@ impl AppContext {
         });
 
         init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+
+        platform.on_keyboard_layout_changed(Box::new({
+            let cx = app.clone();
+            move || {
+                let layout = cx.borrow().platform.keyboard_layout_id();
+                cx.borrow_mut().keyboard_layout_id = layout;
+            }
+        }));
 
         platform.on_quit(Box::new({
             let cx = app.clone();

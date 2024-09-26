@@ -274,6 +274,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         && first_char.map_or(true, |ch| {
             !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
         });
+    let mut ime_key = None;
 
     #[allow(non_upper_case_globals)]
     let key = match first_char {
@@ -317,9 +318,10 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             let mut chars_ignoring_modifiers_and_shift =
                 chars_for_modified_key(native_event.keyCode(), false, false);
 
-            // Honor ⌘ when Dvorak-QWERTY is used.
+            // Use the command keyboard for bindings by default.
             let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
-            if command && chars_ignoring_modifiers_and_shift != chars_with_cmd {
+            if chars_ignoring_modifiers_and_shift != chars_with_cmd {
+                ime_key = Some(chars_ignoring_modifiers);
                 chars_ignoring_modifiers =
                     chars_for_modified_key(native_event.keyCode(), true, shift);
                 chars_ignoring_modifiers_and_shift = chars_with_cmd;
@@ -351,7 +353,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             function,
         },
         key,
-        ime_key: None,
+        ime_key,
     }
 }
 

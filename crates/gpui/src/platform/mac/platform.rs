@@ -67,6 +67,17 @@ const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    fn TISCopyCurrentKeyboardInputSource() -> *mut c_void;
+    fn TISGetInputSourceProperty(
+        inputSource: *mut c_void,
+        propertyKey: CFStringRef,
+    ) -> *const c_void;
+}
+
+static kTISPropertyInputSourceID: &[u8] = b"TISPropertyInputSourceID\0";
+
 #[ctor]
 unsafe fn build_classes() {
     APP_CLASS = {
@@ -135,6 +146,10 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+        decl.add_method(
+            sel!(keyboardLayoutDidChange:),
+            keyboard_layout_did_change as extern "C" fn(&mut Object, Sel, id),
+        );
 
         decl.register()
     }
@@ -159,6 +174,7 @@ pub(crate) struct MacPlatformState {
     menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
+    keyboard_layout_changed: Option<Box<dyn FnMut()>>,
     dock_menu: Option<id>,
 }
 
@@ -188,6 +204,7 @@ impl MacPlatform {
             menu_actions: Default::default(),
             open_urls: None,
             finish_launching: None,
+            keyboard_layout_changed: None,
             dock_menu: None,
         }))
     }
@@ -618,6 +635,27 @@ impl Platform for MacPlatform {
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.0.lock().open_urls = Some(callback);
+    }
+
+    fn on_keyboard_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().keyboard_layout_changed = Some(callback);
+    }
+
+    fn keyboard_layout_id(&self) -> String {
+        unsafe {
+            let current_input_source = TISCopyCurrentKeyboardInputSource();
+            let property = CFString::new("TISPropertyInputSourceID");
+            dbg!(&current_input_source);
+            let input_source_id =
+                TISGetInputSourceProperty(current_input_source, property.as_concrete_TypeRef());
+            dbg!(&input_source_id);
+            let cf_string = CFString::wrap_under_get_rule(input_source_id as _);
+            let result = cf_string.to_string();
+
+            CFRelease(current_input_source as *mut _);
+
+            dbg!(result)
+        }
     }
 
     fn prompt_for_paths(
@@ -1214,10 +1252,38 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+        let observer: id = this as *mut _ as id;
         let platform = get_mac_platform(this);
+
+        let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+        let selector = sel!(keyboardLayoutDidChange:);
+        let name = NSString::alloc(nil)
+            .init_str("NSTextInputContextKeyboardSelectionDidChangeNotification");
+        let _: () = msg_send![notification_center,
+                              addObserver:observer
+                              selector:selector
+                              name:name
+                              object:nil];
+
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
             callback();
+        }
+    }
+}
+
+// Add this new method to handle the keyboard layout change notification
+extern "C" fn keyboard_layout_did_change(this: &mut Object, _: Sel, _: id) {
+    unsafe {
+        let platform = get_mac_platform(this);
+        let callback = platform.0.lock().keyboard_layout_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            platform
+                .0
+                .lock()
+                .keyboard_layout_changed
+                .get_or_insert(callback);
         }
     }
 }

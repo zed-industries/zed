@@ -159,6 +159,9 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn on_keyboard_layout_changed(&self, callback: Box<dyn FnMut()>);
+    fn keyboard_layout_id(&self) -> String;
+
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn add_recent_document(&self, _path: &Path) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);

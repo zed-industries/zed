@@ -3271,10 +3271,18 @@ impl<'a> WindowContext<'a> {
             keystroke = Some(key_down_event.keystroke.clone());
         }
 
-        let Some(keystroke) = keystroke else {
+        let Some(mut keystroke) = keystroke else {
             self.finish_dispatch_key_event(event, dispatch_path);
             return;
         };
+
+        dbg!(&keystroke.key);
+        for (key, replacement) in [("ö", "["), ("Ö", "{"), ("ä", "]"), ("Ä", "}")].into_iter() {
+            if keystroke.key == key {
+                keystroke.key = replacement.to_string();
+            }
+        }
+        dbg!(&keystroke.key);
 
         let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
         if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
@@ -3703,6 +3711,16 @@ impl<'a> WindowContext<'a> {
                 action,
                 &self.window.rendered_frame.dispatch_tree.context_stack,
             )
+            .into_iter()
+            .map(|mut binding| {
+                for keystroke in binding.keystrokes.iter_mut() {
+                    if keystroke.key == "[" {
+                        keystroke.key = "ö".to_string()
+                    }
+                }
+                binding
+            })
+            .collect()
     }
 
     /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
@@ -3721,7 +3739,18 @@ impl<'a> WindowContext<'a> {
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
-        dispatch_tree.bindings_for_action(action, &context_stack)
+        dispatch_tree
+            .bindings_for_action(action, &context_stack)
+            .into_iter()
+            .map(|mut binding| {
+                for keystroke in binding.keystrokes.iter_mut() {
+                    if keystroke.key == "[" {
+                        keystroke.key = "ö".to_string()
+                    }
+                }
+                binding
+            })
+            .collect()
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
