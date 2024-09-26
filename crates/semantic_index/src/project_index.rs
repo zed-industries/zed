@@ -2,6 +2,7 @@ use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
     embedding_index::EmbeddingIndexEntry,
     summary_index::FileSummary,
+    tfidf::{tokenize_query, Bm25Calculator, Bm25Parameters, SimpleTokenizer},
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
 use anyhow::{anyhow, Context, Result};
@@ -233,6 +234,7 @@ impl ProjectIndex {
         &self,
         queries: Vec<String>,
         limit: usize,
+        mixing_param: f32,
         cx: &AppContext,
     ) -> Task<Result<Vec<SearchResult>>> {
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
@@ -279,14 +281,37 @@ impl ProjectIndex {
         let project = self.project.clone();
         let embedding_provider = self.embedding_provider.clone();
         cx.spawn(|cx| async move {
+            log::info!("Searching for {queries:?}");
+            // BM-25: Init term-frequency calculator and tokenize query
+            #[cfg(debug_assertions)]
+            let bm25_query_start = std::time::Instant::now();
+            let bm25_calculator = {
+                let metadata = self
+                    .worktree_indices
+                    .values()
+                    .find_map(|index| {
+                        if let WorktreeIndexHandle::Loaded { index } = index {
+                            Some(index.read(cx).embedding_index().get_tfidf_metadata(cx))
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or_else(|| anyhow!("No loaded worktree index found"))?;
+                Bm25Calculator::new(Bm25Parameters::default(), metadata)
+            };
+            let tokenizer = SimpleTokenizer::new();
+            let query_terms = queries
+                .iter()
+                .map(|q| tokenize_query(q, &tokenizer))
+                .collect();
+
+            // Similarity search: Embed query
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
-            log::info!("Searching for {queries:?}");
             let queries: Vec<TextToEmbed> = queries
                 .iter()
                 .map(|s| TextToEmbed::new(s.as_str()))
                 .collect();
-
             let query_embeddings = embedding_provider.embed(&queries[..]).await?;
             if query_embeddings.len() != queries.len() {
                 return Err(anyhow!(
@@ -306,11 +331,21 @@ impl ProjectIndex {
                     for results in results_by_worker.iter_mut() {
                         cx.spawn(async {
                             while let Ok((worktree_id, path, chunk)) = chunks_rx.recv().await {
-                                let (score, query_index) =
+                                let (embedding_score, query_index) =
                                     chunk.embedding.similarity(&query_embeddings);
 
+                                let bm25_score = bm25_calculator.calculate_score(
+                                    &query_terms[query_index],
+                                    &chunk.term_frequencies,
+                                    chunk.chunk_length,
+                                );
+                                let combined_score = mixing_param * embedding_score
+                                    + (1. - mixing_param) * bm25_score;
+
                                 let ix = match results.binary_search_by(|probe| {
-                                    score.partial_cmp(&probe.score).unwrap_or(Ordering::Equal)
+                                    combined_score
+                                        .partial_cmp(&probe.score)
+                                        .unwrap_or(Ordering::Equal)
                                 }) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
@@ -322,7 +357,7 @@ impl ProjectIndex {
                                             path: path.clone(),
                                             range: chunk.chunk.range.clone(),
                                             query_index,
-                                            score,
+                                            score: combined_score,
                                         },
                                     );
                                     if results.len() > limit {

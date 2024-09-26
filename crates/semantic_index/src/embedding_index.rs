@@ -488,6 +488,22 @@ impl EmbeddingIndex {
         Ok(())
     }
 
+    pub fn get_tfidf_metadata(&self, cx: &AppContext) -> Task<Result<TfIdfMetadata>> {
+        let db_connection = self.db_connection.clone();
+        let db = self.db;
+
+        cx.background_executor().spawn(async move {
+            let txn = db_connection
+                .read_txn()
+                .context("failed to create read transaction")?;
+
+            match db.get(&txn, Self::TFIDF_METADATA_KEY)? {
+                Some(EmbeddingIndexEntry::Metadata(metadata)) => Ok(metadata),
+                _ => Err(anyhow!("TfIdfMetadata not found in the database")),
+            }
+        })
+    }
+
     pub fn reconcile_tfidf_metadata(&self, cx: &AsyncAppContext) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let db = self.db;
