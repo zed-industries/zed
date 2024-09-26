@@ -2768,7 +2768,7 @@ impl Render for ProjectPanel {
                             .with_render_fn(
                                 move |layout, indent_size, item_height| {
                                     const LEFT_OFFSET: f32 = 14.;
-                                    const PADDING_Y: f32 = 8.;
+                                    const PADDING_Y: f32 = 4.;
 
                                     ui::RenderedIndentGuide {
                                         bounds: Bounds::new(
