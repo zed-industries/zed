@@ -147,13 +147,17 @@ It is also possible that you are running out of file descriptors. You can check 
 
 ### FIPS Mode OpenSSL internal error
 
-If your machine is running in FIPS mode (`cat /proc/sys/crypto/fips_enabled` or `sysctl crypto.fips_enabled` are set to `1`) and Zed hangs when starting, check if `zed --foreground` returns the error
+If your machine is running in FIPS mode (`cat /proc/sys/crypto/fips_enabled` or `sysctl crypto.fips_enabled` are set to `1`) Zed may hang when starting and output the following when launched with `zed --foreground`:
+
 ```
 crypto/fips/fips.c:154: OpenSSL internal error: FATAL FIPS SELFTEST FAILURE
 ```
-If so, try removing the `libssl` and `libcrypto` libraries from the `zed.app/lib` directory
+
+As a workaround you can try removing the bundled `libssl` and `libcrypto` libraries from the `zed.app/lib` directory:
+
 ```
-rm zed.app/lib/libssl.so.1.1
-rm zed.app/lib/libcrypto.so.1.1
+rm ~/.local/zed.app/lib/libssl.so.1.1
+rm ~/.local/zed.app/lib/libcrypto.so.1.1
 ```
-so that `zed` will use the FIPS compliant system ssl and crypto libraries instead of the ones bundled with `zed`.
+
+This will force zed to fallback to the system `libssl` and `libcrypto` libraries.
