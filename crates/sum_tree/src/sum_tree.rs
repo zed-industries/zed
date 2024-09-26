@@ -345,7 +345,7 @@ impl<T: Item> SumTree<T> {
         Iter::new(self)
     }
 
-    pub fn cursor<'a, S>(&'a self, cx: &<T::Summary as Summary>::Context) -> Cursor<T, S>
+    pub fn cursor<'a, S>(&'a self, cx: &<T::Summary as Summary>::Context) -> Cursor<'a, T, S>
     where
         S: Dimension<'a, T::Summary>,
     {
@@ -358,7 +358,7 @@ impl<T: Item> SumTree<T> {
         &'a self,
         cx: &<T::Summary as Summary>::Context,
         filter_node: F,
-    ) -> FilterCursor<F, T, U>
+    ) -> FilterCursor<'a, F, T, U>
     where
         F: FnMut(&T::Summary) -> bool,
         U: Dimension<'a, T::Summary>,

@@ -762,6 +762,7 @@
   // }
   //
   "file_types": {
+    "Plain Text": ["txt"],
     "JSON": ["flake.lock"],
     "JSONC": [
       "**/.zed/**/*.json",
@@ -782,7 +783,7 @@
   /// or to ensure Zed always downloads and installs an isolated version of node:
   /// {
   ///   "node": {
-  ///     "disable_path_lookup": true
+  ///     "ignore_system_version": true,
   ///   }
   /// NOTE: changing this setting currently requires restarting Zed.
   "node": {},

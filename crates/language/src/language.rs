@@ -29,7 +29,7 @@ use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::LanguageName;
-use lsp::{CodeActionKind, LanguageServerBinary};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -69,7 +69,7 @@ pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
 pub use language_registry::{
     AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
-    LanguageServerBinaryStatus, PendingLanguageServer, QUERY_FILENAME_PREFIXES,
+    LanguageServerBinaryStatus, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
 pub use outline::*;
@@ -249,26 +249,15 @@ impl CachedLspAdapter {
 
     pub async fn get_language_server_command(
         self: Arc<Self>,
-        container_dir: Option<Arc<Path>>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncAppContext,
     ) -> Result<LanguageServerBinary> {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
             .clone()
-            .get_language_server_command(container_dir, delegate, cached_binary, cx)
+            .get_language_server_command(delegate, binary_options, cached_binary, cx)
             .await
-    }
-
-    pub fn can_be_reinstalled(&self) -> bool {
-        self.adapter.can_be_reinstalled()
-    }
-
-    pub async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        self.adapter.installation_test_binary(container_dir).await
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -322,7 +311,12 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+    async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
+    async fn npm_package_installed_version(
+        &self,
+        package_name: &str,
+    ) -> Result<Option<(PathBuf, String)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
@@ -335,8 +329,8 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        container_dir: Option<Arc<Path>>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
@@ -352,29 +346,29 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
-                log::info!(
-                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                    self.name().0,
-                    binary.path,
-                    binary.arguments
-                );
-                return Ok(binary);
+            if binary_options.allow_path_lookup {
+                if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
+                    log::info!(
+                        "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                        self.name().0,
+                        binary.path,
+                        binary.arguments
+                    );
+                    return Ok(binary);
+                }
+            }
+
+            if !binary_options.allow_binary_download {
+                return Err(anyhow!("downloading language servers disabled"));
             }
 
             if let Some(cached_binary) = cached_binary.as_ref() {
                 return Ok(cached_binary.clone());
             }
 
-            let Some(container_dir) = container_dir else {
+            let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await else {
                 anyhow::bail!("cannot download language servers for remotes (yet)")
             };
-
-            if !container_dir.exists() {
-                smol::fs::create_dir_all(&container_dir)
-                    .await
-                    .context("failed to create container directory")?;
-            }
 
             let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
 
@@ -441,21 +435,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary>;
-
-    /// Returns `true` if a language server can be reinstalled.
-    ///
-    /// If language server initialization fails, a reinstallation will be attempted unless the value returned from this method is `false`.
-    ///
-    /// Implementations that rely on software already installed on user's system
-    /// should have [`can_be_reinstalled`](Self::can_be_reinstalled) return `false`.
-    fn can_be_reinstalled(&self) -> bool {
-        true
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
     ) -> Option<LanguageServerBinary>;
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
@@ -1711,8 +1690,8 @@ impl LspAdapter for FakeLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Option<Arc<Path>>,
         _: Arc<dyn LspAdapterDelegate>,
+        _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
@@ -1740,10 +1719,6 @@ impl LspAdapter for FakeLspAdapter {
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        unreachable!();
-    }
-
-    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         unreachable!();
     }
 

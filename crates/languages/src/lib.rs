@@ -31,6 +31,7 @@ mod yaml;
 struct LanguageDir;
 
 pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut AppContext) {
+    #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
         ("c", tree_sitter_c::LANGUAGE),
@@ -282,9 +283,21 @@ fn load_config(name: &str) -> LanguageConfig {
     )
     .unwrap();
 
-    ::toml::from_str(&config_toml)
+    #[allow(unused_mut)]
+    let mut config: LanguageConfig = ::toml::from_str(&config_toml)
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
-        .unwrap()
+        .unwrap();
+
+    #[cfg(not(feature = "load-grammars"))]
+    {
+        config = LanguageConfig {
+            name: config.name,
+            matcher: config.matcher,
+            ..Default::default()
+        }
+    }
+
+    config
 }
 
 fn load_queries(name: &str) -> LanguageQueries {

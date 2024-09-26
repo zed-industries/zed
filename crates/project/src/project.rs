@@ -590,10 +590,7 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let tasks = Inventory::new(cx);
-            let global_snippets_dir = paths::config_dir().join("snippets");
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
-
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new_model(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
@@ -716,11 +713,12 @@ impl Project {
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
             let lsp_store = cx.new_model(|cx| {
-                LspStore::new_ssh(
+                LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
                     languages.clone(),
                     ssh.clone().into(),
+                    SSH_PROJECT_ID,
                     cx,
                 )
             });
@@ -884,9 +882,8 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
-            let global_snippets_dir = paths::config_dir().join("snippets");
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
@@ -3983,16 +3980,8 @@ impl Project {
     pub fn supplementary_language_servers<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl '_ + Iterator<Item = (LanguageServerId, LanguageServerName)> {
+    ) -> impl 'a + Iterator<Item = (LanguageServerId, LanguageServerName)> {
         self.lsp_store.read(cx).supplementary_language_servers()
-    }
-
-    pub fn language_server_adapter_for_id(
-        &self,
-        id: LanguageServerId,
-        cx: &AppContext,
-    ) -> Option<Arc<CachedLspAdapter>> {
-        self.lsp_store.read(cx).language_server_adapter_for_id(id)
     }
 
     pub fn language_server_for_id(

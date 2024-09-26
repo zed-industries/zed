@@ -11,7 +11,7 @@ use futures::{
     future::BoxFuture,
     select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, StreamExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion};
+use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, Task};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
@@ -51,11 +51,12 @@ pub struct SshSession {
     spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
     client_socket: Option<SshSocket>,
     state: Mutex<ProtoMessageHandlerSet>, // Lock
+    _io_task: Option<Task<Result<()>>>,
 }
 
 struct SshClientState {
     socket: SshSocket,
-    _master_process: process::Child,
+    master_process: process::Child,
     _temp_dir: TempDir,
 }
 
@@ -173,8 +174,7 @@ impl SshSession {
         let mut child_stdout = remote_server_child.stdout.take().unwrap();
         let mut child_stdin = remote_server_child.stdin.take().unwrap();
 
-        let executor = cx.background_executor().clone();
-        executor.clone().spawn(async move {
+        let io_task = cx.background_executor().spawn(async move {
             let mut stdin_buffer = Vec::new();
             let mut stdout_buffer = Vec::new();
             let mut stderr_buffer = Vec::new();
@@ -264,9 +264,18 @@ impl SshSession {
                     }
                 }
             }
-        }).detach();
+        });
 
-        cx.update(|cx| Self::new(incoming_rx, outgoing_tx, spawn_process_tx, Some(socket), cx))
+        cx.update(|cx| {
+            Self::new(
+                incoming_rx,
+                outgoing_tx,
+                spawn_process_tx,
+                Some(socket),
+                Some(io_task),
+                cx,
+            )
+        })
     }
 
     pub fn server(
@@ -275,7 +284,7 @@ impl SshSession {
         cx: &AppContext,
     ) -> Arc<SshSession> {
         let (tx, _rx) = mpsc::unbounded();
-        Self::new(incoming_rx, outgoing_tx, tx, None, cx)
+        Self::new(incoming_rx, outgoing_tx, tx, None, None, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -293,6 +302,7 @@ impl SshSession {
                     client_to_server_tx,
                     tx.clone(),
                     None, // todo()
+                    None,
                     cx,
                 )
             }),
@@ -301,6 +311,7 @@ impl SshSession {
                     client_to_server_rx,
                     server_to_client_tx,
                     tx.clone(),
+                    None,
                     None,
                     cx,
                 )
@@ -313,6 +324,7 @@ impl SshSession {
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
         client_socket: Option<SshSocket>,
+        io_task: Option<Task<Result<()>>>,
         cx: &AppContext,
     ) -> Arc<SshSession> {
         let this = Arc::new(Self {
@@ -322,13 +334,18 @@ impl SshSession {
             spawn_process_tx,
             client_socket,
             state: Default::default(),
+            _io_task: io_task,
         });
 
         cx.spawn(|cx| {
-            let this = this.clone();
+            let this = Arc::downgrade(&this);
             async move {
                 let peer_id = PeerId { owner_id: 0, id: 0 };
                 while let Some(incoming) = incoming_rx.next().await {
+                    let Some(this) = this.upgrade() else {
+                        return anyhow::Ok(());
+                    };
+
                     if let Some(request_id) = incoming.responding_to {
                         let request_id = MessageId(request_id);
                         let sender = this.response_channels.lock().remove(&request_id);
@@ -576,7 +593,7 @@ impl SshClientState {
                 connection_options,
                 socket_path,
             },
-            _master_process: master_process,
+            master_process,
             _temp_dir: temp_dir,
         })
     }
@@ -695,6 +712,14 @@ impl SshClientState {
                 dest_path.display(),
                 String::from_utf8_lossy(&output.stderr)
             ))
+        }
+    }
+}
+
+impl Drop for SshClientState {
+    fn drop(&mut self) {
+        if let Err(error) = self.master_process.kill() {
+            log::error!("failed to kill SSH master process: {}", error);
         }
     }
 }

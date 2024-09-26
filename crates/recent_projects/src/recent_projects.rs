@@ -259,23 +259,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                             dev_server_project.paths.join("")
                         )
                     }
-                    SerializedWorkspaceLocation::Ssh(ssh_project) => {
-                        format!(
-                            "{}{}{}{}",
-                            ssh_project.host,
-                            ssh_project
-                                .port
-                                .as_ref()
-                                .map(|port| port.to_string())
-                                .unwrap_or_default(),
-                            ssh_project.paths.join(","),
-                            ssh_project
-                                .user
-                                .as_ref()
-                                .map(|user| user.to_string())
-                                .unwrap_or_default()
-                        )
-                    }
+                    SerializedWorkspaceLocation::Ssh(ssh_project) => ssh_project
+                        .ssh_urls()
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(""),
                 };
 
                 StringMatchCandidate::new(id, combined_string)
@@ -458,6 +447,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .order()
                     .iter()
                     .filter_map(|i| paths.paths().get(*i).cloned())
+                    .map(|path| path.compact())
                     .collect(),
             ),
             SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
@@ -473,7 +463,6 @@ impl PickerDelegate for RecentProjectsDelegate {
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
             .iter()
             .map(|path| {
-                let path = path.compact();
                 let highlighted_text =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
 
@@ -509,7 +498,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         .color(Color::Muted)
                                         .into_any_element()
                                 }
-                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Screen)
+                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
                                     .color(Color::Muted)
                                     .into_any_element(),
                                 SerializedWorkspaceLocation::DevServer(_) => {
@@ -704,7 +693,6 @@ fn highlights_for_path(
         },
     )
 }
-
 impl RecentProjectsDelegate {
     fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(selected_match) = self.matches.get(ix) {

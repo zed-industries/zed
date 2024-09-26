@@ -2119,7 +2119,7 @@ impl Workspace {
     pub fn items<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
+    ) -> impl 'a + Iterator<Item = &'a Box<dyn ItemHandle>> {
         self.panes.iter().flat_map(|pane| pane.read(cx).items())
     }
 
@@ -5544,12 +5544,21 @@ pub fn open_ssh_project(
             )
         })?;
 
+        let mut project_paths_to_open = vec![];
+        let mut project_path_errors = vec![];
+
         for path in paths {
-            project
-                .update(&mut cx, |project, cx| {
-                    project.find_or_create_worktree(&path, true, cx)
-                })?
-                .await?;
+            let result = cx
+                .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
+                .await;
+            match result {
+                Ok((_, project_path)) => {
+                    project_paths_to_open.push((path.clone(), Some(project_path)));
+                }
+                Err(error) => {
+                    project_path_errors.push(error);
+                }
+            };
         }
 
         let serialized_workspace =
@@ -5576,11 +5585,21 @@ pub fn open_ssh_project(
             .update(&mut cx, |_, cx| {
                 cx.activate_window();
 
-                open_items(serialized_workspace, vec![], app_state, cx)
+                open_items(serialized_workspace, project_paths_to_open, app_state, cx)
             })?
             .await?;
 
-        Ok(())
+        window.update(&mut cx, |workspace, cx| {
+            for error in project_path_errors {
+                if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
+                    if let Some(path) = error.error_tag("path") {
+                        workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                    }
+                } else {
+                    workspace.show_error(&error, cx)
+                }
+            }
+        })
     })
 }
 
@@ -5607,6 +5626,9 @@ pub fn join_dev_server_project(
             })
         });
 
+        let serialized_workspace: Option<SerializedWorkspace> =
+            persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
+
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace
         } else {
@@ -5620,10 +5642,7 @@ pub fn join_dev_server_project(
             )
             .await?;
 
-            let serialized_workspace: Option<SerializedWorkspace> =
-                persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
-
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
+            let workspace_id = if let Some(ref serialized_workspace) = serialized_workspace {
                 serialized_workspace.id
             } else {
                 persistence::DB.next_id().await?
@@ -5650,10 +5669,13 @@ pub fn join_dev_server_project(
             }
         };
 
-        workspace.update(&mut cx, |_, cx| {
-            cx.activate(true);
-            cx.activate_window();
-        })?;
+        workspace
+            .update(&mut cx, |_, cx| {
+                cx.activate(true);
+                cx.activate_window();
+                open_items(serialized_workspace, vec![], app_state, cx)
+            })?
+            .await?;
 
         anyhow::Ok(workspace)
     })
