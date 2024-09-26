@@ -585,7 +585,7 @@ impl SshClientState {
         let stdout = master_process.stdout.as_mut().unwrap();
         let mut output = Vec::new();
         let connection_timeout = Duration::from_secs(10);
-        let result = read_with_timeout(stdout, connection_timeout.clone(), &mut output).await;
+        let result = read_with_timeout(stdout, connection_timeout, &mut output).await;
         if let Err(e) = result {
             let error_message = if e.kind() == std::io::ErrorKind::TimedOut {
                 format!(
