@@ -10,6 +10,7 @@ pub struct PlayerColor {
     pub cursor: Hsla,
     pub background: Hsla,
     pub selection: Hsla,
+    pub selection_border: Hsla,
 }
 
 /// A collection of colors that are used to color players in the editor.
@@ -37,41 +38,49 @@ impl PlayerColors {
                 cursor: blue().dark().step_9(),
                 background: blue().dark().step_5(),
                 selection: blue().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: orange().dark().step_9(),
                 background: orange().dark().step_5(),
                 selection: orange().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: pink().dark().step_9(),
                 background: pink().dark().step_5(),
                 selection: pink().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: lime().dark().step_9(),
                 background: lime().dark().step_5(),
                 selection: lime().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: purple().dark().step_9(),
                 background: purple().dark().step_5(),
                 selection: purple().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: amber().dark().step_9(),
                 background: amber().dark().step_5(),
                 selection: amber().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: jade().dark().step_9(),
                 background: jade().dark().step_5(),
                 selection: jade().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: red().dark().step_9(),
                 background: red().dark().step_5(),
                 selection: red().dark().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
         ])
     }
@@ -82,41 +91,49 @@ impl PlayerColors {
                 cursor: blue().light().step_9(),
                 background: blue().light().step_4(),
                 selection: blue().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: orange().light().step_9(),
                 background: orange().light().step_4(),
                 selection: orange().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: pink().light().step_9(),
                 background: pink().light().step_4(),
                 selection: pink().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: lime().light().step_9(),
                 background: lime().light().step_4(),
                 selection: lime().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: purple().light().step_9(),
                 background: purple().light().step_4(),
                 selection: purple().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: amber().light().step_9(),
                 background: amber().light().step_4(),
                 selection: amber().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: jade().light().step_9(),
                 background: jade().light().step_4(),
                 selection: jade().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
             PlayerColor {
                 cursor: red().light().step_9(),
                 background: red().light().step_4(),
                 selection: red().light().step_3(),
+                selection_border: Hsla::transparent_black(),
             },
         ])
     }
@@ -137,6 +154,7 @@ impl PlayerColors {
             cursor: local.cursor.grayscale(),
             background: local.background.grayscale(),
             selection: local.selection.grayscale(),
+            selection_border: local.selection_border.grayscale(),
         }
     }
 
@@ -164,18 +182,24 @@ impl PlayerColors {
                 .selection
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok());
+            let selection_border = player
+                .selection_border
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok());
 
             if let Some(player_color) = self.0.get_mut(idx) {
                 *player_color = PlayerColor {
                     cursor: cursor.unwrap_or(player_color.cursor),
                     background: background.unwrap_or(player_color.background),
                     selection: selection.unwrap_or(player_color.selection),
+                    selection_border: selection_border.unwrap_or(player_color.selection_border),
                 };
             } else {
                 self.0.push(PlayerColor {
                     cursor: cursor.unwrap_or_default(),
                     background: background.unwrap_or_default(),
                     selection: selection.unwrap_or_default(),
+                    selection_border: selection_border.unwrap_or_default(),
                 });
             }
         }

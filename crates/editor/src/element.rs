@@ -3476,7 +3476,7 @@ impl EditorElement {
                     self.paint_highlighted_range(
                         selection.range.clone(),
                         player_color.selection,
-                        Hsla::green(),
+                        player_color.selection_border,
                         corner_radius,
                         corner_radius * 2.,
                         layout,
