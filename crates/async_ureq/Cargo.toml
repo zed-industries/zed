@@ -1,0 +1,36 @@
+[package]
+name = "async_ureq"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[lib]
+path = "src/async_ureq.rs"
+doctest = true
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
+
+[dependencies]
+anyhow.workspace = true
+derive_more.workspace = true
+futures.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+url.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+util.workspace = true
+parking_lot.workspace = true
+
+ureq = "2.10.1"

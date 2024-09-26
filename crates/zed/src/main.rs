@@ -8,6 +8,7 @@ mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
 use assistant::PromptBuilder;
+use async_ureq::AsyncUreq;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -24,7 +25,6 @@ use gpui::{
     UpdateGlobal as _, VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
-use isahc_http_client::IsahcHttpClient;
 use language::LanguageRegistry;
 use log::LevelFilter;
 
@@ -333,9 +333,7 @@ fn main() {
 
     log::info!("========== starting zed ==========");
 
-    let app = App::new()
-        .with_assets(Assets)
-        .with_http_client(IsahcHttpClient::new(None, None));
+    let app = App::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
     let installation_id = app.background_executor().block(installation_id()).ok();
@@ -469,8 +467,8 @@ fn main() {
                     .ok()
             })
             .or_else(read_proxy_from_env);
-        let http = IsahcHttpClient::new(proxy_url, Some(user_agent));
-        cx.set_http_client(http);
+        let http = AsyncUreq::new(proxy_url, user_agent, cx.background_executor().clone());
+        cx.set_http_client(Arc::new(http));
 
         <dyn Fs>::set_global(fs.clone(), cx);
 

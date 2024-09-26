@@ -928,6 +928,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "async_ureq"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "futures 0.3.30",
+ "gpui",
+ "http_client",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "smol",
+ "ureq",
+ "url",
+ "util",
+]
+
+[[package]]
 name = "async_zip"
 version = "0.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4021,6 +4040,7 @@ name = "evals"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async_ureq",
  "clap",
  "client",
  "clock",
@@ -4031,7 +4051,6 @@ dependencies = [
  "git",
  "gpui",
  "http_client",
- "isahc_http_client",
  "language",
  "languages",
  "node_runtime",
@@ -4117,6 +4136,7 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
+ "async_ureq",
  "client",
  "collections",
  "ctor",
@@ -4126,7 +4146,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indexed_docs",
- "isahc_http_client",
  "language",
  "log",
  "lsp",
@@ -9595,8 +9614,23 @@ checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
  "ring 0.17.8",
- "rustls-webpki",
+ "rustls-webpki 0.101.7",
  "sct",
+]
+
+[[package]]
+name = "rustls"
+version = "0.23.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2dabaac7466917e566adb06783a81ca48944c6898a1b08b9374106dd671f4c8"
+dependencies = [
+ "log",
+ "once_cell",
+ "ring 0.17.8",
+ "rustls-pki-types",
+ "rustls-webpki 0.102.8",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -9656,6 +9690,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
  "ring 0.17.8",
+ "untrusted 0.9.0",
+]
+
+[[package]]
+name = "rustls-webpki"
+version = "0.102.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+dependencies = [
+ "ring 0.17.8",
+ "rustls-pki-types",
  "untrusted 0.9.0",
 ]
 
@@ -9955,6 +10000,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "async_ureq",
  "blake3",
  "client",
  "clock",
@@ -9967,7 +10013,6 @@ dependencies = [
  "gpui",
  "heed",
  "http_client",
- "isahc_http_client",
  "language",
  "language_model",
  "languages",
@@ -12527,6 +12572,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "ureq"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74fc6b57825be3373f7054754755f03ac3a8f5d70015ccad699ba2029956f4a"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "log",
+ "once_cell",
+ "rustls 0.23.13",
+ "rustls-pki-types",
+ "url",
+ "webpki-roots 0.26.6",
+]
+
+[[package]]
 name = "url"
 version = "2.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13398,6 +13459,15 @@ name = "webpki-roots"
 version = "0.25.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841c67bff177718f1d4dfefde8d8f0e78f9b6589319ba88312f567fc5841a958"
+dependencies = [
+ "rustls-pki-types",
+]
 
 [[package]]
 name = "weezl"
@@ -14391,6 +14461,7 @@ dependencies = [
  "assets",
  "assistant",
  "async-watch",
+ "async_ureq",
  "audio",
  "auto_update",
  "backtrace",
@@ -14428,7 +14499,6 @@ dependencies = [
  "image_viewer",
  "inline_completion_button",
  "install_cli",
- "isahc_http_client",
  "journal",
  "language",
  "language_model",

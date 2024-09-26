@@ -48,16 +48,16 @@ impl HttpClient for IsahcHttpClient {
         let read_timeout = req
             .extensions()
             .get::<http_client::ReadTimeout>()
-            .map(|t| t.0);
+            .cloned()
+            .unwrap_or_default()
+            .0;
         let req = maybe!({
             let (mut parts, body) = req.into_parts();
             let mut builder = isahc::Request::builder()
                 .method(parts.method)
                 .uri(parts.uri)
-                .version(parts.version);
-            if let Some(read_timeout) = read_timeout {
-                builder = builder.low_speed_timeout(100, read_timeout);
-            }
+                .version(parts.version)
+                .low_speed_timeout(100, read_timeout);
 
             let headers = builder.headers_mut()?;
             mem::swap(headers, &mut parts.headers);

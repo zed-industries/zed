@@ -16,8 +16,16 @@ use std::{
 };
 pub use url::Url;
 
+#[derive(Clone)]
 pub struct ReadTimeout(pub Duration);
-#[derive(Default, Debug, Clone)]
+impl Default for ReadTimeout {
+    fn default() -> Self {
+        Self(Duration::from_secs(5))
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
+
 pub enum RedirectPolicy {
     #[default]
     NoFollow,
