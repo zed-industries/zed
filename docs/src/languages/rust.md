@@ -23,7 +23,7 @@ The following configuration can be used to change the inlay hint settings for `r
         "inlayHints": {
           "maxLength": null,
           "lifetimeElisionHints": {
-            "enable": "skip_trivial"
+            "enable": "skip_trivial",
             "useParameterNames": true,
           },
           "closureReturnTypeHints": {
