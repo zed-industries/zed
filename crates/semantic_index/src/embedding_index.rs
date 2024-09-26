@@ -52,6 +52,8 @@ pub struct EmbeddingIndex {
 }
 
 impl EmbeddingIndex {
+    const TFIDF_METADATA_KEY: &'static str = "__tfidf_metadata__";
+
     pub fn new(
         worktree: Model<Worktree>,
         fs: Arc<dyn Fs>,
@@ -422,7 +424,7 @@ impl EmbeddingIndex {
         let end = deletion_range.1.as_ref().map(|s| s.as_str());
 
         let mut metadata = if let Some(EmbeddingIndexEntry::Metadata(metadata)) =
-            db.get(&txn, "__tfidf_metadata__")?
+            db.get(&txn, Self::TFIDF_METADATA_KEY)?
         {
             metadata
         } else {
@@ -445,7 +447,7 @@ impl EmbeddingIndex {
             .context("failed to delete embedding range")?;
         db.put(
             &mut txn,
-            "__tfidf_metadata__",
+            Self::TFIDF_METADATA_KEY,
             &EmbeddingIndexEntry::Metadata(metadata),
         )
         .context("failed to update embedding metadata")?;
@@ -460,7 +462,7 @@ impl EmbeddingIndex {
     ) -> Result<()> {
         let mut txn = db_connection.write_txn()?;
         let mut metadata = if let Some(EmbeddingIndexEntry::Metadata(metadata)) =
-            db.get(&txn, "__tfidf_metadata__")?
+            db.get(&txn, Self::TFIDF_METADATA_KEY)?
         {
             metadata
         } else {
@@ -478,7 +480,7 @@ impl EmbeddingIndex {
 
         db.put(
             &mut txn,
-            "__tfidf_metadata__",
+            Self::TFIDF_METADATA_KEY,
             &EmbeddingIndexEntry::Metadata(metadata),
         )
         .context("failed to update embedding metadata")?;
@@ -506,7 +508,7 @@ impl EmbeddingIndex {
 
             db.put(
                 &mut txn,
-                "__tfidf_metadata__",
+                Self::TFIDF_METADATA_KEY,
                 &EmbeddingIndexEntry::Metadata(metadata),
             )?;
             txn.commit()?;
