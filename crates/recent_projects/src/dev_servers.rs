@@ -40,7 +40,6 @@ use ui::{
 };
 use ui_input::{FieldLabelLayout, TextField};
 use util::ResultExt;
-use workspace::notifications::NotifyResultExt;
 use workspace::OpenOptions;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
