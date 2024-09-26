@@ -56,7 +56,7 @@ pub struct ScrollbarSettingsContent {
 
 /// Which files containing diagnostic errors/warnings to mark in the project panel.
 ///
-/// Default: errors
+/// Default: all
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowDiagnostics {
@@ -114,7 +114,7 @@ pub struct ProjectPanelSettingsContent {
     pub scrollbar: Option<ScrollbarSettingsContent>,
     /// Which files containing diagnostic errors/warnings to mark in the project panel.
     ///
-    /// Default: errors
+    /// Default: all
     pub show_diagnostics: Option<ShowDiagnostics>,
 }
 
