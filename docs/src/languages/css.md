@@ -1,4 +1,4 @@
-# CSS / PostCSS
+# CSS
 
 CSS and PostCSS support is available natively in Zed.
 
