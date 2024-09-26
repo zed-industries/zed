@@ -40,7 +40,6 @@ use ui::{
 };
 use ui_input::{FieldLabelLayout, TextField};
 use util::ResultExt;
-use workspace::notifications::NotifyResultExt;
 use workspace::OpenOptions;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
@@ -1133,7 +1132,8 @@ impl DevServerProjects {
         let dev_server_id = state.dev_server_id;
         let access_token = state.access_token.clone();
         let ssh_prompt = state.ssh_prompt.clone();
-        let use_direct_ssh = SshSettings::get_global(cx).use_direct_ssh();
+        let use_direct_ssh = SshSettings::get_global(cx).use_direct_ssh()
+            || Client::global(cx).status().borrow().is_signed_out();
 
         let mut kind = state.kind;
         if use_direct_ssh && kind == NewServerKind::LegacySSH {
@@ -1407,7 +1407,6 @@ impl DevServerProjects {
             is_creating = Some(*creating);
             creating_dev_server = Some(*dev_server_id);
         };
-        let is_signed_out = Client::global(cx).status().borrow().is_signed_out();
 
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
@@ -1415,82 +1414,58 @@ impl DevServerProjects {
                     .show_dismiss_button(true)
                     .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::Small)),
             )
-            .when(is_signed_out, |modal| {
-                modal
-                    .section(Section::new().child(div().child(Label::new(
-                        "To continue with the remote development features, you need to sign in to Zed.",
-                    ))))
-                    .footer(
-                        ModalFooter::new().end_slot(
-                            Button::new("sign_in", "Sign in with GitHub")
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .full_width()
-                                .on_click(cx.listener(|_, _, cx| {
-                                    let client = Client::global(cx).clone();
-                                    cx.spawn(|_, mut cx| async move {
-                                        client
-                                            .authenticate_and_connect(true, &cx)
-                                            .await
-                                            .notify_async_err(&mut cx);
-                                    })
-                                    .detach();
-                                    cx.emit(gpui::DismissEvent);
-                                })),
-                        ),
-                    )
-            })
-            .when(!is_signed_out, |modal| {
-                modal.section(
-                    Section::new().child(
-                        div().child(
-                            List::new()
-                                .empty_message("No dev servers registered yet.")
-                                .header(Some(
-                                    ListHeader::new("Connections").end_slot(
-                                        Button::new("register-dev-server-button", "Connect New Server")
-                                            .icon(IconName::Plus)
-                                            .icon_position(IconPosition::Start)
-                                            .icon_color(Color::Muted)
-                                            .on_click(cx.listener(|this, _, cx| {
-                                                this.mode = Mode::CreateDevServer(
-                                                    CreateDevServer {
-                                                        kind: if SshSettings::get_global(cx).use_direct_ssh() { NewServerKind::DirectSSH } else { NewServerKind::LegacySSH },
-                                                        ..Default::default()
-                                                    }
-                                                );
-                                                this.dev_server_name_input.update(
-                                                    cx,
-                                                    |text_field, cx| {
-                                                        text_field.editor().update(
-                                                            cx,
-                                                            |editor, cx| {
-                                                                editor.set_text("", cx);
-                                                            },
-                                                        );
-                                                    },
-                                                );
-                                                cx.notify();
-                                            })),
-                                    ),
-                                ))
-                                .children(ssh_connections.iter().cloned().enumerate().map(|(ix, connection)| {
+            .section(
+                Section::new().child(
+                    div().child(
+                        List::new()
+                            .empty_message("No dev servers registered yet.")
+                            .header(Some(
+                                ListHeader::new("Connections").end_slot(
+                                    Button::new("register-dev-server-button", "Connect New Server")
+                                        .icon(IconName::Plus)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_color(Color::Muted)
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.mode = Mode::CreateDevServer(CreateDevServer {
+                                                kind: if SshSettings::get_global(cx)
+                                                    .use_direct_ssh()
+                                                {
+                                                    NewServerKind::DirectSSH
+                                                } else {
+                                                    NewServerKind::LegacySSH
+                                                },
+                                                ..Default::default()
+                                            });
+                                            this.dev_server_name_input.update(
+                                                cx,
+                                                |text_field, cx| {
+                                                    text_field.editor().update(cx, |editor, cx| {
+                                                        editor.set_text("", cx);
+                                                    });
+                                                },
+                                            );
+                                            cx.notify();
+                                        })),
+                                ),
+                            ))
+                            .children(ssh_connections.iter().cloned().enumerate().map(
+                                |(ix, connection)| {
                                     self.render_ssh_connection(ix, connection, cx)
                                         .into_any_element()
-                                }))
-                                .children(dev_servers.iter().map(|dev_server| {
-                                    let creating = if creating_dev_server == Some(dev_server.id) {
-                                        is_creating
-                                    } else {
-                                        None
-                                    };
-                                    self.render_dev_server(dev_server, creating, cx)
-                                        .into_any_element()
-                                })),
-                        ),
+                                },
+                            ))
+                            .children(dev_servers.iter().map(|dev_server| {
+                                let creating = if creating_dev_server == Some(dev_server.id) {
+                                    is_creating
+                                } else {
+                                    None
+                                };
+                                self.render_dev_server(dev_server, creating, cx)
+                                    .into_any_element()
+                            })),
                     ),
-                )
-            })
+                ),
+            )
     }
 }
 
