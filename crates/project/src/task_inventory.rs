@@ -203,6 +203,8 @@ impl Inventory {
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
     )> {
+        // TODO kb remove entirely: currently, used in the prod code for in modal.rs only, when opening it.
+        // Instead, add a remote provider (impl ContextProvider for RemoteProvider) that will sync itself over time.
         let language = location
             .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));

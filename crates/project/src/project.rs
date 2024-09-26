@@ -9,6 +9,7 @@ pub mod prettier_store;
 pub mod project_settings;
 pub mod search;
 mod task_inventory;
+pub mod task_store;
 pub mod terminals;
 pub mod worktree_store;
 
@@ -79,6 +80,7 @@ use task::{
     static_source::{StaticSource, TrackedFile},
     HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
+use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use util::{paths::compare_paths, ResultExt as _};
@@ -566,7 +568,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_task_context_for_location);
-        client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
         WorktreeStore::init(&client);
@@ -777,6 +778,7 @@ impl Project {
             ssh_proto.add_model_message_handler(Self::handle_update_worktree);
             ssh_proto.add_model_message_handler(Self::handle_update_project);
             ssh_proto.add_model_request_handler(BufferStore::handle_update_buffer);
+            client.add_model_request_handler(TaskStore::handle_task_context_for_location);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -3556,6 +3558,20 @@ impl Project {
         Ok(response)
     }
 
+    // TODO kb move into some TaskStore
+    /*
+    let buffer_store = this.read_with(&cx, |this, cx| {
+        if let Some(ssh) = &this.ssh_session {
+            let mut payload = envelope.payload.clone();
+            payload.project_id = 0;
+            cx.background_executor()
+                .spawn(ssh.request(payload))
+                .detach_and_log_err(cx);
+        }
+        this.buffer_store.clone()
+    })?;
+    BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
+    */
     async fn handle_task_context_for_location(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskContextForLocation>,
@@ -3599,11 +3615,16 @@ impl Project {
         })
     }
 
+    // TODO kb has to be removed.
+    // The whole flow hast to be inverted, with headless/remote instances syncing, pushing the tasks
+    // and the user-facing Zed accepting those.
+    // This has to happen via settings sync, not a special message.
     async fn handle_task_templates(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskTemplates>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskTemplatesResponse> {
+        dbg!("$$$$$$$$$$$$$$$$$$");
         let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
         let location = match envelope.payload.location {
             Some(location) => Some(
@@ -4103,6 +4124,7 @@ impl Project {
         let client = self.client();
         let location = location.map(|location| serialize_location(location, cx));
         cx.spawn(|_| async move {
+            dbg!("???????/");
             let response = client
                 .request(proto::TaskTemplates {
                     project_id,
@@ -4110,6 +4132,7 @@ impl Project {
                     location,
                 })
                 .await?;
+            dbg!(&response);
 
             Ok(response
                 .templates

@@ -9,6 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Project, TaskSourceKind};
+use proto::SSH_PROJECT_ID;
 use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -225,21 +226,23 @@ impl PickerDelegate for TasksModalDelegate {
                                     if project.is_via_collab() && ssh_connection_string.is_none() {
                                         Task::ready((Vec::new(), Vec::new()))
                                     } else {
-                                        let remote_templates = if project.is_local() {
+                                        let remote_id = if project.is_via_ssh() {
+                                            Some(SSH_PROJECT_ID)
+                                        } else if project.is_local() {
                                             None
                                         } else {
                                             project
                                                 .remote_id()
                                                 .filter(|_| ssh_connection_string.is_some())
-                                                .map(|project_id| {
-                                                    project.query_remote_task_templates(
-                                                        project_id,
-                                                        worktree,
-                                                        location.as_ref(),
-                                                        cx,
-                                                    )
-                                                })
                                         };
+                                        let remote_templates = remote_id.map(|project_id| {
+                                            project.query_remote_task_templates(
+                                                project_id,
+                                                worktree,
+                                                location.as_ref(),
+                                                cx,
+                                            )
+                                        });
                                         project
                                             .task_inventory()
                                             .read(cx)
