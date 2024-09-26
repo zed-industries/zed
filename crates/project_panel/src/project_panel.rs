@@ -16,12 +16,12 @@ use anyhow::{anyhow, Result};
 use collections::{hash_map, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
-    ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
+    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
+    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    InteractiveElement, KeyContext, ListSizingBehavior, Model, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -2748,20 +2748,47 @@ impl Render for ProjectPanel {
                         }
                     })
                     .when(indent_guides, |this| {
-                        this.with_decoration(ui::indent_guides(
-                            cx.view().clone(),
-                            px(indent_size),
-                            |this, range, cx| {
-                                use smallvec::SmallVec;
-                                let mut items = SmallVec::with_capacity(range.end - range.start);
-                                this.for_each_visible_entry(range, cx, |_, details, _| {
-                                    // TODO: only fetch depth instead of all details
-                                    items.push(details.depth);
-                                });
-                                items
-                            },
-                            cx,
-                        ))
+                        let line_color = cx.theme().colors().editor_indent_guide;
+                        this.with_decoration(
+                            ui::indent_guides(
+                                cx.view().clone(),
+                                px(indent_size),
+                                |this, range, cx| {
+                                    use smallvec::SmallVec;
+                                    let mut items =
+                                        SmallVec::with_capacity(range.end - range.start);
+                                    this.for_each_visible_entry(range, cx, |_, details, _| {
+                                        // TODO: only fetch depth instead of all details
+                                        items.push(details.depth);
+                                    });
+                                    items
+                                },
+                                cx,
+                            )
+                            .with_render_fn(
+                                move |layout, indent_size, item_height| {
+                                    const LEFT_OFFSET: f32 = 14.;
+                                    const PADDING_Y: f32 = 8.;
+
+                                    ui::RenderedIndentGuide {
+                                        bounds: Bounds::new(
+                                            point(
+                                                px(layout.offset.x as f32) * indent_size
+                                                    + px(LEFT_OFFSET),
+                                                px(layout.offset.y as f32) * item_height
+                                                    + px(PADDING_Y),
+                                            ),
+                                            size(
+                                                px(1.),
+                                                px(layout.length as f32) * item_height
+                                                    - px(PADDING_Y * 2.),
+                                            ),
+                                        ),
+                                        color: Color::Custom(line_color),
+                                    }
+                                },
+                            ),
+                        )
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)

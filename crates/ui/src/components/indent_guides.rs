@@ -18,6 +18,7 @@ pub fn indent_guides<V: Render>(
         line_color: Color::Custom(cx.theme().colors().editor_indent_guide),
         indent_size,
         compute_fn: Box::new(compute_indent_guides),
+        render_fn: None,
     }
 }
 
@@ -25,6 +26,7 @@ pub struct IndentGuides {
     line_color: Color,
     indent_size: Pixels,
     compute_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
+    render_fn: Option<Box<dyn Fn(IndentGuideLayout, Pixels, Pixels) -> RenderedIndentGuide>>,
 }
 
 impl IndentGuides {
@@ -32,10 +34,23 @@ impl IndentGuides {
         self.line_color = color;
         self
     }
+
+    pub fn with_render_fn(
+        mut self,
+        render_fn: impl Fn(IndentGuideLayout, Pixels, Pixels) -> RenderedIndentGuide + 'static,
+    ) -> Self {
+        self.render_fn = Some(Box::new(render_fn));
+        self
+    }
+}
+
+pub struct RenderedIndentGuide {
+    pub bounds: Bounds<Pixels>,
+    pub color: Color,
 }
 
 pub struct IndentGuidesLayoutState {
-    guides: SmallVec<[(Bounds<Pixels>, Color); 16]>,
+    guides: SmallVec<[RenderedIndentGuide; 16]>,
 }
 
 impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
@@ -43,34 +58,40 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
         let line_color = self.line_color;
         let indent_size = self.indent_size;
         let compute_fn = self.compute_fn;
+        let render_fn = self.render_fn;
 
         UniformListDecoration {
             prepaint_fn: Box::new(move |visible_range, bounds, item_height, cx| {
                 let visible_entries = &(compute_fn)(visible_range.clone(), cx);
                 let indent_guides = compute_indent_guides(&visible_entries, visible_range.start);
 
-                let guides: SmallVec<[(Bounds<Pixels>, Color); 16]> = indent_guides
+                let guides: SmallVec<[RenderedIndentGuide; 16]> = indent_guides
                     .into_iter()
                     .map(|layout| {
-                        (
-                            Bounds::new(
-                                bounds.origin
-                                    + point(
+                        let mut indent_guide = if let Some(ref custom_render) = render_fn {
+                            custom_render(layout, indent_size, item_height)
+                        } else {
+                            RenderedIndentGuide {
+                                bounds: Bounds::new(
+                                    point(
                                         px(layout.offset.x as f32) * indent_size,
                                         px(layout.offset.y as f32) * item_height,
                                     ),
-                                size(px(1.), px(layout.length as f32) * item_height),
-                            ),
-                            line_color,
-                        )
+                                    size(px(1.), px(layout.length as f32) * item_height),
+                                ),
+                                color: line_color,
+                            }
+                        };
+                        indent_guide.bounds.origin += bounds.origin;
+                        indent_guide
                     })
                     .collect();
 
                 IndentGuidesLayoutState { guides }
             }),
             paint_fn: Box::new(|state, cx| {
-                for (bounds, color) in &state.guides {
-                    cx.paint_quad(fill(*bounds, color.color(cx)));
+                for guide in &state.guides {
+                    cx.paint_quad(fill(guide.bounds, guide.color.color(cx)));
                 }
             }),
         }
@@ -78,9 +99,9 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
-struct IndentGuideLayout {
-    offset: Point<usize>,
-    length: usize,
+pub struct IndentGuideLayout {
+    pub offset: Point<usize>,
+    pub length: usize,
 }
 
 fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGuideLayout; 16]> {
