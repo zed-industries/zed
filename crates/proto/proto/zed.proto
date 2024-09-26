@@ -108,8 +108,6 @@ message Envelope {
         PrepareRenameResponse prepare_rename_response = 84;
         PerformRename perform_rename = 85;
         PerformRenameResponse perform_rename_response = 86;
-        SearchProject search_project = 87;
-        SearchProjectResponse search_project_response = 88;
 
         UpdateContacts update_contacts = 89;
         UpdateInviteInfo update_invite_info = 90;
@@ -287,6 +285,7 @@ message Envelope {
         CheckFileExistsResponse check_file_exists_response = 256; // current max
     }
 
+    reserved 87 to 88;
     reserved 158 to 161;
     reserved 166 to 169;
     reserved 224 to 229;
@@ -1236,22 +1235,6 @@ message MarkupContent {
 
 message PerformRenameResponse {
     ProjectTransaction transaction = 2;
-}
-
-message SearchProject {
-    uint64 project_id = 1;
-    string query = 2;
-    bool regex = 3;
-    bool whole_word = 4;
-    bool case_sensitive = 5;
-    string files_to_include = 6;
-    string files_to_exclude = 7;
-    bool include_ignored = 8;
-}
-
-message SearchProjectResponse {
-    repeated Location locations = 1;
-    bool limit_reached = 2;
 }
 
 message SearchQuery {
