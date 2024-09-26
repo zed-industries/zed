@@ -62,11 +62,11 @@ pub struct ScrollbarSettingsContent {
 pub enum ShowDiagnostics {
     /// Never mark the diagnostic errors/warnings in the project panel.
     Off,
-    /// Mark files containing diagnostic errors or warnings in the project panel.
-    All,
-    #[default]
     /// Mark files containing diagnostic errors in the project panel.
     Errors,
+    #[default]
+    /// Mark files containing diagnostic errors or warnings in the project panel.
+    All,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
