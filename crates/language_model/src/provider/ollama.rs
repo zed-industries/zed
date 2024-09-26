@@ -4,7 +4,7 @@ use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Tas
 use http_client::HttpClient;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
-    ChatResponseDelta, OllamaToolCall,
+    ChatResponseDelta, KeepAlive, OllamaToolCall,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,8 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     /// The Context Length parameter to the model (aka num_ctx or n_ctx)
     pub max_tokens: usize,
+    /// The number of seconds to keep the connection open after the last request
+    pub keep_alive: Option<KeepAlive>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -156,7 +158,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                    keep_alive: None,
+                    keep_alive: model.keep_alive.clone(),
                 },
             );
         }
@@ -233,7 +235,7 @@ impl OllamaLanguageModel {
             options: Some(ChatOptions {
                 num_ctx: Some(self.model.max_tokens),
                 stop: Some(request.stop),
-                temperature: Some(request.temperature),
+                temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
             tools: vec![],

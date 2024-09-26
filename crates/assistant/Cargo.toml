@@ -51,6 +51,7 @@ indoc.workspace = true
 language.workspace = true
 language_model.workspace = true
 log.workspace = true
+lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
@@ -65,6 +66,7 @@ proto.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 rope.workspace = true
+rpc.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
@@ -93,9 +95,11 @@ editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+languages = { workspace = true, features = ["test-support"] }
 log.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json_lenient.workspace = true
 text = { workspace = true, features = ["test-support"] }
+tree-sitter-md.workspace = true
 unindent.workspace = true

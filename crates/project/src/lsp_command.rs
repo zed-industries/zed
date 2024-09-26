@@ -1,10 +1,9 @@
 mod signature_help;
 
 use crate::{
-    buffer_store::BufferStore, lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight,
-    Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
-    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, MarkupContent,
-    ProjectTransaction, ResolveState,
+    lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
+    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
+    InlayHintTooltip, Location, LocationLink, MarkupContent, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -46,8 +45,8 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
 }
 
 #[async_trait(?Send)]
-pub trait LspCommand: 'static + Sized + Send {
-    type Response: 'static + Default + Send;
+pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
+    type Response: 'static + Default + Send + std::fmt::Debug;
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
 
@@ -104,72 +103,80 @@ pub trait LspCommand: 'static + Sized + Send {
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
 }
 
+#[derive(Debug)]
 pub(crate) struct PrepareRename {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct PerformRename {
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
 }
 
+#[derive(Debug)]
 pub struct GetDefinition {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetDeclaration {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetTypeDefinition {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetImplementation {
     pub position: PointUtf16,
 }
-
+#[derive(Debug)]
 pub(crate) struct GetReferences {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetDocumentHighlights {
     pub position: PointUtf16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GetSignatureHelp {
     pub position: PointUtf16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GetHover {
     pub position: PointUtf16,
 }
 
+#[derive(Debug)]
 pub(crate) struct GetCompletions {
     pub position: PointUtf16,
     pub context: CompletionContext,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct GetCodeActions {
     pub range: Range<Anchor>,
     pub kinds: Option<Vec<lsp::CodeActionKind>>,
 }
-
+#[derive(Debug)]
 pub(crate) struct OnTypeFormatting {
     pub position: PointUtf16,
     pub trigger: String,
     pub options: lsp::FormattingOptions,
     pub push_to_history: bool,
 }
-
+#[derive(Debug)]
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
-
+#[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
 }
@@ -409,18 +416,18 @@ impl LspCommand for PerformRename {
         message: proto::PerformRenameResponse,
         lsp_store: Model<LspStore>,
         _: Model<Buffer>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         let message = message
             .transaction
             .ok_or_else(|| anyhow!("missing transaction"))?;
-        BufferStore::deserialize_project_transaction(
-            lsp_store.read_with(&cx, |lsp_store, _| lsp_store.buffer_store().downgrade())?,
-            message,
-            self.push_to_history,
-            cx,
-        )
-        .await
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.deserialize_project_transaction(message, self.push_to_history, cx)
+                })
+            })?
+            .await
     }
 
     fn buffer_id_from_proto(message: &proto::PerformRename) -> Result<BufferId> {

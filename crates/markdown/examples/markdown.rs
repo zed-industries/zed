@@ -1,8 +1,8 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, Task, View, WindowOptions};
+use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
@@ -102,11 +102,10 @@ pub fn main() {
         });
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
-        let node_runtime = FakeNodeRuntime::new();
+        let node_runtime = NodeRuntime::unavailable();
         theme::init(LoadThemes::JustBase, cx);
 
-        let language_registry =
-            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        let language_registry = LanguageRegistry::new(cx.background_executor().clone());
         language_registry.set_theme(cx.theme().clone());
         let language_registry = Arc::new(language_registry);
         languages::init(language_registry.clone(), node_runtime, cx);

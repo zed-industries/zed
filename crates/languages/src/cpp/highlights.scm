@@ -1,9 +1,32 @@
 (identifier) @variable
 (field_identifier) @property
+(namespace_identifier) @namespace
 
 (call_expression
   function: (qualified_identifier
     name: (identifier) @function))
+
+(call_expression
+  (qualified_identifier
+    (identifier) @function.call))
+
+(call_expression
+  (qualified_identifier
+    (qualified_identifier
+      (identifier) @function.call)))
+
+(call_expression
+  (qualified_identifier
+    (qualified_identifier
+      (qualified_identifier
+        (identifier) @function.call))))
+
+((qualified_identifier
+  (qualified_identifier
+    (qualified_identifier
+      (qualified_identifier
+        (identifier) @function.call)))) @_parent
+  (#has-ancestor? @_parent call_expression))
 
 (call_expression
   function: (identifier) @function)
@@ -94,12 +117,12 @@
   "typename"
   "union"
   "using"
+  "virtual"
   "while"
   (primitive_type)
   (sized_type_specifier)
   (storage_class_specifier)
   (type_qualifier)
-  (virtual)
 ] @keyword
 
 [

@@ -184,7 +184,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let project = workspace.project();
-        if project.read(cx).is_local_or_ssh() {
+        if project.read(cx).is_local() {
             log_store.update(cx, |store, cx| {
                 store.add_project(project, cx);
             });
@@ -193,7 +193,7 @@ pub fn init(cx: &mut AppContext) {
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, cx| {
             let project = workspace.project().read(cx);
-            if project.is_local_or_ssh() {
+            if project.is_local() {
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
@@ -236,7 +236,7 @@ impl LogStore {
                             ));
                         this.add_language_server(
                             LanguageServerKind::Global {
-                                name: LanguageServerName(Arc::from("copilot")),
+                                name: LanguageServerName::new_static("copilot"),
                             },
                             server.server_id(),
                             Some(server.clone()),
@@ -683,7 +683,7 @@ impl LspLogView {
                 self.project
                     .read(cx)
                     .supplementary_language_servers(cx)
-                    .filter_map(|(&server_id, name)| {
+                    .filter_map(|(server_id, name)| {
                         let state = log_store.language_servers.get(&server_id)?;
                         Some(LogMenuItem {
                             server_id,

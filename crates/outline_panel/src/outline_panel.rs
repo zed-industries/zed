@@ -3906,9 +3906,11 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::toggle_active_editor_pin))
             .on_action(cx.listener(Self::unfold_directory))
             .on_action(cx.listener(Self::fold_directory))
-            .when(project.is_local_or_ssh(), |el| {
+            .when(project.is_local(), |el| {
                 el.on_action(cx.listener(Self::reveal_in_finder))
-                    .on_action(cx.listener(Self::open_in_terminal))
+            })
+            .when(project.is_local() || project.is_via_ssh(), |el| {
+                el.on_action(cx.listener(Self::open_in_terminal))
             })
             .on_mouse_down(
                 MouseButton::Right,
@@ -4787,7 +4789,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_highlights_query(
             r#"

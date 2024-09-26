@@ -467,9 +467,12 @@ impl Element for TextElement {
         let line = prepaint.line.take().unwrap();
         line.paint(bounds.origin, cx.line_height(), cx).unwrap();
 
-        if let Some(cursor) = prepaint.cursor.take() {
-            cx.paint_quad(cursor);
+        if focus_handle.is_focused(cx) {
+            if let Some(cursor) = prepaint.cursor.take() {
+                cx.paint_quad(cursor);
+            }
         }
+
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
@@ -499,7 +502,6 @@ impl Render for TextInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .bg(rgb(0xeeeeee))
-            .size_full()
             .line_height(px(30.))
             .text_size(px(24.))
             .child(
@@ -524,6 +526,13 @@ impl FocusableView for TextInput {
 struct InputExample {
     text_input: View<TextInput>,
     recent_keystrokes: Vec<Keystroke>,
+    focus_handle: FocusHandle,
+}
+
+impl FocusableView for InputExample {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl InputExample {
@@ -540,6 +549,7 @@ impl Render for InputExample {
         let num_keystrokes = self.recent_keystrokes.len();
         div()
             .bg(rgb(0xaaaaaa))
+            .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
             .size_full()
@@ -615,9 +625,10 @@ fn main() {
                         last_bounds: None,
                         is_selecting: false,
                     });
-                    cx.new_view(|_| InputExample {
+                    cx.new_view(|cx| InputExample {
                         text_input,
                         recent_keystrokes: vec![],
+                        focus_handle: cx.focus_handle(),
                     })
                 },
             )

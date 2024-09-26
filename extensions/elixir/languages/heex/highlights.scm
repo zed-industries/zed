@@ -27,7 +27,7 @@
 "=" @operator
 
 ; HEEx inherits the DOCTYPE tag from HTML
-(doctype) @constant
+(doctype) @tag.doctype
 
 (comment) @comment
 

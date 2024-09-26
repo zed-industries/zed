@@ -94,7 +94,7 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
         workspace
             .update(&mut cx, |workspace, cx| {
                 if workspace.project().update(cx, |project, cx| {
-                    project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
+                    project.is_local() || project.ssh_connection_string(cx).is_some()
                 }) {
                     workspace.toggle_modal(cx, |cx| {
                         TasksModal::new(project, task_context, workspace_handle, cx)
@@ -226,7 +226,7 @@ mod tests {
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_outline_query(
                 r#"(function_item
@@ -240,7 +240,7 @@ mod tests {
         let typescript_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
-                Some(tree_sitter_typescript::language_typescript()),
+                Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             )
             .with_outline_query(
                 r#"(function_declaration

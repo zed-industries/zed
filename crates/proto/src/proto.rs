@@ -2,11 +2,9 @@
 
 pub mod error;
 mod macros;
-mod proto_client;
 mod typed_envelope;
 
 pub use error::*;
-pub use proto_client::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;
@@ -366,7 +364,9 @@ messages!(
     (FindSearchCandidates, Background),
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
-    (UpdateUserSettings, Foreground)
+    (UpdateUserSettings, Foreground),
+    (CheckFileExists, Background),
+    (CheckFileExistsResponse, Background)
 );
 
 request_messages!(
@@ -490,6 +490,7 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
+    (CheckFileExists, CheckFileExistsResponse)
 );
 
 entity_messages!(
@@ -562,7 +563,8 @@ entity_messages!(
     UpdateContext,
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
-    UpdateUserSettings
+    UpdateUserSettings,
+    CheckFileExists,
 );
 
 entity_messages!(

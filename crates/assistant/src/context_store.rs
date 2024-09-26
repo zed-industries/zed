@@ -2,7 +2,6 @@ use crate::{
     prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
     SavedContext, SavedContextMetadata,
 };
-use ::proto::AnyProtoClient;
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
@@ -16,6 +15,7 @@ use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
+use rpc::AnyProtoClient;
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -223,7 +223,7 @@ impl ContextStore {
             if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                 let operation_proto = envelope.payload.operation.context("invalid operation")?;
                 let operation = ContextOperation::from_proto(operation_proto)?;
-                context.update(cx, |context, cx| context.apply_ops([operation], cx))?;
+                context.update(cx, |context, cx| context.apply_ops([operation], cx));
             }
             Ok(())
         })?
@@ -357,9 +357,6 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local_or_ssh() {
-            return Task::ready(Err(anyhow!("cannot create remote contexts as the host")));
-        }
 
         let replica_id = project.replica_id();
         let capability = project.capability();
@@ -394,7 +391,7 @@ impl ContextStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context
@@ -488,9 +485,6 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local_or_ssh() {
-            return Task::ready(Err(anyhow!("cannot open remote contexts as the host")));
-        }
 
         if let Some(context) = self.loaded_context_for_id(&context_id, cx) {
             return Task::ready(Ok(context));
@@ -531,7 +525,7 @@ impl ContextStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context

@@ -20,8 +20,8 @@ use language::{
     },
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
-    ParsedMarkdown, Point,
+    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
+    LanguageName, Override, ParsedMarkdown, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
@@ -2322,7 +2322,7 @@ async fn test_newline_above(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2370,7 +2370,7 @@ async fn test_newline_below(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2524,7 +2524,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut gpui::TestAp
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
         .unwrap(),
@@ -2585,7 +2585,7 @@ async fn test_tab_with_mixed_whitespace(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
         .unwrap(),
@@ -2822,7 +2822,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
         Buffer::local("const c: usize = 3;\n", cx).with_language(rust_language, cx)
     });
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             toml_buffer.clone(),
             [ExcerptRange {
@@ -3980,6 +3980,350 @@ fn test_transpose(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rewrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping works inside of a selection
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ»
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that cursors that expand to the same region are collapsed.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
+            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
+            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
+            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
+            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
+            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
+            // porttitor id. Aliquam id accumsan eros.ˇˇˇˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that non-contiguous selections are treated separately.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
+            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
+            //
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+            // auctor, eu lacinia sapien scelerisque.ˇˇ
+            //
+            // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
+            // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+            // blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
+            // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
+            // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
+            // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that different comment prefixes are supported.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["# ".into()],
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "};
+
+        let wrapped_text = indoc! {"
+            # Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            # purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            # eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            # hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            # lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit
+            # amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet
+            # in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur
+            # adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis.
+            # Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id
+            # accumsan eros.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping is ignored outside of comments in most languages.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into(), "/// ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            /// Adds two numbers.
+            /// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
+            fn add(a: u32, b: u32) -> u32 {
+                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            /// Adds two numbers. Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+            /// Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
+            fn add(a: u32, b: u32) -> u32 {
+                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test that rewrapping works in Markdown and Plain Text languages.
+    {
+        let markdown_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+        let unwrapped_text = indoc! {"
+            # Hello
+
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
+        "};
+
+        let wrapped_text = indoc! {"
+            # Hello
+
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
+            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
+            Integer sit amet scelerisque nisi.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+
+        let plaintext_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Plain Text".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(plaintext_language), cx));
+
+        let unwrapped_text = indoc! {"
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
+        "};
+
+        let wrapped_text = indoc! {"
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
+            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
+            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
+            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
+            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
+            Integer sit amet scelerisque nisi.ˇ
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+
+    // Test rewrapping unaligned comments in a selection.
+    {
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into(), "/// ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        let unwrapped_text = indoc! {"
+            fn foo() {
+                if true {
+            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.ˇ»
+                    do_something();
+                } else {
+                    //
+                }
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            fn foo() {
+                if true {
+                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
+                    // egestas tellus id dignissim.ˇ
+                    do_something();
+                } else {
+                    //
+                }
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+
+        let unwrapped_text = indoc! {"
+            fn foo() {
+                if true {
+            «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.»
+                    do_something();
+                } else {
+                    //
+                }
+
+            }
+        "};
+
+        let wrapped_text = indoc! {"
+            fn foo() {
+                if true {
+                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
+                    // egestas tellus id dignissim.ˇ
+                    do_something();
+                } else {
+                    //
+                }
+
+            }
+        "};
+
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -4072,7 +4416,7 @@ async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -4783,7 +5127,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -4992,7 +5336,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query(
             r#"
@@ -5085,7 +5429,7 @@ async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5257,7 +5601,7 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -5397,7 +5741,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -5572,7 +5916,7 @@ async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_override_query("(string_literal) @string")
         .unwrap(),
@@ -5677,7 +6021,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -5826,7 +6170,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
             autoclose_before: "}".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let text = r#"
@@ -5953,7 +6297,7 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     cx.language_registry().add(language.clone());
@@ -6023,7 +6367,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let buffer = cx.new_model(|cx| Buffer::local("", cx).with_language(language, cx));
@@ -6205,7 +6549,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6361,7 +6705,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6399,7 +6743,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let multi_buffer = cx.new_model(|cx| {
-        let mut multi_buffer = MultiBuffer::new(0, ReadWrite);
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
         multi_buffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -6557,7 +6901,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -6698,7 +7042,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             },
             ..LanguageConfig::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
@@ -6708,7 +7052,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             ..PrettierSettings::default()
         });
     });
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -7033,7 +7377,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -7175,7 +7519,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     );
     let language = Arc::new(language);
 
@@ -7968,7 +8312,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
@@ -8089,7 +8433,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -8242,7 +8586,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
             line_comments: vec!["// ".into()],
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ));
 
     cx.language_registry().add(html_language.clone());
@@ -8342,7 +8686,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
 
     let buffer = cx.new_model(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer.clone(),
             [
@@ -8426,7 +8770,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
     });
     let buffer = cx.new_model(|cx| Buffer::local(initial_text, cx));
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(buffer, excerpt_ranges, cx);
         multibuffer
     });
@@ -8485,7 +8829,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         excerpt1_id = multibuffer
             .push_excerpts(
                 buffer.clone(),
@@ -8570,7 +8914,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         excerpt1_id = multibuffer
             .push_excerpts(
                 buffer.clone(),
@@ -8650,7 +8994,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         )
         .with_indents_query("")
         .unwrap(),
@@ -8958,7 +9302,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let leader = pane.update(cx, |_, cx| {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(ReadWrite));
         cx.new_view(|cx| build_editor(multibuffer.clone(), cx))
     });
 
@@ -9279,7 +9623,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
     cx.update_editor(|editor, cx| {
         //Wrap around the bottom of the buffer
         for _ in 0..3 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
         }
     });
 
@@ -9365,7 +9709,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
         //Make sure that the fold only gets one hunk
         for _ in 0..4 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
         }
     });
 
@@ -9486,9 +9830,9 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
@@ -9587,21 +9931,21 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let server_restarts = Arc::new(AtomicUsize::new(0));
     let closure_restarts = Arc::clone(&server_restarts);
     let language_server_name = "test language server";
-    let language_name: Arc<str> = "Rust".into();
+    let language_name: LanguageName = "Rust".into();
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: Arc::clone(&language_name),
+            name: language_name.clone(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
-    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+    let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: language_server_name,
@@ -9629,7 +9973,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
         language_settings.languages.insert(
-            Arc::clone(&language_name),
+            language_name.clone(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
                 ..Default::default()
@@ -9832,7 +10176,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
                 .collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_typescript::language_tsx()),
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         )
         .with_override_query("(jsx_self_closing_element) @element")
         .unwrap(),
@@ -9935,7 +10279,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     update_test_language_settings(cx, |settings| {
         settings.defaults.prettier = Some(PrettierSettings {
@@ -9945,7 +10289,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     });
 
     let test_plugin = "test_plugin";
-    let _ = language_registry.register_fake_lsp_adapter(
+    let _ = language_registry.register_fake_lsp(
         "TypeScript",
         FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
@@ -10413,7 +10757,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
 
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -10553,7 +10897,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     let buffer_3 = cx.new_model(|cx| Buffer::local(sample_text_3.clone(), cx));
 
     let multi_buffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -10882,7 +11226,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
 
     cx.update_editor(|editor, cx| {
         for _ in 0..4 {
-            editor.go_to_hunk(&GoToHunk, cx);
+            editor.go_to_next_hunk(&GoToHunk, cx);
             editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
         }
     });
@@ -10906,17 +11250,12 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(1)..=DisplayRow(1), DisplayRow(7)..=DisplayRow(7), DisplayRow(9)..=DisplayRow(9)],
-            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
-        );
-        assert_eq!(
             all_hunks,
             vec![
-                ("use some::mod;\n".to_string(), DiffHunkStatus::Modified, DisplayRow(1)..DisplayRow(2)),
-                ("const A: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(4)..DisplayRow(4)),
-                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(7)..DisplayRow(8)),
-                ("".to_string(), DiffHunkStatus::Added, DisplayRow(9)..DisplayRow(10)),
+                ("use some::mod;\n".to_string(), DiffHunkStatus::Modified, DisplayRow(2)..DisplayRow(3)),
+                ("const A: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(6)..DisplayRow(6)),
+                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(10)..DisplayRow(11)),
+                ("".to_string(), DiffHunkStatus::Added, DisplayRow(13)..DisplayRow(14)),
             ],
             "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
             (from modified and removed hunks)"
@@ -10924,6 +11263,11 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         assert_eq!(
             all_hunks, all_expanded_hunks,
             "Editor hunks should not change and all be expanded"
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(2)..=DisplayRow(2), DisplayRow(10)..=DisplayRow(10), DisplayRow(13)..=DisplayRow(13)],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
     });
 
@@ -10967,7 +11311,7 @@ async fn test_toggled_diff_base_change(
         const B: u32 = 42;
         const C: u32 = 42;
 
-        fn main(ˇ) {
+        fn main() {
             println!("hello");
 
             println!("world");
@@ -11012,9 +11356,9 @@ async fn test_toggled_diff_base_change(
                     DisplayRow(3)..DisplayRow(3)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(5)..DisplayRow(7)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "".to_string(),
@@ -11046,22 +11390,18 @@ async fn test_toggled_diff_base_change(
         "#
         .unindent(),
     );
+
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(9)..=DisplayRow(10), DisplayRow(13)..=DisplayRow(14)],
-            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
-        );
-        assert_eq!(
             all_hunks,
             vec![
-                ("use some::mod1;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(1)..DisplayRow(1)),
-                ("const B: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(5)..DisplayRow(5)),
-                ("fn main(ˇ) {\n    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(9)..DisplayRow(11)),
-                ("".to_string(), DiffHunkStatus::Added, DisplayRow(13)..DisplayRow(15)),
+                ("use some::mod1;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(2)..DisplayRow(2)),
+                ("const B: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, DisplayRow(7)..DisplayRow(7)),
+                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, DisplayRow(12)..DisplayRow(13)),
+                ("".to_string(), DiffHunkStatus::Added, DisplayRow(16)..DisplayRow(18)),
             ],
             "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
             (from modified and removed hunks)"
@@ -11069,6 +11409,11 @@ async fn test_toggled_diff_base_change(
         assert_eq!(
             all_hunks, all_expanded_hunks,
             "Editor hunks should not change and all be expanded"
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(12)..=DisplayRow(12), DisplayRow(16)..=DisplayRow(17)],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
     });
 
@@ -11115,7 +11460,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         const B: u32 = 42;
         const C: u32 = 42;
 
-        fn main(ˇ) {
+        fn main() {
             println!("hello");
 
             println!("world");
@@ -11176,9 +11521,9 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                     DisplayRow(3)..DisplayRow(3)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(5)..DisplayRow(7)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "".to_string(),
@@ -11233,49 +11578,49 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![
-                DisplayRow(9)..=DisplayRow(10),
-                DisplayRow(13)..=DisplayRow(14),
-                DisplayRow(19)..=DisplayRow(19)
-            ]
-        );
-        assert_eq!(
             all_hunks,
             vec![
                 (
                     "use some::mod1;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(1)..DisplayRow(1)
+                    DisplayRow(2)..DisplayRow(2)
                 ),
                 (
                     "const B: u32 = 42;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(5)..DisplayRow(5)
+                    DisplayRow(7)..DisplayRow(7)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(9)..DisplayRow(11)
+                    DisplayRow(12)..DisplayRow(13)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(13)..DisplayRow(15)
+                    DisplayRow(16)..DisplayRow(18)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(19)..DisplayRow(20)
+                    DisplayRow(23)..DisplayRow(24)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(23)..DisplayRow(23)
+                    DisplayRow(28)..DisplayRow(28)
                 ),
             ],
         );
         assert_eq!(all_hunks, all_expanded_hunks);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(12)..=DisplayRow(12),
+                DisplayRow(16)..=DisplayRow(17),
+                DisplayRow(23)..=DisplayRow(23)
+            ]
+        );
     });
 
     cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
@@ -11310,11 +11655,6 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(0)..=DisplayRow(0), DisplayRow(5)..=DisplayRow(5)],
-            "Only one hunk is left not folded, its highlight should be visible"
-        );
-        assert_eq!(
             all_hunks,
             vec![
                 (
@@ -11328,7 +11668,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                     DisplayRow(0)..DisplayRow(0)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
                     DisplayRow(0)..DisplayRow(0)
                 ),
@@ -11340,12 +11680,12 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(5)..DisplayRow(6)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(9)..DisplayRow(9)
+                    DisplayRow(11)..DisplayRow(11)
                 ),
             ],
             "Hunk list should still return shifted folded hunks"
@@ -11356,15 +11696,20 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(5)..DisplayRow(6)
+                    DisplayRow(6)..DisplayRow(7)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(9)..DisplayRow(9)
+                    DisplayRow(11)..DisplayRow(11)
                 ),
             ],
             "Only non-folded hunks should be left expanded"
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(0)..=DisplayRow(0), DisplayRow(6)..=DisplayRow(6)],
+            "Only one hunk is left not folded, its highlight should be visible"
         );
     });
 
@@ -11403,50 +11748,50 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let all_hunks = editor_hunks(editor, &snapshot, cx);
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
-            expanded_hunks_background_highlights(editor, cx),
-            vec![
-                DisplayRow(9)..=DisplayRow(10),
-                DisplayRow(13)..=DisplayRow(14),
-                DisplayRow(19)..=DisplayRow(19)
-            ],
-            "After unfolding, all hunk diffs should be visible again"
-        );
-        assert_eq!(
             all_hunks,
             vec![
                 (
                     "use some::mod1;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(1)..DisplayRow(1)
+                    DisplayRow(2)..DisplayRow(2)
                 ),
                 (
                     "const B: u32 = 42;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(5)..DisplayRow(5)
+                    DisplayRow(7)..DisplayRow(7)
                 ),
                 (
-                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    "    println!(\"hello\");\n".to_string(),
                     DiffHunkStatus::Modified,
-                    DisplayRow(9)..DisplayRow(11)
+                    DisplayRow(12)..DisplayRow(13)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(13)..DisplayRow(15)
+                    DisplayRow(16)..DisplayRow(18)
                 ),
                 (
                     "".to_string(),
                     DiffHunkStatus::Added,
-                    DisplayRow(19)..DisplayRow(20)
+                    DisplayRow(23)..DisplayRow(24)
                 ),
                 (
                     "fn another2() {\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(23)..DisplayRow(23)
+                    DisplayRow(28)..DisplayRow(28)
                 ),
             ],
         );
         assert_eq!(all_hunks, all_expanded_hunks);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![
+                DisplayRow(12)..=DisplayRow(12),
+                DisplayRow(16)..=DisplayRow(17),
+                DisplayRow(23)..=DisplayRow(23)
+            ],
+            "After unfolding, all hunk diffs should be visible again"
+        );
     });
 }
 
@@ -11492,7 +11837,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     });
 
     let multi_buffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
@@ -11596,17 +11941,17 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         (
             "bbbb\n".to_string(),
             DiffHunkStatus::Removed,
-            DisplayRow(5)..DisplayRow(5),
+            DisplayRow(6)..DisplayRow(6),
         ),
         (
             "nnnn\n".to_string(),
             DiffHunkStatus::Modified,
-            DisplayRow(23)..DisplayRow(24),
+            DisplayRow(25)..DisplayRow(26),
         ),
         (
             "".to_string(),
             DiffHunkStatus::Added,
-            DisplayRow(43)..DisplayRow(44),
+            DisplayRow(46)..DisplayRow(47),
         ),
     ];
 
@@ -11631,8 +11976,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(23)..=DisplayRow(23),
-                DisplayRow(43)..=DisplayRow(43)
+                DisplayRow(25)..=DisplayRow(25),
+                DisplayRow(46)..=DisplayRow(46)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -11663,8 +12008,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
-                DisplayRow(23)..=DisplayRow(23),
-                DisplayRow(43)..=DisplayRow(43)
+                DisplayRow(25)..=DisplayRow(25),
+                DisplayRow(46)..=DisplayRow(46)
             ],
         );
         assert_eq!(all_hunks, expected_all_hunks_shifted);
@@ -11772,12 +12117,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(7)
+                DisplayRow(5)..DisplayRow(8)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)]
+            vec![DisplayRow(5)..=DisplayRow(7)]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -11812,12 +12157,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(8)
+                DisplayRow(5)..DisplayRow(9)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)],
+            vec![DisplayRow(5)..=DisplayRow(7)],
             "Edited hunk should have one more line added"
         );
         assert_eq!(
@@ -11857,12 +12202,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(9)
+                DisplayRow(5)..DisplayRow(10)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)],
+            vec![DisplayRow(5)..=DisplayRow(7)],
             "Edited hunk should have one more line added"
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -11901,12 +12246,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(4)..DisplayRow(8)
+                DisplayRow(5)..DisplayRow(9)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(4)..=DisplayRow(6)],
+            vec![DisplayRow(5)..=DisplayRow(7)],
             "Deleting a line should shrint the hunk"
         );
         assert_eq!(
@@ -11949,12 +12294,12 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "".to_string(),
                 DiffHunkStatus::Added,
-                DisplayRow(5)..DisplayRow(6)
+                DisplayRow(6)..DisplayRow(7)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(5)..=DisplayRow(5)]
+            vec![DisplayRow(6)..=DisplayRow(6)]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -11991,7 +12336,7 @@ async fn test_edits_around_toggled_additions(
                 (
                     "const A: u32 = 42;\n".to_string(),
                     DiffHunkStatus::Removed,
-                    DisplayRow(2)..DisplayRow(2)
+                    DisplayRow(3)..DisplayRow(3)
                 )
             ]
         );
@@ -12005,7 +12350,7 @@ async fn test_edits_around_toggled_additions(
             vec![(
                 "const A: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(2)..DisplayRow(2)
+                DisplayRow(3)..DisplayRow(3)
             )],
             "Should open hunks that were adjacent to the stale addition one"
         );
@@ -12101,7 +12446,7 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(4)..DisplayRow(4)
+                DisplayRow(5)..DisplayRow(5)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12141,7 +12486,7 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(5)..DisplayRow(5)
+                DisplayRow(6)..DisplayRow(6)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12176,7 +12521,7 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(6)..DisplayRow(6)
+                DisplayRow(7)..DisplayRow(7)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12210,12 +12555,12 @@ async fn test_edits_around_toggled_deletions(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(7)..DisplayRow(8)
+                DisplayRow(8)..DisplayRow(9)
             )]
         );
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(7)..=DisplayRow(7)],
+            vec![DisplayRow(8)..=DisplayRow(8)],
             "Modified expanded hunks should display additions and highlight their background"
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12309,14 +12654,14 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(6)],
+            vec![DisplayRow(7)..=DisplayRow(7)],
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "const C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(7)
+                DisplayRow(7)..DisplayRow(8)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12352,7 +12697,7 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(6)],
+            vec![DisplayRow(7)..=DisplayRow(7)],
             "Modified hunk should grow highlighted lines on more text additions"
         );
         assert_eq!(
@@ -12360,7 +12705,7 @@ async fn test_edits_around_toggled_modifications(
             vec![(
                 "const C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(9)
+                DisplayRow(7)..DisplayRow(10)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12398,14 +12743,14 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(8)],
+            vec![DisplayRow(7)..=DisplayRow(9)],
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "const B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(9)
+                DisplayRow(7)..DisplayRow(10)
             )],
             "Modified hunk should grow deleted lines on text deletions above"
         );
@@ -12442,7 +12787,7 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(9)],
+            vec![DisplayRow(7)..=DisplayRow(10)],
             "Modified hunk should grow deleted lines on text modifications above"
         );
         assert_eq!(
@@ -12450,7 +12795,7 @@ async fn test_edits_around_toggled_modifications(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(10)
+                DisplayRow(7)..DisplayRow(11)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12486,7 +12831,7 @@ async fn test_edits_around_toggled_modifications(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(8)],
+            vec![DisplayRow(7)..=DisplayRow(9)],
             "Modified hunk should grow shrink lines on modification lines removal"
         );
         assert_eq!(
@@ -12494,7 +12839,7 @@ async fn test_edits_around_toggled_modifications(
             vec![(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(9)
+                DisplayRow(7)..DisplayRow(10)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12536,7 +12881,7 @@ async fn test_edits_around_toggled_modifications(
                 "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\nconst D: u32 = 42;\n"
                     .to_string(),
                 DiffHunkStatus::Removed,
-                DisplayRow(7)..DisplayRow(7)
+                DisplayRow(8)..DisplayRow(8)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -12630,14 +12975,14 @@ async fn test_multiple_expanded_hunks_merge(
         let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
-            vec![DisplayRow(6)..=DisplayRow(6)],
+            vec![DisplayRow(7)..=DisplayRow(7)],
         );
         assert_eq!(
             all_hunks,
             vec![(
                 "const C: u32 = 42;\n".to_string(),
                 DiffHunkStatus::Modified,
-                DisplayRow(6)..DisplayRow(7)
+                DisplayRow(7)..DisplayRow(8)
             )]
         );
         assert_eq!(all_hunks, all_expanded_hunks);
@@ -13652,7 +13997,7 @@ pub(crate) fn rust_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 

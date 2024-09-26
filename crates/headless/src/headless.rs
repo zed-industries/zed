@@ -25,7 +25,7 @@ pub struct DevServer {
 }
 
 pub struct AppState {
-    pub node_runtime: Arc<dyn NodeRuntime>,
+    pub node_runtime: NodeRuntime,
     pub user_store: Model<UserStore>,
     pub languages: Arc<LanguageRegistry>,
     pub fs: Arc<dyn Fs>,

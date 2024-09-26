@@ -228,10 +228,10 @@ impl MessageEditor {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let language::Event::Reparsed | language::Event::Edited = event {
+        if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let buffer = buffer.read(cx).snapshot();
             self.mentions_task = Some(cx.spawn(|this, cx| async move {
                 cx.background_executor()

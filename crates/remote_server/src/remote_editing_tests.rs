@@ -6,18 +6,23 @@ use gpui::{Context, Model, TestAppContext};
 use http_client::FakeHttpClient;
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, LanguageRegistry,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
+    LineEnding,
 };
-use node_runtime::FakeNodeRuntime;
+use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
+use node_runtime::NodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},
-    Project,
+    Project, ProjectPath,
 };
 use remote::SshSession;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -51,6 +56,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         })
         .await
         .unwrap();
+
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         assert_eq!(
@@ -202,15 +208,29 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(Some("Rust"))
+                .language(Some(&"Rust".into()))
                 .language_servers,
-            ["custom-rust-analyzer".into()]
+            ["custom-rust-analyzer".to_string()]
         )
     });
 
-    fs.insert_tree("/code/project1/.zed", json!({
-        "settings.json": r#"{"languages":{"Rust":{"language_servers":["override-rust-analyzer"]}}}"#
-    })).await;
+    fs.insert_tree(
+        "/code/project1/.zed",
+        json!({
+            "settings.json": r#"
+                  {
+                    "languages": {"Rust":{"language_servers":["override-rust-analyzer"]}},
+                    "lsp": {
+                      "override-rust-analyzer": {
+                        "binary": {
+                          "path": "~/.cargo/bin/rust-analyzer"
+                        }
+                      }
+                    }
+                  }"#
+        }),
+    )
+    .await;
 
     let worktree_id = project
         .update(cx, |project, cx| {
@@ -247,9 +267,9 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
                 }),
                 cx
             )
-            .language(Some("Rust"))
+            .language(Some(&"Rust".into()))
             .language_servers,
-            ["override-rust-analyzer".into()]
+            ["override-rust-analyzer".to_string()]
         )
     });
 
@@ -257,10 +277,290 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
         let file = buffer.read(cx).file();
         assert_eq!(
             all_language_settings(file, cx)
-                .language(Some("Rust"))
+                .language(Some(&"Rust".into()))
                 .language_servers,
-            ["override-rust-analyzer".into()]
+            ["override-rust-analyzer".to_string()]
         )
+    });
+}
+
+#[gpui::test]
+async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, headless, fs) = init_test(cx, server_cx).await;
+
+    fs.insert_tree(
+        "/code/project1/.zed",
+        json!({
+            "settings.json": r#"
+          {
+            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "lsp": {
+              "rust-analyzer": {
+                "binary": {
+                  "path": "~/.cargo/bin/rust-analyzer"
+                }
+              }
+            }
+          }"#
+        }),
+    )
+    .await;
+
+    cx.update_model(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..Default::default()
+            },
+        )
+    });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_language_server(
+            LanguageServerName("rust-analyzer".into()),
+            Default::default(),
+            None,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    // Wait for the settings to synchronize
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let fake_lsp = fake_lsp.next().await.unwrap();
+
+    cx.read(|cx| {
+        let file = buffer.read(cx).file();
+        assert_eq!(
+            all_language_settings(file, cx)
+                .language(Some(&"Rust".into()))
+                .language_servers,
+            ["rust-analyzer".to_string()]
+        )
+    });
+
+    let buffer_id = cx.read(|cx| {
+        let buffer = buffer.read(cx);
+        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        buffer.remote_id()
+    });
+
+    server_cx.read(|cx| {
+        let buffer = headless
+            .read(cx)
+            .buffer_store
+            .read(cx)
+            .get(buffer_id)
+            .unwrap();
+
+        assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust".into());
+    });
+
+    server_cx.read(|cx| {
+        let lsp_store = headless.read(cx).lsp_store.read(cx);
+        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
+    });
+
+    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
+            label: "boop".to_string(),
+            ..Default::default()
+        }])))
+    });
+
+    let result = project
+        .update(cx, |project, cx| {
+            project.completions(
+                &buffer,
+                0,
+                CompletionContext {
+                    trigger_kind: CompletionTriggerKind::INVOKED,
+                    trigger_character: None,
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.into_iter().map(|c| c.label.text).collect::<Vec<_>>(),
+        vec!["boop".to_string()]
+    );
+
+    fake_lsp.handle_request::<lsp::request::Rename, _, _>(|_, _| async move {
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: Some(
+                [(
+                    lsp::Url::from_file_path("/code/project1/src/lib.rs").unwrap(),
+                    vec![lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
+                        "two".to_string(),
+                    )],
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..Default::default()
+        }))
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 3, "two".to_string(), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
+    })
+}
+
+#[gpui::test]
+async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, fs) = init_test(cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a")], None, cx);
+    });
+
+    fs.save(
+        &PathBuf::from("/code/project1/src/lib.rs"),
+        &("bloop".to_string().into()),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(buffer.read(cx).has_conflict());
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert!(!buffer.read(cx).has_conflict());
+    });
+}
+
+#[gpui::test]
+async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let path = project
+        .update(cx, |project, cx| {
+            project.resolve_existing_file_path("/code/project1/README.md", &buffer, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        path.abs_path().unwrap().to_string_lossy(),
+        "/code/project1/README.md"
+    );
+
+    let path = project
+        .update(cx, |project, cx| {
+            project.resolve_existing_file_path("../README.md", &buffer, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        path.project_path().unwrap().clone(),
+        ProjectPath::from((worktree_id, "README.md"))
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+
+    // Open a buffer on the client but cancel after a random amount of time.
+    let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx));
+    cx.executor().simulate_random_delay().await;
+    drop(buffer);
+
+    // Try opening the same buffer again as the client, and ensure we can
+    // still do it despite the cancellation above.
+    let buffer = project
+        .update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buf, _| {
+        assert_eq!(buf.text(), "fn one() -> usize { 1 }")
     });
 }
 
@@ -326,7 +626,7 @@ fn build_project(ssh: Arc<SshSession>, cx: &mut TestAppContext) -> Model<Project
         )
     });
 
-    let node = FakeNodeRuntime::new();
+    let node = NodeRuntime::unavailable();
     let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());

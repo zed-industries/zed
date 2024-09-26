@@ -14,6 +14,7 @@ use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
+use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
@@ -230,7 +231,7 @@ pub fn initialize_workspace(
 
         let project = workspace.project().clone();
         if project.update(cx, |project, cx| {
-            project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
+            project.is_local() || project.is_via_ssh() || project.ssh_connection_string(cx).is_some()
         }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
@@ -582,6 +583,8 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
+            let proposed_change_bar = cx.new_view(|_| ProposedChangesEditorToolbar::new());
+            toolbar.add_item(proposed_change_bar, cx);
             let quick_action_bar =
                 cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);
@@ -2251,14 +2254,8 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     );
                 });
             })
@@ -2374,14 +2371,8 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     )
                 });
             })
@@ -3377,7 +3368,7 @@ mod tests {
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
-        let node_runtime = node_runtime::FakeNodeRuntime::new();
+        let node_runtime = node_runtime::NodeRuntime::unavailable();
         cx.update(|cx| {
             languages::init(languages.clone(), node_runtime, cx);
         });
@@ -3457,7 +3448,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -3471,7 +3462,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_md::language()),
+            Some(tree_sitter_md::LANGUAGE.into()),
         ))
     }
 

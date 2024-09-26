@@ -36,7 +36,8 @@ use gpui::{
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -148,7 +149,7 @@ impl Global for GlobalExtensionStore {}
 pub struct ExtensionIndex {
     pub extensions: BTreeMap<Arc<str>, ExtensionIndexEntry>,
     pub themes: BTreeMap<Arc<str>, ExtensionIndexThemeEntry>,
-    pub languages: BTreeMap<Arc<str>, ExtensionIndexLanguageEntry>,
+    pub languages: BTreeMap<LanguageName, ExtensionIndexLanguageEntry>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -176,7 +177,7 @@ actions!(zed, [ReloadExtensions]);
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -188,6 +189,7 @@ pub fn init(
             paths::extensions_dir().clone(),
             None,
             fs,
+            client.http_client().clone(),
             client.http_client().clone(),
             Some(client.telemetry().clone()),
             node_runtime,
@@ -224,8 +226,9 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
@@ -243,12 +246,7 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(
-                // Construct a real HTTP client for the extension builder, as we
-                // don't want to use a fake one in the tests.
-                ::http_client::client(None, http_client.proxy().cloned()),
-                build_dir,
-            )),
+            builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),

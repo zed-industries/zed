@@ -40,6 +40,7 @@ pub enum ComponentStory {
     ToolStrip,
     ViewportUnits,
     WithRemSize,
+    Vector,
 }
 
 impl ComponentStory {
@@ -75,6 +76,7 @@ impl ComponentStory {
             Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new_view(|_| crate::stories::WithRemSizeStory).into(),
+            Self::Vector => cx.new_view(|_| ui::VectorStory).into(),
         }
     }
 }

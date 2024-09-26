@@ -176,12 +176,11 @@ pub struct ProjectSearchBar {
 
 impl ProjectSearch {
     pub fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
-        let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
         Self {
             project,
-            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(capability)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -264,54 +263,35 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let tasks = results
-                    .into_iter()
-                    .map(|result| {
-                        let this = this.clone();
-
-                        cx.spawn(|mut cx| async move {
-                            match result {
-                                project::search::SearchResult::Buffer { buffer, ranges } => {
-                                    let mut match_ranges_rx =
-                                        this.update(&mut cx, |this, cx| {
-                                            this.excerpts.update(cx, |excerpts, cx| {
-                                                excerpts.stream_excerpts_with_context_lines(
-                                                    buffer,
-                                                    ranges,
-                                                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                                    cx,
-                                                )
-                                            })
-                                        })?;
-
-                                    let mut match_ranges = vec![];
-                                    while let Some(range) = match_ranges_rx.next().await {
-                                        match_ranges.push(range);
-                                    }
-                                    anyhow::Ok((match_ranges, false))
-                                }
-                                project::search::SearchResult::LimitReached => {
-                                    anyhow::Ok((vec![], true))
-                                }
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                let result_ranges = futures::future::join_all(tasks).await;
-                let mut combined_ranges = vec![];
-                for (ranges, result_limit_reached) in result_ranges.into_iter().flatten() {
-                    combined_ranges.extend(ranges);
-                    if result_limit_reached {
-                        limit_reached = result_limit_reached;
+                let mut buffers_with_ranges = Vec::with_capacity(results.len());
+                for result in results {
+                    match result {
+                        project::search::SearchResult::Buffer { buffer, ranges } => {
+                            buffers_with_ranges.push((buffer, ranges));
+                        }
+                        project::search::SearchResult::LimitReached => {
+                            limit_reached = true;
+                        }
                     }
                 }
+
+                let match_ranges = this
+                    .update(&mut cx, |this, cx| {
+                        this.excerpts.update(cx, |excerpts, cx| {
+                            excerpts.push_multiple_excerpts_with_context_lines(
+                                buffers_with_ranges,
+                                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                cx,
+                            )
+                        })
+                    })
+                    .ok()?
+                    .await;
+
                 this.update(&mut cx, |this, cx| {
-                    if !combined_ranges.is_empty() {
-                        this.no_results = Some(false);
-                        this.match_ranges.extend(combined_ranges);
-                        cx.notify();
-                    }
+                    this.no_results = Some(false);
+                    this.match_ranges.extend(match_ranges);
+                    cx.notify();
                 })
                 .ok()?;
             }

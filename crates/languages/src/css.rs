@@ -22,11 +22,11 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct CssLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl CssLspAdapter {
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         CssLspAdapter { node }
     }
 }
@@ -81,14 +81,7 @@ impl LspAdapter for CssLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &self.node).await
     }
 
     async fn initialization_options(
@@ -103,7 +96,7 @@ impl LspAdapter for CssLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_version_dir = None;
@@ -140,7 +133,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::language("css", tree_sitter_css::language());
+        let language = crate::language("css", tree_sitter_css::LANGUAGE.into());
 
         let text = r#"
             /* Import statement */

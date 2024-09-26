@@ -1,0 +1,8 @@
+name = "Dune"
+grammar = "dune"
+path_suffixes = ["dune", "dune-project"]
+brackets = [
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] }
+]
+tab_size = 2

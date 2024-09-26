@@ -6,12 +6,14 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod indent;
 mod insert;
 mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
 mod replace;
+mod rewrap;
 mod state;
 mod surrounds;
 mod visual;
@@ -24,7 +26,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, View, ViewContext, WeakView,
+    Render, Subscription, View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -166,6 +168,8 @@ pub(crate) struct Vim {
     pub search: SearchState,
 
     editor: WeakView<Editor>,
+
+    _subscriptions: Vec<Subscription>,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -189,36 +193,32 @@ impl Vim {
     pub fn new(cx: &mut ViewContext<Editor>) -> View<Self> {
         let editor = cx.view().clone();
 
-        cx.new_view(|cx: &mut ViewContext<Vim>| {
-            cx.subscribe(&editor, |vim, _, event, cx| {
-                vim.handle_editor_event(event, cx)
-            })
-            .detach();
+        cx.new_view(|cx| Vim {
+            mode: Mode::Normal,
+            last_mode: Mode::Normal,
+            pre_count: None,
+            post_count: None,
+            operator_stack: Vec::new(),
+            replacements: Vec::new(),
 
-            let listener = cx.listener(Vim::observe_keystrokes);
-            cx.observe_keystrokes(listener).detach();
+            marks: HashMap::default(),
+            stored_visual_mode: None,
+            change_list: Vec::new(),
+            change_list_position: None,
+            current_tx: None,
+            current_anchor: None,
+            undo_modes: HashMap::default(),
 
-            Vim {
-                mode: Mode::Normal,
-                last_mode: Mode::Normal,
-                pre_count: None,
-                post_count: None,
-                operator_stack: Vec::new(),
-                replacements: Vec::new(),
+            selected_register: None,
+            search: SearchState::default(),
 
-                marks: HashMap::default(),
-                stored_visual_mode: None,
-                change_list: Vec::new(),
-                change_list_position: None,
-                current_tx: None,
-                current_anchor: None,
-                undo_modes: HashMap::default(),
-
-                selected_register: None,
-                search: SearchState::default(),
-
-                editor: editor.downgrade(),
-            }
+            editor: editor.downgrade(),
+            _subscriptions: vec![
+                cx.observe_keystrokes(Self::observe_keystrokes),
+                cx.subscribe(&editor, |this, _, event, cx| {
+                    this.handle_editor_event(event, cx)
+                }),
+            ],
         })
     }
 
@@ -291,6 +291,8 @@ impl Vim {
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);
+            indent::register(editor, cx);
+            rewrap::register(editor, cx);
             object::register(editor, cx);
             visual::register(editor, cx);
             change_list::register(editor, cx);
@@ -387,6 +389,7 @@ impl Vim {
             }
             EditorEvent::Edited { .. } => self.push_to_change_list(cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(cx),
+            EditorEvent::CursorShapeChanged => self.cursor_shape_changed(cx),
             _ => {}
         }
     }
@@ -674,6 +677,12 @@ impl Vim {
         self.clear_operator(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+        });
+    }
+
+    fn cursor_shape_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.set_cursor_shape(vim.cursor_shape(), cx);
         });
     }
 

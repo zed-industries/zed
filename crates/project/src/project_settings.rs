@@ -1,14 +1,12 @@
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use language::LanguageServerName;
 use paths::local_settings_file_relative_path;
-use rpc::{
-    proto::{self, AnyProtoClient},
-    TypedEnvelope,
-};
+use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
+use settings::{InvalidSettingsError, Settings, SettingsSources, SettingsStore};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -19,7 +17,7 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -30,11 +28,15 @@ pub struct ProjectSettings {
     /// name to the lsp value.
     /// Default: null
     #[serde(default)]
-    pub lsp: HashMap<Arc<str>, LspSettings>,
+    pub lsp: HashMap<LanguageServerName, LspSettings>,
 
     /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
+
+    /// Configuration for Node-related features
+    #[serde(default)]
+    pub node: NodeBinarySettings,
 
     /// Configuration for how direnv configuration should be loaded
     #[serde(default)]
@@ -43,6 +45,17 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct NodeBinarySettings {
+    /// The path to the node binary
+    pub path: Option<String>,
+    ///  The path to the npm binary Zed should use (defaults to .path/../npm)
+    pub npm_path: Option<String>,
+    /// If disabled, zed will download its own copy of node.
+    #[serde(default)]
+    pub ignore_system_version: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -130,7 +143,7 @@ const fn true_value() -> bool {
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
-    pub path_lookup: Option<bool>,
+    pub ignore_system_version: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -178,6 +191,13 @@ pub enum SettingsObserverMode {
     Ssh(AnyProtoClient),
     Remote,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SettingsObserverEvent {
+    LocalSettingsUpdated(Result<(), InvalidSettingsError>),
+}
+
+impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
 
 pub struct SettingsObserver {
     mode: SettingsObserverMode,
@@ -314,17 +334,20 @@ impl SettingsObserver {
             .log_err();
         }
 
+        let weak_client = ssh.downgrade();
         cx.observe_global::<SettingsStore>(move |_, cx| {
             let new_settings = cx.global::<SettingsStore>().raw_user_settings();
             if &settings != new_settings {
                 settings = new_settings.clone()
             }
             if let Some(content) = serde_json::to_string(&settings).log_err() {
-                ssh.send(proto::UpdateUserSettings {
-                    project_id: 0,
-                    content,
-                })
-                .log_err();
+                if let Some(ssh) = weak_client.upgrade() {
+                    ssh.send(proto::UpdateUserSettings {
+                        project_id: 0,
+                        content,
+                    })
+                    .log_err();
+                }
             }
         })
         .detach();
@@ -418,11 +441,16 @@ impl SettingsObserver {
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+
+        let result = cx.update_global::<SettingsStore, anyhow::Result<()>>(|store, cx| {
             for (directory, file_content) in settings_contents {
-                store
-                    .set_local_settings(worktree_id, directory.clone(), file_content.as_deref(), cx)
-                    .log_err();
+                store.set_local_settings(
+                    worktree_id,
+                    directory.clone(),
+                    file_content.as_deref(),
+                    cx,
+                )?;
+
                 if let Some(downstream_client) = &self.downstream_client {
                     downstream_client
                         .send(proto::UpdateWorktreeSettings {
@@ -434,6 +462,25 @@ impl SettingsObserver {
                         .log_err();
                 }
             }
-        })
+            anyhow::Ok(())
+        });
+
+        match result {
+            Err(error) => {
+                if let Ok(error) = error.downcast::<InvalidSettingsError>() {
+                    if let InvalidSettingsError::LocalSettings {
+                        ref path,
+                        ref message,
+                    } = error
+                    {
+                        log::error!("Failed to set local settings in {:?}: {:?}", path, message);
+                        cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(error)));
+                    }
+                }
+            }
+            Ok(()) => {
+                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
+            }
+        }
     }
 }

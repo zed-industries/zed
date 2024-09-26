@@ -11,7 +11,9 @@ pub async fn parse_markdown(
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
-    let options = Options::all();
+    let mut options = Options::all();
+    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
+
     let parser = Parser::new_ext(markdown_input, options);
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
@@ -1232,7 +1234,7 @@ fn main() {
                 collapsed_placeholder: " /* ... */ ".to_string(),
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 

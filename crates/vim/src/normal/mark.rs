@@ -54,7 +54,7 @@ impl Vim {
                 );
                 starts.push(
                     map.buffer_snapshot
-                        .anchor_after(selection.start.to_offset(&map, Bias::Right)),
+                        .anchor_before(selection.start.to_offset(&map, Bias::Left)),
                 );
                 reversed.push(selection.reversed)
             }
