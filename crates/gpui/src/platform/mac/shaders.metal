@@ -438,6 +438,7 @@ struct PathSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
+  float4 border_color [[flat]];
 };
 
 vertex PathSpriteVertexOutput path_sprite_vertex(
@@ -457,7 +458,8 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
       to_device_position(unit_vertex, sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
-  return PathSpriteVertexOutput{device_position, tile_position, color};
+  float4 border_color = hsla_to_rgba(sprite.border_color);
+  return PathSpriteVertexOutput{device_position, tile_position, color, border_color};
 }
 
 fragment float4 path_sprite_fragment(
@@ -470,8 +472,47 @@ fragment float4 path_sprite_fragment(
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
   float mask = 1. - abs(1. - fmod(sample.r, 2.));
   float4 color = input.color;
+  // no border or outside, we're done
+  if (input.border_color.a == 0. || mask == 0.) {
+    color.a *= mask;
+    return color;
+  }
+
+  float2 px_size = float2(1. / atlas_texture.get_width(), 1. / atlas_texture.get_height());
+  bool is_border = false;
+  float border_intensity;
+
+  // TODO: Use a better technique than neighbor sampling for detecting edges.
+  for (int i = 1; i <= 2; i++) {
+    float pixel_distance = float(i);
+    float4 samples;
+
+    // Sample in all four directions
+    samples.x = 1. - abs(1. - fmod(atlas_texture.sample(atlas_texture_sampler, input.tile_position - float2(px_size.x * pixel_distance, 0.)).r, 2.));
+    samples.y = 1. - abs(1. - fmod(atlas_texture.sample(atlas_texture_sampler, input.tile_position + float2(px_size.x * pixel_distance, 0.)).r, 2.));
+    samples.z = 1. - abs(1. - fmod(atlas_texture.sample(atlas_texture_sampler, input.tile_position - float2(0., px_size.y * pixel_distance)).r, 2.));
+    samples.w = 1. - abs(1. - fmod(atlas_texture.sample(atlas_texture_sampler, input.tile_position + float2(0., px_size.y * pixel_distance)).r, 2.));
+
+    // Check for any difference, including at edges
+    if (any(samples != mask) ||
+        input.tile_position.x < px_size.x * pixel_distance ||
+        input.tile_position.y < px_size.y * pixel_distance ||
+        input.tile_position.x > 1.0 - px_size.x * pixel_distance ||
+        input.tile_position.y > 1.0 - px_size.y * pixel_distance) {
+      is_border = true;
+      border_intensity = 1.0 - float(i - 1) * 0.1;
+      break;
+    }
+  }
+
+  if (is_border) {
+    color = input.border_color;
+    color.a *= border_intensity;
+  }
+
   color.a *= mask;
   return color;
+
 }
 
 struct SurfaceVertexOutput {

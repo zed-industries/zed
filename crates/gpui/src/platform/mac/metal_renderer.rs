@@ -741,6 +741,12 @@ impl MetalRenderer {
                         },
                         color: path.color,
                         tile: (*tile).clone(),
+                        border_color: Hsla {
+                            h: 0.946,
+                            s: 1.0,
+                            l: 0.933,
+                            a: 1.0,
+                        },
                     });
                     paths_and_tiles.next();
                     continue;
@@ -1244,6 +1250,7 @@ pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
+    pub border_color: Hsla,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
