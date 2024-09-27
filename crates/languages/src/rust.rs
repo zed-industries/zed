@@ -15,8 +15,7 @@ use std::{
     borrow::Cow,
     env::consts,
     path::{Path, PathBuf},
-    sync::Arc,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
@@ -569,6 +568,13 @@ fn package_name_and_bin_name_from_abs_path(
     if let Some(envs) = project_env {
         command.envs(envs);
     }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+        command.creation_flags(CREATE_NO_WINDOW.0);
+    }
     let output = command
         .current_dir(abs_path.parent()?)
         .arg("metadata")
@@ -614,6 +620,13 @@ fn human_readable_package_name(
     let mut command = std::process::Command::new("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+        command.creation_flags(CREATE_NO_WINDOW.0);
     }
 
     let pkgid = String::from_utf8(
