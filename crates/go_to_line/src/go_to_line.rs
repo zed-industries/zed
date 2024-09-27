@@ -121,7 +121,7 @@ impl GoToLine {
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
                     anchor..=anchor,
-                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    cx.theme().colors().editor_highlighted_line_background,
                     true,
                     cx,
                 );
