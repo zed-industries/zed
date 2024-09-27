@@ -7975,13 +7975,13 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
         let working_dir = self.worktree_root_path();
-        let command = smol::process::Command::new(&command.path);
+        let mut child = smol::process::Command::new(&command.path);
         #[cfg(target_os = "windows")]
         {
             use smol::process::windows::CommandExt;
-            command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
         }
-        let output = command
+        let output = child
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
             .current_dir(working_dir)
