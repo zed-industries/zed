@@ -5368,6 +5368,19 @@ impl Editor {
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
                     .selected(is_active)
+                    .tooltip({
+                        let focus_handle = self.focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Code Actions",
+                                &ToggleCodeActions {
+                                    deployed_from_indicator: None,
+                                },
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
                     .on_click(cx.listener(move |editor, _e, cx| {
                         editor.focus(cx);
                         editor.toggle_code_actions(
