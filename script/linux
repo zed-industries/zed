@@ -33,11 +33,10 @@ if [[ -n $apt ]]; then
   )
   # Ubuntu 20.04 / Debian Bullseye (including CI for release)
   if grep -q "bullseye" /etc/debian_version; then
-    mold=$(mold --version || true)
-    if [[ -n $mold ]]; then
+    mold --version || {
       echo "No mold found. Please install mold or run scripts/install-mold and try again."
       exit 1
-    fi
+    }
     deps+=(
       libstdc++-10-dev
     )
