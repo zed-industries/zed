@@ -90,10 +90,10 @@ impl ScopeSelectorDelegate {
         scope_selector: WeakView<ScopeSelector>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
-        let labels = Vec::from(["Global".to_string()]).into_iter();
+        let candidates = Vec::from(["Global".to_string()]).into_iter();
         let languages = language_registry.language_names().into_iter();
 
-        let candidates = labels
+        let candidates = candidates
             .chain(languages)
             .enumerate()
             .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
