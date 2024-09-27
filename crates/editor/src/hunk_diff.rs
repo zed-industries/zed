@@ -6,10 +6,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToPoint,
 };
-use std::{
-    ops::{Range, RangeInclusive},
-    sync::Arc,
-};
+use std::{ops::Range, sync::Arc};
 use ui::{
     prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
     ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
@@ -19,7 +16,7 @@ use util::RangeExt;
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, BlockDisposition,
     BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow, DisplaySnapshot,
-    Editor, EditorElement, EditorSnapshot, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
+    Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -298,7 +295,7 @@ impl Editor {
             }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
+                    hunk_start..hunk_end,
                     added_hunk_color(cx),
                     false,
                     cx,
@@ -307,7 +304,7 @@ impl Editor {
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
+                    hunk_start..hunk_end,
                     added_hunk_color(cx),
                     false,
                     cx,
@@ -960,7 +957,7 @@ fn editor_with_deleted_text(
         editor.set_read_only(true);
         editor.set_show_inline_completions(Some(false), cx);
         editor.highlight_rows::<DiffRowHighlight>(
-            Anchor::min()..=Anchor::max(),
+            Anchor::min()..Anchor::max(),
             deleted_color,
             false,
             cx,
@@ -1037,22 +1034,6 @@ fn buffer_diff_hunk(
         return Some(hunk);
     }
     None
-}
-
-fn to_inclusive_row_range(
-    row_range: Range<Anchor>,
-    snapshot: &EditorSnapshot,
-) -> RangeInclusive<Anchor> {
-    let mut end = row_range.end.to_point(&snapshot.buffer_snapshot);
-    if end.column == 0 && end.row > 0 {
-        end = Point::new(
-            end.row - 1,
-            snapshot
-                .buffer_snapshot
-                .line_len(MultiBufferRow(end.row - 1)),
-        );
-    }
-    row_range.start..=snapshot.buffer_snapshot.anchor_after(end)
 }
 
 impl DisplayDiffHunk {

@@ -337,8 +337,9 @@ impl EditorTestContext {
             let insertions = editor
                 .highlighted_rows::<DiffRowHighlight>()
                 .map(|(range, _)| {
-                    range.start().to_point(&snapshot.buffer_snapshot).row
-                        ..range.end().to_point(&snapshot.buffer_snapshot).row + 1
+                    let start = range.start.to_point(&snapshot.buffer_snapshot);
+                    let end = range.end.to_point(&snapshot.buffer_snapshot);
+                    start.row..end.row
                 })
                 .collect::<Vec<_>>();
             let deletions = editor

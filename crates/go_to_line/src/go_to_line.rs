@@ -116,11 +116,13 @@ impl GoToLine {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                let anchor = snapshot.buffer_snapshot.anchor_before(point);
+                let start = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                let end = point + Point::new(1, 0);
+                let start = snapshot.buffer_snapshot.anchor_before(start);
+                let end = snapshot.buffer_snapshot.anchor_after(end);
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
-                    anchor..=anchor,
+                    start..end,
                     cx.theme().colors().editor_highlighted_line_background,
                     true,
                     cx,
