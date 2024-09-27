@@ -604,6 +604,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
         VimCommand::new(("0", ""), StartOfDocument),
+        // TODO: vim prints "E37: No write since last change (add ! to override)" if you have unsaved changes and you run :edit without the bang
+        VimCommand::new(("e", "dit"), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
     ]
 }
 
