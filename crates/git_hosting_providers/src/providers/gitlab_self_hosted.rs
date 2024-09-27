@@ -2,13 +2,11 @@ use url::Url;
 
 use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
 
-pub struct Gitlab;
+pub struct GitlabSelfHosted;
 
-static BASE_URL: std::sync::LazyLock<Url> =
-    std::sync::LazyLock::new(|| Url::parse("https://gitlab.com").unwrap());
-impl GitHostingProvider for Gitlab {
+impl GitHostingProvider for GitlabSelfHosted {
     fn name(&self) -> String {
-        "GitLab".to_string()
+        "GitLab self hosted".to_string()
     }
 
     fn supports_avatars(&self) -> bool {
@@ -24,19 +22,37 @@ impl GitHostingProvider for Gitlab {
     }
 
     fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        if url.starts_with("git@gitlab.com:") || url.starts_with("https://gitlab.com/") {
-            let repo_with_owner = url
-                .trim_start_matches("git@gitlab.com:")
-                .trim_start_matches("https://gitlab.com/")
-                .trim_end_matches(".git");
+        if !url.starts_with("git@gitlab-self-hosted.com:")
+            && !url.starts_with("https://gitlab-self-hosted.com/")
+            && url.contains("gitlab")
+        {
+            if url.starts_with("https://") {
+                let raw_url = url.trim_start_matches("https://").trim_end_matches(".git");
+                let raw_url_cleaned = match raw_url.contains('@') {
+                    true => raw_url.split_once('@')?.1,
+                    false => raw_url,
+                };
+                let (base_url_raw, rest) = raw_url_cleaned.split_once('/')?;
+                let (owner, repo) = rest.split_once('/')?;
+                let base_url = Url::parse(format!("https://{base_url_raw}").as_str()).ok()?;
 
-            let (owner, repo) = repo_with_owner.split_once('/')?;
+                return Some(ParsedGitRemote {
+                    base_url,
+                    owner,
+                    repo,
+                });
+            } else if url.starts_with("git@") {
+                let raw_url = url.trim_start_matches("git@").trim_end_matches(".git");
+                let (base_url_raw, rest) = raw_url.split_once(':')?;
+                let (owner, repo) = rest.split_once('/')?;
+                let base_url = Url::parse(format!("https://{base_url_raw}").as_str()).ok()?;
 
-            return Some(ParsedGitRemote {
-                base_url: BASE_URL.clone(),
-                owner,
-                repo,
-            });
+                return Some(ParsedGitRemote {
+                    base_url,
+                    owner,
+                    repo,
+                });
+            }
         }
 
         None
@@ -49,9 +65,9 @@ impl GitHostingProvider for Gitlab {
     ) -> Url {
         let BuildCommitPermalinkParams { sha } = params;
         let ParsedGitRemote {
-            base_url,
             owner,
             repo,
+            base_url,
         } = remote;
 
         base_url
@@ -61,9 +77,9 @@ impl GitHostingProvider for Gitlab {
 
     fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
         let ParsedGitRemote {
-            base_url,
             owner,
             repo,
+            base_url,
         } = remote;
         let BuildPermalinkParams {
             sha,
@@ -88,7 +104,50 @@ impl GitHostingProvider for Gitlab {
 
 #[cfg(test)]
 mod tests {
+    static BASE_URL: std::sync::LazyLock<Url> =
+        std::sync::LazyLock::new(|| Url::parse("https://gitlab-self-hosted.com").unwrap());
     use super::*;
+
+    #[test]
+    fn test_parse_remote_url_none() {
+        assert_eq!(GitlabSelfHosted.parse_remote_url("").is_none(), true);
+    }
+
+    #[test]
+    fn test_parse_remote_url_simple() {
+        let actual = GitlabSelfHosted
+            .parse_remote_url(
+                "https://gitlab-forge.din.developpement-durable.gouv.fr/pub/pnm-public/camino.git",
+            )
+            .unwrap();
+        assert_eq!(
+            actual.base_url.as_str(),
+            "https://gitlab-forge.din.developpement-durable.gouv.fr/"
+        );
+        assert_eq!(actual.owner, "pub");
+        assert_eq!(actual.repo, "pnm-public/camino");
+    }
+
+    #[test]
+    fn test_parse_remote_url_with_credentials() {
+        let actual = GitlabSelfHosted.parse_remote_url("https://my_user:my_password@gitlab-forge.din.developpement-durable.gouv.fr/pub/pnm-public/camino.git").unwrap();
+        assert_eq!(
+            actual.base_url.as_str(),
+            "https://gitlab-forge.din.developpement-durable.gouv.fr/"
+        );
+        assert_eq!(actual.owner, "pub");
+        assert_eq!(actual.repo, "pnm-public/camino");
+    }
+
+    #[test]
+    fn test_parse_remote_url_git() {
+        let actual = GitlabSelfHosted
+            .parse_remote_url("git@gitlab.something.fr:internal/part-of-repo/repo.git")
+            .unwrap();
+        assert_eq!(actual.base_url.as_str(), "https://gitlab.something.fr/");
+        assert_eq!(actual.owner, "internal");
+        assert_eq!(actual.repo, "part-of-repo/repo");
+    }
 
     #[test]
     fn test_build_gitlab_permalink_from_ssh_url() {
@@ -97,7 +156,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = GitlabSelfHosted.build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -106,7 +165,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://gitlab-self-hosted.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -117,7 +176,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = GitlabSelfHosted.build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -126,7 +185,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
+        let expected_url = "https://gitlab-self-hosted.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -137,7 +196,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = GitlabSelfHosted.build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -146,7 +205,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-48";
+        let expected_url = "https://gitlab-self-hosted.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -157,7 +216,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = GitlabSelfHosted.build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
@@ -166,7 +225,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
+        let expected_url = "https://gitlab-self-hosted.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -177,7 +236,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = GitlabSelfHosted.build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
@@ -186,7 +245,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L7";
+        let expected_url = "https://gitlab-self-hosted.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -197,7 +256,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = GitlabSelfHosted.build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
@@ -206,7 +265,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-48";
+        let expected_url = "https://gitlab-self-hosted.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

@@ -85,14 +85,12 @@ impl Github {
     }
 }
 
+static BASE_URL: std::sync::LazyLock<Url> =
+    std::sync::LazyLock::new(|| Url::parse("https://github.com").unwrap());
 #[async_trait]
 impl GitHostingProvider for Github {
     fn name(&self) -> String {
         "GitHub".to_string()
-    }
-
-    fn base_url(&self) -> Url {
-        Url::parse("https://github.com").unwrap()
     }
 
     fn supports_avatars(&self) -> bool {
@@ -116,7 +114,11 @@ impl GitHostingProvider for Github {
 
             let (owner, repo) = repo_with_owner.split_once('/')?;
 
-            return Some(ParsedGitRemote { owner, repo });
+            return Some(ParsedGitRemote {
+                base_url: BASE_URL.clone(),
+                owner,
+                repo,
+            });
         }
 
         None
@@ -128,23 +130,30 @@ impl GitHostingProvider for Github {
         params: BuildCommitPermalinkParams,
     ) -> Url {
         let BuildCommitPermalinkParams { sha } = params;
-        let ParsedGitRemote { owner, repo } = remote;
+        let ParsedGitRemote {
+            base_url,
+            owner,
+            repo,
+        } = remote;
 
-        self.base_url()
+        base_url
             .join(&format!("{owner}/{repo}/commit/{sha}"))
             .unwrap()
     }
 
     fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
-        let ParsedGitRemote { owner, repo } = remote;
+        let ParsedGitRemote {
+            base_url,
+            owner,
+            repo,
+        } = remote;
         let BuildPermalinkParams {
             sha,
             path,
             selection,
         } = params;
 
-        let mut permalink = self
-            .base_url()
+        let mut permalink = base_url
             .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
             .unwrap();
         if path.ends_with(".md") {
@@ -163,7 +172,7 @@ impl GitHostingProvider for Github {
         let capture = pull_request_number_regex().captures(line)?;
         let number = capture.get(1)?.as_str().parse::<u32>().ok()?;
 
-        let mut url = self.base_url();
+        let mut url: Url = remote.base_url.clone();
         let path = format!("/{}/{}/pull/{}", remote.owner, remote.repo, number);
         url.set_path(&path);
 
@@ -201,6 +210,7 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "zed-industries",
             repo: "zed",
         };
@@ -220,6 +230,7 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "zed-industries",
             repo: "zed",
         };
@@ -239,6 +250,7 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "zed-industries",
             repo: "zed",
         };
@@ -258,6 +270,7 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_https_url() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "zed-industries",
             repo: "zed",
         };
@@ -277,6 +290,7 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_https_url_single_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "zed-industries",
             repo: "zed",
         };
@@ -296,6 +310,7 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_https_url_multi_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "zed-industries",
             repo: "zed",
         };
@@ -315,6 +330,7 @@ mod tests {
     #[test]
     fn test_github_pull_requests() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "zed-industries",
             repo: "zed",
         };

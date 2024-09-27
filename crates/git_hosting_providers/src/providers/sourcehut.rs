@@ -4,13 +4,11 @@ use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, 
 
 pub struct Sourcehut;
 
+static BASE_URL: std::sync::LazyLock<Url> =
+    std::sync::LazyLock::new(|| Url::parse("https://git.sr.ht").unwrap());
 impl GitHostingProvider for Sourcehut {
     fn name(&self) -> String {
         "Gitee".to_string()
-    }
-
-    fn base_url(&self) -> Url {
-        Url::parse("https://git.sr.ht").unwrap()
     }
 
     fn supports_avatars(&self) -> bool {
@@ -36,7 +34,11 @@ impl GitHostingProvider for Sourcehut {
 
             let (owner, repo) = repo_with_owner.split_once('/')?;
 
-            return Some(ParsedGitRemote { owner, repo });
+            return Some(ParsedGitRemote {
+                base_url: BASE_URL.clone(),
+                owner,
+                repo,
+            });
         }
 
         None
@@ -48,23 +50,30 @@ impl GitHostingProvider for Sourcehut {
         params: BuildCommitPermalinkParams,
     ) -> Url {
         let BuildCommitPermalinkParams { sha } = params;
-        let ParsedGitRemote { owner, repo } = remote;
+        let ParsedGitRemote {
+            base_url,
+            owner,
+            repo,
+        } = remote;
 
-        self.base_url()
+        base_url
             .join(&format!("~{owner}/{repo}/commit/{sha}"))
             .unwrap()
     }
 
     fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
-        let ParsedGitRemote { owner, repo } = remote;
+        let ParsedGitRemote {
+            base_url,
+            owner,
+            repo,
+        } = remote;
         let BuildPermalinkParams {
             sha,
             path,
             selection,
         } = params;
 
-        let mut permalink = self
-            .base_url()
+        let mut permalink = base_url
             .join(&format!("~{owner}/{repo}/tree/{sha}/item/{path}"))
             .unwrap();
         permalink.set_fragment(
@@ -83,6 +92,7 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "rajveermalviya",
             repo: "zed",
         };
@@ -102,6 +112,7 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url_with_git_prefix() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "rajveermalviya",
             repo: "zed.git",
         };
@@ -121,6 +132,7 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "rajveermalviya",
             repo: "zed",
         };
@@ -140,6 +152,7 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "rajveermalviya",
             repo: "zed",
         };
@@ -159,6 +172,7 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_https_url() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "rajveermalviya",
             repo: "zed",
         };
@@ -178,6 +192,7 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_https_url_single_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "rajveermalviya",
             repo: "zed",
         };
@@ -197,6 +212,7 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_https_url_multi_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: BASE_URL.clone(),
             owner: "rajveermalviya",
             repo: "zed",
         };

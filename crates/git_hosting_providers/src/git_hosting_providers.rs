@@ -23,4 +23,5 @@ pub fn init(cx: &mut AppContext) {
     provider_registry.register_hosting_provider(Arc::new(Bitbucket));
     provider_registry.register_hosting_provider(Arc::new(Sourcehut));
     provider_registry.register_hosting_provider(Arc::new(Codeberg));
+    provider_registry.register_hosting_provider(Arc::new(GitlabSelfHosted));
 }

@@ -33,9 +33,6 @@ pub trait GitHostingProvider {
     /// Returns the name of the provider.
     fn name(&self) -> String;
 
-    /// Returns the base URL of the provider.
-    fn base_url(&self) -> Url;
-
     /// Returns a permalink to a Git commit on this hosting provider.
     fn build_commit_permalink(
         &self,
@@ -155,6 +152,7 @@ impl GitHostingProviderRegistry {
 
 #[derive(Debug)]
 pub struct ParsedGitRemote<'a> {
+    pub base_url: Url,
     pub owner: &'a str,
     pub repo: &'a str,
 }
