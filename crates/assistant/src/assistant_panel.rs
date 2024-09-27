@@ -3479,29 +3479,30 @@ impl ContextEditor {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (snapshot, copy_entire_line, creases) = self.editor.update(cx, |editor, cx| {
-            let selection = editor.selections.newest::<Point>(cx);
-            let selection_start = editor.selections.newest::<usize>(cx).start;
+        let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
+            let mut selection = editor.selections.newest::<Point>(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
             let is_entire_line = selection.is_empty() || editor.selections.line_mode;
-            let selection_range = if is_entire_line {
-                Point::new(selection.start.row, 0)
-                    ..cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0))
-            } else {
-                selection.range()
-            };
+            if is_entire_line {
+                selection.start = Point::new(selection.start.row, 0);
+                selection.end =
+                    cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
+                selection.goal = SelectionGoal::None;
+            }
+
+            let selection_start = snapshot.point_to_offset(selection.start);
 
             (
                 snapshot.clone(),
-                is_entire_line,
+                selection.clone(),
                 editor.display_map.update(cx, |display_map, cx| {
                     display_map
                         .snapshot(cx)
                         .crease_snapshot
                         .creases_in_range(
-                            MultiBufferRow(selection_range.start.row)
-                                ..MultiBufferRow(selection_range.end.row + 1),
+                            MultiBufferRow(selection.start.row)
+                                ..MultiBufferRow(selection.end.row + 1),
                             &snapshot,
                         )
                         .filter_map(|crease| {
@@ -3536,17 +3537,8 @@ impl ContextEditor {
             )
         });
 
+        let selection = selection.map(|point| snapshot.point_to_offset(point));
         let context = self.context.read(cx);
-        let mut selection = self.editor.read(cx).selections.newest::<usize>(cx);
-
-        if copy_entire_line {
-            let selection_start = self.editor.read(cx).selections.newest::<Point>(cx).start;
-            let adjusted_range = Point::new(selection_start.row, 0)
-                ..cmp::min(snapshot.max_point(), Point::new(selection_start.row + 1, 0));
-            selection.start = snapshot.point_to_offset(adjusted_range.start);
-            selection.end = snapshot.point_to_offset(adjusted_range.end);
-            selection.goal = SelectionGoal::None;
-        }
 
         let mut text = String::new();
         for message in context.messages(cx) {
