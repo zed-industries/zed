@@ -29,7 +29,7 @@ use std::{
         atomic::{AtomicU32, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Instant,
 };
 use tempfile::TempDir;
 
@@ -584,7 +584,7 @@ impl SshClientState {
         // has completed.
         let stdout = master_process.stdout.as_mut().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = Duration::from_secs(10);
+        let connection_timeout = std::time::Duration::from_secs(10);
         let result = read_with_timeout(stdout, connection_timeout, &mut output).await;
         if let Err(e) = result {
             let error_message = if e.kind() == std::io::ErrorKind::TimedOut {
@@ -743,7 +743,7 @@ impl SshClientState {
 #[cfg(unix)]
 async fn read_with_timeout(
     stdout: &mut process::ChildStdout,
-    timeout: Duration,
+    timeout: std::time::Duration,
     output: &mut Vec<u8>,
 ) -> Result<(), std::io::Error> {
     smol::future::or(
