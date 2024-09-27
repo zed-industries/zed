@@ -2892,11 +2892,27 @@ impl LspStore {
         let file = File::from_dyn(buffer.read(cx).file())?;
         let worktree_id = file.worktree_id(cx);
         let abs_path = file.as_local()?.abs_path(cx);
+        let worktree_path = file.as_local()?.path();
         let text_document = lsp::TextDocumentIdentifier {
             uri: lsp::Url::from_file_path(abs_path).log_err()?,
         };
 
+        let watched_paths_for_server = &self.as_local()?.language_server_watched_paths;
         for server in self.language_servers_for_worktree(worktree_id) {
+            let should_notify = maybe!({
+                Some(
+                    watched_paths_for_server
+                        .get(&server.server_id())?
+                        .read(cx)
+                        .worktree_paths
+                        .get(&worktree_id)?
+                        .is_match(worktree_path),
+                )
+            })
+            .unwrap_or_default();
+            if !should_notify {
+                continue;
+            }
             if let Some(include_text) = include_text(server.as_ref()) {
                 let text = if include_text {
                     Some(buffer.read(cx).text())

@@ -207,6 +207,27 @@ impl GitBlame {
         })
     }
 
+    pub fn max_author_length(&mut self, cx: &mut ModelContext<Self>) -> usize {
+        self.sync(cx);
+
+        let mut max_author_length = 0;
+
+        for entry in self.entries.iter() {
+            let author_len = entry
+                .blame
+                .as_ref()
+                .and_then(|entry| entry.author.as_ref())
+                .map(|author| author.len());
+            if let Some(author_len) = author_len {
+                if author_len > max_author_length {
+                    max_author_length = author_len;
+                }
+            }
+        }
+
+        max_author_length
+    }
+
     pub fn blur(&mut self, _: &mut ModelContext<Self>) {
         self.focused = false;
     }
