@@ -413,6 +413,8 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             }
 
             let mut command = Command::new(node_binary);
+            #[cfg(target_os = "windows")]
+            command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
             command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
@@ -473,7 +475,10 @@ pub struct SystemNodeRuntime {
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(18, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
-        let output = Command::new(&node)
+        let mut command = Command::new(&node);
+        #[cfg(windows)]
+        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        let output = command
             .arg("--version")
             .output()
             .await
@@ -558,6 +563,8 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
                 self.scratch_dir.join("blank_global_npmrc"),
             ])
             .args(args);
+        #[cfg(windows)]
+        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;
         if !output.status.success() {
