@@ -33,6 +33,7 @@ if [[ -n $apt ]]; then
   )
   # Ubuntu 20.04 / Debian Bullseye (including CI for release)
   if grep -q "bullseye" /etc/debian_version; then
+    mold=$(command -v mold || true)
     if [[ -n $mold ]]; then
       echo "No mold found. Please install mold or run scripts/install-mold and try again."
       exit 1
