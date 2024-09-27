@@ -53,10 +53,10 @@ bitflags! {
 impl SearchOptions {
     pub fn label(&self) -> &'static str {
         match *self {
-            SearchOptions::WHOLE_WORD => "Match whole words",
-            SearchOptions::CASE_SENSITIVE => "Match case sensitively",
+            SearchOptions::WHOLE_WORD => "Match Whole Words",
+            SearchOptions::CASE_SENSITIVE => "Match Case Sensitively",
             SearchOptions::INCLUDE_IGNORED => "Also search files ignored by configuration",
-            SearchOptions::REGEX => "Use regular expressions",
+            SearchOptions::REGEX => "Use Regular Expressions",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
