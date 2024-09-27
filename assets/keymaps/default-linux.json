@@ -196,7 +196,7 @@
     }
   },
   {
-    "context": "BufferSearchBar && in_replace",
+    "context": "BufferSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "ctrl-enter": "search::ReplaceAll"

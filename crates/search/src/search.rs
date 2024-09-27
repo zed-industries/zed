@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
-use gpui::{actions, Action, AppContext, IntoElement};
+use gpui::{actions, Action, AppContext, FocusHandle, IntoElement};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
@@ -106,6 +106,7 @@ impl SearchOptions {
     pub fn as_button(
         &self,
         active: bool,
+        focus_handle: FocusHandle,
         action: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
     ) -> impl IntoElement {
         IconButton::new(self.label(), self.icon())
@@ -115,7 +116,7 @@ impl SearchOptions {
             .tooltip({
                 let action = self.to_toggle_action();
                 let label = self.label();
-                move |cx| Tooltip::for_action(label, &*action, cx)
+                move |cx| Tooltip::for_action_in(label, &*action, &focus_handle, cx)
             })
     }
 }
