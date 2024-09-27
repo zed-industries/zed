@@ -769,7 +769,8 @@
       "**/Zed/**/*.json",
       "tsconfig.json",
       "pyrightconfig.json"
-    ]
+    ],
+    "TOML": ["uv.lock"]
   },
   /// By default use a recent system version of node, or install our own.
   /// You can override this to use a version of node that is not in $PATH with:
