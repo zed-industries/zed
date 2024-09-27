@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "windows")]
-    fn path_with_position_parse_windows_path() {
+    fn path_without_position_parse_windows_path() {
         assert_eq!(
             PathWithPosition::parse_str_without_pos("crates\\utils\\paths.rs"),
             PathWithPosition {
@@ -773,7 +773,7 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "windows")]
-    fn path_with_position_parse_windows_path_with_suffix() {
+    fn path_without_position_parse_windows_path_with_suffix() {
         assert_eq!(
             PathWithPosition::parse_str_without_pos("crates\\utils\\paths.rs:101"),
             PathWithPosition {
