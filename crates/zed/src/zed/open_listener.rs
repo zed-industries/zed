@@ -57,7 +57,7 @@ impl OpenRequest {
 
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
-            let path_buf = PathWithPosition::parse_str(&decoded);
+            let path_buf = PathWithPosition::parse_str_without_pos(&decoded);
             self.open_paths.push(path_buf)
         }
     }

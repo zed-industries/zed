@@ -264,6 +264,29 @@ impl PathWithPosition {
         }
     }
 
+    pub fn parse_str_without_pos(s: &str) -> Self {
+        let trimmed = s.trim();
+        let path = Path::new(trimmed);
+        let file_name_without_row_col = path
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default();
+        if file_name_without_row_col.is_empty() {
+            return Self {
+                path: Path::new(s).to_path_buf(),
+                row: None,
+                column: None,
+            };
+        } else {
+            return Self {
+                path: Path::new(trimmed).to_path_buf(),
+                row: None,
+                column: None,
+            };
+        }
+    }
+
     pub fn map_path<E>(
         self,
         mapping: impl FnOnce(PathBuf) -> Result<PathBuf, E>,
@@ -659,6 +682,156 @@ mod tests {
                 path: PathBuf::from("crates\\utils\\paths.rs"),
                 row: Some(101),
                 column: None,
+            }
+        );
+    }
+
+    #[test]
+    fn path_without_position_parse_posix_path() {
+        // Test POSIX filename edge cases
+        // Read more at https://en.wikipedia.org/wiki/Filename
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos(" test_file"),
+            PathWithPosition {
+                path: PathBuf::from("test_file"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("a:bc:.zip:1"),
+            PathWithPosition {
+                path: PathBuf::from("a:bc:.zip:1"),
+                row: None,
+                column: None
+            }
+        );
+
+        // Trim off trailing `:`s for otherwise valid input.
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("test_file:10:1:"),
+            PathWithPosition {
+                path: PathBuf::from("test_file:10:1:"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("test_file.rs:1:"),
+            PathWithPosition {
+                path: PathBuf::from("test_file.rs:1:"),
+                row: None,
+                column: None
+            }
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn path_without_position_parse_posix_path_with_suffix() {
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos(r#"fold&*%$%*(())_{}:":>?!@#$%$^&^&*"#),
+            PathWithPosition {
+                path: PathBuf::from(r#"fold&*%$%*(())_{}:":>?!@#$%$^&^&*"#),
+                row: None,
+                column: None,
+            }
+        );
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos(r#"file~`()&*^%{}}[]|:;\"'<>,.?#"#),
+            PathWithPosition {
+                path: PathBuf::from(r#"file~`()&*^%{}}[]|:;\"'<>,.?#"#),
+                row: None,
+                column: None,
+            }
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn path_with_position_parse_windows_path() {
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("crates\\utils\\paths.rs"),
+            PathWithPosition {
+                path: PathBuf::from("crates\\utils\\paths.rs"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("C:\\Users\\someone\\test_file.rs"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: None,
+                column: None
+            }
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn path_with_position_parse_windows_path_with_suffix() {
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("crates\\utils\\paths.rs:101"),
+            PathWithPosition {
+                path: PathBuf::from("crates\\utils\\paths.rs:101"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("\\\\?\\C:\\Users\\someone\\test_file.rs:1:20"),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs:1:20"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos("C:\\Users\\someone\\test_file.rs(1902,13)"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs(1902,13)"),
+                row: None,
+                column: None,
+            }
+        );
+
+        // Trim off trailing `:`s for otherwise valid input.
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos(
+                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:"
+            ),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                row: Some(1902),
+                column: Some(13)
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos(
+                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:"
+            ),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str_without_pos(
+                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:"
+            ),
+            PathWithPosition {
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:"),
+                row: None,
+                column: None
             }
         );
     }
