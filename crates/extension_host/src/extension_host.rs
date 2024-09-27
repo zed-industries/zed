@@ -837,23 +837,11 @@ impl ExtensionStore {
                 }
             });
 
-            let ret1 = fs
-                .remove_dir(
-                    &work_dir,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: true,
-                    },
-                )
-                .await;
             println!(
                 "-> Deleting: {}<->{}",
                 work_dir.display(),
                 extension_dir.display()
             );
-            println!("=> 1: {:?}", ret1);
-            println!("=> 1: work dir: {:?}", work_dir.display());
-            ret1?;
 
             let ret2 = fs
                 .remove_dir(
@@ -867,8 +855,23 @@ impl ExtensionStore {
             println!("=> 2: {:?}", ret2);
             println!("=> 2: ext dir: {:?}", extension_dir.display());
             ret2?;
+            this.update(&mut cx, |this, cx| this.reload(None, cx))?
+                .await;
 
+            let ret1 = fs
+                .remove_dir(
+                    &work_dir,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await;
+            println!("=> 1: {:?}", ret1);
+            println!("=> 1: work dir: {:?}", work_dir.display());
+            ret1?;
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
