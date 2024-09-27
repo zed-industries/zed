@@ -129,6 +129,20 @@ impl std::ops::DerefMut for ChunkTermFrequency {
     }
 }
 
+impl std::ops::Deref for CorpusTermFrequency {
+    type Target = TermFrequencyMap;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CorpusTermFrequency {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TfIdfMetadata {
     pub total_chunks: u64,

@@ -2,20 +2,32 @@ use crate::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
-    tfidf::{ChunkTermFrequency, SimpleTokenizer, TermFrequency, TfIdfMetadata},
+    tfidf::{
+        ChunkTermFrequency, CorpusTermFrequency, SimpleTokenizer, TermFrequency, TfIdfMetadata,
+    },
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
 use fs::Fs;
 use futures::stream::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Model, Task};
+use futures_batch::ChunksTimeoutStreamExt;
+use gpui::{AppContext, Model, Task};
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use log;
-use project::{Entry, UpdatedEntriesSet, Worktree};
+use project::{Entry, UpdatedEntriesSet, Worktree, WorktreeId};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use std::{cmp::Ordering, future::Future, path::Path, sync::Arc, time::SystemTime};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    future::Future,
+    iter,
+    path::Path,
+    sync::{Arc, RwLock},
+    time::{Duration, SystemTime},
+};
+use util::ResultExt;
 use worktree::Snapshot;
 
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +57,7 @@ pub struct EmbeddingIndex {
     language_registry: Arc<LanguageRegistry>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
+    corpus_frequencies: Arc<RwLock<HashMap<WorktreeId, CorpusTermFrequency>>>,
     tokenizer: SimpleTokenizer,
     settings: EmbeddingIndexSettings,
 }
@@ -67,6 +80,7 @@ impl EmbeddingIndex {
             language_registry,
             embedding_provider,
             entry_ids_being_indexed,
+            corpus_frequencies: Arc::new(RwLock::new(HashMap::new())),
             tokenizer: SimpleTokenizer::new(),
             settings: EmbeddingIndexSettings::default(),
         }
@@ -129,6 +143,8 @@ impl EmbeddingIndex {
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
+        let corpus_frequency_by_worktree = self.corpus_frequencies.clone();
+
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
                 .read_txn()
@@ -142,8 +158,24 @@ impl EmbeddingIndex {
             let mut deletion_range: Option<(Bound<&str>, Bound<&str>)> = None;
             for entry in worktree.files(false, 0) {
                 log::trace!("scanning for embedding index: {:?}", &entry.path);
-
                 let entry_db_key = db_key_for_path(&entry.path);
+                if let Some(embedded_file) = db.get(&txn, &entry_db_key)? {
+                    // initialize the CorpusTermFrequency for each worktree
+                    let mut cf_map = corpus_frequency_by_worktree
+                        .write()
+                        .map_err(|_| anyhow!("RwLock poisoned"))?;
+                    if let Some(cf) = cf_map.get_mut(&worktree.id()) {
+                        for chunk in &embedded_file.chunks {
+                            cf.add_chunk(&chunk.term_frequencies);
+                        }
+                    } else {
+                        let mut new_cf = CorpusTermFrequency::new();
+                        for chunk in &embedded_file.chunks {
+                            new_cf.add_chunk(&chunk.term_frequencies);
+                        }
+                        cf_map.insert(worktree.id(), new_cf);
+                    }
+                }
 
                 let mut saved_mtime = None;
                 while let Some(db_entry) = db_entries.peek() {
@@ -485,12 +517,6 @@ pub struct ChunkedFile {
 pub struct EmbedFiles {
     pub files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
     pub task: Task<Result<()>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum EmbeddingIndexEntry {
-    File(EmbeddedFile),
-    Metadata(TfIdfMetadata),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
