@@ -276,12 +276,6 @@ impl Vim {
                     drop(search_bar.search("", None, cx));
                     return None;
                 };
-                if search_bar.should_use_smartcase_search(cx) {
-                    options.set(
-                        SearchOptions::CASE_SENSITIVE,
-                        search_bar.is_contains_uppercase(&query),
-                    );
-                }
                 let mut query = regex::escape(&query);
                 if whole_word {
                     query = format!(r"\<{}\>", query);
