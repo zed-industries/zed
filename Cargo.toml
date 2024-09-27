@@ -99,6 +99,7 @@ members = [
     "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
+    "crates/snippets_ui",
     "crates/sqlez",
     "crates/sqlez_macros",
     "crates/story",
@@ -275,6 +276,7 @@ settings = { path = "crates/settings" }
 settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
+snippets_ui = { path = "crates/snippets_ui" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
