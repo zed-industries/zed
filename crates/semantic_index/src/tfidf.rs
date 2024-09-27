@@ -1,6 +1,10 @@
+use project::WorktreeId;
 use rust_stemmers::{Algorithm, Stemmer};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Clone)]
 pub struct SimpleTokenizer {
@@ -24,159 +28,6 @@ impl SimpleTokenizer {
     }
 }
 
-pub type TermFrequencyMap = HashMap<Arc<str>, u32>;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChunkTermFrequency(TermFrequencyMap);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CorpusTermFrequency(TermFrequencyMap);
-
-pub trait TermFrequency {
-    fn add_term(&mut self, term: Arc<str>);
-    fn merge(&mut self, other: &Self);
-    fn subtract(&mut self, other: &Self);
-    fn total_terms(&self) -> u32;
-}
-
-impl TermFrequency for TermFrequencyMap {
-    fn add_term(&mut self, term: Arc<str>) {
-        *self.entry(term).or_insert(0) += 1;
-    }
-
-    fn merge(&mut self, other: &Self) {
-        for (term, &count) in other {
-            *self.entry(term.clone()).or_insert(0) += count;
-        }
-    }
-
-    fn subtract(&mut self, other: &Self) {
-        for (term, &count) in other {
-            if let Some(self_count) = self.get_mut(term) {
-                *self_count = self_count.saturating_sub(count);
-                if *self_count == 0 {
-                    self.remove(term);
-                }
-            }
-        }
-    }
-
-    fn total_terms(&self) -> u32 {
-        self.values().sum()
-    }
-}
-
-impl ChunkTermFrequency {
-    pub fn new() -> Self {
-        ChunkTermFrequency(TermFrequencyMap::new())
-    }
-
-    pub fn from_text(text: &str, tokenizer: &SimpleTokenizer) -> Self {
-        let mut tf = ChunkTermFrequency::new();
-        for token in tokenizer.tokenize_and_stem(text) {
-            tf.0.add_term(token);
-        }
-        tf
-    }
-
-    pub fn update(&mut self, old_text: &str, new_text: &str, tokenizer: &SimpleTokenizer) {
-        let old_tf = ChunkTermFrequency::from_text(old_text, tokenizer);
-        let new_tf = ChunkTermFrequency::from_text(new_text, tokenizer);
-
-        self.0.subtract(&old_tf.0);
-        self.0.merge(&new_tf.0);
-    }
-}
-
-impl CorpusTermFrequency {
-    pub fn new() -> Self {
-        CorpusTermFrequency(TermFrequencyMap::new())
-    }
-
-    pub fn add_chunk(&mut self, chunk: &ChunkTermFrequency) {
-        self.0.merge(&chunk.0);
-    }
-
-    pub fn remove_chunk(&mut self, chunk: &ChunkTermFrequency) {
-        self.0.subtract(&chunk.0);
-    }
-
-    pub fn update_chunk(&mut self, old_chunk: &ChunkTermFrequency, new_chunk: &ChunkTermFrequency) {
-        self.remove_chunk(old_chunk);
-        self.add_chunk(new_chunk);
-    }
-
-    pub fn document_frequency(&self, term: &Arc<str>) -> u32 {
-        *self.0.get(term).unwrap_or(&0)
-    }
-
-    pub fn total_terms(&self) -> u32 {
-        self.0.total_terms()
-    }
-}
-
-impl std::ops::Deref for ChunkTermFrequency {
-    type Target = TermFrequencyMap;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for ChunkTermFrequency {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl std::ops::Deref for CorpusTermFrequency {
-    type Target = TermFrequencyMap;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for CorpusTermFrequency {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TfIdfMetadata {
-    pub total_chunks: u64,
-    pub document_frequencies: CorpusTermFrequency,
-}
-
-impl TfIdfMetadata {
-    pub fn new() -> Self {
-        Self {
-            total_chunks: 0,
-            document_frequencies: CorpusTermFrequency::new(),
-        }
-    }
-
-    pub fn add_chunk(&mut self, chunk_term_frequencies: &ChunkTermFrequency) {
-        self.total_chunks += 1;
-        self.document_frequencies.add_chunk(chunk_term_frequencies);
-    }
-
-    pub fn remove_chunk(&mut self, chunk_term_frequencies: &ChunkTermFrequency) {
-        self.total_chunks = self.total_chunks.saturating_sub(1);
-        self.document_frequencies
-            .remove_chunk(chunk_term_frequencies);
-    }
-
-    pub fn update_chunk(&mut self, old_chunk: &ChunkTermFrequency, new_chunk: &ChunkTermFrequency) {
-        self.document_frequencies.update_chunk(old_chunk, new_chunk);
-    }
-
-    pub fn avg_chunk_length(&self) -> f32 {
-        self.total_chunks as f32 / self.document_frequencies.total_terms() as f32
-    }
-}
-
 pub struct Bm25Parameters {
     pub k1: f32,
     pub b: f32,
@@ -187,72 +38,208 @@ impl Default for Bm25Parameters {
         Self { k1: 1.2, b: 0.75 }
     }
 }
+pub trait Bm25Scorer {
+    fn total_chunks(&self) -> u64;
+    fn avg_chunk_length(&self) -> f32;
+    fn term_frequency(&self, term: &Arc<str>, chunk_id: u64) -> Option<u32>;
+    fn chunk_length(&self, chunk_id: u64) -> Option<u32>;
+    fn document_frequency(&self, term: &Arc<str>) -> u64;
 
-pub struct Bm25Calculator {
-    params: Bm25Parameters,
-    metadata: Arc<TfIdfMetadata>,
-    avg_chunk_length: f32,
+    fn calculate_bm25_score(
+        &self,
+        query_terms: &HashMap<Arc<str>, f32>,
+        chunk_id: u64,
+        k1: f32,
+        b: f32,
+    ) -> Option<f32> {
+        let avg_dl = self.avg_chunk_length();
+        let chunk_length = self.chunk_length(chunk_id)? as f32;
+
+        Some(
+            query_terms
+                .iter()
+                .filter_map(|(term, &query_tf)| {
+                    let tf = self.term_frequency(term, chunk_id)? as f32;
+                    let df = self.document_frequency(term) as f32;
+                    let idf = ((self.total_chunks() as f32 - df + 0.5) / (df + 0.5)).ln();
+                    let numerator = tf * (k1 + 1.0);
+                    let denominator = tf + k1 * (1.0 - b + b * chunk_length / avg_dl);
+
+                    Some(query_tf * idf * (numerator / denominator))
+                })
+                .sum(),
+        )
+    }
 }
 
-impl Bm25Calculator {
-    pub fn new(params: Bm25Parameters, metadata: Arc<TfIdfMetadata>) -> Self {
-        let avg_chunk_length = metadata.avg_chunk_length();
+pub struct TermStats {
+    frequency: u32,
+    chunk_ids: HashSet<u64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChunkStats {
+    length: u32,
+    terms: HashMap<Arc<str>, u32>,
+}
+
+impl ChunkStats {
+    pub fn from_text(text: &str, tokenizer: &SimpleTokenizer) -> Self {
+        let tokens = tokenizer.tokenize_and_stem(text);
+        let mut terms = HashMap::new();
+        let length = tokens.len() as u32;
+
+        for token in tokens {
+            *terms.entry(token).or_insert(0) += 1;
+        }
+
+        ChunkStats { length, terms }
+    }
+
+    pub fn from_terms(terms: Vec<Arc<str>>) -> Self {
+        let mut new_terms = HashMap::new();
+        let length = terms.len() as u32;
+        for term in terms {
+            *new_terms.entry(term).or_insert(0) += 1;
+        }
+        ChunkStats {
+            length,
+            terms: new_terms,
+        }
+    }
+}
+
+/// Represents the term frequency statistics for a single worktree.
+///
+/// This struct contains information about chunks, term statistics,
+/// and the total length of all chunks in the worktree.
+pub struct WorktreeTermStats {
+    /// The unique identifier for this worktree.
+    id: WorktreeId,
+    /// A map of chunk IDs to their corresponding statistics.
+    chunks: HashMap<u64, ChunkStats>,
+    /// A map of terms to their statistics across all chunks in this worktree.
+    term_stats: HashMap<Arc<str>, TermStats>,
+    /// The total length of all chunks in this worktree.
+    total_length: u32,
+    /// The next available chunk ID.
+    next_chunk_id: u64,
+}
+impl WorktreeTermStats {
+    pub fn new(
+        id: WorktreeId,
+        chunks: HashMap<u64, ChunkStats>,
+        term_stats: HashMap<Arc<str>, TermStats>,
+        total_length: u32,
+    ) -> Self {
+        let next_chunk_id = chunks.keys().max().map_or(0, |&id| id + 1);
         Self {
-            params,
-            metadata,
-            avg_chunk_length,
+            id,
+            chunks,
+            term_stats,
+            total_length,
+            next_chunk_id,
         }
     }
 
-    pub fn calculate_score(
-        &self,
-        query_terms: &HashMap<Arc<str>, f32>,
-        chunk: &ChunkTermFrequency,
-        chunk_length: u32,
-    ) -> f32 {
-        query_terms
-            .iter()
-            .map(|(term, query_tf)| {
-                let tf = self.tf_component(chunk.get(term).cloned().unwrap_or(0), chunk_length);
-                let idf = self.idf_component(term);
-                let norm = self.length_norm_component(chunk_length);
-                query_tf * idf * (tf * norm)
-            })
-            .sum()
+    pub fn add_chunk(&mut self, chunk: ChunkStats) -> u64 {
+        let chunk_id = self.next_chunk_id;
+        self.next_chunk_id += 1;
+
+        // Update term_stats
+        for (term, &freq) in &chunk.terms {
+            let stats = self.term_stats.entry(term.clone()).or_insert(TermStats {
+                frequency: 0,
+                chunk_ids: HashSet::new(),
+            });
+            stats.frequency += freq;
+            stats.chunk_ids.insert(chunk_id);
+        }
+
+        // Update total_length
+        self.total_length += chunk.length;
+
+        // Add chunk to chunks
+        self.chunks.insert(chunk_id, chunk);
+
+        chunk_id
     }
 
-    fn tf_component(&self, term_freq: u32, chunk_length: u32) -> f32 {
-        let tf = term_freq as f32;
-        (tf * (self.params.k1 + 1.0))
-            / (tf
-                + self.params.k1
-                    * (1.0 - self.params.b + self.params.b * self.length_ratio(chunk_length)))
+    pub fn remove_chunk(&mut self, chunk_id: u64) -> Option<ChunkStats> {
+        if let Some(chunk) = self.chunks.remove(&chunk_id) {
+            // Update term_stats
+            for (term, &freq) in &chunk.terms {
+                if let Some(stats) = self.term_stats.get_mut(term) {
+                    stats.frequency -= freq;
+                    stats.chunk_ids.remove(&chunk_id);
+                    if stats.chunk_ids.is_empty() {
+                        self.term_stats.remove(term);
+                    }
+                }
+            }
+            // Update total_length
+            self.total_length -= chunk.length;
+            Some(chunk)
+        } else {
+            None
+        }
     }
+    pub fn update_chunk(&mut self, chunk_id: u64, new_chunk: ChunkStats) -> u64 {
+        if let Some(old_chunk) = self.chunks.get(&chunk_id) {
+            // Remove old chunk statistics
+            for (term, &freq) in &old_chunk.terms {
+                if let Some(stats) = self.term_stats.get_mut(term) {
+                    stats.frequency -= freq;
+                    stats.chunk_ids.remove(&chunk_id);
+                    if stats.chunk_ids.is_empty() {
+                        self.term_stats.remove(term);
+                    }
+                }
+            }
+            self.total_length -= old_chunk.length;
+        }
 
-    fn idf_component(&self, term: &Arc<str>) -> f32 {
-        let df = self.metadata.document_frequencies.document_frequency(term) as f32;
-        let n = self.metadata.total_chunks as f32;
-        ((n - df + 0.5) / (df + 0.5)).ln()
-    }
+        for (term, &freq) in &new_chunk.terms {
+            let stats = self.term_stats.entry(term.clone()).or_insert(TermStats {
+                frequency: 0,
+                chunk_ids: HashSet::new(),
+            });
+            stats.frequency += freq;
+            stats.chunk_ids.insert(chunk_id);
+        }
+        self.total_length += new_chunk.length;
 
-    fn length_norm_component(&self, chunk_length: u32) -> f32 {
-        1.0 - self.params.b + self.params.b * self.length_ratio(chunk_length)
-    }
-
-    fn length_ratio(&self, chunk_length: u32) -> f32 {
-        chunk_length as f32 / self.avg_chunk_length
+        self.chunks.insert(chunk_id, new_chunk);
+        chunk_id
     }
 }
-
-pub fn combine_bm25_and_embedding(bm25_score: f32, embedding_similarity: f32, alpha: f32) -> f32 {
-    alpha * bm25_score + (1.0 - alpha) * embedding_similarity
-}
-
-pub fn tokenize_query(query: &str, tokenizer: &SimpleTokenizer) -> HashMap<Arc<str>, f32> {
-    let tokens = tokenizer.tokenize_and_stem(query);
-    let mut query_terms = HashMap::new();
-    for token in tokens {
-        *query_terms.entry(token).or_insert(0.0) += 1.0;
+impl Bm25Scorer for WorktreeTermStats {
+    fn total_chunks(&self) -> u64 {
+        self.chunks.len() as u64
     }
-    query_terms
+
+    fn avg_chunk_length(&self) -> f32 {
+        if self.chunks.is_empty() {
+            0.0
+        } else {
+            self.total_length as f32 / self.chunks.len() as f32
+        }
+    }
+
+    fn term_frequency(&self, term: &Arc<str>, chunk_id: u64) -> Option<u32> {
+        self.chunks
+            .get(&chunk_id)
+            .and_then(|chunk| chunk.terms.get(term))
+            .cloned()
+    }
+
+    fn chunk_length(&self, chunk_id: u64) -> Option<u32> {
+        self.chunks.get(&chunk_id).map(|chunk| chunk.length)
+    }
+
+    fn document_frequency(&self, term: &Arc<str>) -> u64 {
+        self.term_stats
+            .get(term)
+            .map(|stats| stats.chunk_ids.len() as u64)
+            .unwrap_or(0)
+    }
 }

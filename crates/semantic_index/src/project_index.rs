@@ -1,11 +1,10 @@
 use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
     summary_index::FileSummary,
-    tfidf::{tokenize_query, Bm25Calculator, Bm25Parameters, SimpleTokenizer},
+    tfidf::{Bm25Parameters, Bm25Scorer, SimpleTokenizer},
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
 use anyhow::{anyhow, Context, Result};
-use collections::HashMap;
 use fs::Fs;
 use futures::{stream::StreamExt, FutureExt};
 use gpui::{
@@ -18,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     future::Future,
     num::NonZeroUsize,
     ops::{Range, RangeInclusive},
@@ -254,6 +254,12 @@ impl ProjectIndex {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
                         let db = *index.embedding_index().db();
+                        let worktree_corpus_stats = index
+                            .embedding_index()
+                            .worktree_corpus_stats
+                            .as_ref()
+                            .unwrap()
+                            .clone();
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()
@@ -265,6 +271,7 @@ impl ProjectIndex {
                                     chunks_tx
                                         .send((
                                             worktree_id,
+                                            worktree_corpus_stats.clone(),
                                             db_embedded_file.path.clone(),
                                             chunk.clone(),
                                         ))
@@ -281,31 +288,25 @@ impl ProjectIndex {
 
         let project = self.project.clone();
         let embedding_provider = self.embedding_provider.clone();
+        let bm25_params = Bm25Parameters::default();
         cx.spawn(|cx| async move {
             log::info!("Searching for {queries:?}");
             // BM-25: Init term-frequency calculator and tokenize query
             #[cfg(debug_assertions)]
             let bm25_query_start = std::time::Instant::now();
-            let bm25_calculator = {
-                let metadata = self
-                    .worktree_indices
-                    .values()
-                    .find_map(|index| {
-                        if let WorktreeIndexHandle::Loaded { index } = index {
-                            Some(index.read(cx).embedding_index().get_tfidf_metadata(cx))
-                        } else {
-                            None
-                        }
-                    })
-                    .ok_or_else(|| anyhow!("No loaded worktree index found"))?;
-                Bm25Calculator::new(Bm25Parameters::default(), metadata)
-            };
             let tokenizer = SimpleTokenizer::new();
-            let query_terms = queries
+            let query_terms: Vec<HashMap<Arc<str>, f32>> = queries
                 .iter()
-                .map(|q| tokenize_query(q, &tokenizer))
+                .map(|query| {
+                    tokenizer.tokenize_and_stem(query).into_iter().fold(
+                        HashMap::new(),
+                        |mut acc, term| {
+                            *acc.entry(term).or_insert(0.0) += 1.0;
+                            acc
+                        },
+                    )
+                })
                 .collect();
-
             // Similarity search: Embed query
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
@@ -331,15 +332,23 @@ impl ProjectIndex {
                 .scoped(|cx| {
                     for results in results_by_worker.iter_mut() {
                         cx.spawn(async {
-                            while let Ok((worktree_id, path, chunk)) = chunks_rx.recv().await {
+                            while let Ok((worktree_id, worktree_corpus_stats, path, chunk)) =
+                                chunks_rx.recv().await
+                            {
                                 let (embedding_score, query_index) =
                                     chunk.embedding.similarity(&query_embeddings);
 
-                                let bm25_score = bm25_calculator.calculate_score(
-                                    &query_terms[query_index],
-                                    &chunk.term_frequencies,
-                                    chunk.chunk_length,
-                                );
+                                let bm25_score = {
+                                    let corpus_stats = worktree_corpus_stats.read().unwrap();
+                                    corpus_stats
+                                        .calculate_bm25_score(
+                                            &query_terms[query_index],
+                                            chunk.chunk_id,
+                                            bm25_params.k1,
+                                            bm25_params.b,
+                                        )
+                                        .expect("Missing chunk_id from WorktreeTermStats")
+                                };
                                 let combined_score = mixing_param * embedding_score
                                     + (1. - mixing_param) * bm25_score;
 
@@ -403,6 +412,8 @@ impl ProjectIndex {
                     );
                     let embedding_query_elapsed = embedding_query_start.elapsed();
                     log::debug!("embedding query took {:?}", embedding_query_elapsed);
+                    let bm25_query_elapsed = bm25_query_start.elapsed();
+                    log::debug!("bm25 query took {:?}", bm25_query_elapsed);
                 }
 
                 search_results

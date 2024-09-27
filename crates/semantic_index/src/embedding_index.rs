@@ -2,9 +2,7 @@ use crate::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
-    tfidf::{
-        ChunkTermFrequency, CorpusTermFrequency, SimpleTokenizer, TermFrequency, TfIdfMetadata,
-    },
+    tfidf::{ChunkStats, SimpleTokenizer, WorktreeTermStats},
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
@@ -15,7 +13,7 @@ use gpui::{AppContext, Model, Task};
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use log;
-use project::{Entry, UpdatedEntriesSet, Worktree, WorktreeId};
+use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
@@ -57,7 +55,7 @@ pub struct EmbeddingIndex {
     language_registry: Arc<LanguageRegistry>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
-    corpus_frequencies: Arc<RwLock<HashMap<WorktreeId, CorpusTermFrequency>>>,
+    pub worktree_corpus_stats: Option<Arc<RwLock<WorktreeTermStats>>>,
     tokenizer: SimpleTokenizer,
     settings: EmbeddingIndexSettings,
 }
@@ -80,7 +78,7 @@ impl EmbeddingIndex {
             language_registry,
             embedding_provider,
             entry_ids_being_indexed,
-            corpus_frequencies: Arc::new(RwLock::new(HashMap::new())),
+            worktree_corpus_stats: None,
             tokenizer: SimpleTokenizer::new(),
             settings: EmbeddingIndexSettings::default(),
         }
@@ -101,6 +99,7 @@ impl EmbeddingIndex {
         let embed = Self::embed_files(
             self.embedding_provider.clone(),
             chunk.files,
+            &mut self.worktree_corpus_stats,
             self.tokenizer.clone(),
             self.settings,
             cx,
@@ -113,7 +112,7 @@ impl EmbeddingIndex {
     }
 
     pub fn index_updated_entries(
-        &self,
+        &mut self,
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
@@ -124,6 +123,7 @@ impl EmbeddingIndex {
         let embed = Self::embed_files(
             self.embedding_provider.clone(),
             chunk.files,
+            &mut self.worktree_corpus_stats,
             self.tokenizer.clone(),
             self.settings,
             cx,
@@ -143,7 +143,13 @@ impl EmbeddingIndex {
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
-        let corpus_frequency_by_worktree = self.corpus_frequencies.clone();
+        let worktree_corpus_stats = Arc::new(RwLock::new(WorktreeTermStats::new(
+            worktree.id(),
+            HashMap::new(),
+            HashMap::new(),
+            0,
+        )));
+        self.worktree_corpus_stats = Some(worktree_corpus_stats.clone());
 
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
@@ -160,20 +166,9 @@ impl EmbeddingIndex {
                 log::trace!("scanning for embedding index: {:?}", &entry.path);
                 let entry_db_key = db_key_for_path(&entry.path);
                 if let Some(embedded_file) = db.get(&txn, &entry_db_key)? {
-                    // initialize the CorpusTermFrequency for each worktree
-                    let mut cf_map = corpus_frequency_by_worktree
-                        .write()
-                        .map_err(|_| anyhow!("RwLock poisoned"))?;
-                    if let Some(cf) = cf_map.get_mut(&worktree.id()) {
-                        for chunk in &embedded_file.chunks {
-                            cf.add_chunk(&chunk.term_frequencies);
-                        }
-                    } else {
-                        let mut new_cf = CorpusTermFrequency::new();
-                        for chunk in &embedded_file.chunks {
-                            new_cf.add_chunk(&chunk.term_frequencies);
-                        }
-                        cf_map.insert(worktree.id(), new_cf);
+                    let mut stats = worktree_corpus_stats.write().unwrap();
+                    for chunk in &embedded_file.chunks {
+                        stats.add_chunk(chunk.term_frequencies.clone());
                     }
                 }
 
@@ -336,11 +331,13 @@ impl EmbeddingIndex {
     pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
+        worktree_corpus_stats: &mut Option<Arc<RwLock<WorktreeTermStats>>>,
         tokenizer: SimpleTokenizer,
         settings: EmbeddingIndexSettings,
         cx: &AppContext,
     ) -> EmbedFiles {
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(settings.embed_files_bound);
+        let worktree_corpus_stats = worktree_corpus_stats.clone();
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
@@ -389,12 +386,17 @@ impl EmbeddingIndex {
                         chunked_file.chunks.into_iter().zip(embeddings.by_ref())
                     {
                         if let Some(embedding) = embedding {
-                            let term_frequencies =
-                                ChunkTermFrequency::from_text(&chunked_file.text, &tokenizer);
-                            let chunk_length = term_frequencies.total_terms();
+                            let chunk_text = &chunked_file.text[chunk.range.clone()];
+                            let chunk_stats = ChunkStats::from_text(chunk_text, &tokenizer);
+                            let chunk_id = if let Ok(mut stats) = worktree_corpus_stats.as_ref().unwrap().write() {
+                                stats.add_chunk(chunk_stats.clone())
+                            } else {
+                                log::error!("Failed to acquire write lock for worktree_corpus_stats");
+                                continue;
+                            };
                             embedded_file
                                 .chunks
-                                .push(EmbeddedChunk { chunk, embedding, term_frequencies, chunk_length });
+                                .push(EmbeddedChunk { chunk, chunk_id, embedding, term_frequencies: chunk_stats });
                         } else {
                             embedded_all_chunks = false;
                         }
@@ -529,9 +531,9 @@ pub struct EmbeddedFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmbeddedChunk {
     pub chunk: Chunk,
+    pub chunk_id: u64,
     pub embedding: Embedding,
-    pub term_frequencies: ChunkTermFrequency,
-    pub chunk_length: u32,
+    pub term_frequencies: ChunkStats,
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
