@@ -852,7 +852,7 @@ fn test_fold_action(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(8), 0)..DisplayPoint::new(DisplayRow(12), 0)
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(12), 0)
             ]);
         });
         view.fold(&Fold, cx);
@@ -940,7 +940,7 @@ fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(10), 0)
+                DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(10), 0)
             ]);
         });
         view.fold(&Fold, cx);
@@ -1022,7 +1022,7 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(11), 0)
+                DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(11), 0)
             ]);
         });
         view.fold(&Fold, cx);
