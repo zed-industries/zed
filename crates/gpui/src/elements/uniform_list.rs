@@ -270,8 +270,8 @@ impl Element for UniformList {
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
-                            // TODO kb scroll highlilghts and rename editor are not shown after scrolling horizontally
-                            // TODO kb cannot click on the right side of the item when scrolled
+                            // TODO kb should all those changes to uniform_list should only work when horizontal scroll is enabled?
+                            // TODO kb symlink icon is not hovered well now
                             // TODO kb does not recalculate the thumb size on directory folding
                             /////////////////////////////////////////////////////////////////////
                             // TODO kb hide scrollbars on hover and only show them when scrolling
@@ -282,7 +282,9 @@ impl Element for UniformList {
                                     item_height * ix + scroll_offset.y + padding.top,
                                 );
                             let available_space = size(
-                                AvailableSpace::Definite(padded_bounds.size.width),
+                                AvailableSpace::Definite(
+                                    padded_bounds.size.width.max(content_width),
+                                ),
                                 AvailableSpace::Definite(item_height),
                             );
                             item.layout_as_root(available_space, cx);
