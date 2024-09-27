@@ -288,7 +288,7 @@ impl Render for BufferSearchBar {
                         let focus_handle = focus_handle.clone();
                         move |cx| {
                             Tooltip::for_action_in(
-                                "Toggle search selection",
+                                "Toggle Search Selection",
                                 &ToggleSelection,
                                 &focus_handle,
                                 cx,
@@ -308,7 +308,7 @@ impl Render for BufferSearchBar {
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
                                     Tooltip::for_action_in(
-                                        "Select all matches",
+                                        "Select All Matches",
                                         &SelectAllMatches,
                                         &focus_handle,
                                         cx,
@@ -319,14 +319,14 @@ impl Render for BufferSearchBar {
                     .child(render_nav_button(
                         ui::IconName::ChevronLeft,
                         self.active_match_index.is_some(),
-                        "Select previous match",
+                        "Select Previous Match",
                         &SelectPrevMatch,
                         focus_handle.clone(),
                     ))
                     .child(render_nav_button(
                         ui::IconName::ChevronRight,
                         self.active_match_index.is_some(),
-                        "Select next match",
+                        "Select Next Match",
                         &SelectNextMatch,
                         focus_handle.clone(),
                     ))
@@ -373,7 +373,7 @@ impl Render for BufferSearchBar {
                                     let focus_handle = focus_handle.clone();
                                     move |cx| {
                                         Tooltip::for_action_in(
-                                            "Replace next match",
+                                            "Replace Next Match",
                                             &ReplaceNext,
                                             &focus_handle,
                                             cx,
@@ -390,7 +390,7 @@ impl Render for BufferSearchBar {
                                     let focus_handle = focus_handle.clone();
                                     move |cx| {
                                         Tooltip::for_action_in(
-                                            "Replace all matches",
+                                            "Replace All Matches",
                                             &ReplaceAll,
                                             &focus_handle,
                                             cx,
@@ -442,7 +442,7 @@ impl Render for BufferSearchBar {
                         div.child(
                             IconButton::new(SharedString::from("Close"), IconName::Close)
                                 .tooltip(move |cx| {
-                                    Tooltip::for_action("Close search bar", &Dismiss, cx)
+                                    Tooltip::for_action("Close Search Bar", &Dismiss, cx)
                                 })
                                 .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                     this.dismiss(&Dismiss, cx)
