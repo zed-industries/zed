@@ -385,7 +385,7 @@ async fn open_workspaces(
         let paths_with_position = paths
             .into_iter()
             .map(|path_with_position_string| {
-                PathWithPosition::parse_str(&path_with_position_string)
+                PathWithPosition::parse_str_without_pos(&path_with_position_string)
             })
             .collect();
         vec![paths_with_position]

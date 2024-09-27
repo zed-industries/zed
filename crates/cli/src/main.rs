@@ -57,9 +57,11 @@ struct Args {
     #[arg(long)]
     dev_server_token: Option<String>,
 }
-
-fn parse_path_with_position(argument_str: &str) -> Result<String, std::io::Error> {
-    let path = PathWithPosition::parse_str(argument_str);
+fn parse_path(
+    argument_str: &str,
+    parser: fn(&str) -> PathWithPosition,
+) -> Result<String, std::io::Error> {
+    let path = parser(argument_str);
     let curdir = env::current_dir()?;
 
     let canonicalized = path.map_path(|path| match fs::canonicalize(&path) {
@@ -142,7 +144,7 @@ fn main() -> Result<()> {
             let (file, _) = file.keep()?;
             stdin_tmp_file = Some(file);
         } else {
-            paths.push(parse_path_with_position(path)?)
+            paths.push(parse_path(&path, PathWithPosition::parse_str_without_pos)?)
         }
     }
 
