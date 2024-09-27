@@ -139,6 +139,8 @@
       "z o": "editor::UnfoldLines",
       "z O": "editor::UnfoldRecursive",
       "z f": "editor::FoldSelectedRanges",
+      "z M": "editor::FoldAll",
+      "z R": "editor::UnfoldAll",
       "shift-z shift-q": ["pane::CloseActiveItem", { "saveIntent": "skip" }],
       "shift-z shift-z": ["pane::CloseActiveItem", { "saveIntent": "saveAll" }],
       // Count support
