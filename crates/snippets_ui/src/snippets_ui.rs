@@ -6,7 +6,7 @@ use gpui::{
 use language::LanguageRegistry;
 use paths::config_dir;
 use picker::{Picker, PickerDelegate};
-use std::{borrow::Borrow, sync::Arc};
+use std::{borrow::Borrow, fs, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, WindowContext};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, ModalView, Workspace};
@@ -19,6 +19,7 @@ pub fn init(cx: &mut AppContext) {
 
 fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(configure_snippets);
+    workspace.register_action(open_folder);
 }
 
 fn configure_snippets(
@@ -32,6 +33,11 @@ fn configure_snippets(
     workspace.toggle_modal(cx, move |cx| {
         ScopeSelector::new(language_registry, workspace_handle, cx)
     });
+}
+
+fn open_folder(workspace: &mut Workspace, _: &OpenFolder, cx: &mut ViewContext<Workspace>) {
+    fs::create_dir_all(config_dir().join("snippets")).notify_err(workspace, cx);
+    cx.open_with_system(config_dir().join("snippets").borrow());
 }
 
 pub struct ScopeSelector {
