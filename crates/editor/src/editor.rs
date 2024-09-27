@@ -9697,7 +9697,7 @@ impl Editor {
                     if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
                         let buffer = target.buffer.read(cx);
                         let range = check_multiline_range(buffer, range);
-                        editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select_ranges([range]);
                         });
                     } else {
