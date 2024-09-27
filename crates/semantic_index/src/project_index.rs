@@ -291,11 +291,11 @@ impl ProjectIndex {
         let bm25_params = Bm25Parameters::default();
         cx.spawn(|cx| async move {
             log::info!("Searching for {queries:?}");
-            // BM-25: Init term-frequency calculator and tokenize query
+            // BM-25: Tokenize query
             #[cfg(debug_assertions)]
             let bm25_query_start = std::time::Instant::now();
             let tokenizer = SimpleTokenizer::new();
-            let query_terms: Vec<HashMap<Arc<str>, f32>> = queries
+            let terms_by_query: Vec<HashMap<Arc<str>, f32>> = queries
                 .iter()
                 .map(|query| {
                     tokenizer.tokenize_and_stem(query).into_iter().fold(
@@ -335,43 +335,51 @@ impl ProjectIndex {
                             while let Ok((worktree_id, worktree_corpus_stats, path, chunk)) =
                                 chunks_rx.recv().await
                             {
-                                let (embedding_score, query_index) =
-                                    chunk.embedding.similarity(&query_embeddings);
+                                // iterate over every (query_embedding, query_term) and compute its hybrid retrieval score for this chunk
+                                // RetScore(chunk, query_embedding, query_term, m) = m * Sim(query_embedding, chunk) + (1 - m) * Bm25(query_term, chunk)]
+                                let hybrid_scores: Vec<f32> = query_embeddings
+                                    .iter()
+                                    .zip(terms_by_query.iter())
+                                    .map(|(query_embedding, query_term)| {
+                                        let (embedding_score, _) =
+                                            query_embedding.similarity(&[chunk.embedding.clone()]);
+                                        let bm25_score = {
+                                            let corpus_stats =
+                                                worktree_corpus_stats.read().unwrap();
+                                            corpus_stats
+                                                .calculate_bm25_score(
+                                                    query_term,
+                                                    chunk.chunk_id,
+                                                    bm25_params.k1,
+                                                    bm25_params.b,
+                                                )
+                                                .expect("Missing chunk_id from WorktreeTermStats")
+                                        };
+                                        mixing_param * embedding_score
+                                            + (1. - mixing_param) * bm25_score
+                                    })
+                                    .collect();
 
-                                let bm25_score = {
-                                    let corpus_stats = worktree_corpus_stats.read().unwrap();
-                                    corpus_stats
-                                        .calculate_bm25_score(
-                                            &query_terms[query_index],
-                                            chunk.chunk_id,
-                                            bm25_params.k1,
-                                            bm25_params.b,
-                                        )
-                                        .expect("Missing chunk_id from WorktreeTermStats")
-                                };
-                                let combined_score = mixing_param * embedding_score
-                                    + (1. - mixing_param) * bm25_score;
-
-                                let ix = match results.binary_search_by(|probe| {
-                                    combined_score
-                                        .partial_cmp(&probe.score)
-                                        .unwrap_or(Ordering::Equal)
-                                }) {
-                                    Ok(ix) | Err(ix) => ix,
-                                };
-                                if ix < limit {
-                                    results.insert(
-                                        ix,
-                                        WorktreeSearchResult {
-                                            worktree_id,
-                                            path: path.clone(),
-                                            range: chunk.chunk.range.clone(),
-                                            query_index,
-                                            score: combined_score,
-                                        },
-                                    );
-                                    if results.len() > limit {
-                                        results.pop();
+                                for (query_index, score) in hybrid_scores.into_iter().enumerate() {
+                                    let ix = match results.binary_search_by(|probe| {
+                                        score.partial_cmp(&probe.score).unwrap_or(Ordering::Equal)
+                                    }) {
+                                        Ok(ix) | Err(ix) => ix,
+                                    };
+                                    if ix < limit {
+                                        results.insert(
+                                            ix,
+                                            WorktreeSearchResult {
+                                                worktree_id,
+                                                path: path.clone(),
+                                                range: chunk.chunk.range.clone(),
+                                                query_index,
+                                                score,
+                                            },
+                                        );
+                                        if results.len() > limit {
+                                            results.pop();
+                                        }
                                     }
                                 }
                             }
