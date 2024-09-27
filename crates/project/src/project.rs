@@ -886,6 +886,9 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
 
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                .detach();
+
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
