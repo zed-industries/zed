@@ -164,7 +164,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
+use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
@@ -6154,30 +6154,8 @@ impl Editor {
     }
 
     pub fn reload_file(&mut self, _: &ReloadFile, cx: &mut ViewContext<Self>) {
-        // directly copied this because i don't know how to call it :P
-        // TODO: call reload from crates/editor/src/items.rs:788 instead of copying it here
         if let Some(project) = self.project.clone() {
-            let buffer = self.buffer().clone();
-            let buffers = self.buffer.read(cx).all_buffers();
-            let reload_buffers =
-                project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
-
-            // hacky to assign _ here
-            let _ = cx.spawn(|this, mut cx| async move {
-                let transaction = reload_buffers.log_err().await;
-                this.update(&mut cx, |editor, cx| {
-                    editor.request_autoscroll(Autoscroll::fit(), cx)
-                }).ok();
-                buffer
-                    .update(&mut cx, |buffer, cx| {
-                        if let Some(transaction) = transaction {
-                            if !buffer.is_singleton() {
-                                buffer.push_transaction(&transaction.0, cx);
-                            }
-                        }
-                    })
-                    .ok();
-            });
+            let _ = self.reload(project, cx);
         }
     }
 
