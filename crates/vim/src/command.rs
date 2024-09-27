@@ -680,7 +680,10 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
 
     for command in commands(cx).iter() {
         if let Some(action) = command.parse(query, cx) {
-            let string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
+            let mut string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
+            if query.ends_with('!') {
+                string.push('!');
+            }
             let positions = generate_positions(&string, &(range_prefix + query));
 
             if let Some(range) = &range {
