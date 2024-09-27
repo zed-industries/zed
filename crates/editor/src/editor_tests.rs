@@ -11490,7 +11490,7 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
     cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
     cx.executor().run_until_parked();
 
-    // Deletions are not shown if their position is within a fold
+    // Hunks are not shown if their position is within a fold
     cx.assert_diff_hunks(
         r#"
           use some::mod2;

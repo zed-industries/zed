@@ -19,8 +19,8 @@ use util::RangeExt;
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, BlockDisposition,
     BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow, DisplaySnapshot,
-    Editor, EditorElement, EditorSnapshot, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
-    RangeToAnchorExt, RevertFile, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    Editor, EditorElement, EditorSnapshot, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -219,14 +219,7 @@ impl Editor {
                         });
                     }
 
-                    for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(
-                            to_inclusive_row_range(removed_rows, &snapshot),
-                            None,
-                            false,
-                            cx,
-                        );
-                    }
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
                         editor.expand_diff_hunk(None, &hunk, cx);
@@ -306,7 +299,7 @@ impl Editor {
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    added_hunk_color(cx),
                     false,
                     cx,
                 );
@@ -315,7 +308,7 @@ impl Editor {
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
                     to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    added_hunk_color(cx),
                     false,
                     cx,
                 );
@@ -850,14 +843,7 @@ impl Editor {
                         retain
                     });
 
-                    for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(
-                            to_inclusive_row_range(removed_rows, &snapshot),
-                            None,
-                            false,
-                            cx,
-                        );
-                    }
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
 
                     if let Some(diff_base_buffer) = &diff_base_buffer {
@@ -978,7 +964,7 @@ fn editor_with_deleted_text(
         editor.set_show_inline_completions(Some(false), cx);
         editor.highlight_rows::<DiffRowHighlight>(
             Anchor::min()..=Anchor::max(),
-            Some(deleted_color),
+            deleted_color,
             false,
             cx,
         );
@@ -1060,15 +1046,16 @@ fn to_inclusive_row_range(
     row_range: Range<Anchor>,
     snapshot: &EditorSnapshot,
 ) -> RangeInclusive<Anchor> {
-    let mut display_row_range =
-        row_range.start.to_display_point(snapshot)..row_range.end.to_display_point(snapshot);
-    if display_row_range.end.row() > display_row_range.start.row() {
-        *display_row_range.end.row_mut() -= 1;
+    let mut end = row_range.end.to_point(&snapshot.buffer_snapshot);
+    if end.column == 0 && end.row > 0 {
+        end = Point::new(
+            end.row - 1,
+            snapshot
+                .buffer_snapshot
+                .line_len(MultiBufferRow(end.row - 1)),
+        );
     }
-    let point_range = display_row_range.start.to_point(&snapshot.display_snapshot)
-        ..display_row_range.end.to_point(&snapshot.display_snapshot);
-    let new_range = point_range.to_anchors(&snapshot.buffer_snapshot);
-    new_range.start..=new_range.end
+    row_range.start..=snapshot.buffer_snapshot.anchor_after(end)
 }
 
 impl DisplayDiffHunk {

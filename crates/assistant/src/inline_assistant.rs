@@ -1142,7 +1142,7 @@ impl InlineAssistant {
             for row_range in inserted_row_ranges {
                 editor.highlight_rows::<InlineAssist>(
                     row_range,
-                    Some(cx.theme().status().info_background),
+                    cx.theme().status().info_background,
                     false,
                     cx,
                 );
@@ -1209,7 +1209,7 @@ impl InlineAssistant {
                     editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..=Anchor::max(),
-                        Some(cx.theme().status().deleted_background),
+                        cx.theme().status().deleted_background,
                         false,
                         cx,
                     );
