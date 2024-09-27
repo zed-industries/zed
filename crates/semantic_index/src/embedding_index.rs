@@ -94,6 +94,10 @@ impl EmbeddingIndex {
     ) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
+        // TODO: audit lifecycle of `worktree_corpus_stats`
+        // at the moment, we only update it in scan_entries when we check previously embedded files,
+        // but it also needs to be updated on file additions, file deletes, and file modifications
+        // in order for bm25 scoring to be correct
         let scan = self.scan_entries(worktree, cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(
@@ -165,6 +169,7 @@ impl EmbeddingIndex {
                 log::trace!("scanning for embedding index: {:?}", &entry.path);
                 let entry_db_key = db_key_for_path(&entry.path);
                 if let Some(embedded_file) = db.get(&txn, &entry_db_key)? {
+                    // initialize worktree_corpus_stats from embedded files in database
                     {
                         let mut stats = worktree_corpus_stats.write().unwrap();
                         for chunk in &embedded_file.chunks {
