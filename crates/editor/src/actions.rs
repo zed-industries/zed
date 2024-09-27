@@ -231,6 +231,7 @@ gpui::actions!(
         FindAllReferences,
         Fold,
         FoldSelectedRanges,
+        ToggleFold,
         Format,
         GoToDeclaration,
         GoToDeclarationSplit,

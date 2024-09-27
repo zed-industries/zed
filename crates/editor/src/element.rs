@@ -336,6 +336,7 @@ impl EditorElement {
         register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at);
+        register_action(view, cx, Editor::toggle_fold);
         register_action(view, cx, Editor::unfold_lines);
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
