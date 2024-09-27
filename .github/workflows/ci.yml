@@ -101,7 +101,7 @@ jobs:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - buildjet-16vcpu-ubuntu-2004
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -271,7 +271,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Linux bundle
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - buildjet-16vcpu-ubuntu-2004
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
