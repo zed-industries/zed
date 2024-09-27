@@ -22,7 +22,7 @@ use fuzzy::CharBag;
 use git::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     status::GitStatus,
-    DOT_GIT, GITIGNORE,
+    COOKIES, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE,
 };
 use gpui::{
     AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
@@ -472,7 +472,7 @@ impl Worktree {
                 disconnected: false,
             };
 
-            // Apply updates to a separate snapshto in a background task, then
+            // Apply updates to a separate snapshot in a background task, then
             // send them to a foreground task which updates the model.
             cx.background_executor()
                 .spawn(async move {
@@ -1826,10 +1826,13 @@ impl RemoteWorktree {
         let initial_update = self
             .snapshot
             .build_initial_update(project_id, self.id().to_proto());
-        self.updates_tx = Some(tx);
+        self.update_observer = Some(tx);
         cx.spawn(|this, mut cx| async move {
             let mut update = initial_update;
             loop {
+                // SSH projects use a special project ID of 0, and we need to
+                // remap it to the correct one here.
+                update.project_id = project_id;
                 if !callback(update).await {
                     break;
                 }
@@ -1841,7 +1844,7 @@ impl RemoteWorktree {
             }
             this.update(&mut cx, |this, _| {
                 let this = this.as_remote_mut().unwrap();
-                this.updates_tx.take();
+                this.update_observer.take();
             })
         })
         .detach();
@@ -3707,9 +3710,32 @@ impl BackgroundScanner {
             let snapshot = &self.state.lock().snapshot;
             {
                 let mut is_git_related = false;
+
+                // We don't want to trigger .git rescan for events within .git/fsmonitor--daemon/cookies directory.
+                #[derive(PartialEq)]
+                enum FsMonitorParseState {
+                    Cookies,
+                    FsMonitor
+                }
+                let mut fsmonitor_parse_state = None;
                 if let Some(dot_git_dir) = abs_path
                     .ancestors()
-                    .find(|ancestor| ancestor.file_name() == Some(*DOT_GIT))
+                    .find(|ancestor| {
+                        let file_name = ancestor.file_name();
+                        if file_name == Some(*COOKIES) {
+                            fsmonitor_parse_state = Some(FsMonitorParseState::Cookies);
+                            false
+                        } else if fsmonitor_parse_state == Some(FsMonitorParseState::Cookies) && file_name == Some(*FSMONITOR_DAEMON) {
+                            fsmonitor_parse_state = Some(FsMonitorParseState::FsMonitor);
+                            false
+                        } else if fsmonitor_parse_state != Some(FsMonitorParseState::FsMonitor) && file_name == Some(*DOT_GIT) {
+                            true
+                        } else {
+                            fsmonitor_parse_state.take();
+                            false
+                        }
+
+                    })
                 {
                     let dot_git_path = dot_git_dir
                         .strip_prefix(&root_canonical_path)

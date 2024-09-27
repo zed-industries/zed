@@ -285,7 +285,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
+                .ok_or_else(|| anyhow!("no such project: {project_id}"))?;
 
             // Update metadata.
             worktree::Entity::update(worktree::ActiveModel {

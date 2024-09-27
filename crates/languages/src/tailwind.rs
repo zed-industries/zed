@@ -46,38 +46,6 @@ impl LspAdapter for TailwindLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
-    ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx
-            .update(|cx| {
-                language_server_settings(delegate, &Self::SERVER_NAME, cx)
-                    .and_then(|s| s.binary.clone())
-            })
-            .ok()??;
-
-        let path = if let Some(configured_path) = configured_binary.path.map(PathBuf::from) {
-            configured_path
-        } else {
-            self.node.binary_path().await.ok()?
-        };
-
-        let arguments = configured_binary
-            .arguments
-            .unwrap_or_default()
-            .iter()
-            .map(|arg| arg.into())
-            .collect();
-
-        Some(LanguageServerBinary {
-            path,
-            arguments,
-            env: None,
-        })
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -121,13 +89,6 @@ impl LspAdapter for TailwindLspAdapter {
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &self.node).await
     }

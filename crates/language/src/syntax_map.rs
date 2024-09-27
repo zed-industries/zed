@@ -794,7 +794,7 @@ impl SyntaxSnapshot {
         range: Range<usize>,
         buffer: &'a BufferSnapshot,
         query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapCaptures {
+    ) -> SyntaxMapCaptures<'a> {
         SyntaxMapCaptures::new(
             range.clone(),
             buffer.as_rope(),
@@ -808,7 +808,7 @@ impl SyntaxSnapshot {
         range: Range<usize>,
         buffer: &'a BufferSnapshot,
         query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapMatches {
+    ) -> SyntaxMapMatches<'a> {
         SyntaxMapMatches::new(
             range.clone(),
             buffer.as_rope(),
@@ -828,7 +828,7 @@ impl SyntaxSnapshot {
         range: Range<T>,
         buffer: &'a BufferSnapshot,
         include_hidden: bool,
-    ) -> impl 'a + Iterator<Item = SyntaxLayer> {
+    ) -> impl 'a + Iterator<Item = SyntaxLayer<'a>> {
         let start_offset = range.start.to_offset(buffer);
         let end_offset = range.end.to_offset(buffer);
         let start = buffer.anchor_before(start_offset);

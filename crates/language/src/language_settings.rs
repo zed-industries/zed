@@ -113,6 +113,9 @@ pub struct LanguageSettings {
     pub use_autoclose: bool,
     /// Whether to automatically surround text with brackets.
     pub use_auto_surround: bool,
+    /// Whether to use additional LSP queries to format (and amend) the code after
+    /// every "trigger" symbol input, defined by LSP server capabilities.
+    pub use_on_type_format: bool,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
@@ -333,6 +336,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: false
     pub always_treat_brackets_as_autoclosed: Option<bool>,
+    /// Whether to use additional LSP queries to format (and amend) the code after
+    /// every "trigger" symbol input, defined by LSP server capabilities.
+    ///
+    /// Default: true
+    pub use_on_type_format: Option<bool>,
     /// Which code actions to run on save after the formatter.
     /// These are not run if formatting is off.
     ///
@@ -371,15 +379,16 @@ pub struct FeaturesContent {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
-    /// Do not soft wrap.
+    /// Prefer a single line generally, unless an overly long line is encountered.
     None,
+    /// Deprecated: use None instead. Left to avoid breakin existing users' configs.
     /// Prefer a single line generally, unless an overly long line is encountered.
     PreferLine,
-    /// Soft wrap lines that exceed the editor width
+    /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length
+    /// Soft wrap lines at the preferred line length.
     PreferredLineLength,
-    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
     Bounded,
 }
 
@@ -1045,6 +1054,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
+    merge(&mut settings.use_on_type_format, src.use_on_type_format);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
         src.always_treat_brackets_as_autoclosed,

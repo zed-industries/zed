@@ -69,7 +69,7 @@ impl CreaseSnapshot {
         &'a self,
         range: Range<MultiBufferRow>,
         snapshot: &'a MultiBufferSnapshot,
-    ) -> impl '_ + Iterator<Item = &'a Crease> {
+    ) -> impl 'a + Iterator<Item = &'a Crease> {
         let start = snapshot.anchor_before(Point::new(range.start.0, 0));
         let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         cursor.seek(&start, Bias::Left, snapshot);

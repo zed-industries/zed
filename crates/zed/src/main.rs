@@ -425,15 +425,22 @@ fn main() {
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
-            cx.spawn({
-                let app_state = app_state.clone();
-                |mut cx| async move {
-                    if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
-                        fail_to_open_window_async(e, &mut cx)
+            let ui_has_launched = cx
+                .try_global::<AppMode>()
+                .map(|mode| matches!(mode, AppMode::Ui))
+                .unwrap_or(false);
+
+            if ui_has_launched {
+                cx.spawn({
+                    let app_state = app_state.clone();
+                    |mut cx| async move {
+                        if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
+                            fail_to_open_window_async(e, &mut cx)
+                        }
                     }
-                }
-            })
-            .detach();
+                })
+                .detach();
+            }
         }
     });
 
@@ -443,6 +450,8 @@ fn main() {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
         settings::init(cx);
+        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
         client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -470,9 +479,6 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
-
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
@@ -482,7 +488,7 @@ fn main() {
         cx.observe_global::<SettingsStore>(move |cx| {
             let settings = &ProjectSettings::get_global(cx).node;
             let options = NodeBinaryOptions {
-                allow_path_lookup: !settings.disable_path_lookup.unwrap_or_default(),
+                allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
                 // TODO: Expose this setting
                 allow_binary_download: true,
                 use_paths: settings.path.as_ref().map(|node_path| {

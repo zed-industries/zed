@@ -8,7 +8,6 @@ use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use language_settings::all_language_settings;
 use lsp::LanguageServerBinary;
-use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{
@@ -37,77 +36,34 @@ impl LspAdapter for RustLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx
-            .update(|cx| {
-                language_server_settings(delegate, &Self::SERVER_NAME, cx)
-                    .and_then(|s| s.binary.clone())
+        let path = delegate.which("rust-analyzer".as_ref()).await?;
+        let env = delegate.shell_env().await;
+
+        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+        let result = delegate
+            .try_exec(LanguageServerBinary {
+                path: path.clone(),
+                arguments: vec!["--help".into()],
+                env: Some(env.clone()),
             })
-            .ok()?;
+            .await;
+        if let Err(err) = result {
+            log::error!(
+                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+                path,
+                err
+            );
+            return None;
+        }
 
-        let (path, env, arguments) = match configured_binary {
-            // If nothing is configured, or path_lookup explicitly enabled,
-            // we lookup the binary in the path.
-            None
-            | Some(BinarySettings {
-                path: None,
-                path_lookup: Some(true),
-                ..
-            })
-            | Some(BinarySettings {
-                path: None,
-                path_lookup: None,
-                ..
-            }) => {
-                let path = delegate.which("rust-analyzer".as_ref()).await;
-                let env = delegate.shell_env().await;
-
-                if let Some(path) = path {
-                    // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
-                    // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
-                    log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
-                    match delegate
-                        .try_exec(LanguageServerBinary {
-                            path: path.clone(),
-                            arguments: vec!["--help".into()],
-                            env: Some(env.clone()),
-                        })
-                        .await
-                    {
-                        Ok(()) => (Some(path), Some(env), None),
-                        Err(err) => {
-                            log::error!("failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}", path, err);
-                            (None, None, None)
-                        }
-                    }
-                } else {
-                    (None, None, None)
-                }
-            }
-            // Otherwise, we use the configured binary.
-            Some(BinarySettings {
-                path: Some(path),
-                arguments,
-                path_lookup,
-            }) => {
-                if path_lookup.is_some() {
-                    log::warn!("Both `path` and `path_lookup` are set, ignoring `path_lookup`");
-                }
-                (Some(path.into()), None, arguments)
-            }
-
-            _ => (None, None, None),
-        };
-
-        path.map(|path| LanguageServerBinary {
+        Some(LanguageServerBinary {
             path,
-            env,
-            arguments: arguments
-                .unwrap_or_default()
-                .iter()
-                .map(|arg| arg.into())
-                .collect(),
+            env: Some(env),
+            arguments: vec![],
         })
     }
 
@@ -184,18 +140,6 @@ impl LspAdapter for RustLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir)
-            .await
-            .map(|mut binary| {
-                binary.arguments = vec!["--help".into()];
-                binary
-            })
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {

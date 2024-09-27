@@ -87,7 +87,11 @@ pub type BufferRow = u32;
 #[derive(Clone)]
 enum BufferDiffBase {
     Git(Rope),
-    PastBufferVersion(Model<Buffer>, BufferSnapshot),
+    PastBufferVersion {
+        buffer: Model<Buffer>,
+        rope: Rope,
+        operations_to_ignore: Vec<clock::Lamport>,
+    },
 }
 
 /// An in-memory representation of a source code file, including its text,
@@ -795,19 +799,15 @@ impl Buffer {
         let this = cx.handle();
         cx.new_model(|cx| {
             let mut branch = Self {
-                diff_base: Some(BufferDiffBase::PastBufferVersion(
-                    this.clone(),
-                    self.snapshot(),
-                )),
+                diff_base: Some(BufferDiffBase::PastBufferVersion {
+                    buffer: this.clone(),
+                    rope: self.as_rope().clone(),
+                    operations_to_ignore: Vec::new(),
+                }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
-                _subscriptions: vec![cx.subscribe(&this, |branch: &mut Self, _, event, cx| {
-                    if let BufferEvent::Operation { operation, .. } = event {
-                        branch.apply_ops([operation.clone()], cx);
-                        branch.diff_base_version += 1;
-                    }
-                })],
+                _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
                 ..Self::build(
                     self.text.branch(),
                     None,
@@ -823,18 +823,74 @@ impl Buffer {
         })
     }
 
-    pub fn merge(&mut self, branch: &Model<Self>, cx: &mut ModelContext<Self>) {
-        let branch = branch.read(cx);
-        let edits = branch
-            .edits_since::<usize>(&self.version)
-            .map(|edit| {
-                (
-                    edit.old,
-                    branch.text_for_range(edit.new).collect::<String>(),
+    /// Applies all of the changes in `branch` buffer that intersect the given `range`
+    /// to this buffer.
+    pub fn merge(
+        &mut self,
+        branch: &Model<Self>,
+        range: Option<Range<Anchor>>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let edits = branch.read_with(cx, |branch, _| {
+            branch
+                .edits_since_in_range::<usize>(
+                    &self.version,
+                    range.unwrap_or(Anchor::MIN..Anchor::MAX),
                 )
-            })
-            .collect::<Vec<_>>();
-        self.edit(edits, None, cx);
+                .map(|edit| {
+                    (
+                        edit.old,
+                        branch.text_for_range(edit.new).collect::<String>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        let operation = self.edit(edits, None, cx);
+
+        // Prevent this operation from being reapplied to the branch.
+        branch.update(cx, |branch, cx| {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                operations_to_ignore,
+                ..
+            }) = &mut branch.diff_base
+            {
+                operations_to_ignore.extend(operation);
+            }
+            cx.emit(BufferEvent::Edited)
+        });
+    }
+
+    fn on_base_buffer_event(
+        &mut self,
+        _: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let BufferEvent::Operation { operation, .. } = event {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                operations_to_ignore,
+                ..
+            }) = &mut self.diff_base
+            {
+                let mut is_ignored = false;
+                if let Operation::Buffer(text::Operation::Edit(buffer_operation)) = &operation {
+                    operations_to_ignore.retain(|operation_to_ignore| {
+                        match buffer_operation.timestamp.cmp(&operation_to_ignore) {
+                            Ordering::Less => true,
+                            Ordering::Equal => {
+                                is_ignored = true;
+                                false
+                            }
+                            Ordering::Greater => false,
+                        }
+                    });
+                }
+                if !is_ignored {
+                    self.apply_ops([operation.clone()], cx);
+                    self.diff_base_version += 1;
+                }
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1017,9 +1073,8 @@ impl Buffer {
     /// Returns the current diff base, see [Buffer::set_diff_base].
     pub fn diff_base(&self) -> Option<&Rope> {
         match self.diff_base.as_ref()? {
-            BufferDiffBase::Git(rope) => Some(rope),
-            BufferDiffBase::PastBufferVersion(_, buffer_snapshot) => {
-                Some(buffer_snapshot.as_rope())
+            BufferDiffBase::Git(rope) | BufferDiffBase::PastBufferVersion { rope, .. } => {
+                Some(rope)
             }
         }
     }
@@ -1050,29 +1105,36 @@ impl Buffer {
         self.diff_base_version
     }
 
+    pub fn diff_base_buffer(&self) -> Option<Model<Self>> {
+        match self.diff_base.as_ref()? {
+            BufferDiffBase::Git(_) => None,
+            BufferDiffBase::PastBufferVersion { buffer, .. } => Some(buffer.clone()),
+        }
+    }
+
     /// Recomputes the diff.
     pub fn recalculate_diff(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base_rope = match self.diff_base.as_mut()? {
+        let diff_base_rope = match self.diff_base.as_ref()? {
             BufferDiffBase::Git(rope) => rope.clone(),
-            BufferDiffBase::PastBufferVersion(base_buffer, base_buffer_snapshot) => {
-                let new_base_snapshot = base_buffer.read(cx).snapshot();
-                *base_buffer_snapshot = new_base_snapshot;
-                base_buffer_snapshot.as_rope().clone()
-            }
+            BufferDiffBase::PastBufferVersion { buffer, .. } => buffer.read(cx).as_rope().clone(),
         };
-        let snapshot = self.snapshot();
 
+        let snapshot = self.snapshot();
         let mut diff = self.git_diff.clone();
         let diff = cx.background_executor().spawn(async move {
             diff.update(&diff_base_rope, &snapshot).await;
-            diff
+            (diff, diff_base_rope)
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            let buffer_diff = diff.await;
+            let (buffer_diff, diff_base_rope) = diff.await;
             this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
                 this.non_text_state_update_count += 1;
+                if let Some(BufferDiffBase::PastBufferVersion { rope, .. }) = &mut this.diff_base {
+                    *rope = diff_base_rope;
+                    cx.emit(BufferEvent::DiffBaseChanged);
+                }
                 cx.emit(BufferEvent::DiffUpdated);
             })
             .ok();
