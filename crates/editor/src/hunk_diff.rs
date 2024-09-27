@@ -338,7 +338,7 @@ impl Editor {
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> BlockProperties<Anchor> {
-        let border_color = cx.theme().colors().border_disabled;
+        let border_color = cx.theme().colors().border_variant;
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => cx.theme().status().created,
             DiffHunkStatus::Modified => cx.theme().status().modified,
@@ -381,14 +381,15 @@ impl Editor {
                         )
                         .child(
                             h_flex()
+                                .pl_1p5()
+                                .pr_6()
                                 .size_full()
                                 .justify_between()
                                 .border_t_1()
                                 .border_color(border_color)
                                 .child(
                                     h_flex()
-                                        .gap_2()
-                                        .pl_6()
+                                        .gap_1()
                                         .child(
                                             IconButton::new("next-hunk", IconName::ArrowDown)
                                                 .shape(IconButtonShape::Square)
@@ -595,7 +596,7 @@ impl Editor {
                                         }),
                                 )
                                 .child(
-                                    h_flex().gap_2().pr_6().child(
+                                    div().child(
                                         IconButton::new("collapse", IconName::Close)
                                             .shape(IconButtonShape::Square)
                                             .icon_size(IconSize::Small)
