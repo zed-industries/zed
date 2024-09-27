@@ -513,49 +513,7 @@ impl Editor {
                                                         });
                                                     }
                                                 }),
-                                        ),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .pr_6()
-                                        .child({
-                                            let focus = editor.focus_handle(cx);
-                                            PopoverMenu::new("hunk-controls-dropdown")
-                                                .trigger(
-                                                    IconButton::new(
-                                                        "toggle_editor_selections_icon",
-                                                        IconName::EllipsisVertical,
-                                                    )
-                                                    .shape(IconButtonShape::Square)
-                                                    .icon_size(IconSize::Small)
-                                                    .style(ButtonStyle::Subtle)
-                                                    .selected(
-                                                        hunk_controls_menu_handle.is_deployed(),
-                                                    )
-                                                    .when(
-                                                        !hunk_controls_menu_handle.is_deployed(),
-                                                        |this| {
-                                                            this.tooltip(|cx| {
-                                                                Tooltip::text("Hunk Controls", cx)
-                                                            })
-                                                        },
-                                                    ),
-                                                )
-                                                .anchor(AnchorCorner::TopRight)
-                                                .with_handle(hunk_controls_menu_handle)
-                                                .menu(move |cx| {
-                                                    let focus = focus.clone();
-                                                    let menu =
-                                                        ContextMenu::build(cx, move |menu, _| {
-                                                            menu.context(focus.clone()).action(
-                                                                "Discard All",
-                                                                RevertFile.boxed_clone(),
-                                                            )
-                                                        });
-                                                    Some(menu)
-                                                })
-                                        })
+                                        )
                                         .child(
                                             IconButton::new("discard", IconName::RotateCcw)
                                                 .shape(IconButtonShape::Square)
@@ -601,31 +559,70 @@ impl Editor {
                                                     }
                                                 }),
                                         )
-                                        .child(
-                                            IconButton::new("collapse", IconName::Close)
-                                                .shape(IconButtonShape::Square)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip({
-                                                    let focus_handle = editor.focus_handle(cx);
-                                                    move |cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Collapse Hunk",
-                                                            &ToggleHunkDiff,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                                .on_click({
-                                                    let editor = editor.clone();
-                                                    let hunk = hunk.clone();
-                                                    move |_event, cx| {
-                                                        editor.update(cx, |editor, cx| {
-                                                            editor.toggle_hovered_hunk(&hunk, cx);
+                                        .child({
+                                            let focus = editor.focus_handle(cx);
+                                            PopoverMenu::new("hunk-controls-dropdown")
+                                                .trigger(
+                                                    IconButton::new(
+                                                        "toggle_editor_selections_icon",
+                                                        IconName::EllipsisVertical,
+                                                    )
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .selected(
+                                                        hunk_controls_menu_handle.is_deployed(),
+                                                    )
+                                                    .when(
+                                                        !hunk_controls_menu_handle.is_deployed(),
+                                                        |this| {
+                                                            this.tooltip(|cx| {
+                                                                Tooltip::text("Hunk Controls", cx)
+                                                            })
+                                                        },
+                                                    ),
+                                                )
+                                                .anchor(AnchorCorner::TopRight)
+                                                .with_handle(hunk_controls_menu_handle)
+                                                .menu(move |cx| {
+                                                    let focus = focus.clone();
+                                                    let menu =
+                                                        ContextMenu::build(cx, move |menu, _| {
+                                                            menu.context(focus.clone()).action(
+                                                                "Discard All",
+                                                                RevertFile.boxed_clone(),
+                                                            )
                                                         });
-                                                    }
-                                                }),
-                                        ),
+                                                    Some(menu)
+                                                })
+                                        }),
+                                )
+                                .child(
+                                    h_flex().gap_2().pr_6().child(
+                                        IconButton::new("collapse", IconName::Close)
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = editor.focus_handle(cx);
+                                                move |cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Collapse Hunk",
+                                                        &ToggleHunkDiff,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            })
+                                            .on_click({
+                                                let editor = editor.clone();
+                                                let hunk = hunk.clone();
+                                                move |_event, cx| {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.toggle_hovered_hunk(&hunk, cx);
+                                                    });
+                                                }
+                                            }),
+                                    ),
                                 ),
                         )
                         .into_any_element()
