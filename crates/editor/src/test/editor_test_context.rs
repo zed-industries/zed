@@ -9,7 +9,6 @@ use gpui::{
     AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, View, ViewContext,
     VisualTestContext, WindowHandle,
 };
-use indoc::indoc;
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
 use multi_buffer::{ExcerptRange, ToPoint};
@@ -337,8 +336,9 @@ impl EditorTestContext {
             let insertions = editor
                 .highlighted_rows::<DiffRowHighlight>()
                 .map(|(range, _)| {
-                    range.start().to_point(&snapshot.buffer_snapshot).row
-                        ..range.end().to_point(&snapshot.buffer_snapshot).row + 1
+                    let start = range.start.to_point(&snapshot.buffer_snapshot);
+                    let end = range.end.to_point(&snapshot.buffer_snapshot);
+                    start.row..end.row
                 })
                 .collect::<Vec<_>>();
             let deletions = editor
@@ -384,13 +384,8 @@ impl EditorTestContext {
     /// See the `util::test::marked_text_ranges` function for more information.
     #[track_caller]
     pub fn assert_editor_state(&mut self, marked_text: &str) {
-        let (unmarked_text, expected_selections) = marked_text_ranges(marked_text, true);
-        let buffer_text = self.buffer_text();
-
-        if buffer_text != unmarked_text {
-            panic!("Unmarked text doesn't match buffer text\nBuffer text: {buffer_text:?}\nUnmarked text: {unmarked_text:?}\nRaw buffer text\n{buffer_text}\nRaw unmarked text\n{unmarked_text}");
-        }
-
+        let (expected_text, expected_selections) = marked_text_ranges(marked_text, true);
+        pretty_assertions::assert_eq!(self.buffer_text(), expected_text, "unexpected buffer text");
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
@@ -463,20 +458,11 @@ impl EditorTestContext {
         let actual_marked_text =
             generate_marked_text(&self.buffer_text(), &actual_selections, true);
         if expected_selections != actual_selections {
-            panic!(
-                indoc! {"
-
-                {}Editor has unexpected selections.
-
-                Expected selections:
-                {}
-
-                Actual selections:
-                {}
-            "},
-                self.assertion_context(),
-                expected_marked_text,
+            pretty_assertions::assert_eq!(
                 actual_marked_text,
+                expected_marked_text,
+                "{}Editor has unexpected selections",
+                self.assertion_context(),
             );
         }
     }

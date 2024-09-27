@@ -11832,7 +11832,6 @@ async fn test_edits_around_expanded_insertion_hunks(
     );
 
     cx.update_editor(|editor, cx| {
-        editor.move_up(&MoveUp, cx);
         editor.delete_line(&DeleteLine, cx);
     });
     executor.run_until_parked();
@@ -11846,7 +11845,7 @@ async fn test_edits_around_expanded_insertion_hunks(
       + const B: u32 = 42;
       + const C: u32 = 42;
       + const D: u32 = 42;
-      +
+      + const E: u32 = 42;
 
         fn main() {
             println!("hello");
@@ -11872,8 +11871,8 @@ async fn test_edits_around_expanded_insertion_hunks(
         use some::mod2;
 
         const A: u32 = 42;
+        const B: u32 = 42;
         ˇ
-
         fn main() {
             println!("hello");
 
@@ -11889,8 +11888,8 @@ async fn test_edits_around_expanded_insertion_hunks(
         use some::mod2;
 
         const A: u32 = 42;
+      + const B: u32 = 42;
 
-      +
         fn main() {
             println!("hello");
 
@@ -11907,7 +11906,9 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
     cx.assert_diff_hunks(
         r#"
-
+        use some::mod1;
+      - use some::mod2;
+      -
       - const A: u32 = 42;
 
         fn main() {

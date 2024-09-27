@@ -1208,7 +1208,7 @@ impl InlineAssistant {
                     editor.set_read_only(true);
                     editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
-                        Anchor::min()..=Anchor::max(),
+                        Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
                         false,
                         cx,
@@ -2557,7 +2557,7 @@ enum CodegenStatus {
 #[derive(Default)]
 struct Diff {
     deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)>,
-    inserted_row_ranges: Vec<RangeInclusive<Anchor>>,
+    inserted_row_ranges: Vec<Range<Anchor>>,
 }
 
 impl Diff {
@@ -3103,7 +3103,7 @@ impl CodegenAlternative {
                         new_end_row,
                         new_snapshot.line_len(MultiBufferRow(new_end_row)),
                     ));
-                    self.diff.inserted_row_ranges.push(start..=end);
+                    self.diff.inserted_row_ranges.push(start..end);
                     new_row += lines;
                 }
             }
@@ -3181,7 +3181,7 @@ impl CodegenAlternative {
                                     new_end_row,
                                     new_snapshot.line_len(MultiBufferRow(new_end_row)),
                                 ));
-                                inserted_row_ranges.push(start..=end);
+                                inserted_row_ranges.push(start..end);
                                 new_row += line_count;
                             }
                         }

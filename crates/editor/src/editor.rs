@@ -821,7 +821,7 @@ impl SelectionHistory {
 
 struct RowHighlight {
     index: usize,
-    range: RangeInclusive<Anchor>,
+    range: Range<Anchor>,
     color: Hsla,
     should_autoscroll: bool,
 }
@@ -11502,9 +11502,11 @@ impl Editor {
 
     /// Adds a row highlight for the given range. If a row has multiple highlights, the
     /// last highlight added will be used.
+    ///
+    /// If the range ends at the beginning of a line, then that line will not be highlighted.
     pub fn highlight_rows<T: 'static>(
         &mut self,
-        range: RangeInclusive<Anchor>,
+        range: Range<Anchor>,
         color: Hsla,
         should_autoscroll: bool,
         cx: &mut ViewContext<Self>,
@@ -11513,8 +11515,8 @@ impl Editor {
         let row_highlights = self.highlighted_rows.entry(TypeId::of::<T>()).or_default();
         let ix = row_highlights.binary_search_by(|highlight| {
             Ordering::Equal
-                .then_with(|| highlight.range.start().cmp(&range.start(), &snapshot))
-                .then_with(|| highlight.range.end().cmp(&range.end(), &snapshot))
+                .then_with(|| highlight.range.start.cmp(&range.start, &snapshot))
+                .then_with(|| highlight.range.end.cmp(&range.end, &snapshot))
         });
 
         if let Err(mut ix) = ix {
@@ -11527,18 +11529,13 @@ impl Editor {
                 let prev_highlight = &mut row_highlights[ix - 1];
                 if prev_highlight
                     .range
-                    .end()
-                    .cmp(&range.start(), &snapshot)
+                    .end
+                    .cmp(&range.start, &snapshot)
                     .is_ge()
                 {
                     ix -= 1;
-                    if prev_highlight
-                        .range
-                        .end()
-                        .cmp(&range.end(), &snapshot)
-                        .is_lt()
-                    {
-                        prev_highlight.range = *prev_highlight.range.start()..=*range.end();
+                    if prev_highlight.range.end.cmp(&range.end, &snapshot).is_lt() {
+                        prev_highlight.range.end = range.end;
                     }
                     merged = true;
                     prev_highlight.index = index;
@@ -11564,18 +11561,17 @@ impl Editor {
                 let highlight = &row_highlights[ix];
                 if next_highlight
                     .range
-                    .start()
-                    .cmp(&highlight.range.end(), &snapshot)
+                    .start
+                    .cmp(&highlight.range.end, &snapshot)
                     .is_le()
                 {
                     if next_highlight
                         .range
-                        .end()
-                        .cmp(&highlight.range.end(), &snapshot)
+                        .end
+                        .cmp(&highlight.range.end, &snapshot)
                         .is_gt()
                     {
-                        row_highlights[ix].range =
-                            *highlight.range.start()..=*next_highlight.range.end();
+                        row_highlights[ix].range.end = next_highlight.range.end;
                     }
                     row_highlights.remove(ix + 1);
                 } else {
@@ -11597,15 +11593,12 @@ impl Editor {
         let mut ranges_to_remove = ranges_to_remove.iter().peekable();
         row_highlights.retain(|highlight| {
             while let Some(range_to_remove) = ranges_to_remove.peek() {
-                match range_to_remove.end.cmp(&highlight.range.start(), &snapshot) {
-                    Ordering::Less => {
+                match range_to_remove.end.cmp(&highlight.range.start, &snapshot) {
+                    Ordering::Less | Ordering::Equal => {
                         ranges_to_remove.next();
                     }
-                    Ordering::Equal => {
-                        return false;
-                    }
                     Ordering::Greater => {
-                        match range_to_remove.start.cmp(&highlight.range.end(), &snapshot) {
+                        match range_to_remove.start.cmp(&highlight.range.end, &snapshot) {
                             Ordering::Less | Ordering::Equal => {
                                 return false;
                             }
@@ -11625,9 +11618,7 @@ impl Editor {
     }
 
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
-    pub fn highlighted_rows<T: 'static>(
-        &self,
-    ) -> impl '_ + Iterator<Item = (RangeInclusive<Anchor>, Hsla)> {
+    pub fn highlighted_rows<T: 'static>(&self) -> impl '_ + Iterator<Item = (Range<Anchor>, Hsla)> {
         self.highlighted_rows
             .get(&TypeId::of::<T>())
             .map_or(&[] as &[_], |vec| vec.as_slice())
@@ -11650,9 +11641,17 @@ impl Editor {
             .fold(
                 BTreeMap::<DisplayRow, Hsla>::new(),
                 |mut unique_rows, highlight| {
-                    let start_row = highlight.range.start().to_display_point(&snapshot).row();
-                    let end_row = highlight.range.end().to_display_point(&snapshot).row();
-                    for row in start_row.0..=end_row.0 {
+                    let start = highlight.range.start.to_display_point(&snapshot);
+                    let end = highlight.range.end.to_display_point(&snapshot);
+                    let start_row = start.row().0;
+                    let end_row = if highlight.range.end.text_anchor != text::Anchor::MAX
+                        && end.column() == 0
+                    {
+                        end.row().0.saturating_sub(1)
+                    } else {
+                        end.row().0
+                    };
+                    for row in start_row..=end_row {
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
@@ -11674,7 +11673,7 @@ impl Editor {
             .flat_map(|highlighted_rows| highlighted_rows.iter())
             .filter_map(|highlight| {
                 if highlight.should_autoscroll {
-                    Some(highlight.range.start().to_display_point(snapshot).row())
+                    Some(highlight.range.start.to_display_point(snapshot).row())
                 } else {
                     None
                 }
