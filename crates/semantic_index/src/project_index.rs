@@ -1,6 +1,5 @@
 use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
-    embedding_index::EmbeddingIndexEntry,
     summary_index::FileSummary,
     tfidf::{tokenize_query, Bm25Calculator, Bm25Parameters, SimpleTokenizer},
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
@@ -262,12 +261,14 @@ impl ProjectIndex {
                             let db_entries = db.iter(&txn).context("failed to iterate database")?;
                             for db_entry in db_entries {
                                 let (_key, db_embedded_file) = db_entry?;
-                                if let EmbeddingIndexEntry::File(file) = db_embedded_file {
-                                    for chunk in &file.chunks {
-                                        chunks_tx
-                                            .send((worktree_id, file.path.clone(), chunk.clone()))
-                                            .await?;
-                                    }
+                                for chunk in &db_embedded_file.chunks {
+                                    chunks_tx
+                                        .send((
+                                            worktree_id,
+                                            db_embedded_file.path.clone(),
+                                            chunk.clone(),
+                                        ))
+                                        .await?;
                                 }
                             }
                             anyhow::Ok(())

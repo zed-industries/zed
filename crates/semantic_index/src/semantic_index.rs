@@ -269,9 +269,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use chunking::Chunk;
-    use embedding_index::{
-        ChunkedFile, EmbeddingIndex, SimpleTokenizer, DEFAULT_EMBEDDING_INDEX_SETTINGS,
-    };
+    use embedding_index::{ChunkedFile, EmbeddingIndex, EmbeddingIndexSettings};
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use futures::{future::BoxFuture, FutureExt};
@@ -283,6 +281,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::{channel, stream::StreamExt};
     use std::{future, path::Path, sync::Arc};
+    use tfidf::SimpleTokenizer;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -491,7 +490,7 @@ mod tests {
         chunked_files_tx.close();
 
         let tokenizer = SimpleTokenizer::new();
-        let embedding_settings = DEFAULT_EMBEDDING_INDEX_SETTINGS;
+        let embedding_settings = EmbeddingIndexSettings::default();
 
         let embed_files_task = cx.update(|cx| {
             EmbeddingIndex::embed_files(
