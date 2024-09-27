@@ -8,7 +8,10 @@ pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use serde_json::json;
-use smol::{fs, process};
+use smol::{
+    fs,
+    process::{self},
+};
 use std::{
     any::Any,
     borrow::Cow,
