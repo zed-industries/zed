@@ -1547,6 +1547,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 
 [[package]]
+name = "bge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.30",
+ "http_client",
+ "isahc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2543,6 +2555,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.22.1",
+ "bge",
  "call",
  "channel",
  "chrono",

@@ -679,6 +679,8 @@ impl TestServer {
                 stripe_api_key: None,
                 stripe_price_id: None,
                 supermaven_admin_api_key: None,
+                embeddings_api_key: None,
+                embeddings_api_url: None,
                 user_backfiller_github_access_token: None,
             },
         })

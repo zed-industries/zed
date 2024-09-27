@@ -37,7 +37,6 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
 use isahc_http_client::IsahcHttpClient;
-use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -641,7 +640,8 @@ impl Server {
                         request,
                         response,
                         session,
-                        app_state.config.openai_api_key.clone(),
+                        app_state.config.embeddings_api_url.clone(),
+                        app_state.config.embeddings_api_key.clone(),
                     )
                 })
             });
@@ -4585,9 +4585,11 @@ async fn compute_embeddings(
     request: proto::ComputeEmbeddings,
     response: Response<proto::ComputeEmbeddings>,
     session: UserSession,
+    api_url: Option<Arc<str>>,
     api_key: Option<Arc<str>>,
 ) -> Result<()> {
-    let api_key = api_key.context("no OpenAI API key configured on the server")?;
+    let embeddings_url = api_url.context("no embeddings API URL configured on the server")?;
+    let embeddings_api_key = api_key.context("no embeddings API key configured on the server")?;
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
     let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
@@ -4601,19 +4603,13 @@ async fn compute_embeddings(
         .check(&*rate_limit, session.user_id())
         .await?;
 
-    let embeddings = match request.model.as_str() {
-        "openai/text-embedding-3-small" => {
-            open_ai::embed(
-                session.http_client.as_ref(),
-                OPEN_AI_API_URL,
-                &api_key,
-                OpenAiEmbeddingModel::TextEmbedding3Small,
-                request.texts.iter().map(|text| text.as_str()),
-            )
-            .await?
-        }
-        provider => return Err(anyhow!("unsupported embedding provider {:?}", provider))?,
-    };
+    let embeddings = bge::embed(
+        session.http_client.as_ref(),
+        &embeddings_url,
+        &embeddings_api_key,
+        request.texts.iter().map(|text| text.as_str()),
+    )
+    .await?;
 
     let embeddings = request
         .texts
