@@ -101,7 +101,8 @@ impl SlashCommand for SearchSlashCommand {
         cx.spawn(|cx| async move {
             let results = project_index
                 .read_with(&cx, |project_index, cx| {
-                    project_index.search(vec![query.clone()], limit.unwrap_or(5), cx)
+                    // TODO allow for some kind of control of mixing param (maybe --hybrid vs. --embedding vs. --text?)
+                    project_index.search(vec![query.clone()], limit.unwrap_or(5), 0.7, cx)
                 })?
                 .await?;
 

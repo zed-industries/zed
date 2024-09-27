@@ -144,7 +144,6 @@ impl EmbeddingIndex {
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let worktree_corpus_stats = Arc::new(RwLock::new(WorktreeTermStats::new(
-            worktree.id(),
             HashMap::new(),
             HashMap::new(),
             0,
@@ -166,9 +165,11 @@ impl EmbeddingIndex {
                 log::trace!("scanning for embedding index: {:?}", &entry.path);
                 let entry_db_key = db_key_for_path(&entry.path);
                 if let Some(embedded_file) = db.get(&txn, &entry_db_key)? {
-                    let mut stats = worktree_corpus_stats.write().unwrap();
-                    for chunk in &embedded_file.chunks {
-                        stats.add_chunk(chunk.term_frequencies.clone());
+                    {
+                        let mut stats = worktree_corpus_stats.write().unwrap();
+                        for chunk in &embedded_file.chunks {
+                            stats.add_chunk(chunk.term_frequencies.clone());
+                        }
                     }
                 }
 

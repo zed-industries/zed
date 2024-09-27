@@ -1,4 +1,3 @@
-use project::WorktreeId;
 use rust_stemmers::{Algorithm, Stemmer};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -94,18 +93,6 @@ impl ChunkStats {
 
         ChunkStats { length, terms }
     }
-
-    pub fn from_terms(terms: Vec<Arc<str>>) -> Self {
-        let mut new_terms = HashMap::new();
-        let length = terms.len() as u32;
-        for term in terms {
-            *new_terms.entry(term).or_insert(0) += 1;
-        }
-        ChunkStats {
-            length,
-            terms: new_terms,
-        }
-    }
 }
 
 /// Represents the term frequency statistics for a single worktree.
@@ -113,8 +100,6 @@ impl ChunkStats {
 /// This struct contains information about chunks, term statistics,
 /// and the total length of all chunks in the worktree.
 pub struct WorktreeTermStats {
-    /// The unique identifier for this worktree.
-    id: WorktreeId,
     /// A map of chunk IDs to their corresponding statistics.
     chunks: HashMap<u64, ChunkStats>,
     /// A map of terms to their statistics across all chunks in this worktree.
@@ -126,14 +111,12 @@ pub struct WorktreeTermStats {
 }
 impl WorktreeTermStats {
     pub fn new(
-        id: WorktreeId,
         chunks: HashMap<u64, ChunkStats>,
         term_stats: HashMap<Arc<str>, TermStats>,
         total_length: u32,
     ) -> Self {
         let next_chunk_id = chunks.keys().max().map_or(0, |&id| id + 1);
         Self {
-            id,
             chunks,
             term_stats,
             total_length,
