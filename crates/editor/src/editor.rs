@@ -6154,31 +6154,29 @@ impl Editor {
     }
 
     pub fn reload_file(&mut self, _: &ReloadFile, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            let cursor_position = self.selections.newest::<Point>(cx).head();
-            let transaction_id = buffer.update(cx, |buffer, cx| {
-                buffer.file()
-                    .and_then(|f| f.as_local())
-                    .and_then(|file| std::fs::read_to_string(file.abs_path(cx)).ok())
-                    .and_then(|content| buffer.set_text(content, cx))
-            });
+        // directly copied this because i don't know how to call it :P
+        // TODO: call reload from crates/editor/src/items.rs:788 instead of copying it here
+        if let Some(project) = self.project.clone() {
+            let buffer = self.buffer().clone();
+            let buffers = self.buffer.read(cx).all_buffers();
+            let reload_buffers =
+                project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
 
-            if let Some(transaction_id) = transaction_id {
-                cx.emit(EditorEvent::Edited { transaction_id });
-            }
-
-            let clipped_cursor_position = {
-                let buffer = self.buffer.read(cx).read(cx);
-                let max_point = buffer.max_point();
-                let clipped_row = cursor_position.row.min(max_point.row);
-                let clipped_column = cursor_position
-                    .column
-                    .min(buffer.line_len(MultiBufferRow(clipped_row)));
-                Point::new(clipped_row, clipped_column)
-            };
-
-            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select_ranges([clipped_cursor_position..clipped_cursor_position]);
+            // hacky to assign _ here
+            let _ = cx.spawn(|this, mut cx| async move {
+                let transaction = reload_buffers.log_err().await;
+                this.update(&mut cx, |editor, cx| {
+                    editor.request_autoscroll(Autoscroll::fit(), cx)
+                }).ok();
+                buffer
+                    .update(&mut cx, |buffer, cx| {
+                        if let Some(transaction) = transaction {
+                            if !buffer.is_singleton() {
+                                buffer.push_transaction(&transaction.0, cx);
+                            }
+                        }
+                    })
+                    .ok();
             });
         }
     }
