@@ -435,22 +435,24 @@ impl EmbeddingIndex {
 
         cx.background_executor().spawn(async move {
             loop {
+                // Interleave deletions and persists of embedded files
                 futures::select_biased! {
                     deletion_range = deleted_entry_ranges.next() => {
                         if let Some(deletion_range) = deletion_range {
                             let mut txn = db_connection.write_txn()?;
-                            let start = deletion_range.0.as_ref().map(|s| s.as_str());
-                            let end = deletion_range.1.as_ref().map(|s| s.as_str());
-                            db.delete_range(&mut txn, &(start, end)).context("failed to delete embedding range")?;
+                            let start = deletion_range.0.as_ref().map(|start| start.as_str());
+                            let end = deletion_range.1.as_ref().map(|end| end.as_str());
+                            log::debug!("deleting embeddings in range {:?}", &(start, end));
+                            db.delete_range(&mut txn, &(start, end))?;
                             txn.commit()?;
                         }
                     },
-                    embedded_file = embedded_files.next() => {
-                        if let Some((file, _)) = embedded_file {
+                    file = embedded_files.next() => {
+                        if let Some((file, _)) = file {
                             let mut txn = db_connection.write_txn()?;
+                            log::debug!("saving embedding for file {:?}", file.path);
                             let key = db_key_for_path(&file.path);
-                            db.put(&mut txn, &key, &file)
-                                .context("failed to write embedded file")?;
+                            db.put(&mut txn, &key, &file)?;
                             txn.commit()?;
                         }
                     },
