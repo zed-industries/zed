@@ -12,7 +12,7 @@ pub struct ApplicationMenuStory {
 impl ApplicationMenuStory {
     pub fn new(cx: &mut WindowContext) -> Self {
         Self {
-            menu: cx.new_view(|cx| ApplicationMenu::new(cx)),
+            menu: cx.new_view(ApplicationMenu::new),
         }
     }
 }

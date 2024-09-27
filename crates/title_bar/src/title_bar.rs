@@ -216,7 +216,7 @@ impl TitleBar {
         let application_menu = match platform_style {
             PlatformStyle::Mac => None,
             PlatformStyle::Linux | PlatformStyle::Windows => {
-                Some(cx.new_view(|cx| ApplicationMenu::new(cx)))
+                Some(cx.new_view(ApplicationMenu::new))
             }
         };
 
