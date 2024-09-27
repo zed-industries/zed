@@ -674,7 +674,7 @@ pub struct EditorEventRow {
     copilot_enabled_for_language: bool,
     historical_event: bool,
     architecture: String,
-    is_staff: Option<bool>,
+    is_staff: bool,
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
@@ -708,7 +708,7 @@ impl EditorEventRow {
             installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
             metrics_id: body.metrics_id.clone().unwrap_or_default(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             operation: event.operation,
             file_extension: event.file_extension.unwrap_or_default(),
@@ -741,7 +741,7 @@ pub struct InlineCompletionEventRow {
     region_code: String,
     city: String,
     time: i64,
-    is_staff: Option<bool>,
+    is_staff: bool,
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
@@ -772,7 +772,7 @@ impl InlineCompletionEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             file_extension: event.file_extension.unwrap_or_default(),
             signed_in: wrapper.signed_in,
@@ -800,7 +800,7 @@ pub struct CallEventRow {
     // ClientEventBase
     installation_id: String,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     time: i64,
 
     // CallEventRow
@@ -832,7 +832,7 @@ impl CallEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             operation: event.operation,
             room_id: event.room_id,
@@ -856,7 +856,7 @@ pub struct AssistantEventRow {
     // ClientEventBase
     installation_id: Option<String>,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     time: i64,
 
     // AssistantEventRow
@@ -891,7 +891,7 @@ impl AssistantEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             conversation_id: event.conversation_id.unwrap_or_default(),
             kind: event.kind.to_string(),
@@ -909,7 +909,7 @@ impl AssistantEventRow {
 pub struct CpuEventRow {
     installation_id: Option<String>,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     usage_as_percentage: f32,
     core_count: u32,
     app_version: String,
@@ -947,7 +947,7 @@ impl CpuEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             usage_as_percentage: event.usage_as_percentage,
             core_count: event.core_count,
@@ -970,7 +970,7 @@ pub struct MemoryEventRow {
     // ClientEventBase
     installation_id: Option<String>,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     time: i64,
 
     // MemoryEventRow
@@ -1001,7 +1001,7 @@ impl MemoryEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             memory_in_bytes: event.memory_in_bytes,
             virtual_memory_in_bytes: event.virtual_memory_in_bytes,
@@ -1024,7 +1024,7 @@ pub struct AppEventRow {
     // ClientEventBase
     installation_id: Option<String>,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     time: i64,
 
     // AppEventRow
@@ -1054,7 +1054,7 @@ impl AppEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             operation: event.operation,
         }
@@ -1076,7 +1076,7 @@ pub struct SettingEventRow {
     // ClientEventBase
     installation_id: Option<String>,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     time: i64,
     // SettingEventRow
     setting: String,
@@ -1106,7 +1106,7 @@ impl SettingEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             setting: event.setting,
             value: event.value,
@@ -1129,7 +1129,7 @@ pub struct ExtensionEventRow {
     // ClientEventBase
     installation_id: Option<String>,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     time: i64,
 
     // ExtensionEventRow
@@ -1164,7 +1164,7 @@ impl ExtensionEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             extension_id: event.extension_id,
             extension_version: event.version,
@@ -1198,7 +1198,7 @@ pub struct ReplEventRow {
     // ClientEventBase
     installation_id: Option<String>,
     session_id: Option<String>,
-    is_staff: Option<bool>,
+    is_staff: bool,
     time: i64,
 
     // ReplEventRow
@@ -1230,7 +1230,7 @@ impl ReplEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
-            is_staff: body.is_staff,
+            is_staff: body.is_staff.unwrap_or_default(),
             time: time.timestamp_millis(),
             kernel_language: event.kernel_language,
             kernel_status: event.kernel_status,

@@ -88,6 +88,7 @@ members = [
     "crates/release_channel",
     "crates/remote",
     "crates/remote_server",
+    "crates/reqwest_client",
     "crates/repl",
     "crates/rich_text",
     "crates/rope",
@@ -595,6 +596,3 @@ should_implement_trait = { level = "allow" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
-
-[replace]
-"rustls:0.21" = { version = "0.23" }
