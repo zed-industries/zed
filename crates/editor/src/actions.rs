@@ -230,8 +230,10 @@ gpui::actions!(
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
+        FoldRecursive,
         FoldSelectedRanges,
         ToggleFold,
+        ToggleFoldRecursive,
         Format,
         GoToDeclaration,
         GoToDeclarationSplit,
@@ -342,6 +344,7 @@ gpui::actions!(
         Undo,
         UndoSelection,
         UnfoldLines,
+        UnfoldRecursive,
         UniqueLinesCaseInsensitive,
         UniqueLinesCaseSensitive,
     ]

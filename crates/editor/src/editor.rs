@@ -10571,6 +10571,30 @@ impl Editor {
         }
     }
 
+    pub fn toggle_fold_recursive(
+        &mut self,
+        _: &actions::ToggleFoldRecursive,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let selection = self.selections.newest::<Point>(cx);
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let range = if selection.is_empty() {
+            let point = selection.head().to_display_point(&display_map);
+            let start = DisplayPoint::new(point.row(), 0).to_point(&display_map);
+            let end = DisplayPoint::new(point.row(), display_map.line_len(point.row()))
+                .to_point(&display_map);
+            start..end
+        } else {
+            selection.range()
+        };
+        if display_map.folds_in_range(range).next().is_some() {
+            self.unfold_recursive(&Default::default(), cx)
+        } else {
+            self.fold_recursive(&Default::default(), cx)
+        }
+    }
+
     pub fn fold(&mut self, _: &actions::Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -10616,6 +10640,46 @@ impl Editor {
         self.fold_ranges(fold_ranges, true, cx);
     }
 
+    pub fn fold_recursive(&mut self, _: &actions::FoldRecursive, cx: &mut ViewContext<Self>) {
+        let mut fold_ranges = Vec::new();
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = self.selections.all_adjusted(cx);
+
+        for selection in selections {
+            let range = selection.range().sorted();
+            let buffer_start_row = range.start.row;
+
+            if range.start.row != range.end.row {
+                let mut found = false;
+                for row in range.start.row..=range.end.row {
+                    if let Some((foldable_range, fold_text)) =
+                        { display_map.foldable_range(MultiBufferRow(row)) }
+                    {
+                        found = true;
+                        fold_ranges.push((foldable_range, fold_text));
+                    }
+                }
+                if found {
+                    continue;
+                }
+            }
+
+            for row in (0..=range.start.row).rev() {
+                if let Some((foldable_range, fold_text)) =
+                    display_map.foldable_range(MultiBufferRow(row))
+                {
+                    if foldable_range.end.row >= buffer_start_row {
+                        fold_ranges.push((foldable_range, fold_text));
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        self.fold_ranges(fold_ranges, true, cx);
+    }
+
     pub fn fold_at(&mut self, fold_at: &FoldAt, cx: &mut ViewContext<Self>) {
         let buffer_row = fold_at.buffer_row;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -10643,6 +10707,24 @@ impl Editor {
                 let mut end = range.end.to_point(&display_map);
                 start.column = 0;
                 end.column = buffer.line_len(MultiBufferRow(end.row));
+                start..end
+            })
+            .collect::<Vec<_>>();
+
+        self.unfold_ranges(ranges, true, true, cx);
+    }
+
+    pub fn unfold_recursive(&mut self, _: &UnfoldRecursive, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = self.selections.all::<Point>(cx);
+        let ranges = selections
+            .iter()
+            .map(|s| {
+                let mut range = s.display_range(&display_map).sorted();
+                *range.start.column_mut() = 0;
+                *range.end.column_mut() = display_map.line_len(range.end.row());
+                let start = range.start.to_point(&display_map);
+                let end = range.end.to_point(&display_map);
                 start..end
             })
             .collect::<Vec<_>>();
