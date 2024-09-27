@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# This will install mold from pre-compiled binaries on the official GitHub
+# It is primarily used to install mold on systems that do not have a package,
+# specifically Ubuntu 20.04 and similar systems. This is necessary because
+# even compiling mold from source requires cmake >= 3.18 and Ubuntu 20.04
+# only has cmake 3.16.3.
+
+set -euxo pipefail
+
+# if sudo is not installed, define an empty alias
+maysudo=$(command -v sudo || command -v doas || true)
+mold=$(command -v mold || true)
+
+if [[ -n $mold ]]; then
+  echo "Skipping install. Found mold at $mold"
+  exit 0
+elif [[ "$(uname -s)" != "Linux" ]]; then
+  echo "This script is only intended to run on Linux systems."
+  exit 1
+fi
+
+MOLD_VERSION="2.34.0"
+MOLD_FILE="mold-$MOLD_VERSION.tar.gz"
+
+ARCH="$(uname -m)"
+if [[ "$ARCH" == "aarch64" ]]; then
+    MOLD_URL="https://github.com/rui314/mold/releases/download/v$MOLD_VERSION/mold-$MOLD_VERSION-aarch64-linux.tar.gz"
+    MOLD_SHA256="aa8cd24aaf65564d14f6d7ff457471c3898f7e93a1827353b7ec5e82736ee93e"
+elif [[ "$ARCH" == "x86_64" ]]; then
+    MOLD_URL="https://github.com/rui314/mold/releases/download/v$MOLD_VERSION/mold-$MOLD_VERSION-x86_64-linux.tar.gz"
+    MOLD_SHA256="0405c58d9afb47dad44912faa21a8fc2f8835352434b458c3ae9665e6581d1cb"
+else
+    echo "Unsupported architecture: $ARCH"
+    exit 1
+fi
+echo "$ARCH architecture detected."
+echo "Downloading mold from $MOLD_URL"
+
+tmpdir=$(mktemp -d)
+cd "$tmpdir"
+curl -fsSL -o "$MOLD_FILE" "$MOLD_URL"
+openssl dgst -sha256 "$MOLD_FILE" | grep -q "$MOLD_SHA256"
+tar xzf "$MOLD_FILE" --strip-components=1
+rm "$MOLD_FILE"
+
+echo "Installing mold to /usr/local/"
+$maysudo cp -Rv bin lib libexec share /usr/local/

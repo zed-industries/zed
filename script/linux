@@ -27,12 +27,27 @@ if [[ -n $apt ]]; then
     make
     cmake
     clang
-    mold
     jq
     gettext-base
     elfutils
     libsqlite3-dev
   )
+  # Ubunutu 20.04 / Debian Bullseye (including CI for release)
+  if grep -q "bullseye" /etc/debian_version; then
+    if [[ -n $mold ]]; then
+      echo "No mold found. Please install mold or run scripts/install-mold and try again."
+      exit 1
+    fi
+    deps+=(
+      libstdc++-10-dev
+    )
+  else
+    deps+=(
+      libstdc++-12-dev
+      mold
+    )
+  fi
+
   $maysudo "$apt" update
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
