@@ -142,7 +142,15 @@ impl super::LspAdapter for GoLspAdapter {
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
         let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
-        let install_output = process::Command::new(go)
+        let mut command = process::Command::new(go);
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt;
+            use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+            command.creation_flags(CREATE_NO_WINDOW.0);
+        }
+        let install_output = command
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -160,7 +168,15 @@ impl super::LspAdapter for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join("gopls");
-        let version_output = process::Command::new(&installed_binary_path)
+        let mut command = process::Command::new(&installed_binary_path);
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt;
+            use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+            command.creation_flags(CREATE_NO_WINDOW.0);
+        }
+        let version_output = command
             .arg("version")
             .output()
             .await
