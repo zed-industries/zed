@@ -740,6 +740,7 @@ impl SshClientState {
     }
 }
 
+#[cfg(unix)]
 async fn read_with_timeout(
     stdout: &mut process::ChildStdout,
     timeout: Duration,
