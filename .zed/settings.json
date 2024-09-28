@@ -38,6 +38,9 @@
       }
     }
   },
+  "file_types": {
+    "Dockerfile": ["*Dockerfile*"]
+  },
   "hard_tabs": false,
   "formatter": "auto",
   "remove_trailing_whitespace_on_save": true,
