@@ -44,6 +44,15 @@ impl MultiBuffer {
             range: Range<usize>,
         }
 
+        impl Debug for NewExcerpt {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("NewExcerpt")
+                    .field("buffer_id", &self.buffer_id)
+                    .field("range", &self.range)
+                    .finish_non_exhaustive()
+            }
+        }
+
         let mut new_excerpts = new_excerpts
             .into_iter()
             .filter_map(|(buffer_handle, range)| {
@@ -100,10 +109,14 @@ impl MultiBuffer {
             }
         });
 
+        dbg!(&new_excerpts);
+
         let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptOffset>>(&());
         let mut new_tree = SumTree::<Excerpt>::default();
         let mut new_excerpts = new_excerpts.into_iter().peekable();
         while let Some(new_excerpt) = new_excerpts.next() {
+            dbg!(&new_excerpt);
+
             new_tree.append(
                 cursor.slice(
                     &Some(ExcerptOffset {
@@ -128,7 +141,15 @@ impl MultiBuffer {
                 0
             };
             if new_excerpt.range.start > prev_excerpt_end {
-                let prefix_visible = cursor.item().map_or(false, |excerpt| excerpt.visible);
+                let prefix_visible = if let Some(old_excerpt) = cursor.item() {
+                    if old_excerpt.buffer_id == new_excerpt.buffer_id {
+                        old_excerpt.visible
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
                 push_excerpt(
                     &mut new_tree,
                     Excerpt {
@@ -182,7 +203,7 @@ impl MultiBuffer {
 
             if new_excerpts.peek().map_or(true, |next_excerpt| {
                 next_excerpt.buffer_id != new_excerpt.buffer_id
-                    || next_excerpt.range.start > old_excerpt_end
+                    || next_excerpt.range.start >= old_excerpt_end
             }) {
                 push_excerpt(
                     &mut new_tree,
@@ -496,7 +517,7 @@ impl MultiBufferSnapshot {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Excerpt {
     path: Option<Arc<Path>>,
     buffer_id: BufferId,
@@ -664,12 +685,14 @@ mod tests {
                     .map(|range| (buffer.clone(), range.clone())),
                 cx,
             );
+            dbg!(multibuffer.snapshot.excerpts.items(&()));
             multibuffer.insert_excerpts(
                 excerpts2
                     .iter()
                     .map(|range| (buffer.clone(), range.clone())),
                 cx,
             );
+            dbg!(multibuffer.snapshot.excerpts.items(&()));
 
             let mut excerpt_ranges = excerpts1
                 .iter()
