@@ -264,6 +264,18 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
 
 fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx);
+
+    let url = match release_channel {
+        ReleaseChannel::Nightly => Some("https://github.com/zed-industries/zed/commits/nightly/"),
+        ReleaseChannel::Dev => Some("https://github.com/zed-industries/zed/commits/main/"),
+        _ => None,
+    };
+
+    if let Some(url) = url {
+        cx.open_url(url);
+        return;
+    }
+
     let version = AppVersion::global(cx).to_string();
 
     let client = client::Client::global(cx).http_client();
