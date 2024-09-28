@@ -1,16 +1,31 @@
+use dap::client::DebugAdapterClientId;
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{Render, TextStyle, View, ViewContext};
+use gpui::{Model, Render, TextStyle, View, ViewContext};
+use menu::Confirm;
+use project::dap_store::DapStore;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
+use crate::debugger_panel::ThreadState;
+
 pub struct Console {
     console: View<Editor>,
     query_bar: View<Editor>,
+    dap_store: Model<DapStore>,
+    current_stack_frame_id: u64,
+    client_id: DebugAdapterClientId,
+    thread_state: Model<ThreadState>,
 }
 
 impl Console {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        client_id: &DebugAdapterClientId,
+        current_stack_frame_id: u64,
+        thread_state: Model<ThreadState>,
+        dap_store: Model<DapStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let console = cx.new_view(|cx| {
             let mut editor = Editor::multi_line(cx);
             editor.move_to_end(&editor::actions::MoveToEnd, cx);
@@ -22,7 +37,24 @@ impl Console {
 
         let query_bar = cx.new_view(Editor::single_line);
 
-        Self { console, query_bar }
+        Self {
+            console,
+            dap_store,
+            query_bar,
+            thread_state,
+            client_id: *client_id,
+            current_stack_frame_id,
+        }
+    }
+
+    pub fn update_current_stack_frame_id(
+        &mut self,
+        stack_frame_id: u64,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.current_stack_frame_id = stack_frame_id;
+
+        cx.notify();
     }
 
     pub fn add_message(&mut self, message: &str, cx: &mut ViewContext<Self>) {
@@ -34,6 +66,28 @@ impl Console {
         });
 
         cx.notify();
+    }
+
+    fn evaluate(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        let expession = self.query_bar.update(cx, |editor, cx| {
+            let expession = editor.text(cx);
+
+            editor.clear(cx);
+
+            expession
+        });
+
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .evaluate(
+                    &self.client_id,
+                    self.current_stack_frame_id,
+                    expession,
+                    dap::EvaluateArgumentsContext::Variables,
+                    cx,
+                )
+                .detach_and_log_err(cx);
+        });
     }
 
     fn render_console(&self, cx: &ViewContext<Self>) -> impl IntoElement {
@@ -94,6 +148,8 @@ impl Console {
 impl Render for Console {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("DebugConsole")
+            .on_action(cx.listener(Self::evaluate))
             .size_full()
             .child(self.render_console(cx))
             .child(

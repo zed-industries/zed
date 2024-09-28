@@ -79,7 +79,15 @@ impl DebugPanelItem {
                 cx,
             )
         });
-        let console = cx.new_view(Console::new);
+        let console = cx.new_view(|cx| {
+            Console::new(
+                client_id,
+                current_stack_frame_id,
+                thread_state.clone(),
+                dap_store.clone(),
+                cx,
+            )
+        });
 
         let weakview = cx.view().downgrade();
         let stack_frame_list =
@@ -312,6 +320,10 @@ impl DebugPanelItem {
         self.variable_list.update(cx, |variable_list, cx| {
             variable_list.update_stack_frame_id(stack_frame_id, cx);
             variable_list.build_entries(true, false, cx);
+        });
+
+        self.console.update(cx, |console, cx| {
+            console.update_current_stack_frame_id(stack_frame_id, cx);
         });
 
         if go_to_stack_frame {

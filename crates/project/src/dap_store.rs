@@ -4,18 +4,18 @@ use collections::{HashMap, HashSet};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::messages::Message;
 use dap::requests::{
-    Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Scopes,
-    SetBreakpoints, SetExpression, SetVariable, StackTrace, StepIn, StepOut, Terminate,
+    Attach, ConfigurationDone, Continue, Disconnect, Evaluate, Initialize, Launch, Next, Pause,
+    Scopes, SetBreakpoints, SetExpression, SetVariable, StackTrace, StepIn, StepOut, Terminate,
     TerminateThreads, Variables,
 };
 use dap::{
     AttachRequestArguments, Capabilities, ConfigurationDoneArguments, ContinueArguments,
-    DisconnectArguments, InitializeRequestArguments, InitializeRequestArgumentsPathFormat,
-    LaunchRequestArguments, NextArguments, PauseArguments, Scope, ScopesArguments,
-    SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments, Source,
-    SourceBreakpoint, StackFrame, StackTraceArguments, StepInArguments, StepOutArguments,
-    SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
-    VariablesArguments,
+    DisconnectArguments, EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse,
+    InitializeRequestArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
+    NextArguments, PauseArguments, Scope, ScopesArguments, SetBreakpointsArguments,
+    SetExpressionArguments, SetVariableArguments, Source, SourceBreakpoint, StackFrame,
+    StackTraceArguments, StepInArguments, StepOutArguments, SteppingGranularity,
+    TerminateArguments, TerminateThreadsArguments, Variable, VariablesArguments,
 };
 use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
@@ -507,6 +507,33 @@ impl DapStore {
                 })
                 .await?
                 .variables)
+        })
+    }
+
+    pub fn evaluate(
+        &self,
+        client_id: &DebugAdapterClientId,
+        stack_frame_id: u64,
+        expression: String,
+        context: EvaluateArgumentsContext,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<EvaluateResponse>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Could not found client")));
+        };
+
+        cx.spawn(|_, _| async move {
+            client
+                .request::<Evaluate>(EvaluateArguments {
+                    expression: expression.clone(),
+                    frame_id: Some(stack_frame_id),
+                    context: Some(context),
+                    format: None,
+                    line: None,
+                    column: None,
+                    source: None,
+                })
+                .await
         })
     }
 
