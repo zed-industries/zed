@@ -46,9 +46,9 @@ impl Console {
             },
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
-            font_size: rems(0.875).into(),
+            font_size: settings.buffer_font_size.into(),
             font_weight: settings.buffer_font.weight,
-            line_height: relative(1.3),
+            line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
 
@@ -73,9 +73,9 @@ impl Console {
             },
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
-            font_size: rems(0.875).into(),
+            font_size: settings.buffer_font_size.into(),
             font_weight: settings.buffer_font.weight,
-            line_height: relative(1.3),
+            line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
 
