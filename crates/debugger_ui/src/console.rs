@@ -63,6 +63,8 @@ impl Console {
             console.move_to_end(&editor::actions::MoveToEnd, cx);
             console.insert(format!("{}\n", message.trim_end()).as_str(), cx);
             console.set_read_only(true);
+
+            cx.notify();
         });
 
         cx.notify();
@@ -77,17 +79,24 @@ impl Console {
             expession
         });
 
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .evaluate(
-                    &self.client_id,
-                    self.current_stack_frame_id,
-                    expession,
-                    dap::EvaluateArgumentsContext::Variables,
-                    cx,
-                )
-                .detach_and_log_err(cx);
+        let evaluate_task = self.dap_store.update(cx, |store, cx| {
+            store.evaluate(
+                &self.client_id,
+                self.current_stack_frame_id,
+                expession,
+                dap::EvaluateArgumentsContext::Variables,
+                cx,
+            )
         });
+
+        cx.spawn(|this, mut cx| async move {
+            let response = evaluate_task.await?;
+
+            this.update(&mut cx, |console, cx| {
+                console.add_message(&response.result, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn render_console(&self, cx: &ViewContext<Self>) -> impl IntoElement {
