@@ -7,22 +7,18 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
-use crate::debugger_panel::ThreadState;
-
 pub struct Console {
     console: View<Editor>,
     query_bar: View<Editor>,
     dap_store: Model<DapStore>,
     current_stack_frame_id: u64,
     client_id: DebugAdapterClientId,
-    thread_state: Model<ThreadState>,
 }
 
 impl Console {
     pub fn new(
         client_id: &DebugAdapterClientId,
         current_stack_frame_id: u64,
-        thread_state: Model<ThreadState>,
         dap_store: Model<DapStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -35,13 +31,17 @@ impl Console {
             editor
         });
 
-        let query_bar = cx.new_view(Editor::single_line);
+        let query_bar = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Evaluate an expression", cx);
+
+            editor
+        });
 
         Self {
             console,
             dap_store,
             query_bar,
-            thread_state,
             client_id: *client_id,
             current_stack_frame_id,
         }
@@ -134,11 +134,12 @@ impl Console {
             } else {
                 cx.theme().colors().text
             },
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features.clone(),
-            font_size: settings.buffer_font_size.into(),
-            font_weight: settings.buffer_font.weight,
-            line_height: relative(settings.buffer_line_height.value()),
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
+            font_size: TextSize::Editor.rems(cx).into(),
+            font_weight: settings.ui_font.weight,
+            line_height: relative(1.3),
             ..Default::default()
         };
 

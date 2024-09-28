@@ -76,15 +76,8 @@ impl DebugPanelItem {
                 cx,
             )
         });
-        let console = cx.new_view(|cx| {
-            Console::new(
-                client_id,
-                current_stack_frame_id,
-                thread_state.clone(),
-                dap_store.clone(),
-                cx,
-            )
-        });
+        let console = cx
+            .new_view(|cx| Console::new(client_id, current_stack_frame_id, dap_store.clone(), cx));
 
         let weakview = cx.view().downgrade();
         let stack_frame_list =
