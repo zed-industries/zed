@@ -226,7 +226,7 @@ impl MultiBuffer {
         new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.snapshot.excerpts = new_tree;
-        self.check_invariants(cx);
+        // self.check_invariants(cx);
     }
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
@@ -268,59 +268,62 @@ impl MultiBuffer {
 
         self.apply_renames(renames);
         self.apply_edits(edits);
-        self.check_invariants(cx);
+        // self.check_invariants(cx);
     }
 
     fn apply_renames(&mut self, renames: Vec<(BufferId, Option<Arc<Path>>, Option<Arc<Path>>)>) {
-
+        dbg!(&renames);
         // Remove all the excerpts that have been renamed.
-        // let mut renamed_excerpts = Vec::new();
-        // {
-        //     let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-        //     let mut new_tree = SumTree::default();
-        //     for (buffer_id, old_path, new_path) in renames {
-        //         let buffer_start = ExcerptOffset {
-        //             path: old_path.clone(),
-        //             buffer_id,
-        //             offset: 0,
-        //         };
-        //         new_tree.append(cursor.slice(&buffer_start, Bias::Left, &()), &());
-        //         while let Some(excerpt) = cursor.item() {
-        //             if excerpt.key.buffer_id == buffer_id {
-        //                 renamed_excerpts.push(Excerpt {
-        //                     key: ExcerptKey {
-        //                         path: new_path.clone(),
-        //                         buffer_id,
-        //                         range: excerpt.key.range.clone(),
-        //                     },
-        //                     text_summary: excerpt.text_summary.clone(),
-        //                 });
-        //                 cursor.next(&());
-        //             } else {
-        //                 break;
-        //             }
-        //         }
-        //     }
-        //     new_tree.append(cursor.suffix(&()), &());
-        //     drop(cursor);
-        //     self.snapshot.excerpts = new_tree;
-        // }
+        let mut renamed_excerpts = BTreeMap::default();
+        {
+            let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptOffset>>(&());
+            let mut new_tree = SumTree::default();
+            for (buffer_id, old_path, new_path) in renames {
+                let buffer_start = ExcerptOffset {
+                    path: old_path.clone(),
+                    buffer_id,
+                    buffer_offset: 0,
+                };
+                new_tree.append(cursor.slice(&Some(buffer_start), Bias::Right, &()), &());
+                while let Some(excerpt) = cursor.item() {
+                    if excerpt.buffer_id == buffer_id {
+                        renamed_excerpts
+                            .entry((new_path.clone(), buffer_id))
+                            .or_insert(Vec::new())
+                            .push(Excerpt {
+                                path: new_path.clone(),
+                                buffer_id,
+                                text_summary: excerpt.text_summary.clone(),
+                                visible: excerpt.visible,
+                            });
+                        cursor.next(&());
+                    } else {
+                        break;
+                    }
+                }
+            }
+            new_tree.append(cursor.suffix(&()), &());
+            drop(cursor);
+            self.snapshot.excerpts = new_tree;
+        }
+
+        dbg!(&renamed_excerpts);
 
         // Re-insert excerpts for the renamed buffers at the right location.
-        // let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-        // let mut new_tree = SumTree::default();
-        // for excerpt in renamed_excerpts {
-        //     let buffer_start = ExcerptOffset {
-        //         path: excerpt.key.path.clone(),
-        //         buffer_id: excerpt.key.buffer_id,
-        //         offset: excerpt.key.range.start,
-        //     };
-        //     new_tree.append(cursor.slice(&buffer_start, Bias::Right, &()), &());
-        //     new_tree.push(excerpt, &());
-        // }
-        // new_tree.append(cursor.suffix(&()), &());
-        // drop(cursor);
-        // self.snapshot.excerpts = new_tree;
+        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptOffset>>(&());
+        let mut new_tree = SumTree::default();
+        for ((path, buffer_id), excerpts) in renamed_excerpts {
+            let buffer_start = ExcerptOffset {
+                path,
+                buffer_id,
+                buffer_offset: 0,
+            };
+            new_tree.append(cursor.slice(&Some(buffer_start), Bias::Right, &()), &());
+            new_tree.extend(excerpts, &());
+        }
+        new_tree.append(cursor.suffix(&()), &());
+        drop(cursor);
+        self.snapshot.excerpts = new_tree;
     }
 
     fn apply_edits(
@@ -430,6 +433,7 @@ impl MultiBuffer {
     }
 
     fn check_invariants(&self, cx: &AppContext) {
+        dbg!(self.snapshot.excerpts.items(&()));
         #[cfg(debug_assertions)]
         {
             let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptOffset>>(&());
@@ -440,11 +444,8 @@ impl MultiBuffer {
                     .buffer_snapshots
                     .get(&excerpt.buffer_id)
                     .unwrap();
-                let start = cursor
-                    .start()
-                    .as_ref()
-                    .map_or(0, |start| start.buffer_offset);
-                let end = cursor.end(&()).as_ref().unwrap().buffer_offset;
+                let end = cursor.end(&()).unwrap().buffer_offset;
+                let start = end - excerpt.text_summary.len;
                 assert_eq!(
                     excerpt.text_summary,
                     buffer.text_summary_for_range(start..end)
@@ -466,6 +467,10 @@ impl MultiBuffer {
 }
 
 fn push_excerpt(excerpts: &mut SumTree<Excerpt>, excerpt: Excerpt) {
+    if excerpt.text_summary.len == 0 {
+        return;
+    }
+
     let mut merged = false;
     excerpts.update_last(
         |last_excerpt| {
@@ -498,11 +503,8 @@ impl MultiBufferSnapshot {
         cursor.next(&());
         while let Some(excerpt) = cursor.item() {
             if excerpt.visible {
-                let start = cursor
-                    .start()
-                    .as_ref()
-                    .map_or(0, |start| start.buffer_offset);
-                let end = start + excerpt.text_summary.len;
+                let end = cursor.end(&()).unwrap().buffer_offset;
+                let start = end - excerpt.text_summary.len;
                 let snapshot = self.buffer_snapshots.get(&excerpt.buffer_id).unwrap();
                 text.push('\n');
                 text.extend(snapshot.text_for_range(start..end));
@@ -601,6 +603,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptOffset> {
             {
                 excerpt_offset.buffer_offset += other_excerpt_offset.buffer_offset;
             } else {
+                *self = summary.max_offset.clone();
             }
         } else {
             *self = summary.max_offset.clone();
@@ -760,6 +763,8 @@ mod tests {
                 ],
                 cx,
             );
+            multibuffer.check_invariants(cx);
+
             assert_eq!(
                 multibuffer.snapshot(cx).text(),
                 "\nThe quick\nbrown fox\njumps\nover the lazy dog"
@@ -778,6 +783,7 @@ mod tests {
                 multibuffer.snapshot(cx).text(),
                 "\njumps\nover the lazy dog\nThe quick\nbrown fox"
             );
+            multibuffer.check_invariants(cx);
 
             multibuffer
         });
