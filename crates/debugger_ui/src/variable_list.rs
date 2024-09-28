@@ -381,7 +381,7 @@ impl VariableList {
             };
 
             let tasks = this.update(&mut cx, |this, cx| {
-                let mut tasks = Vec::new();
+                let mut tasks = Vec::with_capacity(scope_variables.len());
 
                 for variable_container in scope_variables {
                     let fetch_variables_task = this.dap_store.update(cx, |store, cx| {
