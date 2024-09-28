@@ -67,14 +67,11 @@ impl DebugPanelItem {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let capabilities = dap_store.read(cx).capabilities_by_id(&client_id);
-
         let variable_list = cx.new_view(|cx| {
             VariableList::new(
                 dap_store.clone(),
                 &client_id,
                 &thread_state,
-                &capabilities,
                 current_stack_frame_id,
                 cx,
             )

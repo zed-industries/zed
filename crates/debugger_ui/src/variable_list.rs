@@ -1,5 +1,5 @@
 use crate::debugger_panel::{ThreadState, VariableContainer};
-use dap::{client::DebugAdapterClientId, Capabilities, Scope, Variable};
+use dap::{client::DebugAdapterClientId, Scope, Variable};
 use editor::{
     actions::{self, SelectAll},
     Editor, EditorEvent,
@@ -42,10 +42,9 @@ pub enum VariableListEntry {
 
 pub struct VariableList {
     list: ListState,
-    current_stack_frame_id: u64,
     dap_store: Model<DapStore>,
     focus_handle: FocusHandle,
-    capabilities: Capabilities,
+    current_stack_frame_id: u64,
     client_id: DebugAdapterClientId,
     open_entries: Vec<SharedString>,
     thread_state: Model<ThreadState>,
@@ -60,7 +59,6 @@ impl VariableList {
         dap_store: Model<DapStore>,
         client_id: &DebugAdapterClientId,
         thread_state: &Model<ThreadState>,
-        capabilities: &Capabilities,
         current_stack_frame_id: u64,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -98,7 +96,6 @@ impl VariableList {
             entries: Default::default(),
             open_entries: Default::default(),
             thread_state: thread_state.clone(),
-            capabilities: capabilities.clone(),
         }
     }
 
@@ -252,7 +249,12 @@ impl VariableList {
         let this = cx.view().clone();
 
         let stack_frame_id = self.current_stack_frame_id;
-        let support_set_variable = self.capabilities.supports_set_variable.unwrap_or_default();
+        let support_set_variable = self.dap_store.read_with(cx, |store, _| {
+            store
+                .capabilities_by_id(&self.client_id)
+                .supports_set_variable
+                .unwrap_or_default()
+        });
 
         let context_menu = ContextMenu::build(cx, |menu, cx| {
             menu.entry(
