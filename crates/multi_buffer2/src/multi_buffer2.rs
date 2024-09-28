@@ -1,14 +1,14 @@
 use collections::{BTreeMap, HashMap};
-use gpui::{Model, ModelContext};
+use gpui::{AppContext, Model, ModelContext};
 use language::{Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, ReplicaId};
 use std::{
-    cmp::{self, Ordering},
-    fmt::{self, Debug, Formatter},
+    cmp::{self, Reverse},
+    fmt::Debug,
     ops::Range,
     path::Path,
     sync::Arc,
 };
-use sum_tree::{SeekTarget, SumTree, TreeMap};
+use sum_tree::{SumTree, TreeMap};
 use text::TextSummary;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,6 +37,13 @@ impl MultiBuffer {
     ) {
         self.sync(cx);
 
+        struct NewExcerpt {
+            path: Option<Arc<Path>>,
+            buffer_id: BufferId,
+            snapshot: BufferSnapshot,
+            range: Range<usize>,
+        }
+
         let mut new_excerpts = new_excerpts
             .into_iter()
             .filter_map(|(buffer_handle, range)| {
@@ -45,98 +52,152 @@ impl MultiBuffer {
                 if range.is_empty() {
                     None
                 } else {
-                    let key = ExcerptKey {
-                        path: buffer.file().map(|file| file.full_path(cx).into()),
-                        buffer_id: BufferId {
-                            remote_id: buffer.remote_id(),
-                            replica_id: buffer.replica_id(),
-                        },
-                        range,
+                    let path: Option<Arc<Path>> =
+                        buffer.file().map(|file| file.full_path(cx).into());
+                    let buffer_id = BufferId {
+                        remote_id: buffer.remote_id(),
+                        replica_id: buffer.replica_id(),
                     };
-                    Some((buffer_handle, key))
+
+                    if self.buffers.insert(buffer_id, buffer_handle).is_none() {
+                        self.snapshot
+                            .buffer_snapshots
+                            .insert(buffer_id, buffer.snapshot());
+                    }
+
+                    Some(NewExcerpt {
+                        path,
+                        buffer_id,
+                        snapshot: buffer.snapshot(),
+                        range,
+                    })
                 }
             })
             .collect::<Vec<_>>();
-        new_excerpts.sort_unstable_by_key(|(_, key)| key.clone());
-        new_excerpts.dedup_by(|(_, key_a), (_, key_b)| {
-            if key_a.intersects(&key_b) {
-                key_b.range.start = cmp::min(key_a.range.start, key_b.range.start);
-                key_b.range.end = cmp::max(key_a.range.end, key_b.range.end);
-                true
+        new_excerpts.sort_unstable_by_key(|excerpt| {
+            (
+                excerpt.path.clone(),
+                excerpt.buffer_id,
+                excerpt.range.start,
+                Reverse(excerpt.range.end),
+            )
+        });
+        new_excerpts.dedup_by(|excerpt_a, excerpt_b| {
+            if excerpt_a.buffer_id == excerpt_b.buffer_id {
+                if excerpt_a.range.end < excerpt_b.range.start
+                    || excerpt_a.range.start > excerpt_b.range.end
+                {
+                    false
+                } else {
+                    excerpt_b.range.start =
+                        cmp::min(excerpt_a.range.start.clone(), excerpt_b.range.start.clone());
+                    excerpt_b.range.end =
+                        cmp::max(excerpt_a.range.end.clone(), excerpt_b.range.end.clone());
+                    true
+                }
             } else {
                 false
             }
         });
 
-        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptOffset>>(&());
         let mut new_tree = SumTree::<Excerpt>::default();
-        if let Some((_, key)) = new_excerpts.first() {
-            let start_offset = ExcerptOffset {
-                path: key.path.clone(),
-                buffer_id: key.buffer_id,
-                offset: key.range.start,
-            };
-            new_tree = cursor.slice(&start_offset, Bias::Left, &());
-        }
-
-        for (buffer, key) in new_excerpts {
-            if self.buffers.insert(key.buffer_id, buffer.clone()).is_none() {
-                self.snapshot
-                    .buffer_snapshots
-                    .insert(key.buffer_id, buffer.read(cx).snapshot());
-            }
-
-            let start_offset = ExcerptOffset {
-                path: key.path.clone(),
-                buffer_id: key.buffer_id,
-                offset: key.range.start,
-            };
-            let end_offset = ExcerptOffset {
-                path: key.path.clone(),
-                buffer_id: key.buffer_id,
-                offset: key.range.end,
-            };
-
-            if start_offset
-                .cmp(&cursor.item().map(|item| item.key.clone()), &())
-                .is_ge()
-            {
-                new_tree.append(cursor.slice(&start_offset, Bias::Left, &()), &());
-                if let Some(excerpt) = cursor.item() {
-                    if excerpt.key.intersects(&key) {
-                        push_excerpt(
-                            &mut new_tree,
-                            &self.snapshot.buffer_snapshots,
-                            excerpt.clone(),
-                        );
-                        cursor.next(&());
-                    }
-                }
-            }
-
-            push_excerpt(
-                &mut new_tree,
-                &self.snapshot.buffer_snapshots,
-                Excerpt {
-                    key: key.clone(),
-                    text_summary: buffer.read(cx).text_summary_for_range(key.range.clone()),
-                },
+        let mut new_excerpts = new_excerpts.into_iter().peekable();
+        while let Some(new_excerpt) = new_excerpts.next() {
+            new_tree.append(
+                cursor.slice(
+                    &Some(ExcerptOffset {
+                        path: new_excerpt.path.clone(),
+                        buffer_id: new_excerpt.buffer_id,
+                        buffer_offset: new_excerpt.range.start,
+                    }),
+                    Bias::Right,
+                    &(),
+                ),
+                &(),
             );
 
-            if end_offset
-                .cmp(&cursor.item().map(|item| item.key.clone()), &())
-                .is_ge()
+            let prev_excerpt_end = if let Some(max_offset) = new_tree.summary().max_offset.as_ref()
             {
-                cursor.seek(&end_offset, Bias::Left, &());
-                if let Some(excerpt) = cursor.item() {
-                    if excerpt.key.intersects(&key) {
-                        push_excerpt(
-                            &mut new_tree,
-                            &self.snapshot.buffer_snapshots,
-                            excerpt.clone(),
-                        );
-                        cursor.next(&());
-                    }
+                if max_offset.buffer_id == new_excerpt.buffer_id {
+                    max_offset.buffer_offset
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            if new_excerpt.range.start > prev_excerpt_end {
+                let prefix_visible = cursor.item().map_or(false, |excerpt| excerpt.visible);
+                push_excerpt(
+                    &mut new_tree,
+                    Excerpt {
+                        path: new_excerpt.path.clone(),
+                        buffer_id: new_excerpt.buffer_id,
+                        text_summary: new_excerpt
+                            .snapshot
+                            .text_summary_for_range(prev_excerpt_end..new_excerpt.range.start),
+                        visible: prefix_visible,
+                    },
+                );
+            }
+            push_excerpt(
+                &mut new_tree,
+                Excerpt {
+                    path: new_excerpt.path.clone(),
+                    buffer_id: new_excerpt.buffer_id,
+                    text_summary: new_excerpt
+                        .snapshot
+                        .text_summary_for_range(new_excerpt.range.clone()),
+                    visible: true,
+                },
+            );
+            cursor.seek_forward(
+                &Some(ExcerptOffset {
+                    path: new_excerpt.path.clone(),
+                    buffer_id: new_excerpt.buffer_id,
+                    buffer_offset: new_excerpt.range.end,
+                }),
+                Bias::Right,
+                &(),
+            );
+
+            let old_excerpt_buffer_id;
+            let old_excerpt_end;
+            let old_excerpt_visible;
+            if let Some(old_excerpt) = cursor.item() {
+                old_excerpt_buffer_id = Some(old_excerpt.buffer_id);
+                if old_excerpt.buffer_id == new_excerpt.buffer_id {
+                    old_excerpt_end = cursor.end(&()).unwrap().buffer_offset;
+                    old_excerpt_visible = old_excerpt.visible;
+                } else {
+                    old_excerpt_end = new_excerpt.snapshot.len();
+                    old_excerpt_visible = false;
+                }
+            } else {
+                old_excerpt_buffer_id = None;
+                old_excerpt_end = new_excerpt.snapshot.len();
+                old_excerpt_visible = false;
+            };
+
+            if new_excerpts.peek().map_or(true, |next_excerpt| {
+                next_excerpt.buffer_id != new_excerpt.buffer_id
+                    || next_excerpt.range.start > old_excerpt_end
+            }) {
+                push_excerpt(
+                    &mut new_tree,
+                    Excerpt {
+                        path: new_excerpt.path.clone(),
+                        buffer_id: new_excerpt.buffer_id,
+                        text_summary: new_excerpt
+                            .snapshot
+                            .text_summary_for_range(new_excerpt.range.end..old_excerpt_end),
+                        visible: old_excerpt_visible,
+                    },
+                );
+
+                if old_excerpt_buffer_id == Some(new_excerpt.buffer_id) {
+                    cursor.next(&());
                 }
             }
         }
@@ -144,7 +205,7 @@ impl MultiBuffer {
         new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.snapshot.excerpts = new_tree;
-        self.check_invariants();
+        self.check_invariants(cx);
     }
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
@@ -186,146 +247,160 @@ impl MultiBuffer {
 
         self.apply_renames(renames);
         self.apply_edits(edits);
-        self.check_invariants();
+        self.check_invariants(cx);
     }
 
     fn apply_renames(&mut self, renames: Vec<(BufferId, Option<Arc<Path>>, Option<Arc<Path>>)>) {
+
         // Remove all the excerpts that have been renamed.
-        let mut renamed_excerpts = Vec::new();
-        {
-            let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-            let mut new_tree = SumTree::default();
-            for (buffer_id, old_path, new_path) in renames {
-                let buffer_start = ExcerptOffset {
-                    path: old_path.clone(),
-                    buffer_id,
-                    offset: 0,
-                };
-                new_tree.append(cursor.slice(&buffer_start, Bias::Left, &()), &());
-                while let Some(excerpt) = cursor.item() {
-                    if excerpt.key.buffer_id == buffer_id {
-                        renamed_excerpts.push(Excerpt {
-                            key: ExcerptKey {
-                                path: new_path.clone(),
-                                buffer_id,
-                                range: excerpt.key.range.clone(),
-                            },
-                            text_summary: excerpt.text_summary.clone(),
-                        });
-                        cursor.next(&());
-                    } else {
-                        break;
-                    }
-                }
-            }
-            new_tree.append(cursor.suffix(&()), &());
-            drop(cursor);
-            self.snapshot.excerpts = new_tree;
-        }
+        // let mut renamed_excerpts = Vec::new();
+        // {
+        //     let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+        //     let mut new_tree = SumTree::default();
+        //     for (buffer_id, old_path, new_path) in renames {
+        //         let buffer_start = ExcerptOffset {
+        //             path: old_path.clone(),
+        //             buffer_id,
+        //             offset: 0,
+        //         };
+        //         new_tree.append(cursor.slice(&buffer_start, Bias::Left, &()), &());
+        //         while let Some(excerpt) = cursor.item() {
+        //             if excerpt.key.buffer_id == buffer_id {
+        //                 renamed_excerpts.push(Excerpt {
+        //                     key: ExcerptKey {
+        //                         path: new_path.clone(),
+        //                         buffer_id,
+        //                         range: excerpt.key.range.clone(),
+        //                     },
+        //                     text_summary: excerpt.text_summary.clone(),
+        //                 });
+        //                 cursor.next(&());
+        //             } else {
+        //                 break;
+        //             }
+        //         }
+        //     }
+        //     new_tree.append(cursor.suffix(&()), &());
+        //     drop(cursor);
+        //     self.snapshot.excerpts = new_tree;
+        // }
 
         // Re-insert excerpts for the renamed buffers at the right location.
-        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-        let mut new_tree = SumTree::default();
-        for excerpt in renamed_excerpts {
-            let buffer_start = ExcerptOffset {
-                path: excerpt.key.path.clone(),
-                buffer_id: excerpt.key.buffer_id,
-                offset: excerpt.key.range.start,
-            };
-            new_tree.append(cursor.slice(&buffer_start, Bias::Right, &()), &());
-            new_tree.push(excerpt, &());
-        }
-        new_tree.append(cursor.suffix(&()), &());
-        drop(cursor);
-        self.snapshot.excerpts = new_tree;
+        // let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+        // let mut new_tree = SumTree::default();
+        // for excerpt in renamed_excerpts {
+        //     let buffer_start = ExcerptOffset {
+        //         path: excerpt.key.path.clone(),
+        //         buffer_id: excerpt.key.buffer_id,
+        //         offset: excerpt.key.range.start,
+        //     };
+        //     new_tree.append(cursor.slice(&buffer_start, Bias::Right, &()), &());
+        //     new_tree.push(excerpt, &());
+        // }
+        // new_tree.append(cursor.suffix(&()), &());
+        // drop(cursor);
+        // self.snapshot.excerpts = new_tree;
     }
 
     fn apply_edits(
         &mut self,
         edits: BTreeMap<(Option<Arc<Path>>, BufferId), Vec<language::Edit<usize>>>,
     ) {
-        let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-        let mut new_tree = SumTree::default();
+        // let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
+        // let mut new_tree = SumTree::default();
 
-        for ((path, buffer_id), buffer_edits) in edits {
-            let mut buffer_edits = buffer_edits.into_iter().peekable();
-            if let Some(buffer_edit) = buffer_edits.peek() {
-                new_tree.append(
-                    cursor.slice(
-                        &ExcerptOffset::new(path.clone(), buffer_id, buffer_edit.old.start),
-                        Bias::Left,
-                        &(),
-                    ),
-                    &(),
-                );
-            }
+        // for ((path, buffer_id), buffer_edits) in edits {
+        //     let mut buffer_edits = buffer_edits.into_iter().peekable();
+        //     if let Some(buffer_edit) = buffer_edits.peek() {
+        //         new_tree.append(
+        //             cursor.slice(
+        //                 &ExcerptOffset::new(path.clone(), buffer_id, buffer_edit.old.start),
+        //                 Bias::Left,
+        //                 &(),
+        //             ),
+        //             &(),
+        //         );
+        //     }
 
-            let mut buffer_old_start = cursor.item().unwrap().key.range.start;
-            let mut buffer_new_start = buffer_old_start;
-            while let Some(buffer_edit) = buffer_edits.next() {
-                let buffer_old_end = cursor.item().unwrap().key.range.end;
-                if buffer_edit.old.start > buffer_old_start {
-                    push_excerpt(
-                        &mut new_tree,
-                        &self.snapshot.buffer_snapshots,
-                        Excerpt {
-                            key: ExcerptKey {
-                                path: path.clone(),
-                                buffer_id,
-                                range: buffer_new_start..buffer_edit.new.start,
-                            },
-                            text_summary: TextSummary::default(), // todo!(change this)
-                        },
-                    );
-                    buffer_old_start = buffer_edit.old.start;
-                    buffer_new_start = buffer_edit.new.start;
-                }
+        //     let mut buffer_old_start = cursor.item().unwrap().key.range.start;
+        //     let mut buffer_new_start = buffer_old_start;
+        //     while let Some(buffer_edit) = buffer_edits.next() {
+        //         let buffer_old_end = cursor.item().unwrap().key.range.end;
 
+        //         if buffer_edit.old.start > buffer_old_start {
+        //             push_excerpt(
+        //                 &mut new_tree,
+        //                 &self.snapshot.buffer_snapshots,
+        //                 Excerpt {
+        //                     key: ExcerptKey {
+        //                         path: path.clone(),
+        //                         buffer_id,
+        //                         range: buffer_new_start..buffer_edit.new.start,
+        //                     },
+        //                     text_summary: TextSummary::default(), // todo!(change this)
+        //                 },
+        //             );
+        //             buffer_old_start = buffer_edit.old.start;
+        //             buffer_new_start = buffer_edit.new.start;
+        //         }
 
-                push_excerpt(
-                    &mut new_tree,
-                    &self.snapshot.buffer_snapshots,
-                    Excerpt {
-                        key: ExcerptKey {
-                            path: path.clone(),
-                            buffer_id,
-                            range: buffer_edit.new.clone(),
-                        },
-                        text_summary: TextSummary::default(), // todo!(change this)
-                    },
-                );
-                [   (  ]   )
-                let delta = buffer_old_end
-                cursor.seek_forward(
-                    &ExcerptOffset::new(path.clone(), buffer_id, buffer_edit.old.end),
-                    Bias::Left,
-                    &(),
-                );
+        //         cursor.seek_forward(
+        //             &ExcerptOffset::new(path.clone(), buffer_id, buffer_edit.old.end),
+        //             Bias::Left,
+        //             &(),
+        //         );
+        //         let buffer_old_end = cursor.item().unwrap().key.range.end;
 
-                // push_excerpt(
-                //     &mut new_tree,
-                //     &self.snapshot.buffer_snapshots,
-                //     Excerpt {
-                //         key: ExcerptKey {
-                //             path: path.clone(),
-                //             buffer_id,
-                //             range: buffer_new_start
-                //                 ..buffer_new_start + (buffer_old_end - buffer_old_start),
-                //         },
-                //         text_summary: TextSummary::default(), // todo!(change this)
-                //     },
-                // );
-                // cursor.next(&());
-                // new_tree.append(
-                //     cursor.slice(
-                //         &ExcerptOffset::new(path.clone(), buffer_id, buffer_edit.old.start),
-                //         Bias::Left,
-                //         &(),
-                //     ),
-                //     &(),
-                // );
-            }
-        }
+        //         //  (         [  )   ]
+        //         // if buffer_edit.old.end >
+
+        //         // push_excerpt(
+        //         //     &mut new_tree,
+        //         //     &self.snapshot.buffer_snapshots,
+        //         //     Excerpt {
+        //         //         key: ExcerptKey {
+        //         //             path: path.clone(),
+        //         //             buffer_id,
+        //         //             range: buffer_edit.new.clone(),
+        //         //         },
+        //         //         text_summary: TextSummary::default(), // todo!(change this)
+        //         //     },
+        //         // );
+
+        //         cursor.seek_forward(
+        //             &ExcerptOffset::new(path.clone(), buffer_id, buffer_edit.old.end),
+        //             Bias::Left,
+        //             &(),
+        //         );
+
+        //         // todo!("if the edit extends into another fragment, merge the two fragments.")
+        //         let deleted = cmp::min(buffer_edit.old.end, buffer_old_end) - buffer_edit.old.start;
+        //         let inserted = buffer_edit.new.len();
+
+        //         // push_excerpt(
+        //         //     &mut new_tree,
+        //         //     &self.snapshot.buffer_snapshots,
+        //         //     Excerpt {
+        //         //         key: ExcerptKey {
+        //         //             path: path.clone(),
+        //         //             buffer_id,
+        //         //             range: buffer_new_start
+        //         //                 ..buffer_new_start + (buffer_old_end - buffer_old_start),
+        //         //         },
+        //         //         text_summary: TextSummary::default(), // todo!(change this)
+        //         //     },
+        //         // );
+        //         // cursor.next(&());
+        //         // new_tree.append(
+        //         //     cursor.slice(
+        //         //         &ExcerptOffset::new(path.clone(), buffer_id, buffer_edit.old.start),
+        //         //         Bias::Left,
+        //         //         &(),
+        //         //     ),
+        //         //     &(),
+        //         // );
+        //     }
+        // }
     }
 
     pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
@@ -333,46 +408,50 @@ impl MultiBuffer {
         self.snapshot.clone()
     }
 
-    fn check_invariants(&self) {
+    fn check_invariants(&self, cx: &AppContext) {
         #[cfg(debug_assertions)]
         {
-            let mut cursor = self.snapshot.excerpts.cursor::<()>(&());
+            let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptOffset>>(&());
             cursor.next(&());
             while let Some(excerpt) = cursor.item() {
-                if let Some(prev_excerpt) = cursor.prev_item() {
-                    assert!(
-                        !excerpt.key.intersects(&prev_excerpt.key),
-                        "excerpts are not disjoint {:?}, {:?}",
-                        prev_excerpt.key.range,
-                        excerpt.key.range,
-                    );
-                }
+                let buffer = self
+                    .snapshot
+                    .buffer_snapshots
+                    .get(&excerpt.buffer_id)
+                    .unwrap();
+                let start = cursor
+                    .start()
+                    .as_ref()
+                    .map_or(0, |start| start.buffer_offset);
+                let end = cursor.end(&()).as_ref().unwrap().buffer_offset;
+                assert_eq!(
+                    excerpt.text_summary,
+                    buffer.text_summary_for_range(start..end)
+                );
                 cursor.next(&());
+            }
+
+            for (buffer_id, buffer_snapshot) in self.snapshot.buffer_snapshots.iter() {
+                let excerpt_offset = ExcerptOffset {
+                    path: buffer_snapshot.file().map(|file| file.full_path(cx).into()),
+                    buffer_id: *buffer_id,
+                    buffer_offset: buffer_snapshot.len(),
+                };
+                cursor.seek(&Some(excerpt_offset.clone()), Bias::Left, &());
+                assert_eq!(cursor.end(&()), Some(excerpt_offset));
             }
         }
     }
 }
 
-fn push_excerpt(
-    excerpts: &mut SumTree<Excerpt>,
-    buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
-    excerpt: Excerpt,
-) {
-    if excerpt.key.range.is_empty() {
-        return;
-    }
-
+fn push_excerpt(excerpts: &mut SumTree<Excerpt>, excerpt: Excerpt) {
     let mut merged = false;
     excerpts.update_last(
         |last_excerpt| {
-            if last_excerpt.key.intersects(&excerpt.key) {
-                let snapshot = buffer_snapshots.get(&excerpt.key.buffer_id).unwrap();
-                last_excerpt.key.range.start =
-                    cmp::min(last_excerpt.key.range.start, excerpt.key.range.start);
-                last_excerpt.key.range.end =
-                    cmp::max(last_excerpt.key.range.end, excerpt.key.range.end);
-                last_excerpt.text_summary =
-                    snapshot.text_summary_for_range(last_excerpt.key.range.clone());
+            if last_excerpt.buffer_id == excerpt.buffer_id
+                && last_excerpt.visible == excerpt.visible
+            {
+                last_excerpt.text_summary += &excerpt.text_summary;
                 merged = true;
             }
         },
@@ -394,10 +473,20 @@ impl MultiBufferSnapshot {
     #[cfg(any(test, feature = "test-support"))]
     fn text(&self) -> String {
         let mut text = String::new();
-        for excerpt in self.excerpts.iter() {
-            let snapshot = self.buffer_snapshots.get(&excerpt.key.buffer_id).unwrap();
-            text.push('\n');
-            text.extend(snapshot.text_for_range(excerpt.key.range.clone()));
+        let mut cursor = self.excerpts.cursor::<Option<ExcerptOffset>>(&());
+        cursor.next(&());
+        while let Some(excerpt) = cursor.item() {
+            if excerpt.visible {
+                let start = cursor
+                    .start()
+                    .as_ref()
+                    .map_or(0, |start| start.buffer_offset);
+                let end = start + excerpt.text_summary.len;
+                let snapshot = self.buffer_snapshots.get(&excerpt.buffer_id).unwrap();
+                text.push('\n');
+                text.extend(snapshot.text_for_range(start..end));
+            }
+            cursor.next(&());
         }
         text
     }
@@ -409,16 +498,10 @@ impl MultiBufferSnapshot {
 
 #[derive(Clone)]
 struct Excerpt {
-    key: ExcerptKey,
+    path: Option<Arc<Path>>,
+    buffer_id: BufferId,
     text_summary: TextSummary,
-}
-
-impl Debug for Excerpt {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.debug_struct("Excerpt")
-            .field("key", &self.key)
-            .finish_non_exhaustive()
-    }
+    visible: bool,
 }
 
 impl sum_tree::Item for Excerpt {
@@ -426,7 +509,11 @@ impl sum_tree::Item for Excerpt {
 
     fn summary(&self) -> Self::Summary {
         ExcerptSummary {
-            max_key: Some(self.key.clone()),
+            max_offset: Some(ExcerptOffset {
+                path: self.path.clone(),
+                buffer_id: self.buffer_id,
+                buffer_offset: self.text_summary.len,
+            }),
             text: self.text_summary.clone(),
         }
     }
@@ -434,77 +521,15 @@ impl sum_tree::Item for Excerpt {
 
 #[derive(Clone, Debug, Default)]
 struct ExcerptSummary {
-    max_key: Option<ExcerptKey>,
+    max_offset: Option<ExcerptOffset>,
     text: TextSummary,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ExcerptKey {
-    path: Option<Arc<Path>>,
-    buffer_id: BufferId,
-    range: Range<usize>,
-}
-
-impl ExcerptKey {
-    fn intersects(&self, other: &Self) -> bool {
-        self.buffer_id == other.buffer_id
-            && self.range.start <= other.range.end
-            && other.range.start <= self.range.end
-    }
-}
-
-impl Ord for ExcerptKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.path
-            .cmp(&other.path)
-            .then_with(|| self.buffer_id.cmp(&other.buffer_id))
-            .then_with(|| Ord::cmp(&self.range.start, &other.range.start))
-            .then_with(|| Ord::cmp(&other.range.end, &self.range.end))
-    }
-}
-
-impl PartialOrd for ExcerptKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 struct ExcerptOffset {
     path: Option<Arc<Path>>,
     buffer_id: BufferId,
-    offset: usize,
-}
-
-impl ExcerptOffset {
-    fn new(path: Option<Arc<Path>>, buffer_id: BufferId, offset: usize) -> Self {
-        Self {
-            path,
-            buffer_id,
-            offset,
-        }
-    }
-}
-
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for ExcerptOffset {
-    fn cmp(&self, cursor_location: &Option<ExcerptKey>, _: &()) -> Ordering {
-        if let Some(cursor_location) = cursor_location {
-            self.path
-                .cmp(&cursor_location.path)
-                .then_with(|| self.buffer_id.cmp(&cursor_location.buffer_id))
-                .then_with(|| {
-                    if Ord::cmp(&self.offset, &cursor_location.range.start).is_lt() {
-                        Ordering::Less
-                    } else if Ord::cmp(&self.offset, &cursor_location.range.end).is_gt() {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Equal
-                    }
-                })
-        } else {
-            Ordering::Greater
-        }
-    }
+    buffer_offset: usize,
 }
 
 impl sum_tree::Summary for ExcerptSummary {
@@ -515,8 +540,20 @@ impl sum_tree::Summary for ExcerptSummary {
     }
 
     fn add_summary(&mut self, summary: &Self, _cx: &Self::Context) {
-        self.max_key = summary.max_key.clone();
-        self.text.add_summary(&summary.text, &());
+        if let Some(excerpt_offset) = self.max_offset.as_mut() {
+            let other_excerpt_offset = summary.max_offset.as_ref().unwrap();
+            if excerpt_offset.path == other_excerpt_offset.path
+                && excerpt_offset.buffer_id == other_excerpt_offset.buffer_id
+            {
+                excerpt_offset.buffer_offset += other_excerpt_offset.buffer_offset;
+            } else {
+                self.max_offset = Some(other_excerpt_offset.clone());
+            }
+        } else {
+            self.max_offset = summary.max_offset.clone();
+        }
+
+        self.text += &summary.text;
     }
 }
 
@@ -530,14 +567,23 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptKey> {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptOffset> {
     fn zero(_cx: &()) -> Self {
         None
     }
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _cx: &()) {
-        debug_assert!(summary.max_key >= *self);
-        *self = summary.max_key.clone();
+        if let Some(excerpt_offset) = self.as_mut() {
+            let other_excerpt_offset = summary.max_offset.as_ref().unwrap();
+            if excerpt_offset.path == other_excerpt_offset.path
+                && excerpt_offset.buffer_id == other_excerpt_offset.buffer_id
+            {
+                excerpt_offset.buffer_offset += other_excerpt_offset.buffer_offset;
+            } else {
+            }
+        } else {
+            *self = summary.max_offset.clone();
+        }
     }
 }
 
