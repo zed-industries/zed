@@ -38,13 +38,12 @@ if [[ -n $apt ]]; then
   exit 0
 fi
 
-# Fedora, CentOS, RHEL, etc.
+# Fedora, CentOS, RHEL, Alma, Amazon, Oracle, etc.
 # https://packages.fedoraproject.org/
 dnf=$(command -v dnf || true)
 if [[ -n $dnf ]]; then
   deps=(
     gcc
-    g++
     clang
     cmake
     mold
@@ -62,6 +61,16 @@ if [[ -n $dnf ]]; then
     vulkan-loader
     sqlite-devel
   )
+
+  # gcc-c++ is g++ on RHEL8 and clones
+  if (grep -q '^ID=' /etc/os-release | grep -qP '(rhel|fedora|rocky|almalinux|ol)' &&
+      grep -q '^VERSION_ID="8' /etc/os-release) ||
+     (grep -q '^ID=' /etc/os-release | grep -qP '(amzn)' &&
+      grep -q '^VERSION_ID="2"' /etc/os-release); then
+    deps+=( gcc-c++ )
+  else
+    deps+=( g++ )
+  fi
 
   # libxkbcommon-x11-devel is in the crb repo on RHEL and CentOS, not needed for Fedora
   if ! grep -q "Fedora" /etc/redhat-release; then
