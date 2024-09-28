@@ -1,8 +1,8 @@
 use std::{cell::Cell, ops::Range, rc::Rc};
 
 use gpui::{
-    point, Bounds, ContentMask, EntityId, Hitbox, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ScrollWheelEvent, Size, Style, UniformListScrollHandle,
+    point, quad, Bounds, ContentMask, Corners, Edges, EntityId, Hitbox, Hsla, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Size, Style, UniformListScrollHandle,
 };
 use ui::{prelude::*, px, relative, IntoElement};
 
@@ -109,35 +109,64 @@ impl gpui::Element for ProjectPanelScrollbar {
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let colors = cx.theme().colors();
-            let scrollbar_background = colors.scrollbar_track_background;
             let thumb_background = colors.scrollbar_thumb_background;
-            cx.paint_quad(gpui::fill(bounds, scrollbar_background));
+            let is_vertical = self.is_vertical();
+            let extra_padding = px(5.0);
+            let padded_bounds = if is_vertical {
+                Bounds::from_corners(
+                    bounds.origin + point(Pixels::ZERO, extra_padding),
+                    bounds.lower_right() - point(Pixels::ZERO, extra_padding * 3),
+                )
+            } else {
+                Bounds::from_corners(
+                    bounds.origin + point(extra_padding, Pixels::ZERO),
+                    bounds.lower_right() - point(extra_padding * 3, Pixels::ZERO),
+                )
+            };
 
-            let thumb_bounds = if self.is_vertical() {
-                let thumb_offset = self.thumb.start * bounds.size.height;
-                let thumb_end = self.thumb.end * bounds.size.height;
-                let thumb_upper_left = point(bounds.origin.x, bounds.origin.y + thumb_offset);
+            let mut thumb_bounds = if is_vertical {
+                let thumb_offset = self.thumb.start * padded_bounds.size.height;
+                let thumb_end = self.thumb.end * padded_bounds.size.height;
+                let thumb_upper_left = point(
+                    padded_bounds.origin.x,
+                    padded_bounds.origin.y + thumb_offset,
+                );
                 let thumb_lower_right = point(
-                    bounds.origin.x + bounds.size.width,
-                    bounds.origin.y + thumb_end,
+                    padded_bounds.origin.x + padded_bounds.size.width,
+                    padded_bounds.origin.y + thumb_end,
                 );
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right)
             } else {
-                let thumb_offset = self.thumb.start * bounds.size.width;
-                let thumb_end = self.thumb.end * bounds.size.width;
-                let thumb_upper_left = point(bounds.origin.x + thumb_offset, bounds.origin.y);
+                let thumb_offset = self.thumb.start * padded_bounds.size.width;
+                let thumb_end = self.thumb.end * padded_bounds.size.width;
+                let thumb_upper_left = point(
+                    padded_bounds.origin.x + thumb_offset,
+                    padded_bounds.origin.y,
+                );
                 let thumb_lower_right = point(
-                    bounds.origin.x + thumb_end,
-                    bounds.origin.y + bounds.size.height,
+                    padded_bounds.origin.x + thumb_end,
+                    padded_bounds.origin.y + padded_bounds.size.height,
                 );
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right)
             };
-            let thumb_percentage_size = self.thumb.end - self.thumb.start;
+            let corners = if is_vertical {
+                thumb_bounds.size.width /= 1.5;
+                Corners::all(thumb_bounds.size.width / 2.0)
+            } else {
+                thumb_bounds.size.height /= 1.5;
+                Corners::all(thumb_bounds.size.height / 2.0)
+            };
+            cx.paint_quad(quad(
+                thumb_bounds,
+                corners,
+                thumb_background,
+                Edges::default(),
+                Hsla::transparent_black(),
+            ));
 
-            cx.paint_quad(gpui::fill(thumb_bounds, thumb_background));
             let scroll = self.scroll.clone();
             let kind = self.kind;
-            let is_vertical = self.is_vertical();
+            let thumb_percentage_size = self.thumb.end - self.thumb.start;
 
             cx.on_mouse_event({
                 let scroll = self.scroll.clone();
