@@ -29,7 +29,7 @@ impl Console {
         self.console.update(cx, |console, cx| {
             console.set_read_only(false);
             console.move_to_end(&editor::actions::MoveToEnd, cx);
-            console.insert(format!("{}\n", message).as_str(), cx);
+            console.insert(format!("{}\n", message.trim_end()).as_str(), cx);
             console.set_read_only(true);
         });
 
