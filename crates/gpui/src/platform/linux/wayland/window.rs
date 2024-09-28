@@ -1046,8 +1046,8 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         && state.decorations == WindowDecorations::Server
     {
         // Promise the compositor that this region of the window surface
-        // contains no transparent pixels. This allows the compositor to
-        // do skip whatever is behind the surface for better performance.
+        // contains no transparent pixels. This allows the compositor to skip
+        // updating whatever is behind the surface for better performance.
         state.surface.set_opaque_region(Some(&region));
     } else {
         state.surface.set_opaque_region(None);
@@ -1057,7 +1057,6 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.blur.is_none() {
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                blur.set_region(Some(&region));
                 state.blur = Some(blur);
             }
             state.blur.as_ref().unwrap().commit();
