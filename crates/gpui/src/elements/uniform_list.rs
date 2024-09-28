@@ -275,7 +275,7 @@ impl Element for UniformList {
                             // TODO kb does not recalculate the thumb size on directory folding
                             /////////////////////////////////////////////////////////////////////
                             // TODO kb hide scrollbars on hover and only show them when scrolling
-                            // TODO kb disable mouse clicks to scroll the scrollbar?
+                            // TODO kb when one scrollbar is scolled somewhere, scrolling another one with a click resets the first one
                             // TODO kb scroll horizontally when rename editor input gets over the edge of the list
                             let item_origin = padded_bounds.origin
                                 + point(

@@ -177,26 +177,31 @@ impl gpui::Element for ProjectPanelScrollbar {
                             let scroll = scroll.0.borrow();
                             if let Some(Size {
                                 height: last_height,
-                                ..
+                                width: last_width,
                             }) = scroll.last_item_size
                             {
-                                let max_offset = match kind {
+                                match kind {
                                     ScrollbarKind::Horizontal { viewport_width } => {
-                                        viewport_width.0
+                                        let percentage = (event.position.x - bounds.origin.x)
+                                            / bounds.size.width;
+                                        let max_offset = viewport_width.max(last_width).0;
+                                        let percentage = percentage.min(1. - thumb_percentage_size);
+                                        scroll.base_handle.set_offset(point(
+                                            px(-max_offset * percentage),
+                                            px(0.),
+                                        ));
                                     }
                                     ScrollbarKind::Vertical { item_count } => {
-                                        item_count as f32 * last_height.0
+                                        let percentage = (event.position.y - bounds.origin.y)
+                                            / bounds.size.height;
+                                        let max_offset = item_count as f32 * last_height.0;
+                                        let percentage = percentage.min(1. - thumb_percentage_size);
+                                        scroll.base_handle.set_offset(point(
+                                            px(0.),
+                                            px(-max_offset * percentage),
+                                        ));
                                     }
-                                };
-
-                                let percentage =
-                                    (event.position.y - bounds.origin.y) / bounds.size.height;
-
-                                let percentage = percentage.min(1. - thumb_percentage_size);
-
-                                scroll
-                                    .base_handle
-                                    .set_offset(point(px(0.), px(-max_offset * percentage)));
+                                }
                             }
                         } else {
                             let thumb_offset = if is_vertical {
