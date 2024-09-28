@@ -345,15 +345,17 @@ pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
             workspace.update(&mut cx, |workspace, cx| {
+                let workspace_handle = workspace.weak_handle();
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),
                     cx,
-                    |cx| cx.new_view(|_| UpdateNotification::new(version)),
+                    |cx| cx.new_view(|_| UpdateNotification::new(version, workspace_handle)),
                 );
-                updater
-                    .read(cx)
-                    .set_should_show_update_notification(false, cx)
-                    .detach_and_log_err(cx);
+                updater.update(cx, |updater, cx| {
+                    updater
+                        .set_should_show_update_notification(false, cx)
+                        .detach_and_log_err(cx);
+                });
             })?;
         }
         anyhow::Ok(())
