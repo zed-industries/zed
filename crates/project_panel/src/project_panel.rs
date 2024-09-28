@@ -1878,7 +1878,7 @@ impl ProjectPanel {
                         .unwrap_or_default();
                     (depth, path)
                 };
-                let estimated_width = Self::item_width(depth, &path, entry.is_symlink);
+                let estimated_width = Self::item_width_estimate(depth, &path, entry.is_symlink);
 
                 match max_width_item.as_mut() {
                     Some((id, worktree_id, width)) => {
@@ -2800,7 +2800,7 @@ impl ProjectPanel {
         }
     }
 
-    fn item_width(depth: usize, entry: &Path, is_symlink: bool) -> usize {
+    fn item_width_estimate(depth: usize, entry: &Path, is_symlink: bool) -> usize {
         const ICON_SIZE_FACTOR: usize = 2;
         let mut item_width = depth * ICON_SIZE_FACTOR + entry.to_string_lossy().chars().count();
         if is_symlink {

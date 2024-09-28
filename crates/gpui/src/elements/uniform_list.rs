@@ -271,11 +271,7 @@ impl Element for UniformList {
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
                             // TODO kb should all those changes to uniform_list should only work when horizontal scroll is enabled?
-                            // TODO kb symlink icon is not hovered well now
-                            // TODO kb does not recalculate the thumb size on directory folding
-                            /////////////////////////////////////////////////////////////////////
-                            // TODO kb hide scrollbars on hover and only show them when scrolling
-                            // TODO kb when one scrollbar is scolled somewhere, scrolling another one with a click resets the first one
+                            // TODO kb symlink icon is way over to the right now
                             // TODO kb scroll horizontally when rename editor input gets over the edge of the list
                             let item_origin = padded_bounds.origin
                                 + point(
