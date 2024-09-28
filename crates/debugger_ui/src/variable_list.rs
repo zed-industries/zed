@@ -42,7 +42,7 @@ pub enum VariableListEntry {
 
 pub struct VariableList {
     list: ListState,
-    stack_frame_id: u64,
+    current_stack_frame_id: u64,
     dap_store: Model<DapStore>,
     focus_handle: FocusHandle,
     capabilities: Capabilities,
@@ -61,7 +61,7 @@ impl VariableList {
         client_id: &DebugAdapterClientId,
         thread_state: &Model<ThreadState>,
         capabilities: &Capabilities,
-        stack_frame_id: u64,
+        current_stack_frame_id: u64,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let weakview = cx.view().downgrade();
@@ -90,9 +90,9 @@ impl VariableList {
             list,
             dap_store,
             focus_handle,
-            stack_frame_id,
             set_variable_editor,
             client_id: *client_id,
+            current_stack_frame_id,
             open_context_menu: None,
             set_variable_state: None,
             entries: Default::default(),
@@ -103,7 +103,7 @@ impl VariableList {
     }
 
     fn render_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
-        let Some(entries) = self.entries.get(&self.stack_frame_id) else {
+        let Some(entries) = self.entries.get(&self.current_stack_frame_id) else {
             return div().into_any_element();
         };
 
@@ -144,7 +144,7 @@ impl VariableList {
     }
 
     pub fn update_stack_frame_id(&mut self, stack_frame_id: u64, cx: &mut ViewContext<Self>) {
-        self.stack_frame_id = stack_frame_id;
+        self.current_stack_frame_id = stack_frame_id;
 
         cx.notify();
     }
@@ -157,7 +157,7 @@ impl VariableList {
     ) {
         let thread_state = self.thread_state.read(cx);
 
-        let Some(scopes) = thread_state.scopes.get(&self.stack_frame_id) else {
+        let Some(scopes) = thread_state.scopes.get(&self.current_stack_frame_id) else {
             return;
         };
 
@@ -235,7 +235,7 @@ impl VariableList {
         }
 
         let len = entries.len();
-        self.entries.insert(self.stack_frame_id, entries);
+        self.entries.insert(self.current_stack_frame_id, entries);
         self.list.reset(len);
 
         cx.notify();
@@ -251,7 +251,7 @@ impl VariableList {
     ) {
         let this = cx.view().clone();
 
-        let stack_frame_id = self.stack_frame_id;
+        let stack_frame_id = self.current_stack_frame_id;
         let support_set_variable = self.capabilities.supports_set_variable.unwrap_or_default();
 
         let context_menu = ContextMenu::build(cx, |menu, cx| {
@@ -340,7 +340,8 @@ impl VariableList {
             return cx.notify();
         };
 
-        if new_variable_value == state.value || state.stack_frame_id != self.stack_frame_id {
+        if new_variable_value == state.value || state.stack_frame_id != self.current_stack_frame_id
+        {
             return cx.notify();
         }
 
@@ -469,7 +470,7 @@ impl VariableList {
             return self.toggle_entry_collapsed(&variable_id, cx);
         }
 
-        let Some(entries) = self.entries.get(&self.stack_frame_id) else {
+        let Some(entries) = self.entries.get(&self.current_stack_frame_id) else {
             return;
         };
 
