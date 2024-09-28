@@ -136,7 +136,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                     workspace.update(&mut cx, |workspace, cx| {
                         workspace
                             .open_abs_path(
-                                config_dir().join("snippets").join(scope + ".json").into(),
+                                config_dir().join("snippets").join(scope + ".json"),
                                 false,
                                 cx,
                             )
