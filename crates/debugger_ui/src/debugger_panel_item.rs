@@ -243,20 +243,6 @@ impl DebugPanelItem {
                     console.add_message(&event.output, cx);
                 });
             }
-            // OutputEventCategory::Stderr => {}
-            OutputEventCategory::Stdout => {
-                self.output_editor.update(cx, |editor, cx| {
-                    editor.set_read_only(false);
-                    editor.move_to_end(&editor::actions::MoveToEnd, cx);
-                    editor.insert(format!("{}\n", &event.output.trim_end()).as_str(), cx);
-                    editor.set_read_only(true);
-
-                    cx.notify();
-                });
-            }
-            // OutputEventCategory::Unknown => {}
-            // OutputEventCategory::Important => {}
-            OutputEventCategory::Telemetry => {}
             _ => {
                 self.output_editor.update(cx, |editor, cx| {
                     editor.set_read_only(false);
