@@ -113,7 +113,7 @@ impl ScopeSelectorDelegate {
 impl PickerDelegate for ScopeSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _: &mut WindowContext) -> Arc<str> {
         "Select snippet scope...".into()
     }
 
