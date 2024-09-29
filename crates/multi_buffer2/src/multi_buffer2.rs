@@ -793,7 +793,7 @@ mod tests {
                             ));
                         }
 
-                        log::info!("    inserting excerpts {:?}", new_excerpts);
+                        log::info!("inserting excerpts {:?}", new_excerpts);
                         multibuffer.insert_excerpts(new_excerpts.iter().cloned(), cx);
                         excerpts.append(&mut new_excerpts);
                     }
@@ -801,12 +801,12 @@ mod tests {
                         let file = Arc::new(TestFile {
                             path: Path::new(DESSERTS.choose(&mut rng).unwrap()).into(),
                         });
-                        log::info!("    renaming to {:?}", file.path);
+                        log::info!("renaming to {:?}", file.path);
                         buffer_handle.update(cx, |buffer, cx| buffer.file_updated(file, cx));
                     }
                     _ => {
-
-                        // apply edits
+                        buffer_handle
+                            .update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
                     }
                 }
 
