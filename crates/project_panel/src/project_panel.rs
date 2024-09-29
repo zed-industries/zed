@@ -12,7 +12,7 @@ use editor::{
 };
 use file_icons::FileIcons;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, BTreeSet, HashMap};
 use core::f32;
 use git::repository::GitFileStatus;
@@ -1878,13 +1878,30 @@ impl ProjectPanel {
                     });
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
-                let (depth, path) = if entry.is_file() {
-                    let depth = entry.path.ancestors().count() - 1;
-                    let path = Arc::from(Path::new(entry.path.file_name().unwrap()));
-                    (depth, path)
-                } else if Some(entry) == worktree.read(cx).root_entry() {
-                    let path = Arc::from(Path::new(worktree_abs_path.file_name().unwrap()));
+                let (depth, path) = if Some(entry) == worktree.read(cx).root_entry() {
+                    let Some(path_name) = worktree_abs_path
+                        .file_name()
+                        .with_context(|| {
+                            format!("Worktree abs path has no file name, root entry: {entry:?}")
+                        })
+                        .log_err()
+                    else {
+                        continue;
+                    };
+                    let path = Arc::from(Path::new(path_name));
                     let depth = 0;
+                    (depth, path)
+                } else if entry.is_file() {
+                    let Some(path_name) = entry
+                        .path
+                        .file_name()
+                        .with_context(|| format!("Non-root entry has no file name: {entry:?}"))
+                        .log_err()
+                    else {
+                        continue;
+                    };
+                    let path = Arc::from(Path::new(path_name));
+                    let depth = entry.path.ancestors().count() - 1;
                     (depth, path)
                 } else {
                     let path = self
@@ -3169,6 +3186,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
+    use ui::Context;
     use workspace::{
         item::{Item, ProjectItem},
         register_project_item, AppState,
