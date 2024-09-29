@@ -236,6 +236,7 @@ pub struct DragState {
 }
 
 pub struct ClickState {
+    last_mouse_button: Option<MouseButton>,
     last_click: Instant,
     last_location: Point<Pixels>,
     current_count: usize,
@@ -535,6 +536,7 @@ impl WaylandClient {
             },
             click: ClickState {
                 last_click: Instant::now(),
+                last_mouse_button: None,
                 last_location: Point::default(),
                 current_count: 0,
             },
@@ -1524,6 +1526,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         let click_elapsed = state.click.last_click.elapsed();
 
                         if click_elapsed < DOUBLE_CLICK_INTERVAL
+                            && state
+                                .click
+                                .last_mouse_button
+                                .is_some_and(|prev_button| prev_button == button)
                             && is_within_click_distance(
                                 state.click.last_location,
                                 state.mouse_location.unwrap(),
@@ -1535,6 +1541,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         }
 
                         state.click.last_click = Instant::now();
+                        state.click.last_mouse_button = Some(button);
                         state.click.last_location = state.mouse_location.unwrap();
 
                         state.button_pressed = Some(button);
