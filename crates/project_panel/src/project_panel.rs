@@ -268,8 +268,20 @@ impl ProjectPanel {
                         let scroll_handle = project_panel.scroll_handle.0.borrow();
                         let Some(selection_point) = filename_editor.update(cx, |editor, cx| {
                             let editor_snapshot = editor.snapshot(cx);
-                            let selection = editor.selections.newest_anchor();
-                            editor.to_pixel_point(selection.head(), &editor_snapshot, cx)
+                            let end_anchor = editor_snapshot
+                                .buffer_snapshot
+                                .anchor_after(editor_snapshot.buffer_snapshot.len());
+                            let end_pixel_point =
+                                editor.to_pixel_point(end_anchor, &editor_snapshot, cx)?;
+                            if Some(end_pixel_point.x) > project_panel.width {
+                                editor.to_pixel_point(
+                                    editor.selections.newest_anchor().head(),
+                                    &editor_snapshot,
+                                    cx,
+                                )
+                            } else {
+                                None
+                            }
                         }) else {
                             return;
                         };
