@@ -11,7 +11,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use sum_tree::{SumTree, TreeMap};
+use sum_tree::{SeekTarget, SumTree, TreeMap};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct BufferId {
@@ -114,8 +114,6 @@ impl MultiBuffer {
             }
         });
 
-        dbg!(&new_excerpts);
-
         let mut cursor = self
             .snapshot
             .excerpts
@@ -124,14 +122,20 @@ impl MultiBuffer {
         let mut new_excerpts = new_excerpts.into_iter().peekable();
 
         while let Some(new_excerpt) = new_excerpts.next() {
-            new_tree.append(
-                cursor.slice(
-                    &new_excerpt.key,
-                    Bias::Right,
+            if new_excerpt
+                .key
+                .cmp(cursor.start(), &self.snapshot.buffer_snapshots)
+                .is_gt()
+            {
+                new_tree.append(
+                    cursor.slice(
+                        &new_excerpt.key,
+                        Bias::Right,
+                        &self.snapshot.buffer_snapshots,
+                    ),
                     &self.snapshot.buffer_snapshots,
-                ),
-                &self.snapshot.buffer_snapshots,
-            );
+                );
+            }
 
             push_new_excerpt(
                 &mut new_tree,
@@ -155,6 +159,28 @@ impl MultiBuffer {
                     prev_excerpt.key.clone(),
                     &self.snapshot.buffer_snapshots,
                 );
+            }
+
+            // If the new excerpt ends at the same offset as the next old excerpt, update its `touches_previous` value.
+            if let Some(next_old_excerpt) = cursor.item() {
+                if next_old_excerpt.key.buffer_id == new_excerpt.key.buffer_id
+                    && new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
+                        == next_old_excerpt
+                            .key
+                            .range
+                            .start
+                            .to_offset(&new_excerpt.snapshot)
+                {
+                    new_tree.push(
+                        Excerpt {
+                            key: next_old_excerpt.key.clone(),
+                            touches_previous: true,
+                            empty: next_old_excerpt.empty,
+                        },
+                        &self.snapshot.buffer_snapshots,
+                    );
+                    cursor.next(&self.snapshot.buffer_snapshots);
+                }
             }
         }
 
@@ -480,7 +506,6 @@ impl Default for MultiBufferSnapshot {
 impl MultiBufferSnapshot {
     #[cfg(any(test, feature = "test-support"))]
     fn text(&self) -> String {
-        dbg!(self.excerpts.items(&self.buffer_snapshots));
         let mut text = String::new();
         let mut cursor = self.excerpts.cursor::<()>(&self.buffer_snapshots);
         cursor.next(&self.buffer_snapshots);
@@ -695,77 +720,84 @@ mod tests {
         });
     }
 
-    // #[gpui::test(iterations = 1000)]
-    // fn test_insert_random_excerpts(mut rng: StdRng, cx: &mut AppContext) {
-    //     let buffer = cx.new_model(|cx| {
-    //         let random_words: Vec<&str> = WORDS.choose_multiple(&mut rng, 10).cloned().collect();
-    //         let content = random_words.join(" ");
-    //         Buffer::local(&content, cx)
-    //     });
+    #[gpui::test(iterations = 1000)]
+    fn test_insert_random_excerpts(mut rng: StdRng, cx: &mut AppContext) {
+        let buffer = cx.new_model(|cx| {
+            let random_words: Vec<&str> = WORDS.choose_multiple(&mut rng, 10).cloned().collect();
+            let content = random_words.join(" ");
+            Buffer::local(&content, cx)
+        });
 
-    //     let buffer_len = buffer.read(cx).len();
+        let snapshot = buffer.read(cx).snapshot();
+        let generate_excerpts = |rng: &mut StdRng| {
+            let mut ranges = Vec::new();
+            for _ in 0..5 {
+                let start = rng.gen_range(0..=snapshot.len());
+                let end = rng.gen_range(start..=snapshot.len());
+                let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                ranges
+                    .push(snapshot.anchor_at(start, start_bias)..snapshot.anchor_at(end, end_bias));
+            }
+            ranges
+        };
 
-    //     let generate_excerpts = |rng: &mut StdRng| {
-    //         let mut ranges = Vec::new();
-    //         for _ in 0..5 {
-    //             let start = rng.gen_range(0..=buffer_len);
-    //             let end = rng.gen_range(start..=buffer_len);
-    //             ranges.push(start..end);
-    //         }
-    //         ranges
-    //     };
+        cx.new_model(|cx| {
+            let mut multibuffer = MultiBuffer::new();
+            let excerpts1 = generate_excerpts(&mut rng);
+            let excerpts2 = generate_excerpts(&mut rng);
 
-    //     cx.new_model(|cx| {
-    //         let mut multibuffer = MultiBuffer::new();
-    //         let excerpts1 = generate_excerpts(&mut rng);
-    //         let excerpts2 = generate_excerpts(&mut rng);
+            multibuffer.insert_excerpts(
+                excerpts1
+                    .iter()
+                    .map(|range| (buffer.clone(), range.clone())),
+                cx,
+            );
+            multibuffer.insert_excerpts(
+                excerpts2
+                    .iter()
+                    .map(|range| (buffer.clone(), range.clone())),
+                cx,
+            );
 
-    //         multibuffer.insert_excerpts(
-    //             excerpts1
-    //                 .iter()
-    //                 .map(|range| (buffer.clone(), range.clone())),
-    //             cx,
-    //         );
-    //         dbg!(multibuffer.snapshot.excerpts.items(&()));
-    //         multibuffer.insert_excerpts(
-    //             excerpts2
-    //                 .iter()
-    //                 .map(|range| (buffer.clone(), range.clone())),
-    //             cx,
-    //         );
-    //         dbg!(multibuffer.snapshot.excerpts.items(&()));
+            let mut excerpt_ranges = excerpts1
+                .iter()
+                .chain(&excerpts2)
+                .filter(|range| range.end.cmp(&range.start, &snapshot).is_gt())
+                .cloned()
+                .collect::<Vec<_>>();
+            excerpt_ranges.sort_by(|range_a, range_b| range_a.cmp(range_b, buffer.read(cx)));
+            excerpt_ranges.dedup_by(|a, b| {
+                if a.start.cmp(&b.end, buffer.read(cx)).is_le()
+                    && b.start.cmp(&a.end, buffer.read(cx)).is_le()
+                {
+                    b.start = a.start.min(&b.start, buffer.read(cx));
+                    b.end = a.end.max(&b.end, buffer.read(cx));
+                    true
+                } else {
+                    false
+                }
+            });
 
-    //         let mut excerpt_ranges = excerpts1
-    //             .iter()
-    //             .chain(&excerpts2)
-    //             .cloned()
-    //             .collect::<Vec<_>>();
-    //         excerpt_ranges.sort_by_key(|range| (range.start, range.end));
-    //         excerpt_ranges.dedup_by(|a, b| {
-    //             if a.start <= b.end && b.start <= a.end {
-    //                 b.start = a.start.min(b.start);
-    //                 b.end = a.end.max(b.end);
-    //                 true
-    //             } else {
-    //                 false
-    //             }
-    //         });
+            let mut expected_text = String::new();
+            let mut prev_range: Option<Range<usize>> = None;
+            for range in excerpt_ranges {
+                let offset_range = range.to_offset(&snapshot);
+                if !offset_range.is_empty() {
+                    if prev_range.map_or(true, |prev_range| {
+                        prev_range.is_empty() || offset_range.start > prev_range.end
+                    }) {
+                        expected_text.push('\n');
+                    }
+                    expected_text.extend(snapshot.text_for_range(offset_range.clone()));
+                }
+                prev_range = Some(offset_range);
+            }
+            assert_eq!(multibuffer.snapshot(cx).text(), expected_text);
 
-    //         let expected_text = excerpt_ranges
-    //             .into_iter()
-    //             .filter_map(|range| {
-    //                 if range.is_empty() {
-    //                     None
-    //                 } else {
-    //                     Some(format!("\n{}", &buffer.read(cx).text()[range]))
-    //                 }
-    //             })
-    //             .collect::<String>();
-    //         assert_eq!(multibuffer.snapshot(cx).text(), expected_text);
-
-    //         multibuffer
-    //     });
-    // }
+            multibuffer
+        });
+    }
 
     // #[gpui::test]
     // fn test_rename_buffers(cx: &mut AppContext) {
