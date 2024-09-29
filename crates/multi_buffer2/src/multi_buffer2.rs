@@ -83,13 +83,7 @@ impl MultiBuffer {
                 }
             })
             .collect::<Vec<_>>();
-        new_excerpts.sort_unstable_by(|a, b| {
-            a.key
-                .path
-                .cmp(&b.key.path)
-                .then_with(|| a.key.buffer_id.cmp(&b.key.buffer_id))
-                .then_with(|| a.key.range.cmp(&b.key.range, &a.snapshot))
-        });
+        new_excerpts.sort_unstable_by(|a, b| a.key.cmp(&b.key, &a.snapshot));
         new_excerpts.dedup_by(|a, b| {
             if a.key.buffer_id == b.key.buffer_id
                 && a.key.range.end.cmp(&b.key.range.start, &a.snapshot).is_ge()
@@ -122,10 +116,12 @@ impl MultiBuffer {
         let mut new_excerpts = new_excerpts.into_iter().peekable();
 
         while let Some(new_excerpt) = new_excerpts.next() {
-            if new_excerpt
-                .key
-                .cmp(cursor.start(), &self.snapshot.buffer_snapshots)
-                .is_gt()
+            if SeekTarget::cmp(
+                &new_excerpt.key,
+                cursor.start(),
+                &self.snapshot.buffer_snapshots,
+            )
+            .is_gt()
             {
                 new_tree.append(
                     cursor.slice(
@@ -154,11 +150,13 @@ impl MultiBuffer {
             );
 
             if let Some(prev_excerpt) = cursor.prev_item() {
-                push_new_excerpt(
-                    &mut new_tree,
-                    prev_excerpt.key.clone(),
-                    &self.snapshot.buffer_snapshots,
-                );
+                if prev_excerpt.key.buffer_id == new_excerpt.key.buffer_id {
+                    push_new_excerpt(
+                        &mut new_tree,
+                        prev_excerpt.key.clone(),
+                        &self.snapshot.buffer_snapshots,
+                    );
+                }
             }
 
             // If the new excerpt ends at the same offset as the next old excerpt, update its `touches_previous` value.
@@ -438,36 +436,36 @@ impl MultiBuffer {
 
 fn push_new_excerpt(
     excerpts: &mut SumTree<Excerpt>,
-    key: ExcerptKey,
+    new_key: ExcerptKey,
     snapshots: &TreeMap<BufferId, BufferSnapshot>,
 ) {
-    let snapshot = snapshots.get(&key.buffer_id).unwrap();
+    let snapshot = snapshots.get(&new_key.buffer_id).unwrap();
 
     let mut merged_with_previous = false;
     let mut touches_previous = false;
     excerpts.update_last(
         |last_excerpt| {
-            if last_excerpt.key.buffer_id == key.buffer_id {
+            if last_excerpt.key.buffer_id == new_key.buffer_id {
                 if last_excerpt
                     .key
                     .range
                     .end
-                    .cmp(&key.range.start, snapshot)
+                    .cmp(&new_key.range.start, snapshot)
                     .is_ge()
                 {
                     merged_with_previous = true;
-                    if key
+                    if new_key
                         .range
                         .end
                         .cmp(&last_excerpt.key.range.end, snapshot)
                         .is_gt()
                     {
-                        last_excerpt.key.range.end = key.range.end;
+                        last_excerpt.key.range.end = new_key.range.end;
                         last_excerpt.empty = last_excerpt.key.range.to_offset(snapshot).is_empty();
                     }
                 } else {
                     touches_previous = last_excerpt.key.range.end.to_offset(snapshot)
-                        == key.range.start.to_offset(snapshot);
+                        == new_key.range.start.to_offset(snapshot);
                 }
             }
         },
@@ -475,10 +473,10 @@ fn push_new_excerpt(
     );
 
     if !merged_with_previous {
-        let empty = key.range.to_offset(snapshot).is_empty();
+        let empty = new_key.range.to_offset(snapshot).is_empty();
         excerpts.push(
             Excerpt {
-                key,
+                key: new_key,
                 touches_previous,
                 empty,
             },
@@ -543,6 +541,15 @@ struct ExcerptKey {
     path: Option<Arc<Path>>,
     buffer_id: BufferId,
     range: Range<language::Anchor>,
+}
+
+impl ExcerptKey {
+    fn cmp(&self, other: &Self, snapshot: &BufferSnapshot) -> Ordering {
+        self.path
+            .cmp(&other.path)
+            .then_with(|| self.buffer_id.cmp(&other.buffer_id))
+            .then_with(|| self.range.cmp(&other.range, snapshot))
+    }
 }
 
 impl sum_tree::Item for Excerpt {
@@ -620,13 +627,10 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for Excerp
         buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
     ) -> Ordering {
         if let Some(cursor_location) = cursor_location {
-            self.path
-                .cmp(&cursor_location.path)
-                .then_with(|| self.buffer_id.cmp(&cursor_location.buffer_id))
-                .then_with(|| {
-                    let snapshot = buffer_snapshots.get(&self.buffer_id).unwrap();
-                    self.range.cmp(&cursor_location.range, snapshot)
-                })
+            self.cmp(
+                cursor_location,
+                buffer_snapshots.get(&self.buffer_id).unwrap(),
+            )
         } else {
             Ordering::Greater
         }
@@ -722,57 +726,82 @@ mod tests {
 
     #[gpui::test(iterations = 1000)]
     fn test_insert_random_excerpts(mut rng: StdRng, cx: &mut AppContext) {
-        let buffer = cx.new_model(|cx| {
-            let random_words: Vec<&str> = WORDS.choose_multiple(&mut rng, 10).cloned().collect();
+        let fruits = cx.new_model(|cx| {
+            let random_words: Vec<&str> = FRUITS.choose_multiple(&mut rng, 10).cloned().collect();
+            let content = random_words.join(" ");
+            Buffer::local(&content, cx)
+        });
+        let cars = cx.new_model(|cx| {
+            let random_words: Vec<&str> = CARS.choose_multiple(&mut rng, 10).cloned().collect();
+            let content = random_words.join(" ");
+            Buffer::local(&content, cx)
+        });
+        let animals = cx.new_model(|cx| {
+            let random_words: Vec<&str> = ANIMALS.choose_multiple(&mut rng, 10).cloned().collect();
             let content = random_words.join(" ");
             Buffer::local(&content, cx)
         });
 
-        let snapshot = buffer.read(cx).snapshot();
-        let generate_excerpts = |rng: &mut StdRng| {
-            let mut ranges = Vec::new();
+        let generate_excerpts = |rng: &mut StdRng, cx: &mut AppContext| {
+            let mut excerpts = Vec::new();
             for _ in 0..5 {
-                let start = rng.gen_range(0..=snapshot.len());
-                let end = rng.gen_range(start..=snapshot.len());
+                let buffer = match rng.gen_range(0..3) {
+                    0 => fruits.clone(),
+                    1 => cars.clone(),
+                    _ => animals.clone(),
+                };
+                let buffer_snapshot = buffer.read(cx);
+                let start = rng.gen_range(0..=buffer_snapshot.len());
+                let end = rng.gen_range(start..=buffer_snapshot.len());
                 let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
-                ranges
-                    .push(snapshot.anchor_at(start, start_bias)..snapshot.anchor_at(end, end_bias));
+                excerpts.push((
+                    buffer,
+                    buffer_snapshot.anchor_at(start, start_bias)
+                        ..buffer_snapshot.anchor_at(end, end_bias),
+                ));
             }
-            ranges
+            excerpts
         };
 
         cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new();
-            let excerpts1 = generate_excerpts(&mut rng);
-            let excerpts2 = generate_excerpts(&mut rng);
+            let excerpts1 = generate_excerpts(&mut rng, cx);
+            let excerpts2 = generate_excerpts(&mut rng, cx);
 
-            multibuffer.insert_excerpts(
-                excerpts1
-                    .iter()
-                    .map(|range| (buffer.clone(), range.clone())),
-                cx,
-            );
-            multibuffer.insert_excerpts(
-                excerpts2
-                    .iter()
-                    .map(|range| (buffer.clone(), range.clone())),
-                cx,
-            );
+            multibuffer.insert_excerpts(excerpts1.iter().cloned(), cx);
+            multibuffer.insert_excerpts(excerpts2.iter().cloned(), cx);
 
             let mut excerpt_ranges = excerpts1
                 .iter()
                 .chain(&excerpts2)
-                .filter(|range| range.end.cmp(&range.start, &snapshot).is_gt())
+                .filter(|(buffer, range)| range.end.cmp(&range.start, buffer.read(cx)).is_gt())
                 .cloned()
                 .collect::<Vec<_>>();
-            excerpt_ranges.sort_by(|range_a, range_b| range_a.cmp(range_b, buffer.read(cx)));
-            excerpt_ranges.dedup_by(|a, b| {
-                if a.start.cmp(&b.end, buffer.read(cx)).is_le()
-                    && b.start.cmp(&a.end, buffer.read(cx)).is_le()
+            excerpt_ranges.sort_by(|(buffer_a, range_a), (buffer_b, range_b)| {
+                buffer_a
+                    .read(cx)
+                    .file()
+                    .map(|file| file.full_path(cx))
+                    .cmp(&buffer_b.read(cx).file().map(|file| file.full_path(cx)))
+                    .then_with(|| {
+                        buffer_a
+                            .read(cx)
+                            .remote_id()
+                            .cmp(&buffer_b.read(cx).remote_id())
+                    })
+                    .then_with(|| range_a.cmp(range_b, buffer_a.read(cx)))
+            });
+            excerpt_ranges.dedup_by(|(buffer_a, range_a), (buffer_b, range_b)| {
+                let buffer_a = buffer_a.read(cx);
+                let buffer_b = buffer_b.read(cx);
+
+                if buffer_a.remote_id() == buffer_b.remote_id()
+                    && range_a.start.cmp(&range_b.end, buffer_a).is_le()
+                    && range_b.start.cmp(&range_a.end, buffer_a).is_le()
                 {
-                    b.start = a.start.min(&b.start, buffer.read(cx));
-                    b.end = a.end.max(&b.end, buffer.read(cx));
+                    range_b.start = range_a.start.min(&range_b.start, buffer_a);
+                    range_b.end = range_a.end.max(&range_b.end, buffer_a);
                     true
                 } else {
                     false
@@ -780,18 +809,21 @@ mod tests {
             });
 
             let mut expected_text = String::new();
-            let mut prev_range: Option<Range<usize>> = None;
-            for range in excerpt_ranges {
-                let offset_range = range.to_offset(&snapshot);
+            let mut prev_excerpt: Option<(language::BufferId, Range<usize>)> = None;
+            for (buffer, range) in excerpt_ranges {
+                let buffer = buffer.read(cx);
+                let offset_range = range.to_offset(&buffer);
                 if !offset_range.is_empty() {
-                    if prev_range.map_or(true, |prev_range| {
-                        prev_range.is_empty() || offset_range.start > prev_range.end
+                    if prev_excerpt.map_or(true, |(prev_buffer_id, prev_range)| {
+                        prev_buffer_id != buffer.remote_id()
+                            || prev_range.is_empty()
+                            || offset_range.start > prev_range.end
                     }) {
                         expected_text.push('\n');
                     }
-                    expected_text.extend(snapshot.text_for_range(offset_range.clone()));
+                    expected_text.extend(buffer.text_for_range(offset_range.clone()));
                 }
-                prev_range = Some(offset_range);
+                prev_excerpt = Some((buffer.remote_id(), offset_range));
             }
             assert_eq!(multibuffer.snapshot(cx).text(), expected_text);
 
@@ -903,7 +935,7 @@ mod tests {
         }
     }
 
-    const WORDS: &[&str] = &[
+    const FRUITS: &[&str] = &[
         "apple",
         "banana",
         "cherry",
@@ -944,5 +976,84 @@ mod tests {
         "olive",
         "peach",
         "rambutan",
+    ];
+
+    const CARS: &[&str] = &[
+        "Acura",
+        "Audi",
+        "BMW",
+        "Buick",
+        "Cadillac",
+        "Chevrolet",
+        "Chrysler",
+        "Dodge",
+        "Ferrari",
+        "Ford",
+        "GMC",
+        "Honda",
+        "Hyundai",
+        "Infiniti",
+        "Jaguar",
+        "Jeep",
+        "Kia",
+        "Lamborghini",
+        "Lexus",
+        "Lincoln",
+        "Maserati",
+        "Mazda",
+        "Mercedes-Benz",
+        "Mini",
+        "Mitsubishi",
+        "Nissan",
+        "Porsche",
+        "Ram",
+        "Subaru",
+        "Tesla",
+        "Toyota",
+        "Volkswagen",
+        "Volvo",
+    ];
+
+    const ANIMALS: &[&str] = &[
+        "ant",
+        "bear",
+        "cat",
+        "dog",
+        "elephant",
+        "fox",
+        "giraffe",
+        "hippo",
+        "iguana",
+        "jaguar",
+        "kangaroo",
+        "lion",
+        "monkey",
+        "newt",
+        "owl",
+        "penguin",
+        "quokka",
+        "rabbit",
+        "snake",
+        "tiger",
+        "unicorn",
+        "vulture",
+        "walrus",
+        "xerus",
+        "yak",
+        "zebra",
+        "alligator",
+        "bison",
+        "camel",
+        "dolphin",
+        "emu",
+        "flamingo",
+        "gorilla",
+        "hedgehog",
+        "ibex",
+        "jellyfish",
+        "koala",
+        "lemur",
+        "meerkat",
+        "narwhal",
     ];
 }
