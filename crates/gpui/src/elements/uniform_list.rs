@@ -14,6 +14,8 @@ use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
 use taffy::style::Overflow;
 
+use super::ListHorizontalSizingBehavior;
+
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visible subset of items.
@@ -32,7 +34,6 @@ where
     let id = id.into();
     let mut base_style = StyleRefinement::default();
     base_style.overflow.y = Some(Overflow::Scroll);
-    base_style.overflow.x = Some(Overflow::Scroll);
 
     let render_range = move |range, cx: &mut WindowContext| {
         view.update(cx, |this, cx| {
@@ -58,6 +59,7 @@ where
         },
         scroll_handle: None,
         sizing_behavior: ListSizingBehavior::default(),
+        horizontal_sizing_behavior: ListHorizontalSizingBehavior::default(),
     }
 }
 
@@ -70,6 +72,7 @@ pub struct UniformList {
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
     sizing_behavior: ListSizingBehavior,
+    horizontal_sizing_behavior: ListHorizontalSizingBehavior,
 }
 
 /// Frame state used by the [UniformList].
@@ -134,7 +137,7 @@ impl Element for UniformList {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let max_items = self.item_count;
-        let item_size = self.measure_item(cx);
+        let item_size = self.measure_item(None, cx);
         let layout_id = self
             .interactivity
             .request_layout(global_id, cx, |style, cx| match self.sizing_behavior {
@@ -194,14 +197,25 @@ impl Element for UniformList {
                 - point(border.right + padding.right, border.bottom + padding.bottom),
         );
 
+        let can_scroll_horizontally = matches!(
+            self.horizontal_sizing_behavior,
+            ListHorizontalSizingBehavior::Unconstrained
+        );
+        let content_width = if can_scroll_horizontally {
+            padded_bounds.size.width.max(frame_state.item_size.width)
+        } else {
+            padded_bounds.size.width
+        };
+        let measurement = self.measure_item(
+            Some(padded_bounds.size.width).filter(|_| !can_scroll_horizontally),
+            cx,
+        );
         let content_size = Size {
-            width: padded_bounds.size.width.max(frame_state.item_size.width),
+            width: content_width,
             height: frame_state.item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
-
-        let measurement = self.measure_item(cx);
         let item_height = measurement.height;
         let shared_scroll_to_item = self.scroll_handle.as_mut().and_then(|handle| {
             let mut handle = handle.0.borrow_mut();
@@ -238,7 +252,8 @@ impl Element for UniformList {
                     }
 
                     let content_width = measurement.width + padding.left + padding.right;
-                    let is_scrolled_horizontally = !scroll_offset.x.is_zero();
+                    let is_scrolled_horizontally =
+                        can_scroll_horizontally && !scroll_offset.x.is_zero();
                     if is_scrolled_horizontally && content_width <= padded_bounds.size.width {
                         shared_scroll_offset.borrow_mut().x = Pixels::ZERO;
                         scroll_offset.x = Pixels::ZERO;
@@ -270,7 +285,6 @@ impl Element for UniformList {
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
-                            // TODO kb should all those changes to uniform_list should only work when horizontal scroll is enabled?
                             // TODO kb symlink icon is way over to the right now
                             // TODO kb scroll horizontally when rename editor input gets over the edge of the list
                             let item_origin = padded_bounds.origin
@@ -278,10 +292,13 @@ impl Element for UniformList {
                                     scroll_offset.x + padding.left,
                                     item_height * ix + scroll_offset.y + padding.top,
                                 );
+                            let available_width = if can_scroll_horizontally {
+                                padded_bounds.size.width.max(content_width)
+                            } else {
+                                padded_bounds.size.width
+                            };
                             let available_space = size(
-                                AvailableSpace::Definite(
-                                    padded_bounds.size.width.max(content_width),
-                                ),
+                                AvailableSpace::Definite(available_width),
                                 AvailableSpace::Definite(item_height),
                             );
                             item.layout_as_root(available_space, cx);
@@ -334,7 +351,24 @@ impl UniformList {
         self
     }
 
-    fn measure_item(&self, cx: &mut WindowContext) -> Size<Pixels> {
+    /// Sets the horizontal sizing behavior, controlling the way list items laid out horizontally.
+    pub fn with_horizontal_sizing_behavior(
+        mut self,
+        behavior: ListHorizontalSizingBehavior,
+    ) -> Self {
+        self.horizontal_sizing_behavior = behavior;
+        match behavior {
+            ListHorizontalSizingBehavior::FitList => {
+                self.interactivity.base_style.overflow.x = None;
+            }
+            ListHorizontalSizingBehavior::Unconstrained => {
+                self.interactivity.base_style.overflow.x = Some(Overflow::Scroll);
+            }
+        }
+        self
+    }
+
+    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut WindowContext) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();
         }
@@ -344,7 +378,12 @@ impl UniformList {
         let Some(mut item_to_measure) = items.pop() else {
             return Size::default();
         };
-        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+        let available_space = size(
+            list_width.map_or(AvailableSpace::MinContent, |width| {
+                AvailableSpace::Definite(width)
+            }),
+            AvailableSpace::MinContent,
+        );
         item_to_measure.layout_as_root(available_space, cx)
     }
 

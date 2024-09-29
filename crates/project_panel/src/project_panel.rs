@@ -19,9 +19,10 @@ use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
     AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
     Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement,
-    KeyContext, ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
-    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView,
+    WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -2546,7 +2547,8 @@ impl ProjectPanel {
                             cx.stop_propagation();
                             this.deploy_context_menu(event.position, entry_id, cx);
                         },
-                    )),
+                    ))
+                    .overflow_x(),
             )
             .border_1()
             .border_r_2()
@@ -2918,6 +2920,7 @@ impl Render for ProjectPanel {
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
+                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                     .with_width_from_item(Some(self.max_width_item_index))
                     .track_scroll(self.scroll_handle.clone()),
                 )
