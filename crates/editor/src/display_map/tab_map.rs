@@ -344,7 +344,13 @@ impl TabSnapshot {
                 let tab_len = tab_size - expanded_chars % tab_size;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
-            } else {
+            } else if ('\u{0001}'..='\u{0008}').contains(&c) ||
+            ('\u{000B}'..='\u{000C}').contains(&c) ||
+            ('\u{000E}'..='\u{001F}').contains(&c) ||
+            ('\u{007F}'..='\u{009F}').contains(&c) {
+                expanded_bytes += 3;
+                expanded_chars += 1;
+            }else {
                 expanded_bytes += c.len_utf8() as u32;
                 expanded_chars += 1;
             }
@@ -352,6 +358,30 @@ impl TabSnapshot {
         }
         expanded_bytes + column.saturating_sub(collapsed_bytes)
     }
+
+    // fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
+    //     let tab_size = self.tab_size.get();
+
+    //     let mut expanded_chars = 0;
+    //     let mut expanded_bytes = 0;
+    //     let mut collapsed_bytes = 0;
+    //     let end_column = column.min(self.max_expansion_column);
+    //     for c in chars {
+    //         if collapsed_bytes >= end_column {
+    //             break;
+    //         }
+    //         if c == '\t' {
+    //             let tab_len = tab_size - expanded_chars % tab_size;
+    //             expanded_bytes += tab_len;
+    //             expanded_chars += tab_len;
+    //         } else {
+    //             expanded_bytes += c.len_utf8() as u32;
+    //             expanded_chars += 1;
+    //         }
+    //         collapsed_bytes += c.len_utf8() as u32;
+    //     }
+    //     expanded_bytes + column.saturating_sub(collapsed_bytes)
+    // }
 
     fn collapse_tabs(
         &self,
@@ -376,6 +406,21 @@ impl TabSnapshot {
                 let tab_len = tab_size - (expanded_chars % tab_size);
                 expanded_chars += tab_len;
                 expanded_bytes += tab_len;
+                if expanded_bytes > column {
+                    expanded_chars -= expanded_bytes - column;
+                    return match bias {
+                        Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
+                        Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
+                    };
+                }
+            } else if
+            ('\u{0001}'..='\u{0008}').contains(&c) ||
+            ('\u{000B}'..='\u{000C}').contains(&c) ||
+            ('\u{000E}'..='\u{001F}').contains(&c) ||
+            ('\u{007F}'..='\u{009F}').contains(&c) {
+                expanded_chars += 1;
+                expanded_bytes += 3;
+
                 if expanded_bytes > column {
                     expanded_chars -= expanded_bytes - column;
                     return match bias {
@@ -515,6 +560,37 @@ impl<'a> Iterator for TabChunks<'a> {
 
         for (ix, c) in self.chunk.text.char_indices() {
             match c {
+                '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' => {
+                    if ix > 0 {
+                        let (prefix, suffix) = self.chunk.text.split_at(ix);
+                        self.chunk.text = suffix;
+                        return Some(Chunk {
+                            text: prefix,
+                            is_invisible: true,
+                            ..self.chunk.clone()
+                        });
+                    } else {
+                        if self.chunk.text.len() >= 3 {
+                            self.chunk.text = &self.chunk.text[3..];
+                        } else {
+                            self.chunk.text = "";
+                            }
+                        let tab_size = 1;
+                        let len = tab_size - (self.column % tab_size);
+                        let next_output_position = cmp::min(
+                            self.output_position + Point::new(0, 1),
+                            self.max_output_position,
+                        );
+                        self.column += len;
+                        self.input_column += len;
+                        self.output_position = next_output_position;
+                        return Some(Chunk {
+                            text: "□",
+                            is_invisible: true,
+                            ..self.chunk.clone()
+                        });
+                    }
+                }
                 '\t' => {
                     if ix > 0 {
                         let (prefix, suffix) = self.chunk.text.split_at(ix);
@@ -545,6 +621,38 @@ impl<'a> Iterator for TabChunks<'a> {
                             ..self.chunk.clone()
                         });
                     }
+                }
+                '\u{0001}'..='\u{0008}' | '\u{000B}'..='\u{000C}' | '\u{000E}'..='\u{001F}' |'\u{007F}'..='\u{009F}'
+                => {
+                    if ix > 0 {
+                        let (prefix, suffix) = self.chunk.text.split_at(ix);
+                        self.chunk.text = suffix;
+                        return Some(Chunk {
+                            text: prefix,
+                            is_invisible: true,
+                            ..self.chunk.clone()
+                        });
+                    } else {
+                        if self.chunk.text.len() >= 1 {
+                            self.chunk.text = &self.chunk.text[1..];
+                        } else {
+                            self.chunk.text = "";
+                        }
+                        let len = 1;
+                        let next_output_position = cmp::min(
+                            self.output_position + Point::new(0, len),
+                            self.max_output_position,
+                        );
+                        self.column += len;
+                        self.input_column += len;
+                        self.output_position = next_output_position;
+                        return Some(Chunk {
+                            text: "�",
+                            is_invisible: true,
+                            ..self.chunk.clone()
+                        });
+                    }
+
                 }
                 '\n' => {
                     self.column = 0;
