@@ -55,7 +55,7 @@ pub struct NodeBinarySettings {
     pub npm_path: Option<String>,
     /// If disabled, zed will download its own copy of node.
     #[serde(default)]
-    pub disable_path_lookup: Option<bool>,
+    pub ignore_system_version: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -143,7 +143,7 @@ const fn true_value() -> bool {
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
-    pub path_lookup: Option<bool>,
+    pub ignore_system_version: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -334,17 +334,20 @@ impl SettingsObserver {
             .log_err();
         }
 
+        let weak_client = ssh.downgrade();
         cx.observe_global::<SettingsStore>(move |_, cx| {
             let new_settings = cx.global::<SettingsStore>().raw_user_settings();
             if &settings != new_settings {
                 settings = new_settings.clone()
             }
             if let Some(content) = serde_json::to_string(&settings).log_err() {
-                ssh.send(proto::UpdateUserSettings {
-                    project_id: 0,
-                    content,
-                })
-                .log_err();
+                if let Some(ssh) = weak_client.upgrade() {
+                    ssh.send(proto::UpdateUserSettings {
+                        project_id: 0,
+                        content,
+                    })
+                    .log_err();
+                }
             }
         })
         .detach();

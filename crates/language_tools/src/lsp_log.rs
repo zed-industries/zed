@@ -184,7 +184,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let project = workspace.project();
-        if project.read(cx).is_local_or_ssh() {
+        if project.read(cx).is_local() {
             log_store.update(cx, |store, cx| {
                 store.add_project(project, cx);
             });
@@ -193,7 +193,7 @@ pub fn init(cx: &mut AppContext) {
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, cx| {
             let project = workspace.project().read(cx);
-            if project.is_local_or_ssh() {
+            if project.is_local() {
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)

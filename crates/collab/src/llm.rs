@@ -400,42 +400,6 @@ async fn perform_completion(
                 })
                 .boxed()
         }
-        LanguageModelProvider::Zed => {
-            let api_key = state
-                .config
-                .runpod_api_key
-                .as_ref()
-                .context("no Qwen2-7B API key configured on the server")?;
-            let api_url = state
-                .config
-                .runpod_api_summary_url
-                .as_ref()
-                .context("no Qwen2-7B URL configured on the server")?;
-            let chunks = open_ai::stream_completion(
-                &state.http_client,
-                api_url,
-                api_key,
-                serde_json::from_str(params.provider_request.get())?,
-                None,
-            )
-            .await?;
-
-            chunks
-                .map(|event| {
-                    event.map(|chunk| {
-                        let input_tokens =
-                            chunk.usage.as_ref().map_or(0, |u| u.prompt_tokens) as usize;
-                        let output_tokens =
-                            chunk.usage.as_ref().map_or(0, |u| u.completion_tokens) as usize;
-                        (
-                            serde_json::to_vec(&chunk).unwrap(),
-                            input_tokens,
-                            output_tokens,
-                        )
-                    })
-                })
-                .boxed()
-        }
     };
 
     Ok(Response::new(Body::wrap_stream(TokenCountingStream {

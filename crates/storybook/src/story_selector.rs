@@ -46,7 +46,9 @@ pub enum ComponentStory {
 impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
-            Self::ApplicationMenu => cx.new_view(|_| title_bar::ApplicationMenuStory).into(),
+            Self::ApplicationMenu => cx
+                .new_view(|cx| title_bar::ApplicationMenuStory::new(cx))
+                .into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(cx).into(),
             Self::Avatar => cx.new_view(|_| ui::AvatarStory).into(),
             Self::Button => cx.new_view(|_| ui::ButtonStory).into(),
