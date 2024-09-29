@@ -272,8 +272,6 @@ jobs:
     name: Create a Linux bundle
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
-    container:
-      image: quay.io/pypa/manylinux2014_x86_64:latest
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:

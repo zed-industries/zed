@@ -1,0 +1,12 @@
+# syntax=docker/dockerfile:1.10.0
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+WORKDIR /app
+COPY . .
+
+RUN ./script/install-mold "2.34.0"
+RUN ./script/linux
+RUN ./script/bundle-linux
