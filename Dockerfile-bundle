@@ -5,8 +5,15 @@ ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
 WORKDIR /app
-COPY . .
 
-RUN ./script/install-mold "2.34.0"
+COPY script/linux script/install-mold script/
 RUN ./script/linux
-RUN ./script/bundle-linux
+RUN ./script/install-mold "2.34.0"
+
+COPY . .
+ARG GITHUB_SHA
+ENV GITHUB_SHA=${GITHUB_SHA}
+RUN . "$HOME/.cargo/env" \
+    && rustup update \
+    && script/generate-licenses \
+    && ./script/bundle-linux
