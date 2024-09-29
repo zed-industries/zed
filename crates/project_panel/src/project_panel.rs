@@ -8,21 +8,21 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::entry_git_aware_label_color,
     scroll::{Autoscroll, ScrollbarAutoHide},
-    Editor,
+    Editor, EditorEvent,
 };
 use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, BTreeSet, HashMap};
+use core::f32;
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement,
-    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView,
-    WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent, Entity,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -84,7 +84,13 @@ pub struct ProjectPanel {
     vertical_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     horizontal_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     hide_scrollbar_task: Option<Task<()>>,
-    max_width_item_index: usize,
+    max_width_item: Option<MaxWidthItem>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MaxWidthItem {
+    visible_item_index: usize,
+    width_estimate: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +99,8 @@ struct EditState {
     entry_id: ProjectEntryId,
     is_new_entry: bool,
     is_dir: bool,
+    is_symlink: bool,
+    depth: usize,
     processing_filename: Option<String>,
 }
 
@@ -257,24 +265,36 @@ impl ProjectPanel {
 
             let filename_editor = cx.new_view(Editor::single_line);
 
-            cx.subscribe(&filename_editor, |this, _, event, cx| match event {
-                // TODO kb scroll horizontally when rename editor input gets over the edge of the list
-                editor::EditorEvent::BufferEdited
-                | editor::EditorEvent::SelectionsChanged { .. } => {
-                    this.autoscroll(cx);
-                }
-                editor::EditorEvent::Blurred => {
-                    if this
-                        .edit_state
-                        .as_ref()
-                        .map_or(false, |state| state.processing_filename.is_none())
-                    {
-                        this.edit_state = None;
-                        this.update_visible_entries(None, cx);
+            cx.subscribe(
+                &filename_editor,
+                |project_panel, filename_editor, editor_event, cx| match editor_event {
+                    EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
+                        project_panel.autoscroll(cx);
+                        let scroll_handle = project_panel.scroll_handle.0.borrow();
+                        let Some(selection_point) = filename_editor.update(cx, |editor, cx| {
+                            let editor_snapshot = editor.snapshot(cx);
+                            let selection = editor.selections.newest_anchor();
+                            editor.to_pixel_point(selection.head(), &editor_snapshot, cx)
+                        }) else {
+                            return;
+                        };
+                        let new_offset =
+                            Point::new(-selection_point.x, scroll_handle.base_handle.offset().y);
+                        scroll_handle.base_handle.set_offset(new_offset);
                     }
-                }
-                _ => {}
-            })
+                    EditorEvent::Blurred => {
+                        if project_panel
+                            .edit_state
+                            .as_ref()
+                            .map_or(false, |state| state.processing_filename.is_none())
+                        {
+                            project_panel.edit_state = None;
+                            project_panel.update_visible_entries(None, cx);
+                        }
+                    }
+                    _ => {}
+                },
+            )
             .detach();
 
             cx.observe_global::<FileIcons>(|_, cx| {
@@ -317,7 +337,7 @@ impl ProjectPanel {
                 hide_scrollbar_task: None,
                 vertical_scrollbar_drag_thumb_offset: Default::default(),
                 horizontal_scrollbar_drag_thumb_offset: Default::default(),
-                max_width_item_index: 0,
+                max_width_item: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -976,6 +996,8 @@ impl ProjectPanel {
                 is_new_entry: true,
                 is_dir,
                 processing_filename: None,
+                is_symlink: false,
+                depth: 0,
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(cx);
@@ -998,6 +1020,7 @@ impl ProjectPanel {
             leaf_entry_id
         }
     }
+
     fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
         if let Some(SelectedEntry {
             worktree_id,
@@ -1013,6 +1036,8 @@ impl ProjectPanel {
                         is_new_entry: false,
                         is_dir: entry.is_dir(),
                         processing_filename: None,
+                        is_symlink: entry.is_symlink,
+                        depth: 0,
                     });
                     let file_name = entry
                         .path
@@ -1812,6 +1837,12 @@ impl ProjectPanel {
                         .get(&entry.id)
                         .map(|ancestor| ancestor.current_ancestor_depth)
                         .unwrap_or_default();
+                    if let Some(edit_state) = &mut self.edit_state {
+                        if edit_state.entry_id == entry.id {
+                            edit_state.is_symlink = entry.is_symlink;
+                            edit_state.depth = depth;
+                        }
+                    }
                     let mut ancestors = std::mem::take(&mut auto_folded_ancestors);
                     if ancestors.len() > 1 {
                         ancestors.reverse();
@@ -1880,18 +1911,22 @@ impl ProjectPanel {
                         .unwrap_or_default();
                     (depth, path)
                 };
-                let estimated_width = Self::item_width_estimate(depth, &path, entry.is_symlink);
+                let width_estimate = item_width_estimate(
+                    depth,
+                    path.to_string_lossy().chars().count(),
+                    entry.is_symlink,
+                );
 
                 match max_width_item.as_mut() {
                     Some((id, worktree_id, width)) => {
-                        if *width < estimated_width {
+                        if *width < width_estimate {
                             *id = entry.id;
                             *worktree_id = worktree.read(cx).id();
-                            *width = estimated_width;
+                            *width = width_estimate;
                         }
                     }
                     None => {
-                        max_width_item = Some((entry.id, worktree.read(cx).id(), estimated_width))
+                        max_width_item = Some((entry.id, worktree.read(cx).id(), width_estimate))
                     }
                 }
 
@@ -1909,7 +1944,7 @@ impl ProjectPanel {
                 .push((worktree_id, visible_worktree_entries, OnceCell::new()));
         }
 
-        if let Some((project_entry_id, worktree_id, _)) = max_width_item {
+        if let Some((project_entry_id, worktree_id, width_estimate)) = max_width_item {
             let mut visited_worktrees_length = 0;
             let index = self.visible_entries.iter().find_map(|(id, entries, _)| {
                 if worktree_id == *id {
@@ -1922,7 +1957,10 @@ impl ProjectPanel {
                 }
             });
             if let Some(index) = index {
-                self.max_width_item_index = visited_worktrees_length + index;
+                self.max_width_item = Some(MaxWidthItem {
+                    visible_item_index: visited_worktrees_length + index,
+                    width_estimate,
+                });
             }
         }
         if let Some((worktree_id, entry_id)) = new_selected_entry {
@@ -2814,15 +2852,15 @@ impl ProjectPanel {
             cx.notify();
         }
     }
+}
 
-    fn item_width_estimate(depth: usize, entry: &Path, is_symlink: bool) -> usize {
-        const ICON_SIZE_FACTOR: usize = 2;
-        let mut item_width = depth * ICON_SIZE_FACTOR + entry.to_string_lossy().chars().count();
-        if is_symlink {
-            item_width += ICON_SIZE_FACTOR;
-        }
-        item_width
+fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
+    const ICON_SIZE_FACTOR: usize = 2;
+    let mut item_width = depth * ICON_SIZE_FACTOR + item_text_chars;
+    if is_symlink {
+        item_width += ICON_SIZE_FACTOR;
     }
+    item_width
 }
 
 impl Render for ProjectPanel {
@@ -2934,7 +2972,11 @@ impl Render for ProjectPanel {
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
                     .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                    .with_width_from_item(Some(self.max_width_item_index))
+                    .with_width_from_item(
+                        self.max_width_item
+                            .as_ref()
+                            .map(|item| item.visible_item_index),
+                    )
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(items_count, cx))
