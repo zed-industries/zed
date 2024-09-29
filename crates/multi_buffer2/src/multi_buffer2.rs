@@ -725,7 +725,12 @@ mod tests {
     }
 
     #[gpui::test(iterations = 1000)]
-    fn test_insert_random_excerpts(mut rng: StdRng, cx: &mut AppContext) {
+    fn test_random_multibuffer(mut rng: StdRng, cx: &mut AppContext) {
+        let operations = std::env::var("OPERATIONS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20);
+
         let fruits = cx.new_model(|cx| {
             let random_words: Vec<&str> = FRUITS.choose_multiple(&mut rng, 10).cloned().collect();
             let content = random_words.join(" ");
@@ -742,90 +747,96 @@ mod tests {
             Buffer::local(&content, cx)
         });
 
-        let generate_excerpts = |rng: &mut StdRng, cx: &mut AppContext| {
-            let mut excerpts = Vec::new();
-            for _ in 0..5 {
-                let buffer = match rng.gen_range(0..3) {
-                    0 => fruits.clone(),
-                    1 => cars.clone(),
-                    _ => animals.clone(),
-                };
-                let buffer_snapshot = buffer.read(cx);
-                let start = rng.gen_range(0..=buffer_snapshot.len());
-                let end = rng.gen_range(start..=buffer_snapshot.len());
-                let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
-                let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
-                excerpts.push((
-                    buffer,
-                    buffer_snapshot.anchor_at(start, start_bias)
-                        ..buffer_snapshot.anchor_at(end, end_bias),
-                ));
-            }
-            excerpts
-        };
-
         cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new();
-            let excerpts1 = generate_excerpts(&mut rng, cx);
-            let excerpts2 = generate_excerpts(&mut rng, cx);
+            let mut excerpts = Vec::new();
 
-            multibuffer.insert_excerpts(excerpts1.iter().cloned(), cx);
-            multibuffer.insert_excerpts(excerpts2.iter().cloned(), cx);
+            for _ in 0..operations {
+                match rng.gen_range(0..100) {
+                    0..35 => {
+                        let mut new_excerpts = Vec::new();
+                        for _ in 0..5 {
+                            let buffer = match rng.gen_range(0..3) {
+                                0 => fruits.clone(),
+                                1 => cars.clone(),
+                                _ => animals.clone(),
+                            };
+                            let buffer_snapshot = buffer.read(cx);
+                            let start = rng.gen_range(0..=buffer_snapshot.len());
+                            let end = rng.gen_range(start..=buffer_snapshot.len());
+                            let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                            let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                            new_excerpts.push((
+                                buffer,
+                                buffer_snapshot.anchor_at(start, start_bias)
+                                    ..buffer_snapshot.anchor_at(end, end_bias),
+                            ));
+                        }
 
-            let mut excerpt_ranges = excerpts1
-                .iter()
-                .chain(&excerpts2)
-                .filter(|(buffer, range)| range.end.cmp(&range.start, buffer.read(cx)).is_gt())
-                .cloned()
-                .collect::<Vec<_>>();
-            excerpt_ranges.sort_by(|(buffer_a, range_a), (buffer_b, range_b)| {
-                buffer_a
-                    .read(cx)
-                    .file()
-                    .map(|file| file.full_path(cx))
-                    .cmp(&buffer_b.read(cx).file().map(|file| file.full_path(cx)))
-                    .then_with(|| {
-                        buffer_a
-                            .read(cx)
-                            .remote_id()
-                            .cmp(&buffer_b.read(cx).remote_id())
-                    })
-                    .then_with(|| range_a.cmp(range_b, buffer_a.read(cx)))
-            });
-            excerpt_ranges.dedup_by(|(buffer_a, range_a), (buffer_b, range_b)| {
-                let buffer_a = buffer_a.read(cx);
-                let buffer_b = buffer_b.read(cx);
-
-                if buffer_a.remote_id() == buffer_b.remote_id()
-                    && range_a.start.cmp(&range_b.end, buffer_a).is_le()
-                    && range_b.start.cmp(&range_a.end, buffer_a).is_le()
-                {
-                    range_b.start = range_a.start.min(&range_b.start, buffer_a);
-                    range_b.end = range_a.end.max(&range_b.end, buffer_a);
-                    true
-                } else {
-                    false
-                }
-            });
-
-            let mut expected_text = String::new();
-            let mut prev_excerpt: Option<(language::BufferId, Range<usize>)> = None;
-            for (buffer, range) in excerpt_ranges {
-                let buffer = buffer.read(cx);
-                let offset_range = range.to_offset(&buffer);
-                if !offset_range.is_empty() {
-                    if prev_excerpt.map_or(true, |(prev_buffer_id, prev_range)| {
-                        prev_buffer_id != buffer.remote_id()
-                            || prev_range.is_empty()
-                            || offset_range.start > prev_range.end
-                    }) {
-                        expected_text.push('\n');
+                        multibuffer.insert_excerpts(new_excerpts.iter().cloned(), cx);
+                        excerpts.append(&mut new_excerpts);
                     }
-                    expected_text.extend(buffer.text_for_range(offset_range.clone()));
+                    35..50 => {}
+                    _ => {
+
+                        // apply edits
+                    }
                 }
-                prev_excerpt = Some((buffer.remote_id(), offset_range));
+
+                let mut expected_excerpts = excerpts
+                    .iter()
+                    .filter(|(buffer, range)| range.end.cmp(&range.start, buffer.read(cx)).is_gt())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                expected_excerpts.sort_by(|(buffer_a, range_a), (buffer_b, range_b)| {
+                    buffer_a
+                        .read(cx)
+                        .file()
+                        .map(|file| file.full_path(cx))
+                        .cmp(&buffer_b.read(cx).file().map(|file| file.full_path(cx)))
+                        .then_with(|| {
+                            buffer_a
+                                .read(cx)
+                                .remote_id()
+                                .cmp(&buffer_b.read(cx).remote_id())
+                        })
+                        .then_with(|| range_a.cmp(range_b, buffer_a.read(cx)))
+                });
+                expected_excerpts.dedup_by(|(buffer_a, range_a), (buffer_b, range_b)| {
+                    let buffer_a = buffer_a.read(cx);
+                    let buffer_b = buffer_b.read(cx);
+
+                    if buffer_a.remote_id() == buffer_b.remote_id()
+                        && range_a.start.cmp(&range_b.end, buffer_a).is_le()
+                        && range_b.start.cmp(&range_a.end, buffer_a).is_le()
+                    {
+                        range_b.start = range_a.start.min(&range_b.start, buffer_a);
+                        range_b.end = range_a.end.max(&range_b.end, buffer_a);
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                let mut expected_text = String::new();
+                let mut prev_excerpt: Option<(language::BufferId, Range<usize>)> = None;
+                for (buffer, range) in expected_excerpts {
+                    let buffer = buffer.read(cx);
+                    let offset_range = range.to_offset(&buffer);
+                    if !offset_range.is_empty() {
+                        if prev_excerpt.map_or(true, |(prev_buffer_id, prev_range)| {
+                            prev_buffer_id != buffer.remote_id()
+                                || prev_range.is_empty()
+                                || offset_range.start > prev_range.end
+                        }) {
+                            expected_text.push('\n');
+                        }
+                        expected_text.extend(buffer.text_for_range(offset_range.clone()));
+                    }
+                    prev_excerpt = Some((buffer.remote_id(), offset_range));
+                }
+                assert_eq!(multibuffer.snapshot(cx).text(), expected_text);
             }
-            assert_eq!(multibuffer.snapshot(cx).text(), expected_text);
 
             multibuffer
         });
