@@ -8,7 +8,7 @@ use menu::Confirm;
 use parking_lot::RwLock;
 use project::{dap_store::DapStore, Completion};
 use settings::Settings;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
 
@@ -202,27 +202,34 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             return Task::ready(Ok(Vec::new()));
         };
 
-        let string_matches = handle.update(cx, |console, cx| {
+        let (variables, string_matches) = handle.update(cx, |console, cx| {
             console.thread_state.read_with(cx, |state, _| {
-                state
-                    .variables
-                    .values()
-                    .flatten()
-                    .cloned()
-                    .map(|variable| {
-                        let variable_name = variable
-                            .variable
-                            .evaluate_name
-                            .clone()
-                            .unwrap_or(variable.variable.name.clone());
+                let mut variables = HashMap::new();
+                let mut string_matches = Vec::new();
 
-                        StringMatchCandidate {
-                            id: variable.variable.variables_reference as usize,
-                            string: variable_name.clone(),
-                            char_bag: variable_name.chars().collect(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
+                for variable in state.variables.values().flatten() {
+                    if let Some(evaluate_name) = &variable.variable.evaluate_name {
+                        variables.insert(evaluate_name.clone(), variable.variable.value.clone());
+                        string_matches.push(StringMatchCandidate {
+                            id: 0,
+                            string: evaluate_name.clone(),
+                            char_bag: evaluate_name.chars().collect(),
+                        });
+                    }
+
+                    variables.insert(
+                        variable.variable.name.clone(),
+                        variable.variable.value.clone(),
+                    );
+
+                    string_matches.push(StringMatchCandidate {
+                        id: 0,
+                        string: variable.variable.name.clone(),
+                        char_bag: variable.variable.name.chars().collect(),
+                    });
+                }
+
+                (variables, string_matches)
             })
         });
 
@@ -242,18 +249,22 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 
             Ok(matches
                 .iter()
-                .map(|string_match| project::Completion {
-                    old_range: start_position..buffer_position,
-                    new_text: string_match.string.clone(),
-                    label: CodeLabel {
-                        filter_range: 0..string_match.string.len(),
-                        text: string_match.string.clone(),
-                        runs: Vec::new(),
-                    },
-                    server_id: LanguageServerId(0), // TODO read from client
-                    documentation: None,
-                    lsp_completion: Default::default(),
-                    confirm: None,
+                .map(|string_match| {
+                    let variable_value = variables.get(&string_match.string).unwrap();
+
+                    project::Completion {
+                        old_range: start_position..buffer_position,
+                        new_text: string_match.string.clone(),
+                        label: CodeLabel {
+                            filter_range: 0..string_match.string.len(),
+                            text: format!("{} {}", string_match.string.clone(), variable_value),
+                            runs: Vec::new(),
+                        },
+                        server_id: LanguageServerId(0), // TODO read from client
+                        documentation: None,
+                        lsp_completion: Default::default(),
+                        confirm: None,
+                    }
                 })
                 .collect())
         })
