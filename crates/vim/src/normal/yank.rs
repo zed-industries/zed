@@ -8,7 +8,7 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
-use gpui::{Hsla, ViewContext};
+use gpui::ViewContext;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 
@@ -180,7 +180,7 @@ impl Vim {
             |colors| {
                 (
                     colors.editor_document_highlight_read_background,
-                    Hsla::transparent_black(),
+                    gpui::transparent_black(),
                 )
             },
             cx,

@@ -4882,7 +4882,12 @@ impl Editor {
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
-                    |theme| (theme.editor_highlighted_line_background, Hsla::blue()),
+                    |theme| {
+                        (
+                            theme.editor_highlighted_line_background,
+                            theme.border_selected,
+                        )
+                    },
                     cx,
                 );
             });
