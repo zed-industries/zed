@@ -1,16 +1,10 @@
 use collections::{BTreeMap, HashMap};
-use gpui::{AppContext, Model, ModelContext};
+use gpui::{Model, ModelContext};
 use language::{
     AnchorRangeExt, Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, ReplicaId, TextSummary,
     ToOffset as _,
 };
-use std::{
-    cmp::{self, Ordering, Reverse},
-    fmt::Debug,
-    ops::Range,
-    path::Path,
-    sync::Arc,
-};
+use std::{cmp::Ordering, fmt::Debug, ops::Range, path::Path, sync::Arc};
 use sum_tree::{SeekTarget, SumTree, TreeMap};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -232,70 +226,86 @@ impl MultiBuffer {
 
     fn apply_renames(&mut self, renames: Vec<(BufferId, Option<Arc<Path>>, Option<Arc<Path>>)>) {
         // Remove all the excerpts that have been renamed.
-        // let mut renamed_excerpts = BTreeMap::default();
-        // {
-        //     let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-        //     let mut new_tree = SumTree::default();
-        //     for (buffer_id, old_path, new_path) in renames {
-        //         let buffer_snapshot = self.snapshot.buffer_snapshots.get(&buffer_id).unwrap();
-        //         new_tree.append(
-        //             cursor.slice(
-        //                 &Some(ExcerptKey {
-        //                     path: old_path.clone(),
-        //                     buffer_id,
-        //                     range: buffer_snapshot.min_anchor()..buffer_snapshot.min_anchor(),
-        //                 }),
-        //                 Bias::Right,
-        //                 &(),
-        //             ),
-        //             &(),
-        //         );
-        //         while let Some(excerpt) = cursor.item() {
-        //             if excerpt.buffer_id == buffer_id {
-        //                 renamed_excerpts
-        //                     .entry((new_path.clone(), buffer_id))
-        //                     .or_insert(Vec::new())
-        //                     .push(ExcerptKey {
-        //                         path: new_path.clone(),
-        //                         buffer_id,
-        //                         range: excerpt.range.clone(),
-        //                     });
-        //                 cursor.next(&());
-        //             } else {
-        //                 break;
-        //             }
-        //         }
-        //     }
-        //     new_tree.append(cursor.suffix(&()), &());
-        //     drop(cursor);
-        //     self.snapshot.excerpts = new_tree;
-        // }
+        let mut renamed_excerpts = BTreeMap::default();
+        {
+            let mut cursor = self
+                .snapshot
+                .excerpts
+                .cursor::<Option<ExcerptKey>>(&self.snapshot.buffer_snapshots);
+            let mut new_tree = SumTree::new(&self.snapshot.buffer_snapshots);
+            for (buffer_id, old_path, new_path) in renames {
+                let buffer_snapshot = self.snapshot.buffer_snapshots.get(&buffer_id).unwrap();
+                new_tree.append(
+                    cursor.slice(
+                        &ExcerptKey {
+                            path: old_path.clone(),
+                            buffer_id,
+                            range: buffer_snapshot.min_anchor()..buffer_snapshot.max_anchor(),
+                        },
+                        Bias::Left,
+                        &self.snapshot.buffer_snapshots,
+                    ),
+                    &self.snapshot.buffer_snapshots,
+                );
+                while let Some(excerpt) = cursor.item() {
+                    if excerpt.key.buffer_id == buffer_id {
+                        renamed_excerpts
+                            .entry((new_path.clone(), buffer_id))
+                            .or_insert(Vec::new())
+                            .push(Excerpt {
+                                key: ExcerptKey {
+                                    path: new_path.clone(),
+                                    buffer_id,
+                                    range: excerpt.key.range.clone(),
+                                },
+                                touches_previous: excerpt.touches_previous,
+                                empty: excerpt.empty,
+                            });
+                        cursor.next(&self.snapshot.buffer_snapshots);
+                    } else {
+                        break;
+                    }
+                }
+            }
+            new_tree.append(
+                cursor.suffix(&self.snapshot.buffer_snapshots),
+                &self.snapshot.buffer_snapshots,
+            );
+            drop(cursor);
+            self.snapshot.excerpts = new_tree;
+        }
 
-        // // Re-insert excerpts for the renamed buffers at the right location.
-        // let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
-        // let mut new_tree = SumTree::default();
-        // for ((path, buffer_id), excerpts) in renamed_excerpts {
-        //     let buffer_snapshot = self.snapshot.buffer_snapshots.get(&buffer_id).unwrap();
-        //     new_tree.append(
-        //         cursor.slice(
-        //             &Some(ExcerptKey {
-        //                 path,
-        //                 buffer_id,
-        //                 range: buffer_snapshot.min_anchor()..buffer_snapshot.min_anchor(),
-        //             }),
-        //             Bias::Right,
-        //             &(),
-        //         ),
-        //         &(),
-        //     );
-        //     new_tree.extend(excerpts, &());
-        // }
-        // new_tree.append(cursor.suffix(&()), &());
-        // drop(cursor);
-        // self.snapshot.excerpts = new_tree;
+        // Re-insert excerpts for the renamed buffers at the right location.
+        let mut cursor = self
+            .snapshot
+            .excerpts
+            .cursor::<Option<ExcerptKey>>(&self.snapshot.buffer_snapshots);
+        let mut new_tree = SumTree::new(&self.snapshot.buffer_snapshots);
+        for ((new_path, buffer_id), excerpts) in renamed_excerpts {
+            let buffer_snapshot = self.snapshot.buffer_snapshots.get(&buffer_id).unwrap();
+            new_tree.append(
+                cursor.slice(
+                    &ExcerptKey {
+                        path: new_path,
+                        buffer_id,
+                        range: buffer_snapshot.min_anchor()..buffer_snapshot.max_anchor(),
+                    },
+                    Bias::Left,
+                    &self.snapshot.buffer_snapshots,
+                ),
+                &self.snapshot.buffer_snapshots,
+            );
+            new_tree.extend(excerpts, &self.snapshot.buffer_snapshots);
+        }
+        new_tree.append(
+            cursor.suffix(&self.snapshot.buffer_snapshots),
+            &self.snapshot.buffer_snapshots,
+        );
+        drop(cursor);
+        self.snapshot.excerpts = new_tree;
     }
 
-    fn apply_edits(&mut self, edits: Vec<(Option<Arc<Path>>, BufferId, language::Edit<usize>)>) {
+    fn apply_edits(&mut self, _edits: Vec<(Option<Arc<Path>>, BufferId, language::Edit<usize>)>) {
         // let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
         // let mut new_tree = SumTree::default();
 
@@ -752,31 +762,48 @@ mod tests {
             let mut excerpts = Vec::new();
 
             for _ in 0..operations {
+                let buffer_handle = match rng.gen_range(0..3) {
+                    0 => fruits.clone(),
+                    1 => cars.clone(),
+                    _ => animals.clone(),
+                };
+
+                log::info!(
+                    "{} ({}):",
+                    buffer_handle
+                        .read(cx)
+                        .file()
+                        .map_or(Path::new("<untitled>"), |file| file.path())
+                        .display(),
+                    buffer_handle.read(cx).remote_id()
+                );
                 match rng.gen_range(0..100) {
                     0..35 => {
                         let mut new_excerpts = Vec::new();
                         for _ in 0..5 {
-                            let buffer = match rng.gen_range(0..3) {
-                                0 => fruits.clone(),
-                                1 => cars.clone(),
-                                _ => animals.clone(),
-                            };
-                            let buffer_snapshot = buffer.read(cx);
-                            let start = rng.gen_range(0..=buffer_snapshot.len());
-                            let end = rng.gen_range(start..=buffer_snapshot.len());
+                            let buffer = buffer_handle.read(cx);
+                            let start = rng.gen_range(0..=buffer.len());
+                            let end = rng.gen_range(start..=buffer.len());
                             let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
                             let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
                             new_excerpts.push((
-                                buffer,
-                                buffer_snapshot.anchor_at(start, start_bias)
-                                    ..buffer_snapshot.anchor_at(end, end_bias),
+                                buffer_handle.clone(),
+                                buffer.anchor_at(start, start_bias)
+                                    ..buffer.anchor_at(end, end_bias),
                             ));
                         }
 
+                        log::info!("    inserting excerpts {:?}", new_excerpts);
                         multibuffer.insert_excerpts(new_excerpts.iter().cloned(), cx);
                         excerpts.append(&mut new_excerpts);
                     }
-                    35..50 => {}
+                    35..50 => {
+                        let file = Arc::new(TestFile {
+                            path: Path::new(DESSERTS.choose(&mut rng).unwrap()).into(),
+                        });
+                        log::info!("    renaming to {:?}", file.path);
+                        buffer_handle.update(cx, |buffer, cx| buffer.file_updated(file, cx));
+                    }
                     _ => {
 
                         // apply edits
@@ -946,6 +973,13 @@ mod tests {
         }
     }
 
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
+
     const FRUITS: &[&str] = &[
         "apple",
         "banana",
@@ -1066,5 +1100,29 @@ mod tests {
         "lemur",
         "meerkat",
         "narwhal",
+    ];
+
+    const DESSERTS: &[&str] = &[
+        "tiramisu",
+        "cheesecake",
+        "brownie",
+        "gelato",
+        "pie",
+        "mousse",
+        "baklava",
+        "cannoli",
+        "pavlova",
+        "macarons",
+        "flan",
+        "churros",
+        "trifle",
+        "eclair",
+        "profiteroles",
+        "pudding",
+        "cake",
+        "tart",
+        "affogato",
+        "beignets",
+        "souffle",
     ];
 }
