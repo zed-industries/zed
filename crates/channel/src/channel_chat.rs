@@ -808,7 +808,7 @@ pub fn mentions_to_proto(mentions: &[(Range<usize>, UserId)]) -> Vec<proto::Chat
 impl sum_tree::Item for ChannelMessage {
     type Summary = ChannelMessageSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         ChannelMessageSummary {
             max_id: self.id,
             count: 1,

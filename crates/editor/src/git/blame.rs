@@ -29,7 +29,7 @@ pub struct GitBlameEntrySummary {
 impl sum_tree::Item for GitBlameEntry {
     type Summary = GitBlameEntrySummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         GitBlameEntrySummary { rows: self.rows }
     }
 }

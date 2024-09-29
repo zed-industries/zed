@@ -1739,7 +1739,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
 impl sum_tree::Item for SyntaxLayerEntry {
     type Summary = SyntaxLayerSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &BufferSnapshot) -> Self::Summary {
         SyntaxLayerSummary {
             min_depth: self.depth,
             max_depth: self.depth,
