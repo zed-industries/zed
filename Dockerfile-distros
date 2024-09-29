@@ -15,4 +15,11 @@ RUN ./script/install-mold "2.34.0"
 
 COPY . .
 ARG GITHUB_SHA
-RUN . "$HOME/.cargo/env" && ./script/bundle-linux
+RUN . "$HOME/.cargo/env" \
+    && rustup toolchain install --no-self-update \
+    && cargo fetch
+RUN . "$HOME/.cargo/env" \
+    && cargo run -- --help
+
+# TODO:
+# RUN . "$HOME/.cargo/env" ./script/bundle-linux

@@ -9,8 +9,9 @@ else maysudo="$(command sudo || command doas || true)"
 fi
 
 function finalize {
-  # install the wasm toolchain
+  # after packages install, get the rust toolchain
   which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  # verify the mold situation
   if ! command -v mold >/dev/null 2>&1; then
     echo "Warning: Mold binaries are unavailable on your system." >&2
     echo "    Builds will be slower without mold. Try: scripts/install-mold" >&2

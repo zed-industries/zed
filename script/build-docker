@@ -2,6 +2,11 @@
 
 # Use a docker BASE_IMAGE to test building Zed.
 # e.g: ./script/bundle-docker ubuntu:20.04
+#
+# Increasing resources available to podman may speed this up:
+# podman machine stop
+# podman machine set --memory 16384 --cpus 8 --disk-size 200
+# podman machine start
 
 set -euo pipefail
 
