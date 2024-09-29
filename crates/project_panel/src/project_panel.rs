@@ -258,6 +258,7 @@ impl ProjectPanel {
             let filename_editor = cx.new_view(Editor::single_line);
 
             cx.subscribe(&filename_editor, |this, _, event, cx| match event {
+                // TODO kb scroll horizontally when rename editor input gets over the edge of the list
                 editor::EditorEvent::BufferEdited
                 | editor::EditorEvent::SelectionsChanged { .. } => {
                     this.autoscroll(cx);
@@ -2368,22 +2369,6 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_marked || is_active)
-                    .when_some(canonical_path, |this, path| {
-                        this.end_slot::<AnyElement>(
-                            div()
-                                .id("symlink_icon")
-                                .pr_3()
-                                .tooltip(move |cx| {
-                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
-                                })
-                                .child(
-                                    Icon::new(IconName::ArrowUpRight)
-                                        .size(IconSize::Indicator)
-                                        .color(filename_text_color),
-                                )
-                                .into_any_element(),
-                        )
-                    })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
@@ -2396,79 +2381,107 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            h_flex().h_6().map(|this| {
-                                if let Some(folded_ancestors) =
-                                    is_active.then(|| self.ancestors.get(&entry_id)).flatten()
-                                {
-                                    let Some(part_to_highlight) = Path::new(&file_name)
-                                        .ancestors()
-                                        .nth(folded_ancestors.current_ancestor_depth)
-                                    else {
-                                        return this;
-                                    };
+                            h_flex()
+                                .h_6()
+                                .map(|this| {
+                                    if let Some(folded_ancestors) =
+                                        is_active.then(|| self.ancestors.get(&entry_id)).flatten()
+                                    {
+                                        let Some(part_to_highlight) = Path::new(&file_name)
+                                            .ancestors()
+                                            .nth(folded_ancestors.current_ancestor_depth)
+                                        else {
+                                            return this;
+                                        };
 
-                                    let suffix = Path::new(&file_name)
-                                        .strip_prefix(part_to_highlight)
-                                        .ok()
-                                        .filter(|suffix| !suffix.as_os_str().is_empty());
-                                    let prefix = part_to_highlight
-                                        .parent()
-                                        .filter(|prefix| !prefix.as_os_str().is_empty());
-                                    let Some(part_to_highlight) = part_to_highlight
-                                        .file_name()
-                                        .and_then(|name| name.to_str().map(String::from))
-                                    else {
-                                        return this;
-                                    };
+                                        let suffix = Path::new(&file_name)
+                                            .strip_prefix(part_to_highlight)
+                                            .ok()
+                                            .filter(|suffix| !suffix.as_os_str().is_empty());
+                                        let prefix = part_to_highlight
+                                            .parent()
+                                            .filter(|prefix| !prefix.as_os_str().is_empty());
+                                        let Some(part_to_highlight) = part_to_highlight
+                                            .file_name()
+                                            .and_then(|name| name.to_str().map(String::from))
+                                        else {
+                                            return this;
+                                        };
 
-                                    this.children(prefix.and_then(|prefix| {
-                                        Some(
-                                            h_flex()
-                                                .child(
-                                                    Label::new(prefix.to_str().map(String::from)?)
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                )
-                                                .child(
-                                                    Label::new(std::path::MAIN_SEPARATOR_STR)
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                ),
-                                        )
-                                    }))
-                                    .child(
-                                        Label::new(part_to_highlight)
-                                            .single_line()
-                                            .color(filename_text_color)
-                                            .underline(true),
-                                    )
-                                    .children(
-                                        suffix.and_then(|suffix| {
+                                        this.children(prefix.and_then(|prefix| {
                                             Some(
                                                 h_flex()
+                                                    .child(
+                                                        Label::new(
+                                                            prefix.to_str().map(String::from)?,
+                                                        )
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                    )
                                                     .child(
                                                         Label::new(std::path::MAIN_SEPARATOR_STR)
                                                             .single_line()
                                                             .color(filename_text_color),
-                                                    )
-                                                    .child(
-                                                        Label::new(
-                                                            suffix.to_str().map(String::from)?,
-                                                        )
-                                                        .single_line()
-                                                        .color(filename_text_color),
                                                     ),
                                             )
-                                        }),
-                                    )
-                                } else {
+                                        }))
+                                        .child(
+                                            Label::new(part_to_highlight)
+                                                .single_line()
+                                                .color(filename_text_color)
+                                                .underline(true),
+                                        )
+                                        .children(
+                                            suffix.and_then(|suffix| {
+                                                Some(
+                                                    h_flex()
+                                                        .child(
+                                                            Label::new(
+                                                                std::path::MAIN_SEPARATOR_STR,
+                                                            )
+                                                            .single_line()
+                                                            .color(filename_text_color),
+                                                        )
+                                                        .child(
+                                                            Label::new(
+                                                                suffix
+                                                                    .to_str()
+                                                                    .map(String::from)?,
+                                                            )
+                                                            .single_line()
+                                                            .color(filename_text_color),
+                                                        ),
+                                                )
+                                            }),
+                                        )
+                                    } else {
+                                        this.child(
+                                            Label::new(file_name)
+                                                .single_line()
+                                                .color(filename_text_color),
+                                        )
+                                    }
+                                })
+                                .when_some(canonical_path, |this, path| {
                                     this.child(
-                                        Label::new(file_name)
-                                            .single_line()
-                                            .color(filename_text_color),
+                                        div()
+                                            .id("symlink_icon")
+                                            .pl_2()
+                                            .tooltip(move |cx| {
+                                                Tooltip::with_meta(
+                                                    path.to_string(),
+                                                    None,
+                                                    "Symbolic Link",
+                                                    cx,
+                                                )
+                                            })
+                                            .child(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::Indicator)
+                                                    .color(filename_text_color),
+                                            ),
                                     )
-                                }
-                            })
+                                })
                         }
                         .ml_1(),
                     )

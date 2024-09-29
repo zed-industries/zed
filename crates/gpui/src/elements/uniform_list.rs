@@ -285,8 +285,6 @@ impl Element for UniformList {
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
-                            // TODO kb symlink icon is way over to the right now
-                            // TODO kb scroll horizontally when rename editor input gets over the edge of the list
                             let item_origin = padded_bounds.origin
                                 + point(
                                     scroll_offset.x + padding.left,
@@ -352,6 +350,8 @@ impl UniformList {
     }
 
     /// Sets the horizontal sizing behavior, controlling the way list items laid out horizontally.
+    /// With [`ListHorizontalSizingBehavior::Unconstrained`] behavior, every item and the list itself will
+    /// have the size of the widest item and lay out pushing the `end_slot` to the right end.
     pub fn with_horizontal_sizing_behavior(
         mut self,
         behavior: ListHorizontalSizingBehavior,
