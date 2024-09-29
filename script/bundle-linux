@@ -32,7 +32,7 @@ version="$(script/get-crate-version zed)"
 # Set RELEASE_VERSION so it's compiled into GPUI and it knows about the version.
 export RELEASE_VERSION="${version}"
 
-commit="${GITHUB_SHA:-$(git rev-parse HEAD | cut -c 1-7)}"
+commit=$(git rev-parse HEAD | cut -c 1-7)
 
 version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
