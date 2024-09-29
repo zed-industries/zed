@@ -226,13 +226,12 @@ impl MultiBuffer {
         new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
         self.snapshot.excerpts = new_tree;
-        // self.check_invariants(cx);
+        self.check_invariants(cx);
     }
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
         let mut renames = Vec::new();
-        let mut edits =
-            BTreeMap::<(Option<Arc<Path>>, BufferId), Vec<language::Edit<usize>>>::new();
+        let mut edits = Vec::new();
 
         for (buffer_id, old_snapshot) in self.snapshot.buffer_snapshots.clone().iter() {
             let new_snapshot = self.buffers[buffer_id].read(cx).snapshot();
@@ -253,10 +252,7 @@ impl MultiBuffer {
 
             for edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
                 changed = true;
-                edits
-                    .entry((new_path.clone(), *buffer_id))
-                    .or_default()
-                    .push(edit);
+                edits.push((new_path.clone(), *buffer_id, edit));
             }
 
             if changed {
@@ -265,10 +261,11 @@ impl MultiBuffer {
                     .insert(*buffer_id, new_snapshot);
             }
         }
+        edits.sort_by_key(|(path, buffer_id, _)| (path.clone(), *buffer_id));
 
         self.apply_renames(renames);
         self.apply_edits(edits);
-        // self.check_invariants(cx);
+        self.check_invariants(cx);
     }
 
     fn apply_renames(&mut self, renames: Vec<(BufferId, Option<Arc<Path>>, Option<Arc<Path>>)>) {
@@ -326,10 +323,7 @@ impl MultiBuffer {
         self.snapshot.excerpts = new_tree;
     }
 
-    fn apply_edits(
-        &mut self,
-        edits: BTreeMap<(Option<Arc<Path>>, BufferId), Vec<language::Edit<usize>>>,
-    ) {
+    fn apply_edits(&mut self, edits: Vec<(Option<Arc<Path>>, BufferId, language::Edit<usize>)>) {
         // let mut cursor = self.snapshot.excerpts.cursor::<Option<ExcerptKey>>(&());
         // let mut new_tree = SumTree::default();
 
@@ -763,8 +757,6 @@ mod tests {
                 ],
                 cx,
             );
-            multibuffer.check_invariants(cx);
-
             assert_eq!(
                 multibuffer.snapshot(cx).text(),
                 "\nThe quick\nbrown fox\njumps\nover the lazy dog"
