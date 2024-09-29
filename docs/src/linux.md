@@ -24,7 +24,8 @@ Both Nix and Alpine have third-party Zed packages available (though they are cur
 You will need to build from source for:
 
 - architectures other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
-- Redhat Enterprise Linux 9.x, Rocky Linux 9.3, Alma 9, Amazon Linux 2 (due to glibc 2.28)
+- Redhat Enterprise Linux 8.x, Rocky Linux 8, AlmaLinux 8, Amazon Linux 2 on all architectures
+- Redhat Enterprise Linux 9.x, Rocky Linux 9.3, AlmaLinux 8, Amazon Linux 2023 on aarch64 (x86_x64 OK)
 
 ## Other ways to install Zed on Linux
 
