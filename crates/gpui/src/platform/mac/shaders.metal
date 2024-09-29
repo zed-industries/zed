@@ -440,7 +440,7 @@ struct PathSpriteVertexOutput {
   float2 tile_position;
   float4 color [[flat]];
   float4 border_color [[flat]];
-  float4 bounds [[flat]];
+  uint sprite_id [[flat]];
 };
 
 vertex PathSpriteVertexOutput path_sprite_vertex(
@@ -462,20 +462,12 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
   float4 color = hsla_to_rgba(sprite.color);
   float4 border_color = hsla_to_rgba(sprite.border_color);
 
-  float2 origin = float2(sprite.tile.bounds.origin.x, sprite.tile.bounds.origin.y);
-  float2 size = float2(sprite.tile.bounds.size.width, sprite.tile.bounds.size.height);
-  float2 atlas_size_f = float2(atlas_size->width, atlas_size->height);
-  float4 bounds = float4(
-      origin / atlas_size_f,
-      (origin + size) / atlas_size_f
-  );
-
   return PathSpriteVertexOutput{
       device_position,
       tile_position,
       color,
       border_color,
-      bounds
+      sprite_id,
   };
 }
 
@@ -493,7 +485,16 @@ fragment float4 path_sprite_fragment(
     return color;
   }
 
-  float2 px_size = 1.0 / float2(atlas_texture.get_width(), atlas_texture.get_height());
+  float2 atlas_size = float2(atlas_texture.get_width(), atlas_texture.get_height());
+  float2 px_size = 1.0 / atlas_size;
+  AtlasTile tile = sprites[input.sprite_id].tile;
+  float2 origin = float2(tile.bounds.origin.x, tile.bounds.origin.y);
+  float2 size = float2(tile.bounds.size.width, tile.bounds.size.height);
+  float4 bounds = float4(
+      origin / atlas_size,
+      (origin + size) / atlas_size
+  );
+
   bool is_border = false;
   float border_intensity;
 
@@ -502,8 +503,8 @@ fragment float4 path_sprite_fragment(
     float2 offset = px_size * i;
 
     // Check the edge cases, literally
-    float2 min_bound = input.bounds.xy + offset;
-    float2 max_bound = input.bounds.zw - offset;
+    float2 min_bound = bounds.xy + offset;
+    float2 max_bound = bounds.zw - offset;
     if (any(input.tile_position < min_bound) || any(input.tile_position > max_bound)) {
       is_border = true;
     } else {
@@ -513,7 +514,9 @@ fragment float4 path_sprite_fragment(
           float2(0, -offset.y), float2(0, offset.y)
       };
       for (int j = 0; j < 4; j++) {
-        if (sample_mask(atlas_texture, atlas_texture_sampler, input.tile_position + offsets[j]) != mask) {
+        if (mask != sample_mask(atlas_texture,
+                                atlas_texture_sampler,
+                                input.tile_position + offsets[j])) {
           is_border = true;
           break;
         }
@@ -528,7 +531,7 @@ fragment float4 path_sprite_fragment(
 
   if (is_border) {
     color = input.border_color;
-    color.a = border_intensity;
+    color.a *= border_intensity;
   }
 
   color.a *= mask;
