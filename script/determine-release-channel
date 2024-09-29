@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -eu
+set -euo pipefail
 
 if [ -z "${GITHUB_ACTIONS-}" ]; then
     echo "Error: This script must be run in a GitHub Actions environment"
