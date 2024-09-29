@@ -84,13 +84,7 @@ pub struct ProjectPanel {
     vertical_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     horizontal_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     hide_scrollbar_task: Option<Task<()>>,
-    max_width_item: Option<MaxWidthItem>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct MaxWidthItem {
-    visible_item_index: usize,
-    width_estimate: usize,
+    max_width_item_index: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +96,7 @@ struct EditState {
     is_symlink: bool,
     depth: usize,
     processing_filename: Option<String>,
+    original_horizontal_scroll_position: Option<Pixels>,
 }
 
 #[derive(Clone, Debug)]
@@ -288,8 +283,9 @@ impl ProjectPanel {
                             .as_ref()
                             .map_or(false, |state| state.processing_filename.is_none())
                         {
-                            project_panel.edit_state = None;
+                            project_panel.stop_editing();
                             project_panel.update_visible_entries(None, cx);
+                            cx.notify();
                         }
                     }
                     _ => {}
@@ -337,7 +333,7 @@ impl ProjectPanel {
                 hide_scrollbar_task: None,
                 vertical_scrollbar_drag_thumb_offset: Default::default(),
                 horizontal_scrollbar_drag_thumb_offset: Default::default(),
-                max_width_item: None,
+                max_width_item_index: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -853,7 +849,7 @@ impl ProjectPanel {
         Some(cx.spawn(|project_panel, mut cx| async move {
             let new_entry = edit_task.await;
             project_panel.update(&mut cx, |project_panel, cx| {
-                project_panel.edit_state.take();
+                project_panel.stop_editing();
                 cx.notify();
             })?;
 
@@ -916,7 +912,7 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.edit_state = None;
+        self.stop_editing();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
         cx.focus(&self.focus_handle);
@@ -998,6 +994,9 @@ impl ProjectPanel {
                 processing_filename: None,
                 is_symlink: false,
                 depth: 0,
+                original_horizontal_scroll_position: Some(
+                    self.scroll_handle.0.borrow().base_handle.offset().x,
+                ),
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(cx);
@@ -1038,6 +1037,9 @@ impl ProjectPanel {
                         processing_filename: None,
                         is_symlink: entry.is_symlink,
                         depth: 0,
+                        original_horizontal_scroll_position: Some(
+                            self.scroll_handle.0.borrow().base_handle.offset().x,
+                        ),
                     });
                     let file_name = entry
                         .path
@@ -1944,7 +1946,7 @@ impl ProjectPanel {
                 .push((worktree_id, visible_worktree_entries, OnceCell::new()));
         }
 
-        if let Some((project_entry_id, worktree_id, width_estimate)) = max_width_item {
+        if let Some((project_entry_id, worktree_id, _)) = max_width_item {
             let mut visited_worktrees_length = 0;
             let index = self.visible_entries.iter().find_map(|(id, entries, _)| {
                 if worktree_id == *id {
@@ -1957,10 +1959,7 @@ impl ProjectPanel {
                 }
             });
             if let Some(index) = index {
-                self.max_width_item = Some(MaxWidthItem {
-                    visible_item_index: visited_worktrees_length + index,
-                    width_estimate,
-                });
+                self.max_width_item_index = Some(visited_worktrees_length + index);
             }
         }
         if let Some((worktree_id, entry_id)) = new_selected_entry {
@@ -2832,7 +2831,7 @@ impl ProjectPanel {
         project: Model<Project>,
         entry_id: ProjectEntryId,
         skip_ignored: bool,
-        cx: &mut ViewContext<'_, ProjectPanel>,
+        cx: &mut ViewContext<'_, Self>,
     ) {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
             let worktree = worktree.read(cx);
@@ -2850,6 +2849,20 @@ impl ProjectPanel {
             self.update_visible_entries(Some((worktree_id, entry_id)), cx);
             self.autoscroll(cx);
             cx.notify();
+        }
+    }
+
+    fn stop_editing(&mut self) {
+        if let Some(original_horizontal_scroll_position) = self
+            .edit_state
+            .take()
+            .and_then(|edit_state| edit_state.original_horizontal_scroll_position)
+        {
+            let scroll_handle = self.scroll_handle.0.borrow_mut();
+            scroll_handle.base_handle.set_offset(Point::new(
+                original_horizontal_scroll_position,
+                scroll_handle.base_handle.offset().y,
+            ));
         }
     }
 }
@@ -2972,11 +2985,7 @@ impl Render for ProjectPanel {
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
                     .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                    .with_width_from_item(
-                        self.max_width_item
-                            .as_ref()
-                            .map(|item| item.visible_item_index),
-                    )
+                    .with_width_from_item(self.max_width_item_index)
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(items_count, cx))
