@@ -2504,6 +2504,7 @@ impl ProjectPanel {
                                         div()
                                             .id("symlink_icon")
                                             .pl_2()
+                                            .pr_2()
                                             .tooltip(move |cx| {
                                                 Tooltip::with_meta(
                                                     path.to_string(),
