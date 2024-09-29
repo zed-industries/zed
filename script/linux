@@ -5,7 +5,7 @@ set -xeuo pipefail
 # if root or if sudo/unavailable, define an empty variable
 if [ "$(id -u)" -eq 0 ]
 then maysudo=''
-else maysudo="$(command sudo || command doas || true)"
+else maysudo="$(command -v sudo || command -v doas || true)"
 fi
 
 function finalize {
@@ -97,7 +97,7 @@ if [[ -n $dnf ]]; then
     deps+=( g++ )
   fi
 
-  # libxkbcommon-x11-devel is in a non-default repo on RHEL
+  # libxkbcommon-x11-devel is in a non-default repo on RHEL (except on AmazonLinux)
   if grep -qP '^ID="(rhel|rocky|centos|alma|ol)' /etc/os-release; then
     $maysudo dnf install -y 'dnf-command(config-manager)'
     if grep -qP '^PRETTY_NAME="(AlmaLinux 8|Rocky Linux 8)' /etc/os-release; then
