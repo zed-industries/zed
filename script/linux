@@ -2,6 +2,18 @@
 
 set -ex
 
+# require pre-existing mold where no mold package available
+if (
+  grep -qP '^ID="(rhel|rocky|almalinux|ol)' /etc/os-release
+  && grep -qP '^VERSION_ID="8' /etc/os-release
+  || grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|.+20\.04)' /etc/os-release
+); then
+  mold --version &>/dev/null || {
+    echo "Please install mold first. Try scripts/install-mold."
+    exit 1
+  }
+fi
+
 # install the wasm toolchain
 which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
@@ -12,15 +24,7 @@ else
     maysudo=$(command -v sudo || command -v doas || true)
 fi
 
-function mold_check() {
-  mold --version &>/dev/null || {
-    echo "No mold found. Please install mold or run scripts/install-mold and try again."
-    exit 1
-  }
-}
-
-# Ubuntu, Debian, etc.
-# https://packages.ubuntu.com/
+# Ubuntu, Debian, Mint, Kali, Pop!_OS, Raspbian, etc.
 apt=$(command -v apt-get || true)
 if [[ -n $apt ]]; then
   deps=(
@@ -31,26 +35,31 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libxkbcommon-x11-dev
     libssl-dev
-    libstdc++-12-dev
     libzstd-dev
     libvulkan1
     libgit2-dev
     make
     cmake
     clang
-    mold
     jq
     gettext-base
     elfutils
     libsqlite3-dev
   )
+  if (grep -qP 'PRETTY_NAME="(.+24\.04)' /etc/os-release); then
+    deps+=( mold libstdc++-14-dev )
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|.+22\.04)' /etc/os-release); then
+    deps+=( mold libstdc++-12-dev )
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|.+20\.04)' /etc/os-release); then
+    deps+=( libstdc++-10-dev )
+  fi
+
   $maysudo "$apt" update
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
 fi
 
 # Fedora, CentOS, RHEL, Alma, Amazon, Oracle, etc.
-# https://packages.fedoraproject.org/
 dnf=$(command -v dnf || true)
 if [[ -n $dnf ]]; then
   deps=(
@@ -65,34 +74,35 @@ if [[ -n $dnf ]]; then
     libzstd-devel
     vulkan-loader
     sqlite-devel
+    jq
   )
   if grep -q '^ID="(fedora)' /etc/os-release; then
-    deps+=(
-      # Perl dependencies are needed for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
-      perl-FindBin
-      perl-IPC-Cmd
-      # perl-File-Compare
-      # perl-File-Copy
-    )
+    # Perl dependencies are needed for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
+    deps+=( perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy )
   fi
-  # gcc-c++ is g++ on RHEL8 and 8.x clones
-  if (grep -qP '^ID="(rhel|rocky|almalinux|ol)' /etc/os-release &&
-      grep -qP '^VERSION_ID="8' /etc/os-release); then
-    deps+=( "gcc-c++" )
-    mold_check
+  # gcc-c++ is g++ on RHEL8 and 8.x clones; they also have no mold package
+  if (grep -qP '^ID="(rhel|rocky|alma|ol)' /etc/os-release
+      && grep -qP '^VERSION_ID="8' /etc/os-release
+  ); then
+    deps+=( gcc-c++ )
   else
-    deps+=(
-      g++
-      mold
-    )
+    deps+=( g++ mold )
   fi
 
-  # libxkbcommon-x11-devel is in the crb repo on RHEL and CentOS, not needed for Fedora
-  if grep -qP '(Redhat|CentOS)' /etc/redhat-release; then
-    if $maysudo "$dnf" config-manager --help &>/dev/null; then
+  # libxkbcommon-x11-devel is in the crb repo on RHEL
+  if grep -qP '^ID="(centos|alma|ol)' /etc/os-release; then
+    if $maysudo "$dnf" config-manager --help 2>&1 > /dev/null; then
       $maysudo "$dnf" install -y 'dnf-command(config-manager)'
     fi
-    $maysudo "$dnf" config-manager --set-enabled crb
+    if grep -qP '^ID="(centos|alma)' /etc/os-release; then
+      $maysudo "$dnf" config-manager --set-enabled crb
+    elif grep -qP '^PRETTY_NAME="Oracle Linux Server 8' /etc/os-release; then
+      $maysudo "$dnf" config-manager --set-enabled ol8_codeready_builder
+    elif grep -qP '^PRETTY_NAME="Oracle Linux Server 9' /etc/os-release; then
+      $maysudo "$dnf" config-manager --set-enabled ol9_codeready_builder
+    else
+      echo "Unexpected distro" && grep 'PRETTY_NAME' /etc/os-release && exit 1
+    fi
   fi
 
   $maysudo "$dnf" install -y "${deps[@]}"
@@ -118,6 +128,7 @@ if [[ -n $zyp ]]; then
     libvulkan1
     mold
     sqlite3-devel
+    jq
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -179,6 +190,7 @@ emerge=$(command -v emerge || true)
 if [[ -n $emerge ]]; then
   deps=(
     app-arch/zstd
+    app-misc/jq
     dev-libs/openssl
     dev-libs/wayland
     dev-util/cmake
@@ -195,3 +207,4 @@ if [[ -n $emerge ]]; then
 fi
 
 echo "Unsupported Linux distribution in script/linux"
+exit 1

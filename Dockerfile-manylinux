@@ -1,17 +1,11 @@
 # syntax=docker/dockerfile:1.10.0
-ARG ARCH=aarch64
-FROM quay.io/pypa/manylinux_2_28_${ARCH}:latest
-
-# ENV ARCH=$ARCH
+FROM ubuntu:24.04
 ENV LANG C.UTF-8
 ENV LC_ALL C.UTF-8
 
 WORKDIR /app
 COPY . .
 
-ARG GITHUB_SHA
-ENV GITHUB_SHA=$GITHUB_SHA
-
-RUN true && \
-    ./script/install-mold && \
-    ./script/linux
+RUN ./script/install-mold
+RUN ./script/linux
+RUN ./bundle-linux
