@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{SumTree, TreeMap};
-use text::TextSummary;
+use text::{Anchor, TextSummary};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct BufferId {
@@ -269,7 +269,6 @@ impl MultiBuffer {
     }
 
     fn apply_renames(&mut self, renames: Vec<(BufferId, Option<Arc<Path>>, Option<Arc<Path>>)>) {
-        dbg!(&renames);
         // Remove all the excerpts that have been renamed.
         let mut renamed_excerpts = BTreeMap::default();
         {
@@ -517,8 +516,7 @@ impl MultiBufferSnapshot {
 struct Excerpt {
     path: Option<Arc<Path>>,
     buffer_id: BufferId,
-    text_summary: TextSummary,
-    visible: bool,
+    range: Range<Anchor>,
 }
 
 impl sum_tree::Item for Excerpt {
@@ -526,27 +524,15 @@ impl sum_tree::Item for Excerpt {
 
     fn summary(&self) -> Self::Summary {
         ExcerptSummary {
-            max_offset: Some(ExcerptOffset {
-                path: self.path.clone(),
-                buffer_id: self.buffer_id,
-                buffer_offset: self.text_summary.len,
-            }),
-            text: self.text_summary.clone(),
+            max_excerpt: Some(self.clone()),
         }
     }
 }
 
 #[derive(Clone, Debug, Default)]
 struct ExcerptSummary {
-    max_offset: Option<ExcerptOffset>,
+    max_excerpt: Option<Excerpt>,
     text: TextSummary,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-struct ExcerptOffset {
-    path: Option<Arc<Path>>,
-    buffer_id: BufferId,
-    buffer_offset: usize,
 }
 
 impl sum_tree::Summary for ExcerptSummary {
