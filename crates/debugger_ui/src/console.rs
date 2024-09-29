@@ -1,9 +1,14 @@
+use crate::debugger_panel::ThreadState;
 use dap::client::DebugAdapterClientId;
-use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{Model, Render, TextStyle, View, ViewContext};
+use editor::{CompletionProvider, Editor, EditorElement, EditorStyle};
+use fuzzy::StringMatchCandidate;
+use gpui::{Model, Render, Task, TextStyle, View, ViewContext, WeakView};
+use language::{Buffer, CodeLabel, LanguageServerId};
 use menu::Confirm;
-use project::dap_store::DapStore;
+use parking_lot::RwLock;
+use project::{dap_store::DapStore, Completion};
 use settings::Settings;
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
@@ -13,12 +18,14 @@ pub struct Console {
     dap_store: Model<DapStore>,
     current_stack_frame_id: u64,
     client_id: DebugAdapterClientId,
+    thread_state: Model<ThreadState>,
 }
 
 impl Console {
     pub fn new(
         client_id: &DebugAdapterClientId,
         current_stack_frame_id: u64,
+        thread_state: Model<ThreadState>,
         dap_store: Model<DapStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -27,13 +34,22 @@ impl Console {
             editor.move_to_end(&editor::actions::MoveToEnd, cx);
             editor.set_read_only(true);
             editor.set_show_gutter(false, cx);
+            editor.set_use_autoclose(false);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_show_inline_completions(Some(false), cx);
             editor
         });
 
+        let this = cx.view().downgrade();
         let query_bar = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Evaluate an expression", cx);
+            editor.set_use_autoclose(false);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
+            editor.set_completion_provider(Box::new(ConsoleQueryBarCompletionProvider(this)));
 
             editor
         });
@@ -42,6 +58,7 @@ impl Console {
             console,
             dap_store,
             query_bar,
+            thread_state,
             client_id: *client_id,
             current_stack_frame_id,
         }
@@ -168,5 +185,108 @@ impl Render for Console {
                     .pt(Spacing::XSmall.rems(cx)),
             )
             .border_2()
+    }
+}
+
+struct ConsoleQueryBarCompletionProvider(WeakView<Console>);
+
+impl CompletionProvider for ConsoleQueryBarCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: language::Anchor,
+        _trigger: editor::CompletionContext,
+        cx: &mut ViewContext<Editor>,
+    ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
+        let Some(handle) = self.0.upgrade() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        let string_matches = handle.update(cx, |console, cx| {
+            console.thread_state.read_with(cx, |state, _| {
+                state
+                    .variables
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .map(|variable| {
+                        let variable_name = variable
+                            .variable
+                            .evaluate_name
+                            .clone()
+                            .unwrap_or(variable.variable.name.clone());
+
+                        StringMatchCandidate {
+                            id: variable.variable.variables_reference as usize,
+                            string: variable_name.clone(),
+                            char_bag: variable_name.chars().collect(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+
+        let query = buffer.read(cx).text();
+        let start_position = buffer.read(cx).anchor_before(0);
+
+        cx.spawn(|_, cx| async move {
+            let matches = fuzzy::match_strings(
+                &string_matches,
+                &query,
+                true,
+                10,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+
+            Ok(matches
+                .iter()
+                .map(|string_match| project::Completion {
+                    old_range: start_position..buffer_position,
+                    new_text: string_match.string.clone(),
+                    label: CodeLabel {
+                        filter_range: 0..string_match.string.len(),
+                        text: string_match.string.clone(),
+                        runs: Vec::new(),
+                    },
+                    server_id: LanguageServerId(0), // TODO read from client
+                    documentation: None,
+                    lsp_completion: Default::default(),
+                    confirm: None,
+                })
+                .collect())
+        })
+    }
+
+    fn resolve_completions(
+        &self,
+        _buffer: Model<Buffer>,
+        _completion_indices: Vec<usize>,
+        _completions: Arc<RwLock<Box<[Completion]>>>,
+        _cx: &mut ViewContext<Editor>,
+    ) -> gpui::Task<gpui::Result<bool>> {
+        Task::ready(Ok(false))
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        _buffer: Model<Buffer>,
+        _completion: project::Completion,
+        _push_to_history: bool,
+        _cx: &mut ViewContext<Editor>,
+    ) -> gpui::Task<gpui::Result<Option<language::Transaction>>> {
+        Task::ready(Ok(None))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Model<Buffer>,
+        _position: language::Anchor,
+        _text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        true
     }
 }
