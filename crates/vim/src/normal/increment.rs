@@ -98,37 +98,40 @@ impl Vim {
     }
 }
 
-fn increment_decimal_string(mut num: &str, mut delta: i64) -> String {
-    let mut negative = false;
-    if num.chars().next() == Some('-') {
-        negative = true;
-        delta = 0 - delta;
-        num = &num[1..];
-    }
+fn increment_decimal_string(num: &str, delta: i64) -> String {
+    let (negative, delta, num_str) = match num.strip_prefix('-') {
+        Some(n) => (true, -delta, n),
+        None => (false, delta, num),
+    };
+    let num_length = num_str.len();
+    let leading_zero = num_str.starts_with('0');
 
-    let num_length = num.len();
-
-    let result = if let Ok(value) = u64::from_str_radix(num, 10) {
-        let wrapped = value.wrapping_add_signed(delta);
-        if delta < 0 && wrapped > value {
-            negative = !negative;
-            (u64::MAX - wrapped).wrapping_add(1)
-        } else if delta > 0 && wrapped < value {
-            negative = !negative;
-            u64::MAX - wrapped
-        } else {
-            wrapped
+    let (result, new_negative) = match u64::from_str_radix(num_str, 10) {
+        Ok(value) => {
+            let wrapped = value.wrapping_add_signed(delta);
+            if delta < 0 && wrapped > value {
+                ((u64::MAX - wrapped).wrapping_add(1), !negative)
+            } else if delta > 0 && wrapped < value {
+                (u64::MAX - wrapped, !negative)
+            } else {
+                (wrapped, negative)
+            }
         }
-    } else {
-        u64::MAX
+        Err(_) => (u64::MAX, negative),
     };
 
-    if result == 0 {
-        '0'.to_string()
-    } else if !negative {
-        format!("{:0>width$}", result, width = num_length)
+    let formatted = format!("{}", result);
+    let new_significant_digits = formatted.len();
+    let padding = if leading_zero {
+        num_length.saturating_sub(new_significant_digits)
     } else {
-        format!("-{:0>width$}", result, width = num_length)
+        0
+    };
+
+    if new_negative && result != 0 {
+        format!("-{}{}", "0".repeat(padding), formatted)
+    } else {
+        format!("{}{}", "0".repeat(padding), formatted)
     }
 }
 
