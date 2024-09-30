@@ -104,7 +104,7 @@ pub struct TerminalView {
     context_menu: Option<(View<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_state: bool,
-    blinking_on: bool,
+    blinking_terminal_enabled: bool,
     blinking_paused: bool,
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
@@ -184,7 +184,7 @@ impl TerminalView {
             context_menu: None,
             cursor_shape,
             blink_state: true,
-            blinking_on: false,
+            blinking_terminal_enabled: false,
             blinking_paused: false,
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
@@ -434,7 +434,6 @@ impl TerminalView {
     pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
-            || !self.blinking_on
             || self.blinking_paused
             || self
                 .terminal
@@ -450,7 +449,10 @@ impl TerminalView {
             //If the user requested to never blink, don't blink it.
             TerminalBlink::Off => true,
             //If the terminal is controlling it, check terminal mode
-            TerminalBlink::TerminalControlled | TerminalBlink::On => self.blink_state,
+            TerminalBlink::TerminalControlled => {
+                !self.blinking_terminal_enabled || self.blink_state
+            }
+            TerminalBlink::On => self.blink_state,
         }
     }
 
@@ -642,7 +644,14 @@ fn subscribe_for_terminal_events(
                 cx.emit(Event::Wakeup);
             }
 
-            Event::BlinkChanged => this.blinking_on = !this.blinking_on,
+            Event::BlinkChanged(blinking) => {
+                if matches!(
+                    TerminalSettings::get_global(cx).blinking,
+                    TerminalBlink::TerminalControlled
+                ) {
+                    this.blinking_terminal_enabled = *blinking;
+                }
+            }
 
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);

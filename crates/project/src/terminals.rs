@@ -215,7 +215,6 @@ impl Project {
             spawn_task,
             shell,
             env,
-            Some(settings.blinking),
             settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
