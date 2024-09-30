@@ -117,7 +117,7 @@ jobs:
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install Linux dependencies
-        run: ./script/install-mold && ./script/linux
+        run: ./script/linux && ./script/install-mold
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
