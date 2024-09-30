@@ -93,3 +93,30 @@ This error can happen if you are using the "rust-lld.exe" linker. Consider tryin
 If you are using a global config, consider moving the Zed repository to a nested directory and add a `.cargo/config.toml` with a custom linker config in the parent directory.
 
 See this issue for more information [#12041](https://github.com/zed-industries/zed/issues/12041)
+
+### Invalid RC path selected
+
+Sometimes, depending on the security rules applied to your laptop, you may get the following error while compiling Zed:
+
+```
+error: failed to run custom build command for `zed(C:\Users\USER\src\zed\crates\zed)`
+
+Caused by:
+  process didn't exit successfully: `C:\Users\USER\src\zed\target\debug\build\zed-b24f1e9300107efc\build-script-build` (exit code: 1)
+  --- stdout
+  cargo:rerun-if-changed=../../.git/logs/HEAD
+  cargo:rustc-env=ZED_COMMIT_SHA=25e2e9c6727ba9b77415588cfa11fd969612adb7
+  cargo:rustc-link-arg=/stack:8388608
+  cargo:rerun-if-changed=resources/windows/app-icon.ico
+  package.metadata.winresource does not exist
+  Selected RC path: 'bin\x64\rc.exe'
+
+  --- stderr
+  The system cannot find the path specified. (os error 3)
+warning: build failed, waiting for other jobs to finish...
+```
+
+In order to fix this issue, you can manually set the `ZED_RC_TOOLKIT_PATH` environment variable to the RC toolkit path. Usually, you can set it to:
+`C:\Program Files (x86)\Windows Kits\10\bin\<SDK_version>\x64`.
+
+See this [issue](https://github.com/zed-industries/zed/issues/18393) for more information.
