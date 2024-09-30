@@ -197,7 +197,7 @@ impl MultiBuffer {
 
             // If the next old excerpt starts where the new excerpt ends, push
             // it again so it can update its show_header value.
-            if let Some(next_old_excerpt) = cursor.item() {
+            while let Some(next_old_excerpt) = cursor.item() {
                 if next_old_excerpt.key.buffer_id == new_excerpt.key.buffer_id
                     && new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
                         == next_old_excerpt
@@ -218,6 +218,8 @@ impl MultiBuffer {
                         &self.snapshot.buffer_snapshots,
                     );
                     cursor.next(&self.snapshot.buffer_snapshots);
+                } else {
+                    break;
                 }
             }
 
