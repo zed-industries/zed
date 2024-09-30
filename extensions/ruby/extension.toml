@@ -18,6 +18,10 @@ languages = ["Ruby", "ERB"]
 name = "Rubocop"
 languages = ["Ruby"]
 
+[language_servers.custom-ruby-lsp]
+name = "Custom Ruby LSP"
+languages = ["Ruby"]
+
 [grammars.ruby]
 repository = "https://github.com/tree-sitter/tree-sitter-ruby"
 commit = "7dbc1e2d0e2d752577655881f73b4573f3fe85d4"

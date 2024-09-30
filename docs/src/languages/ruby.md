@@ -47,6 +47,29 @@ To switch to `ruby-lsp`, add the following to your `settings.json`:
 
 That disables `solargraph` and `rubocop` and enables `ruby-lsp`.
 
+### Using `custom-ruby-lsp`
+
+The Ruby extension also provides support for a custom language server (eg. fuzzy_ruby_server) for Ruby.
+
+To enable it, add the following to your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Ruby": {
+      "language_servers": ["custom-ruby-lsp", "!solargraph", "!ruby-lsp", "..."]
+    },
+    "lsp": {
+      "custom-ruby-lsp": {
+        "binary": {
+          "path": "<path_to_your_binary>/bin/fuzzy_ruby_server"
+        }
+      }
+    }
+  }
+}
+```
+
 ### Using `rubocop`
 
 The Ruby extension also provides support for `rubocop` language server for offense detection and autocorrection.

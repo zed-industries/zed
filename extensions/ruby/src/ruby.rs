@@ -5,12 +5,13 @@ use zed::settings::LspSettings;
 use zed::{serde_json, CodeLabel, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
-use crate::language_servers::{Rubocop, RubyLsp, Solargraph};
+use crate::language_servers::{CustomRubyLsp, Rubocop, RubyLsp, Solargraph};
 
 struct RubyExtension {
     solargraph: Option<Solargraph>,
     ruby_lsp: Option<RubyLsp>,
     rubocop: Option<Rubocop>,
+    custom_ruby_lsp: Option<CustomRubyLsp>,
 }
 
 impl zed::Extension for RubyExtension {
@@ -19,6 +20,7 @@ impl zed::Extension for RubyExtension {
             solargraph: None,
             ruby_lsp: None,
             rubocop: None,
+            custom_ruby_lsp: None,
         }
     }
 
@@ -39,6 +41,10 @@ impl zed::Extension for RubyExtension {
             Rubocop::LANGUAGE_SERVER_ID => {
                 let rubocop = self.rubocop.get_or_insert_with(Rubocop::new);
                 rubocop.language_server_command(language_server_id, worktree)
+            }
+            CustomRubyLsp::LANGUAGE_SERVER_ID => {
+                let custom_lsp = self.custom_ruby_lsp.get_or_insert_with(CustomRubyLsp::new);
+                custom_lsp.language_server_command(language_server_id, worktree)
             }
             language_server_id => Err(format!("unknown language server: {language_server_id}")),
         }
