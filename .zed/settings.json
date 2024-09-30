@@ -38,6 +38,10 @@
       }
     }
   },
+  "file_types": {
+    "Dockerfile": ["Dockerfile*[!dockerignore]"],
+    "Git Ignore": ["dockerignore"]
+  },
   "hard_tabs": false,
   "formatter": "auto",
   "remove_trailing_whitespace_on_save": true,
