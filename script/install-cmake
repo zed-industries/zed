@@ -62,11 +62,14 @@ else
   pushd "$tempdir"
     CMAKE_REPO="https://github.com/Kitware/CMake"
     CMAKE_INSTALLER="cmake-$CMAKE_VERSION-linux-$arch.sh"
-    curl -sL -o cmake-$CMAKE_VERSION-SHA-256.txt \
+    curl --location --show-error --retry 3 --retry-delay 5 \
+      --output cmake-$CMAKE_VERSION-SHA-256.txt \
       "$CMAKE_REPO/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-SHA-256.txt"
     curl -sL -o $CMAKE_INSTALLER \
       "$CMAKE_REPO/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-$arch.sh"
-    sha256sum --ignore-missing -c cmake-$CMAKE_VERSION-SHA-256.txt \
+    # workaround for old versions of sha256sum not having --ignore-missing
+    grep -F "cmake-$CMAKE_VERSION-linux-$arch.sh" "cmake-$CMAKE_VERSION-SHA-256.txt" \
+      | sha256sum -c \
       | grep -qP "^${CMAKE_INSTALLER}: OK"
     chmod +x cmake-$CMAKE_VERSION-linux-$arch.sh
     $SUDO ./cmake-$CMAKE_VERSION-linux-$arch.sh --prefix=/usr/local --skip-license
