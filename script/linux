@@ -20,19 +20,29 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libxkbcommon-x11-dev
     libssl-dev
-    libstdc++-12-dev
     libzstd-dev
     libvulkan1
     libgit2-dev
     make
     cmake
     clang
-    mold
     jq
     gettext-base
     elfutils
     libsqlite3-dev
   )
+  # Ubuntu 20.04 / Debian Bullseye (including CI for release)
+  if grep -q "bullseye" /etc/debian_version; then
+    deps+=(
+      libstdc++-10-dev
+    )
+  else
+    deps+=(
+      libstdc++-12-dev
+      mold
+    )
+  fi
+
   $maysudo "$apt" update
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0

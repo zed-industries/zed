@@ -271,7 +271,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Linux bundle
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - buildjet-16vcpu-ubuntu-2004
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
@@ -284,7 +284,7 @@ jobs:
           clean: false
 
       - name: Install Linux dependencies
-        run: ./script/linux
+        run: ./script/linux && ./script/install-mold 2.34.0
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
