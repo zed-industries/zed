@@ -381,7 +381,7 @@ impl Editor {
                         )
                         .child(
                             h_flex()
-                                .pl_1p5()
+                                .pl_2()
                                 .pr_6()
                                 .size_full()
                                 .justify_between()
