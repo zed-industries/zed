@@ -101,8 +101,8 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     deps+=( g++ )
   fi
 
-  # libxkbcommon-x11-devel is in a non-default repo on RHEL (except on AmazonLinux)
-  if grep -qP '^ID="(rhel|rocky|centos|alma|ol)' /etc/os-release; then
+  # libxkbcommon-x11-devel is in a non-default repo on RHEL 8.x/9.x (except on AmazonLinux)
+  if grep -qP '^VERSION_ID="(8|9)' && grep -qP '^ID="(rhel|rocky|centos|alma|ol)' /etc/os-release; then
     $maysudo dnf install -y 'dnf-command(config-manager)'
     if grep -qP '^PRETTY_NAME="(AlmaLinux 8|Rocky Linux 8)' /etc/os-release; then
       $maysudo dnf config-manager --set-enabled powertools
@@ -171,7 +171,7 @@ if [[ -n $pacman ]]; then
     jq
     git
   )
-  $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
+  $maysudo "$pacman" -Syu --needed --noconfirm "${deps[@]}"
   finalize
   exit 0
 fi
