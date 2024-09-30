@@ -93,6 +93,15 @@
   (false)
 ] @boolean
 
+(literal_type
+  [
+    (null)
+    (undefined)
+    (true)
+    (false)
+  ] @type.builtin
+)
+
 (comment) @comment
 
 [
