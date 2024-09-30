@@ -267,12 +267,14 @@ left and right padding of the central pane from the workspace when the centered 
 
 ## Direnv Integration
 
-- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. `direnv` integration currently only means that the environment variables set by a `direnv` configuration can be used to detect some language servers in `$PATH` instead of installing them.
+- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed.
+  `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
+  It also allows for those environment variables to be used in tasks.
 - Setting: `load_direnv`
 - Default:
 
 ```json
-"load_direnv": "shell_hook"
+"load_direnv": "direct"
 ```
 
 **Options**
