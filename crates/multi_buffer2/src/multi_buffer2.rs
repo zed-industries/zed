@@ -6,6 +6,7 @@ use language::{
 };
 use std::{cmp::Ordering, fmt::Debug, ops::Range, path::Path, sync::Arc};
 use sum_tree::{Item, SeekTarget, SumTree, TreeMap};
+use text::Patch;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct BufferId {
@@ -251,14 +252,14 @@ impl MultiBuffer {
             let new_path = new_snapshot
                 .file()
                 .map(|file| Arc::from(file.full_path(cx)));
-            if new_path != old_path {
+            if new_path == old_path {
+                for edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+                    changed = true;
+                    edits.push((new_path.clone(), *buffer_id, edit));
+                }
+            } else {
                 renames.push((*buffer_id, old_path, new_path.clone()));
                 changed = true;
-            }
-
-            for edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
-                changed = true;
-                edits.push((new_path.clone(), *buffer_id, edit));
             }
 
             if changed {
@@ -281,8 +282,9 @@ impl MultiBuffer {
             let mut cursor = self
                 .snapshot
                 .excerpts
-                .cursor::<Option<ExcerptKey>>(&self.snapshot.buffer_snapshots);
+                .cursor::<(Option<ExcerptKey>, usize)>(&self.snapshot.buffer_snapshots);
             let mut new_tree = SumTree::new(&self.snapshot.buffer_snapshots);
+            let mut deletions = Patch::default();
             for (buffer_id, old_path, new_path) in renames {
                 let buffer_snapshot = self.snapshot.buffer_snapshots.get(&buffer_id).unwrap();
                 new_tree.append(
@@ -297,6 +299,9 @@ impl MultiBuffer {
                     ),
                     &self.snapshot.buffer_snapshots,
                 );
+
+                let edit_old_start = cursor.start().1;
+                let edit_new_start = new_tree.summary().text.len;
                 while let Some(excerpt) = cursor.item() {
                     if excerpt.key.buffer_id == buffer_id {
                         renamed_excerpts
@@ -315,6 +320,11 @@ impl MultiBuffer {
                         break;
                     }
                 }
+                let edit_old_end = cursor.start().1;
+                deletions.push(Edit {
+                    old: edit_old_start..edit_old_end,
+                    new: edit_new_start..edit_new_start,
+                });
             }
             new_tree.append(
                 cursor.suffix(&self.snapshot.buffer_snapshots),
@@ -322,16 +332,20 @@ impl MultiBuffer {
             );
             drop(cursor);
             self.snapshot.excerpts = new_tree;
+            self.edits.publish(deletions);
         }
 
         // Re-insert excerpts for the renamed buffers at the right location.
         let mut cursor = self
             .snapshot
             .excerpts
-            .cursor::<Option<ExcerptKey>>(&self.snapshot.buffer_snapshots);
-        let mut new_tree = SumTree::new(&self.snapshot.buffer_snapshots);
+            .cursor::<(Option<ExcerptKey>, usize)>(&self.snapshot.buffer_snapshots);
+        let mut new_tree = SumTree::<Excerpt>::new(&self.snapshot.buffer_snapshots);
+        let mut insertions = Patch::default();
         for ((new_path, buffer_id), excerpts) in renamed_excerpts {
             let buffer_snapshot = self.snapshot.buffer_snapshots.get(&buffer_id).unwrap();
+            let edit_old_start = cursor.start().1;
+            let edit_new_start = new_tree.summary().text.len;
             new_tree.append(
                 cursor.slice(
                     &ExcerptKey {
@@ -345,6 +359,11 @@ impl MultiBuffer {
                 &self.snapshot.buffer_snapshots,
             );
             new_tree.extend(excerpts, &self.snapshot.buffer_snapshots);
+            let edit_new_end = new_tree.summary().text.len;
+            insertions.push(Edit {
+                old: edit_old_start..edit_old_start,
+                new: edit_new_start..edit_new_end,
+            });
         }
         new_tree.append(
             cursor.suffix(&self.snapshot.buffer_snapshots),
@@ -352,6 +371,7 @@ impl MultiBuffer {
         );
         drop(cursor);
         self.snapshot.excerpts = new_tree;
+        self.edits.publish(insertions);
     }
 
     fn apply_edits(&mut self, edits: Vec<(Option<Arc<Path>>, BufferId, language::Edit<usize>)>) {
@@ -731,6 +751,23 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for Excerp
         buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
     ) -> Ordering {
         if let Some(cursor_location) = cursor_location {
+            self.cmp(
+                cursor_location,
+                buffer_snapshots.get(&self.buffer_id).unwrap(),
+            )
+        } else {
+            Ordering::Greater
+        }
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, (Option<ExcerptKey>, usize)> for ExcerptKey {
+    fn cmp(
+        &self,
+        cursor_location: &(Option<ExcerptKey>, usize),
+        buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
+    ) -> Ordering {
+        if let Some(cursor_location) = cursor_location.0.as_ref() {
             self.cmp(
                 cursor_location,
                 buffer_snapshots.get(&self.buffer_id).unwrap(),
