@@ -61,7 +61,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
-use remote::{SshConnectionOptions, SshSession};
+use remote::{SshConnectionOptions, SshRemoteClient};
 use serde::Deserialize;
 use session::AppSession;
 use settings::{InvalidSettingsError, Settings};
@@ -5514,7 +5514,7 @@ pub fn join_hosted_project(
 pub fn open_ssh_project(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
-    session: Arc<SshSession>,
+    session: Arc<SshRemoteClient>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut AppContext,

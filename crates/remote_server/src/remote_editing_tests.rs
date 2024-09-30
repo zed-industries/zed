@@ -15,7 +15,7 @@ use project::{
     search::{SearchQuery, SearchResult},
     Project, ProjectPath,
 };
-use remote::SshSession;
+use remote::SshRemoteClient;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
@@ -616,7 +616,7 @@ async fn init_test(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) -> (Model<Project>, Model<HeadlessProject>, Arc<FakeFs>) {
-    let (client_ssh, server_ssh) = SshSession::fake(cx, server_cx);
+    let (ssh_remote_client, ssh_server_client) = SshRemoteClient::fake(cx, server_cx);
     init_logger();
 
     let fs = FakeFs::new(server_cx.executor());
@@ -642,8 +642,9 @@ async fn init_test(
     );
 
     server_cx.update(HeadlessProject::init);
-    let headless = server_cx.new_model(|cx| HeadlessProject::new(server_ssh, fs.clone(), cx));
-    let project = build_project(client_ssh, cx);
+    let headless =
+        server_cx.new_model(|cx| HeadlessProject::new(ssh_server_client, fs.clone(), cx));
+    let project = build_project(ssh_remote_client, cx);
 
     project
         .update(cx, {
@@ -654,7 +655,7 @@ async fn init_test(
     (project, headless, fs)
 }
 
-fn build_project(ssh: Arc<SshSession>, cx: &mut TestAppContext) -> Model<Project> {
+fn build_project(ssh: Arc<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
