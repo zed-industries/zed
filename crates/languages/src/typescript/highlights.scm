@@ -12,6 +12,24 @@
 (type_identifier) @type
 (predefined_type) @type.builtin
 
+(import_specifier
+  "type"
+  name: (identifier) @type
+  alias: (identifier) @type
+)
+
+(import_statement
+  "type"
+  (import_clause
+    (named_imports
+      (import_specifier
+        name: (identifier) @type
+        alias: (identifier) @type
+      )
+    )
+  )
+)
+
 ([
   (identifier)
   (shorthand_property_identifier)
