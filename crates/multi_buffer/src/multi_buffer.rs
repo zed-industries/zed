@@ -4596,7 +4596,7 @@ impl fmt::Debug for Excerpt {
 impl sum_tree::Item for Excerpt {
     type Summary = ExcerptSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         let mut text = self.text_summary.clone();
         if self.has_trailing_newline {
             text += TextSummary::from("\n");
@@ -4613,7 +4613,7 @@ impl sum_tree::Item for Excerpt {
 impl sum_tree::Item for ExcerptIdMapping {
     type Summary = ExcerptId;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.id
     }
 }

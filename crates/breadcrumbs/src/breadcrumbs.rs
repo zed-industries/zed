@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
-    ViewContext,
+    Element, EventEmitter, FocusableView, IntoElement, ParentElement, Render, StyledText,
+    Subscription, ViewContext,
 };
 use itertools::Itertools;
 use std::cmp;
@@ -90,17 +90,30 @@ impl Render for Breadcrumbs {
                 ButtonLike::new("toggle outline view")
                     .child(breadcrumbs_stack)
                     .style(ButtonStyle::Transparent)
-                    .on_click(move |_, cx| {
-                        if let Some(editor) = editor.upgrade() {
-                            outline::toggle(editor, &editor::actions::ToggleOutline, cx)
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_, cx| {
+                            if let Some(editor) = editor.upgrade() {
+                                outline::toggle(editor, &editor::actions::ToggleOutline, cx)
+                            }
                         }
                     })
-                    .tooltip(|cx| {
-                        Tooltip::for_action(
-                            "Show symbol outline",
-                            &editor::actions::ToggleOutline,
-                            cx,
-                        )
+                    .tooltip(move |cx| {
+                        if let Some(editor) = editor.upgrade() {
+                            let focus_handle = editor.read(cx).focus_handle(cx);
+                            Tooltip::for_action_in(
+                                "Show symbol outline",
+                                &editor::actions::ToggleOutline,
+                                &focus_handle,
+                                cx,
+                            )
+                        } else {
+                            Tooltip::for_action(
+                                "Show symbol outline",
+                                &editor::actions::ToggleOutline,
+                                cx,
+                            )
+                        }
                     }),
             ),
             None => element

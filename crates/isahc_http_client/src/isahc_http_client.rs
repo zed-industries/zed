@@ -1,7 +1,6 @@
 use std::{mem, sync::Arc, time::Duration};
 
 use futures::future::BoxFuture;
-use isahc::config::RedirectPolicy;
 use util::maybe;
 
 pub use isahc::config::Configurable;
@@ -36,18 +35,29 @@ impl HttpClient for IsahcHttpClient {
         None
     }
 
-    fn send_with_redirect_policy(
+    fn send(
         &self,
         req: http_client::http::Request<http_client::AsyncBody>,
-        follow_redirects: bool,
     ) -> BoxFuture<'static, Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>>
     {
+        let redirect_policy = req
+            .extensions()
+            .get::<http_client::RedirectPolicy>()
+            .cloned()
+            .unwrap_or_default();
+        let read_timeout = req
+            .extensions()
+            .get::<http_client::ReadTimeout>()
+            .map(|t| t.0);
         let req = maybe!({
             let (mut parts, body) = req.into_parts();
             let mut builder = isahc::Request::builder()
                 .method(parts.method)
                 .uri(parts.uri)
                 .version(parts.version);
+            if let Some(read_timeout) = read_timeout {
+                builder = builder.low_speed_timeout(100, read_timeout);
+            }
 
             let headers = builder.headers_mut()?;
             mem::swap(headers, &mut parts.headers);
@@ -64,10 +74,12 @@ impl HttpClient for IsahcHttpClient {
             };
 
             builder
-                .redirect_policy(if follow_redirects {
-                    RedirectPolicy::Follow
-                } else {
-                    RedirectPolicy::None
+                .redirect_policy(match redirect_policy {
+                    http_client::RedirectPolicy::FollowAll => isahc::config::RedirectPolicy::Follow,
+                    http_client::RedirectPolicy::FollowLimit(limit) => {
+                        isahc::config::RedirectPolicy::Limit(limit)
+                    }
+                    http_client::RedirectPolicy::NoFollow => isahc::config::RedirectPolicy::None,
                 })
                 .body(isahc_body)
                 .ok()

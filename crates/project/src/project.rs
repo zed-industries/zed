@@ -558,7 +558,6 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_worktree);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
 
-        client.add_model_request_handler(Self::handle_search_project);
         client.add_model_request_handler(Self::handle_search_candidate_buffers);
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
@@ -885,6 +884,9 @@ impl Project {
 
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+                .detach();
+
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -2692,9 +2694,9 @@ impl Project {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
         let matching_buffers_rx = if query.is_opened_only() {
-            self.sort_candidate_buffers(&query, cx)
+            self.sort_search_candidates(&query, cx)
         } else {
-            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
+            self.find_search_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
         };
 
         cx.spawn(|_, cx| async move {
@@ -2757,7 +2759,7 @@ impl Project {
         result_rx
     }
 
-    fn search_for_candidate_buffers(
+    fn find_search_candidate_buffers(
         &mut self,
         query: &SearchQuery,
         limit: usize,
@@ -2769,11 +2771,11 @@ impl Project {
                 buffer_store.find_search_candidates(query, limit, fs, cx)
             })
         } else {
-            self.search_for_candidate_buffers_remote(query, limit, cx)
+            self.find_search_candidates_remote(query, limit, cx)
         }
     }
 
-    fn sort_candidate_buffers(
+    fn sort_search_candidates(
         &mut self,
         search_query: &SearchQuery,
         cx: &mut ModelContext<Project>,
@@ -2815,7 +2817,7 @@ impl Project {
         rx
     }
 
-    fn search_for_candidate_buffers_remote(
+    fn find_search_candidates_remote(
         &mut self,
         query: &SearchQuery,
         limit: usize,
@@ -3656,46 +3658,6 @@ impl Project {
         Ok(proto::TaskTemplatesResponse { templates })
     }
 
-    async fn handle_search_project(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::SearchProject>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::SearchProjectResponse> {
-        let peer_id = envelope.original_sender_id()?;
-        let query = SearchQuery::from_proto_v1(envelope.payload)?;
-        let mut result = this.update(&mut cx, |this, cx| this.search(query, cx))?;
-
-        cx.spawn(move |mut cx| async move {
-            let mut locations = Vec::new();
-            let mut limit_reached = false;
-            while let Some(result) = result.next().await {
-                match result {
-                    SearchResult::Buffer { buffer, ranges } => {
-                        for range in ranges {
-                            let start = serialize_anchor(&range.start);
-                            let end = serialize_anchor(&range.end);
-                            let buffer_id = this.update(&mut cx, |this, cx| {
-                                this.create_buffer_for_peer(&buffer, peer_id, cx).into()
-                            })?;
-                            locations.push(proto::Location {
-                                buffer_id,
-                                start: Some(start),
-                                end: Some(end),
-                            });
-                        }
-                    }
-                    SearchResult::LimitReached => limit_reached = true,
-                }
-            }
-            Ok(proto::SearchProjectResponse {
-                locations,
-                limit_reached,
-                // will restart
-            })
-        })
-        .await
-    }
-
     async fn handle_search_candidate_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
@@ -3709,7 +3671,7 @@ impl Project {
                 .ok_or_else(|| anyhow!("missing query field"))?,
         )?;
         let mut results = this.update(&mut cx, |this, cx| {
-            this.search_for_candidate_buffers(&query, message.limit as _, cx)
+            this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {

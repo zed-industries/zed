@@ -6,10 +6,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToPoint,
 };
-use std::{
-    ops::{Range, RangeInclusive},
-    sync::Arc,
-};
+use std::{ops::Range, sync::Arc};
 use ui::{
     prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
     ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
@@ -19,8 +16,8 @@ use util::RangeExt;
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, BlockDisposition,
     BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow, DisplaySnapshot,
-    Editor, EditorElement, EditorSnapshot, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
-    RangeToAnchorExt, RevertFile, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -219,14 +216,7 @@ impl Editor {
                         });
                     }
 
-                    for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(
-                            to_inclusive_row_range(removed_rows, &snapshot),
-                            None,
-                            false,
-                            cx,
-                        );
-                    }
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
                         editor.expand_diff_hunk(None, &hunk, cx);
@@ -305,8 +295,8 @@ impl Editor {
             }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    hunk_start..hunk_end,
+                    added_hunk_color(cx),
                     false,
                     cx,
                 );
@@ -314,8 +304,8 @@ impl Editor {
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    hunk_start..hunk_end,
+                    added_hunk_color(cx),
                     false,
                     cx,
                 );
@@ -348,7 +338,7 @@ impl Editor {
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> BlockProperties<Anchor> {
-        let border_color = cx.theme().colors().border_disabled;
+        let border_color = cx.theme().colors().border_variant;
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => cx.theme().status().created,
             DiffHunkStatus::Modified => cx.theme().status().modified,
@@ -391,14 +381,15 @@ impl Editor {
                         )
                         .child(
                             h_flex()
+                                .pl_1p5()
+                                .pr_6()
                                 .size_full()
                                 .justify_between()
                                 .border_t_1()
                                 .border_color(border_color)
                                 .child(
                                     h_flex()
-                                        .gap_2()
-                                        .pl_6()
+                                        .gap_1()
                                         .child(
                                             IconButton::new("next-hunk", IconName::ArrowDown)
                                                 .shape(IconButtonShape::Square)
@@ -520,49 +511,7 @@ impl Editor {
                                                         });
                                                     }
                                                 }),
-                                        ),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .pr_6()
-                                        .child({
-                                            let focus = editor.focus_handle(cx);
-                                            PopoverMenu::new("hunk-controls-dropdown")
-                                                .trigger(
-                                                    IconButton::new(
-                                                        "toggle_editor_selections_icon",
-                                                        IconName::EllipsisVertical,
-                                                    )
-                                                    .shape(IconButtonShape::Square)
-                                                    .icon_size(IconSize::Small)
-                                                    .style(ButtonStyle::Subtle)
-                                                    .selected(
-                                                        hunk_controls_menu_handle.is_deployed(),
-                                                    )
-                                                    .when(
-                                                        !hunk_controls_menu_handle.is_deployed(),
-                                                        |this| {
-                                                            this.tooltip(|cx| {
-                                                                Tooltip::text("Hunk Controls", cx)
-                                                            })
-                                                        },
-                                                    ),
-                                                )
-                                                .anchor(AnchorCorner::TopRight)
-                                                .with_handle(hunk_controls_menu_handle)
-                                                .menu(move |cx| {
-                                                    let focus = focus.clone();
-                                                    let menu =
-                                                        ContextMenu::build(cx, move |menu, _| {
-                                                            menu.context(focus.clone()).action(
-                                                                "Discard All",
-                                                                RevertFile.boxed_clone(),
-                                                            )
-                                                        });
-                                                    Some(menu)
-                                                })
-                                        })
+                                        )
                                         .child(
                                             IconButton::new("discard", IconName::RotateCcw)
                                                 .shape(IconButtonShape::Square)
@@ -608,31 +557,70 @@ impl Editor {
                                                     }
                                                 }),
                                         )
-                                        .child(
-                                            IconButton::new("collapse", IconName::Close)
-                                                .shape(IconButtonShape::Square)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip({
-                                                    let focus_handle = editor.focus_handle(cx);
-                                                    move |cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Collapse Hunk",
-                                                            &ToggleHunkDiff,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                                .on_click({
-                                                    let editor = editor.clone();
-                                                    let hunk = hunk.clone();
-                                                    move |_event, cx| {
-                                                        editor.update(cx, |editor, cx| {
-                                                            editor.toggle_hovered_hunk(&hunk, cx);
+                                        .child({
+                                            let focus = editor.focus_handle(cx);
+                                            PopoverMenu::new("hunk-controls-dropdown")
+                                                .trigger(
+                                                    IconButton::new(
+                                                        "toggle_editor_selections_icon",
+                                                        IconName::EllipsisVertical,
+                                                    )
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .selected(
+                                                        hunk_controls_menu_handle.is_deployed(),
+                                                    )
+                                                    .when(
+                                                        !hunk_controls_menu_handle.is_deployed(),
+                                                        |this| {
+                                                            this.tooltip(|cx| {
+                                                                Tooltip::text("Hunk Controls", cx)
+                                                            })
+                                                        },
+                                                    ),
+                                                )
+                                                .anchor(AnchorCorner::TopRight)
+                                                .with_handle(hunk_controls_menu_handle)
+                                                .menu(move |cx| {
+                                                    let focus = focus.clone();
+                                                    let menu =
+                                                        ContextMenu::build(cx, move |menu, _| {
+                                                            menu.context(focus.clone()).action(
+                                                                "Discard All",
+                                                                RevertFile.boxed_clone(),
+                                                            )
                                                         });
-                                                    }
-                                                }),
-                                        ),
+                                                    Some(menu)
+                                                })
+                                        }),
+                                )
+                                .child(
+                                    div().child(
+                                        IconButton::new("collapse", IconName::Close)
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = editor.focus_handle(cx);
+                                                move |cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Collapse Hunk",
+                                                        &ToggleHunkDiff,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            })
+                                            .on_click({
+                                                let editor = editor.clone();
+                                                let hunk = hunk.clone();
+                                                move |_event, cx| {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.toggle_hovered_hunk(&hunk, cx);
+                                                    });
+                                                }
+                                            }),
+                                    ),
                                 ),
                         )
                         .into_any_element()
@@ -850,14 +838,7 @@ impl Editor {
                         retain
                     });
 
-                    for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(
-                            to_inclusive_row_range(removed_rows, &snapshot),
-                            None,
-                            false,
-                            cx,
-                        );
-                    }
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
 
                     if let Some(diff_base_buffer) = &diff_base_buffer {
@@ -977,8 +958,8 @@ fn editor_with_deleted_text(
         editor.set_read_only(true);
         editor.set_show_inline_completions(Some(false), cx);
         editor.highlight_rows::<DiffRowHighlight>(
-            Anchor::min()..=Anchor::max(),
-            Some(deleted_color),
+            Anchor::min()..Anchor::max(),
+            deleted_color,
             false,
             cx,
         );
@@ -1054,21 +1035,6 @@ fn buffer_diff_hunk(
         return Some(hunk);
     }
     None
-}
-
-fn to_inclusive_row_range(
-    row_range: Range<Anchor>,
-    snapshot: &EditorSnapshot,
-) -> RangeInclusive<Anchor> {
-    let mut display_row_range =
-        row_range.start.to_display_point(snapshot)..row_range.end.to_display_point(snapshot);
-    if display_row_range.end.row() > display_row_range.start.row() {
-        *display_row_range.end.row_mut() -= 1;
-    }
-    let point_range = display_row_range.start.to_point(&snapshot.display_snapshot)
-        ..display_row_range.end.to_point(&snapshot.display_snapshot);
-    let new_range = point_range.to_anchors(&snapshot.buffer_snapshot);
-    new_range.start..=new_range.end
 }
 
 impl DisplayDiffHunk {

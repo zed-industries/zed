@@ -564,6 +564,48 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
     });
 }
 
+#[gpui::test]
+async fn test_adding_then_removing_then_adding_worktrees(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let (_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let (worktree_2, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project2", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id_2 = worktree_2.read_with(cx, |tree, _| tree.id());
+
+    project.update(cx, |project, cx| project.remove_worktree(worktree_id_2, cx));
+
+    let (worktree_2, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project2", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    worktree_2.update(cx, |worktree, _cx| {
+        assert!(worktree.is_visible());
+        let entries = worktree.entries(true, 0).collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[1].path.to_string_lossy().to_string(),
+            "README.md".to_string()
+        )
+    })
+}
+
 fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::try_init().ok();
