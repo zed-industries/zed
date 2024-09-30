@@ -84,7 +84,7 @@ use crate::{
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
+    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta,
     ScrollWheelEvent, TouchPhase,
 };
 use crate::{LinuxCommon, WindowParams};
@@ -313,7 +313,7 @@ impl WaylandClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         if state.composing || state.text_input.is_none() || state.pre_edit_text.is_some() {

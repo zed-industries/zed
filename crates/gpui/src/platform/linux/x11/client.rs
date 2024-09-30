@@ -38,7 +38,8 @@ use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
     DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta, Size, TouchPhase,
+    WindowParams, X11Window,
 };
 
 use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
@@ -188,7 +189,7 @@ impl X11ClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let client = self.get_client();
         let mut state = client.0.borrow_mut();
         if state.composing || state.ximc.is_none() {

@@ -26,7 +26,7 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, ScaledPixels, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
 };
@@ -1010,7 +1010,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let state = self.borrow();
         state.client.update_ime_position(bounds);
     }
