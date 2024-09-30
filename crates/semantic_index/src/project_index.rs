@@ -254,12 +254,8 @@ impl ProjectIndex {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
                         let db = *index.embedding_index().db();
-                        let worktree_corpus_stats = index
-                            .embedding_index()
-                            .worktree_corpus_stats
-                            .as_ref()
-                            .unwrap()
-                            .clone();
+                        let worktree_corpus_stats =
+                            index.embedding_index().worktree_corpus_stats.clone();
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()

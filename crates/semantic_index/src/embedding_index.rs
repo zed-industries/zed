@@ -55,7 +55,7 @@ pub struct EmbeddingIndex {
     language_registry: Arc<LanguageRegistry>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
-    pub worktree_corpus_stats: Option<Arc<RwLock<WorktreeTermStats>>>,
+    pub worktree_corpus_stats: Arc<RwLock<WorktreeTermStats>>,
     tokenizer: SimpleTokenizer,
     settings: EmbeddingIndexSettings,
 }
@@ -78,7 +78,12 @@ impl EmbeddingIndex {
             language_registry,
             embedding_provider,
             entry_ids_being_indexed,
-            worktree_corpus_stats: None,
+            worktree_corpus_stats: Arc::new(RwLock::new(WorktreeTermStats::new(
+                HashMap::new(),
+                HashMap::new(),
+                0,
+                HashMap::new(),
+            ))),
             tokenizer: SimpleTokenizer::new(),
             settings: EmbeddingIndexSettings::default(),
         }
@@ -94,16 +99,12 @@ impl EmbeddingIndex {
     ) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        // TODO: audit lifecycle of `worktree_corpus_stats`
-        // at the moment, we only update it in scan_entries when we check previously embedded files,
-        // but it also needs to be updated on file additions, file deletes, and file modifications
-        // in order for bm25 scoring to be correct
         let scan = self.scan_entries(worktree, cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(
             self.embedding_provider.clone(),
             chunk.files,
-            &mut self.worktree_corpus_stats,
+            self.worktree_corpus_stats.clone(),
             self.tokenizer.clone(),
             self.settings,
             cx,
@@ -127,7 +128,7 @@ impl EmbeddingIndex {
         let embed = Self::embed_files(
             self.embedding_provider.clone(),
             chunk.files,
-            &mut self.worktree_corpus_stats,
+            self.worktree_corpus_stats.clone(),
             self.tokenizer.clone(),
             self.settings,
             cx,
@@ -147,12 +148,7 @@ impl EmbeddingIndex {
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
-        let worktree_corpus_stats = Arc::new(RwLock::new(WorktreeTermStats::new(
-            HashMap::new(),
-            HashMap::new(),
-            0,
-        )));
-        self.worktree_corpus_stats = Some(worktree_corpus_stats.clone());
+        let worktree_corpus_stats = self.worktree_corpus_stats.clone();
 
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
@@ -170,12 +166,14 @@ impl EmbeddingIndex {
                 let entry_db_key = db_key_for_path(&entry.path);
                 if let Some(embedded_file) = db.get(&txn, &entry_db_key)? {
                     // initialize worktree_corpus_stats from embedded files in database
-                    {
-                        let mut stats = worktree_corpus_stats.write().unwrap();
+                    update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
                         for chunk in &embedded_file.chunks {
-                            stats.add_chunk(chunk.term_frequencies.clone());
+                            stats.add_chunk(
+                                chunk.term_frequencies.clone(),
+                                embedded_file.path.clone(),
+                            );
                         }
-                    }
+                    });
                 }
 
                 let mut saved_mtime = None;
@@ -194,10 +192,12 @@ impl EmbeddingIndex {
                             }
                             Ordering::Equal => {
                                 if let Some(deletion_range) = deletion_range.take() {
+                                    // none of these deletions' entries are in the worktree, so we don't need to adjust corpus stats
                                     deleted_entry_ranges_tx
                                         .send((
                                             deletion_range.0.map(ToString::to_string),
                                             deletion_range.1.map(ToString::to_string),
+                                            None,
                                         ))
                                         .await?;
                                 }
@@ -214,6 +214,7 @@ impl EmbeddingIndex {
                 }
 
                 if entry.mtime != saved_mtime {
+                    // corpus stats will be adjusted later, while these are chunked/embedded
                     let handle = entries_being_indexed.insert(entry.id);
                     updated_entries_tx.send((entry.clone(), handle)).await?;
                 }
@@ -222,7 +223,8 @@ impl EmbeddingIndex {
             if let Some(db_entry) = db_entries.next() {
                 let (db_path, _) = db_entry?;
                 deleted_entry_ranges_tx
-                    .send((Bound::Included(db_path.to_string()), Bound::Unbounded))
+                    // these db entries aren't in the worktree, so we don't need to account for them in corpus stats
+                    .send((Bound::Included(db_path.to_string()), Bound::Unbounded, None))
                     .await?;
             }
 
@@ -255,6 +257,7 @@ impl EmbeddingIndex {
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
                             if entry.is_file() {
+                                // corpus stats will be adjusted later, while these are chunked/embedded
                                 let handle = entries_being_indexed.insert(entry.id);
                                 updated_entries_tx.send((entry.clone(), handle)).await?;
                             }
@@ -263,7 +266,11 @@ impl EmbeddingIndex {
                     project::PathChange::Removed => {
                         let db_path = db_key_for_path(path);
                         deleted_entry_ranges_tx
-                            .send((Bound::Included(db_path.clone()), Bound::Included(db_path)))
+                            .send((
+                                Bound::Included(db_path.clone()),
+                                Bound::Included(db_path),
+                                Some(path.clone()),
+                            ))
                             .await?;
                     }
                     project::PathChange::Loaded => {
@@ -337,7 +344,7 @@ impl EmbeddingIndex {
     pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
-        worktree_corpus_stats: &mut Option<Arc<RwLock<WorktreeTermStats>>>,
+        worktree_corpus_stats: Arc<RwLock<WorktreeTermStats>>,
         tokenizer: SimpleTokenizer,
         settings: EmbeddingIndexSettings,
         cx: &AppContext,
@@ -382,10 +389,14 @@ impl EmbeddingIndex {
                 let mut embeddings = embeddings.into_iter();
                 for chunked_file in chunked_files {
                     let mut embedded_file = EmbeddedFile {
-                        path: chunked_file.path,
+                        path: chunked_file.path.clone(),
                         mtime: chunked_file.mtime,
                         chunks: Vec::new(),
                     };
+                    // We're about to re-index all the chunks for this file, so let's remove them all from the tfidf corpus if they exist
+                    update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
+                        stats.remove_file(&chunked_file.path)
+                    });
 
                     let mut embedded_all_chunks = true;
                     for (chunk, embedding) in
@@ -394,12 +405,12 @@ impl EmbeddingIndex {
                         if let Some(embedding) = embedding {
                             let chunk_text = &chunked_file.text[chunk.range.clone()];
                             let chunk_stats = ChunkStats::from_text(chunk_text, &tokenizer);
-                            let chunk_id = if let Ok(mut stats) = worktree_corpus_stats.as_ref().unwrap().write() {
-                                stats.add_chunk(chunk_stats.clone())
-                            } else {
-                                log::error!("Failed to acquire write lock for worktree_corpus_stats");
-                                continue;
-                            };
+                            let chunk_id = update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
+                                stats.add_chunk(chunk_stats.clone(), chunked_file.path.clone())
+                            }).unwrap_or_else(|| {
+                                log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
+                                0 // Provide a default chunk_id
+                            });
                             embedded_file
                                 .chunks
                                 .push(EmbeddedChunk { chunk, chunk_id, embedding, term_frequencies: chunk_stats });
@@ -426,12 +437,17 @@ impl EmbeddingIndex {
 
     fn persist_embeddings(
         &self,
-        mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
+        mut deleted_entry_ranges: channel::Receiver<(
+            Bound<String>,
+            Bound<String>,
+            Option<Arc<Path>>,
+        )>,
         mut embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let db = self.db;
+        let worktree_corpus_stats = self.worktree_corpus_stats.clone();
 
         cx.background_executor().spawn(async move {
             loop {
@@ -440,6 +456,11 @@ impl EmbeddingIndex {
                     deletion_range = deleted_entry_ranges.next() => {
                         if let Some(deletion_range) = deletion_range {
                             let mut txn = db_connection.write_txn()?;
+                            // If we've sent a path along with the deletion range, we need
+                            // to account for the deletion in worktree corpus stats
+                            if let Some(deletion_path) = deletion_range.2 {
+                                update_corpus_stats(worktree_corpus_stats.clone(), |s| s.remove_file(&deletion_path));
+                            }
                             let start = deletion_range.0.as_ref().map(|start| start.as_str());
                             let end = deletion_range.1.as_ref().map(|end| end.as_str());
                             log::debug!("deleting embeddings in range {:?}", &(start, end));
@@ -507,7 +528,7 @@ impl EmbeddingIndex {
 
 struct ScanEntries {
     updated_entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
-    deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
+    deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>, Option<Arc<Path>>)>,
     task: Task<Result<()>>,
 }
 
@@ -546,4 +567,13 @@ pub struct EmbeddedChunk {
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
     path.to_string_lossy().replace('/', "\0")
+}
+
+fn update_corpus_stats<F, R>(stats: Arc<RwLock<WorktreeTermStats>>, f: F) -> Option<R>
+where
+    F: FnOnce(&mut WorktreeTermStats) -> R,
+{
+    stats.write().map(|mut guard| f(&mut guard)).map_err(|_| {
+        log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
+    }).ok()
 }

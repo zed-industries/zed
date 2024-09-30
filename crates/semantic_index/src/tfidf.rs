@@ -2,6 +2,7 @@ use rust_stemmers::{Algorithm, Stemmer};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    path::Path,
     sync::Arc,
 };
 
@@ -108,12 +109,15 @@ pub struct WorktreeTermStats {
     total_length: u32,
     /// The next available chunk ID.
     next_chunk_id: u64,
+    /// A map of filepaths to their corresponding chunk IDs.
+    filepath_to_chunks: HashMap<Arc<Path>, HashSet<u64>>,
 }
 impl WorktreeTermStats {
     pub fn new(
         chunks: HashMap<u64, ChunkStats>,
         term_stats: HashMap<Arc<str>, TermStats>,
         total_length: u32,
+        filepath_to_chunks: HashMap<Arc<Path>, HashSet<u64>>,
     ) -> Self {
         let next_chunk_id = chunks.keys().max().map_or(0, |&id| id + 1);
         Self {
@@ -121,10 +125,10 @@ impl WorktreeTermStats {
             term_stats,
             total_length,
             next_chunk_id,
+            filepath_to_chunks,
         }
     }
-
-    pub fn add_chunk(&mut self, chunk: ChunkStats) -> u64 {
+    pub fn add_chunk(&mut self, chunk: ChunkStats, filepath: Arc<Path>) -> u64 {
         let chunk_id = self.next_chunk_id;
         self.next_chunk_id += 1;
 
@@ -144,9 +148,14 @@ impl WorktreeTermStats {
         // Add chunk to chunks
         self.chunks.insert(chunk_id, chunk);
 
+        // Update filepath_to_chunks
+        self.filepath_to_chunks
+            .entry(filepath)
+            .or_insert_with(HashSet::new)
+            .insert(chunk_id);
+
         chunk_id
     }
-
     pub fn remove_chunk(&mut self, chunk_id: u64) -> Option<ChunkStats> {
         if let Some(chunk) = self.chunks.remove(&chunk_id) {
             // Update term_stats
@@ -161,40 +170,28 @@ impl WorktreeTermStats {
             }
             // Update total_length
             self.total_length -= chunk.length;
+
+            // Update filepath_to_chunks
+            self.filepath_to_chunks.retain(|_, chunk_set| {
+                chunk_set.remove(&chunk_id);
+                !chunk_set.is_empty()
+            });
+
             Some(chunk)
         } else {
             None
         }
     }
-    pub fn update_chunk(&mut self, chunk_id: u64, new_chunk: ChunkStats) -> u64 {
-        if let Some(old_chunk) = self.chunks.get(&chunk_id) {
-            // Remove old chunk statistics
-            for (term, &freq) in &old_chunk.terms {
-                if let Some(stats) = self.term_stats.get_mut(term) {
-                    stats.frequency -= freq;
-                    stats.chunk_ids.remove(&chunk_id);
-                    if stats.chunk_ids.is_empty() {
-                        self.term_stats.remove(term);
-                    }
-                }
+
+    pub fn remove_file(&mut self, filepath: &Arc<Path>) {
+        if let Some(chunk_ids) = self.filepath_to_chunks.remove(filepath) {
+            for chunk_id in chunk_ids {
+                self.remove_chunk(chunk_id);
             }
-            self.total_length -= old_chunk.length;
         }
-
-        for (term, &freq) in &new_chunk.terms {
-            let stats = self.term_stats.entry(term.clone()).or_insert(TermStats {
-                frequency: 0,
-                chunk_ids: HashSet::new(),
-            });
-            stats.frequency += freq;
-            stats.chunk_ids.insert(chunk_id);
-        }
-        self.total_length += new_chunk.length;
-
-        self.chunks.insert(chunk_id, new_chunk);
-        chunk_id
     }
 }
+
 impl Bm25Scorer for WorktreeTermStats {
     fn total_chunks(&self) -> u64 {
         self.chunks.len() as u64

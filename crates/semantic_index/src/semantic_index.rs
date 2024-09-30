@@ -496,17 +496,18 @@ mod tests {
 
         let tokenizer = SimpleTokenizer::new();
         let embedding_settings = EmbeddingIndexSettings::default();
-        let mut worktree_corpus_stats = Some(Arc::new(RwLock::new(WorktreeTermStats::new(
+        let worktree_corpus_stats = Arc::new(RwLock::new(WorktreeTermStats::new(
             HashMap::new(),
             HashMap::new(),
             0,
-        ))));
+            HashMap::new(),
+        )));
 
         let embed_files_task = cx.update(|cx| {
             EmbeddingIndex::embed_files(
                 provider.clone(),
                 chunked_files_rx,
-                &mut worktree_corpus_stats,
+                worktree_corpus_stats,
                 tokenizer,
                 embedding_settings,
                 cx,
