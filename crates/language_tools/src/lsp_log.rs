@@ -17,7 +17,7 @@ use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selectio
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
+    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
 const SEND_LINE: &str = "// Send:";
@@ -194,12 +194,11 @@ pub fn init(cx: &mut AppContext) {
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
-                workspace.add_item_to_active_pane(
+                workspace.split_item(
+                    SplitDirection::Right,
                     Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
-                    None,
-                    true,
                     cx,
                 );
             }
