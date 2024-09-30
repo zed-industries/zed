@@ -894,8 +894,10 @@ mod tests {
                         buffer_handle.update(cx, |buffer, cx| buffer.file_updated(file, cx));
                     }
                     _ => {
-                        buffer_handle
-                            .update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
+                        let edit_count = rng.gen_range(1..=5);
+                        buffer_handle.update(cx, |buffer, cx| {
+                            buffer.randomly_edit(&mut rng, edit_count, cx)
+                        });
                     }
                 }
 
