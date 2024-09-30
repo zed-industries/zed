@@ -110,8 +110,24 @@ impl MultiBuffer {
         let mut new_excerpts = new_excerpts.into_iter().peekable();
 
         while let Some(new_excerpt) = new_excerpts.next() {
+            // dbg!(new_excerpt
+            //     .snapshot
+            //     .text_for_range(new_excerpt.key.range.clone())
+            //     .collect::<String>());
+
+            let new_excerpt_start = ExcerptContaining {
+                path: new_excerpt.key.path.clone(),
+                buffer_id: new_excerpt.key.buffer_id,
+                position: new_excerpt.key.range.start,
+            };
+            let new_excerpt_end = ExcerptContaining {
+                path: new_excerpt.key.path.clone(),
+                buffer_id: new_excerpt.key.buffer_id,
+                position: new_excerpt.key.range.end,
+            };
+
             if SeekTarget::cmp(
-                &new_excerpt.key,
+                &new_excerpt_start,
                 cursor.start(),
                 &self.snapshot.buffer_snapshots,
             )
@@ -119,12 +135,27 @@ impl MultiBuffer {
             {
                 new_tree.append(
                     cursor.slice(
-                        &new_excerpt.key,
-                        Bias::Right,
+                        &new_excerpt_start,
+                        Bias::Left,
                         &self.snapshot.buffer_snapshots,
                     ),
                     &self.snapshot.buffer_snapshots,
                 );
+
+                if let Some(old_excerpt) = cursor.item() {
+                    if old_excerpt
+                        .key
+                        .cmp(&new_excerpt.key, &new_excerpt.snapshot)
+                        .is_le()
+                    {
+                        push_new_excerpt(
+                            &mut new_tree,
+                            old_excerpt.key.clone(),
+                            &self.snapshot.buffer_snapshots,
+                        );
+                        cursor.next(&self.snapshot.buffer_snapshots);
+                    }
+                }
             }
 
             push_new_excerpt(
@@ -133,23 +164,34 @@ impl MultiBuffer {
                 &self.snapshot.buffer_snapshots,
             );
 
-            cursor.seek_forward(
-                &ExcerptKey {
-                    path: new_excerpt.key.path,
-                    buffer_id: new_excerpt.key.buffer_id,
-                    range: new_excerpt.key.range.end..new_excerpt.key.range.end,
-                },
-                Bias::Right,
+            if SeekTarget::cmp(
+                &new_excerpt_end,
+                &cursor.end(&self.snapshot.buffer_snapshots),
                 &self.snapshot.buffer_snapshots,
-            );
+            )
+            .is_gt()
+            {
+                cursor.seek_forward(
+                    &new_excerpt_end,
+                    Bias::Left,
+                    &self.snapshot.buffer_snapshots,
+                );
+            }
 
-            if let Some(prev_excerpt) = cursor.prev_item() {
-                if prev_excerpt.key.buffer_id == new_excerpt.key.buffer_id {
+            if let Some(old_excerpt) = cursor.item() {
+                if SeekTarget::cmp(
+                    &new_excerpt_end,
+                    &Some(old_excerpt.key.clone()),
+                    &self.snapshot.buffer_snapshots,
+                )
+                .is_ge()
+                {
                     push_new_excerpt(
                         &mut new_tree,
-                        prev_excerpt.key.clone(),
+                        old_excerpt.key.clone(),
                         &self.snapshot.buffer_snapshots,
                     );
+                    cursor.next(&self.snapshot.buffer_snapshots);
                 }
             }
 
@@ -163,6 +205,12 @@ impl MultiBuffer {
                             .range
                             .start
                             .to_offset(&new_excerpt.snapshot)
+                    && new_excerpts.peek().map_or(true, |next_new_excerpt| {
+                        next_old_excerpt
+                            .key
+                            .cmp(&next_new_excerpt.key, &next_new_excerpt.snapshot)
+                            .is_le()
+                    })
                 {
                     push_new_excerpt(
                         &mut new_tree,
@@ -172,6 +220,72 @@ impl MultiBuffer {
                     cursor.next(&self.snapshot.buffer_snapshots);
                 }
             }
+
+            // if SeekTarget::cmp(
+            //     &new_excerpt.key,
+            //     cursor.start(),
+            //     &self.snapshot.buffer_snapshots,
+            // )
+            // .is_gt()
+            // {
+            //     new_tree.append(
+            //         cursor.slice(
+            //             &new_excerpt.key,
+            //             Bias::Right,
+            //             &self.snapshot.buffer_snapshots,
+            //         ),
+            //         &self.snapshot.buffer_snapshots,
+            //     );
+            // }
+
+            // dbg!("here");
+            // push_new_excerpt(
+            //     &mut new_tree,
+            //     new_excerpt.key.clone(),
+            //     &self.snapshot.buffer_snapshots,
+            // );
+
+            // cursor.seek_forward(
+            //     &ExcerptKey {
+            //         path: new_excerpt.key.path,
+            //         buffer_id: new_excerpt.key.buffer_id,
+            //         range: new_excerpt.key.range.end..new_excerpt.key.range.end,
+            //     },
+            //     Bias::Right,
+            //     &self.snapshot.buffer_snapshots,
+            // );
+
+            // if let Some(prev_excerpt) = cursor.prev_item() {
+            //     if prev_excerpt.key.buffer_id == new_excerpt.key.buffer_id {
+            //         dbg!("here");
+            //         push_new_excerpt(
+            //             &mut new_tree,
+            //             prev_excerpt.key.clone(),
+            //             &self.snapshot.buffer_snapshots,
+            //         );
+            //     }
+            // }
+
+            // // If the next old excerpt starts where the new excerpt ends, push
+            // // it again so it can update its show_header value.
+            // if let Some(next_old_excerpt) = cursor.item() {
+            //     if next_old_excerpt.key.buffer_id == new_excerpt.key.buffer_id
+            //         && new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
+            //             == next_old_excerpt
+            //                 .key
+            //                 .range
+            //                 .start
+            //                 .to_offset(&new_excerpt.snapshot)
+            //     {
+            //         dbg!("here");
+            //         push_new_excerpt(
+            //             &mut new_tree,
+            //             next_old_excerpt.key.clone(),
+            //             &self.snapshot.buffer_snapshots,
+            //         );
+            //         cursor.next(&self.snapshot.buffer_snapshots);
+            //     }
+            // }
         }
 
         new_tree.append(
@@ -314,7 +428,7 @@ impl MultiBuffer {
             let edit_end = snapshot.anchor_after(edit.new.end);
             new_tree.append(
                 cursor.slice(
-                    &ExcerptEditPosition {
+                    &ExcerptContaining {
                         path: path.clone(),
                         buffer_id,
                         position: edit_start,
@@ -400,6 +514,12 @@ fn push_new_excerpt(
     snapshots: &TreeMap<BufferId, BufferSnapshot>,
 ) {
     let snapshot = snapshots.get(&new_key.buffer_id).unwrap();
+    // dbg!(
+    //     snapshot.text(),
+    //     snapshot
+    //         .text_for_range(new_key.range.clone())
+    //         .collect::<String>()
+    // );
 
     let last_header = excerpts.summary().last_header.clone();
     let mut merged_with_previous = false;
@@ -435,6 +555,7 @@ fn push_new_excerpt(
         snapshots,
     );
 
+    // dbg!(merged_with_previous);
     if !merged_with_previous {
         excerpts.push(
             Excerpt {
@@ -520,13 +641,14 @@ impl ExcerptKey {
     }
 }
 
-struct ExcerptEditPosition {
+#[derive(Debug)]
+struct ExcerptContaining {
     path: Option<Arc<Path>>,
     buffer_id: BufferId,
     position: language::Anchor,
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for ExcerptEditPosition {
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for ExcerptContaining {
     fn cmp(
         &self,
         cursor_location: &Option<ExcerptKey>,
@@ -790,6 +912,7 @@ mod tests {
             let mut excerpts = Vec::new();
 
             for _ in 0..operations {
+                // println!("=====================================");
                 let buffer_handle = match rng.gen_range(0..3) {
                     0 => fruits.clone(),
                     1 => cars.clone(),
@@ -902,6 +1025,7 @@ mod tests {
                     }
                 }
                 assert_eq!(multibuffer.snapshot(cx).text(), expected_text);
+                log::info!("text: {:?}", expected_text);
             }
 
             multibuffer
