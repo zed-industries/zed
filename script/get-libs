@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ $# -eq 1 ]; then
+    which_bin="$1"
+else
+    echo "Usage: $0 [stable|preview|nightly|target/debug/zed|target/debug/zed]"
+    exit 1
+fi
+case "${which_bin}_$(uname)" in
+    stable_Darwin) BINARY="/Applications/Zed.app/Contents/MacOS/zed" ;;
+    preview_Darwin) BINARY="/Applications/Zed Preview.app/Contents/MacOS/zed";;
+    nightly_Darwin) BINARY="/Applications/Zed Nightly.app/Contents/MacOS/zed";;
+    stable_Linux) BINARY="$HOME/.local/zed.app/bin/zed";;
+    preview_Linux) BINARY="$HOME/.local/zed-preview.app/bin/zed";;
+    nightly_Linux) BINARY="$HOME/.local/zed-nightly.app/bin/zed";;
+    *) BINARY="$which_bin";;
+esac
+if [ ! -x "$BINARY" ]; then
+    echo "Binary not found: $BINARY"
+    exit 1
+fi
+echo "-------Zed Library Report-------"
+echo "$BINARY" | sed "s|$HOME|~|g"
+echo "-------------System-------------"
+uname -s -m -r
+case "$(uname -s)" in
+    Darwin*)
+        echo "macOS $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+        xcodebuild -version | awk '{printf "%s ", $0} END {print ""}'
+        ;;
+    Linux*)
+        grep "PRETTY_NAME=" /etc/os-release | sed 's/PRETTY_NAME=//'
+        gcc --version |head -1
+        g++ --version |head -1
+        ;;
+    CYGWIN*|MINGW32*|MSYS*|MINGW*)
+        echo "TODO: Add windows-specific tooling versions."
+        ;;
+    *)
+        echo "Other OS detected: $(uname -s)"
+        ;;
+esac
+
+clang --version | head -1
+cmake --version | grep version
+make --version | grep Make
+rustc --version
+cargo --version
+mold --version || echo "no mold"
+
+echo "-----------Libraries-----------"
+case "$(uname -s)" in
+    Linux*)
+        # TODO: Make this work with target/debug/zed
+        echo "$BINARY" | sed "s|$HOME|~|g"
+        ldd "$BINARY" |sort
+        ZED_LIB="$(dirname $BINARY)/../lib"
+        for lib in $(ls $ZED_LIB); do
+            echo "$ZED_LIB/$lib" | sed "s|$HOME|~|g"
+            ldd "$ZED_LIB/$lib" |sort
+        done
+        ;;
+    Darwin*)
+    # TODO: Make this work with target/debug/zed
+        echo "$BINARY" | sed "s|$HOME|~|g"
+        otool -L "$BINARY" |tail -n +3 |sort
+        ZED_LIB="$(dirname $BINARY)/../Frameworks"
+        for lib in $(ls -d $ZED_LIB); do
+            echo "$ZED_LIB/$lib"
+            ldd "$ZED_LIB/$lib" |sort
+        done
+
+        ;;
+esac
