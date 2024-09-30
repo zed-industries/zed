@@ -513,7 +513,7 @@ impl Editor {
                                                 }),
                                         )
                                         .child(
-                                            IconButton::new("discard", IconName::RotateCcw)
+                                            IconButton::new("discard", IconName::Undo)
                                                 .shape(IconButtonShape::Square)
                                                 .icon_size(IconSize::Small)
                                                 .tooltip({
