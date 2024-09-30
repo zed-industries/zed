@@ -4,7 +4,7 @@ use futures::{future, StreamExt};
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{AllLanguageSettings, LanguageSettingsContent},
+    language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
@@ -386,6 +386,34 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // A server is started up, and it is notified about Rust files.
     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    fake_rust_server
+        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
+            registrations: vec![lsp::Registration {
+                id: Default::default(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+                register_options: serde_json::to_value(
+                    lsp::DidChangeWatchedFilesRegistrationOptions {
+                        watchers: vec![
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/Cargo.toml".to_string(),
+                                ),
+                                kind: None,
+                            },
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    "/the-root/*.rs".to_string(),
+                                ),
+                                kind: None,
+                            },
+                        ],
+                    },
+                )
+                .ok(),
+            }],
+        })
+        .await
+        .unwrap();
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -433,6 +461,24 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // A json language server is started up and is only notified about the json buffer.
     let mut fake_json_server = fake_json_servers.next().await.unwrap();
+    fake_json_server
+        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
+            registrations: vec![lsp::Registration {
+                id: Default::default(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+                register_options: serde_json::to_value(
+                    lsp::DidChangeWatchedFilesRegistrationOptions {
+                        watchers: vec![lsp::FileSystemWatcher {
+                            glob_pattern: lsp::GlobPattern::String("/the-root/*.json".to_string()),
+                            kind: None,
+                        }],
+                    },
+                )
+                .ok(),
+            }],
+        })
+        .await
+        .unwrap();
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -483,20 +529,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    // Save notifications are reported to all servers.
+    // Save notifications are reported only to servers that signed up for a given extension.
     project
         .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
         .await
         .unwrap();
     assert_eq!(
         fake_rust_server
-            .receive_notification::<lsp::notification::DidSaveTextDocument>()
-            .await
-            .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
-    );
-    assert_eq!(
-        fake_json_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
@@ -2708,7 +2747,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let action = actions.await[0].clone();
+    let action = actions.await.unwrap()[0].clone();
     let apply = project.update(cx, |project, cx| {
         project.apply_code_action(buffer.clone(), action, true, cx)
     });
@@ -5046,6 +5085,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         vec!["TailwindServer code action", "TypeScriptServer code action"],
         code_actions_task
             .await
+            .unwrap()
             .into_iter()
             .map(|code_action| code_action.lsp_action.title)
             .sorted()

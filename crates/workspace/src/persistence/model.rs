@@ -26,24 +26,29 @@ pub struct SerializedSshProject {
     pub id: SshProjectId,
     pub host: String,
     pub port: Option<u16>,
-    pub path: String,
+    pub paths: Vec<String>,
     pub user: Option<String>,
 }
 
 impl SerializedSshProject {
-    pub fn ssh_url(&self) -> String {
-        let mut result = String::from("ssh://");
-        if let Some(user) = &self.user {
-            result.push_str(user);
-            result.push('@');
-        }
-        result.push_str(&self.host);
-        if let Some(port) = &self.port {
-            result.push(':');
-            result.push_str(&port.to_string());
-        }
-        result.push_str(&self.path);
-        result
+    pub fn ssh_urls(&self) -> Vec<PathBuf> {
+        self.paths
+            .iter()
+            .map(|path| {
+                let mut result = String::new();
+                if let Some(user) = &self.user {
+                    result.push_str(user);
+                    result.push('@');
+                }
+                result.push_str(&self.host);
+                if let Some(port) = &self.port {
+                    result.push(':');
+                    result.push_str(&port.to_string());
+                }
+                result.push_str(path);
+                PathBuf::from(result)
+            })
+            .collect()
     }
 }
 
@@ -58,7 +63,8 @@ impl Bind for &SerializedSshProject {
         let next_index = statement.bind(&self.id.0, start_index)?;
         let next_index = statement.bind(&self.host, next_index)?;
         let next_index = statement.bind(&self.port, next_index)?;
-        let next_index = statement.bind(&self.path, next_index)?;
+        let raw_paths = serde_json::to_string(&self.paths)?;
+        let next_index = statement.bind(&raw_paths, next_index)?;
         statement.bind(&self.user, next_index)
     }
 }
@@ -68,7 +74,9 @@ impl Column for SerializedSshProject {
         let id = statement.column_int64(start_index)?;
         let host = statement.column_text(start_index + 1)?.to_string();
         let (port, _) = Option::<u16>::column(statement, start_index + 2)?;
-        let path = statement.column_text(start_index + 3)?.to_string();
+        let raw_paths = statement.column_text(start_index + 3)?.to_string();
+        let paths: Vec<String> = serde_json::from_str(&raw_paths)?;
+
         let (user, _) = Option::<String>::column(statement, start_index + 4)?;
 
         Ok((
@@ -76,7 +84,7 @@ impl Column for SerializedSshProject {
                 id: SshProjectId(id as u64),
                 host,
                 port,
-                path,
+                paths,
                 user,
             },
             start_index + 5,

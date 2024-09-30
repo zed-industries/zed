@@ -20,8 +20,7 @@ in
       wayland
       xorg.libxcb
       vulkan-loader
-      rustc
-      cargo
+      rustToolchain
     ];
   in
     pkgs.mkShell.override {inherit stdenv;} {

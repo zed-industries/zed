@@ -245,7 +245,6 @@ dependencies = [
  "chrono",
  "futures 0.3.30",
  "http_client",
- "isahc",
  "schemars",
  "serde",
  "serde_json",
@@ -404,6 +403,7 @@ dependencies = [
  "language_model",
  "languages",
  "log",
+ "lsp",
  "markdown",
  "menu",
  "multi_buffer",
@@ -894,9 +894,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.82"
+version = "0.1.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a27b8a3a6e1a44fa4c8baf1f653e4172e81486d4941f2237e20dc2d0cf4ddff1"
+checksum = "721cae7de5c34fbb2acd27e21e6d2cf7b886dce0c27388d46c4e6c47ea4318dd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2086,9 +2086,9 @@ dependencies = [
 
 [[package]]
 name = "cargo_toml"
-version = "0.20.4"
+version = "0.20.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad639525b1c67b6a298f378417b060fbc04618bea559482a8484381cce27d965"
+checksum = "88da5a13c620b4ca0078845707ea9c3faf11edbc3ffd8497d11d686211cd1ac0"
 dependencies = [
  "serde",
  "toml 0.8.19",
@@ -2282,9 +2282,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.17"
+version = "4.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e5a21b8495e732f1b3c364c9949b201ca7bae518c502c80256c96ad79eaf6ac"
+checksum = "b0956a43b323ac1afaffc053ed5c4b7c1f1800bacd1683c353aabbb752515dd3"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -2292,9 +2292,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.17"
+version = "4.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cf2dd12af7a047ad9d6da2b6b249759a22a7abc0f474c1dae1777afa4b21a73"
+checksum = "4d72166dd41634086d5803a47eb71ae740e61d84709c36f3c34110173db3961b"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2314,9 +2314,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.13"
+version = "4.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "501d359d5f3dcaf6ecdeee48833ae73ec6e42723a1e52419c79abf9507eec0a0"
+checksum = "4ac6a0c7b1a9e9a5186361f67dfa1b88213572f427fb9ab038efb2bd8c582dab"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2408,7 +2408,6 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "feature_flags",
- "fs",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -2850,7 +2849,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "isahc",
  "language",
  "lsp",
  "menu",
@@ -3731,6 +3729,7 @@ dependencies = [
  "multi_buffer",
  "ordered-float 2.10.1",
  "parking_lot",
+ "pretty_assertions",
  "project",
  "rand 0.8.5",
  "regex",
@@ -4129,7 +4128,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indexed_docs",
- "isahc",
  "isahc_http_client",
  "language",
  "log",
@@ -4290,7 +4288,6 @@ dependencies = [
  "gpui",
  "http_client",
  "human_bytes",
- "isahc",
  "language",
  "log",
  "menu",
@@ -5017,7 +5014,6 @@ dependencies = [
  "anyhow",
  "futures 0.3.30",
  "http_client",
- "isahc",
  "schemars",
  "serde",
  "serde_json",
@@ -6289,7 +6285,6 @@ dependencies = [
  "http_client",
  "image",
  "inline_completion_button",
- "isahc",
  "language",
  "log",
  "menu",
@@ -6435,9 +6430,9 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
 name = "libc"
-version = "0.2.158"
+version = "0.2.159"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8adc4bb1803a324070e64a98ae98f38934d91957a99cfb3a43dcbc01bc56439"
+checksum = "561d97a539a36e26a9a5fad1ea11a3039a67714694aaa379433e580854bc3dc5"
 
 [[package]]
 name = "libdbus-sys"
@@ -6479,7 +6474,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7190,6 +7185,7 @@ dependencies = [
  "async-std",
  "async-tar",
  "async-trait",
+ "async-watch",
  "async_zip",
  "futures 0.3.30",
  "http_client",
@@ -7202,6 +7198,7 @@ dependencies = [
  "tempfile",
  "util",
  "walkdir",
+ "which 6.0.3",
  "windows 0.58.0",
 ]
 
@@ -7590,7 +7587,6 @@ dependencies = [
  "anyhow",
  "futures 0.3.30",
  "http_client",
- "isahc",
  "schemars",
  "serde",
  "serde_json",
@@ -9121,6 +9117,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "languages",
  "log",
  "lsp",
  "node_runtime",
@@ -10497,6 +10494,7 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "parking_lot",
+ "paths",
  "serde",
  "serde_json",
  "snippet",
@@ -11004,6 +11002,7 @@ dependencies = [
  "text",
  "theme",
  "ui",
+ "unicode-segmentation",
  "util",
  "windows 0.58.0",
 ]
@@ -13532,7 +13531,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14386,13 +14385,14 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.155.0"
+version = "0.156.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
  "ashpd",
  "assets",
  "assistant",
+ "async-watch",
  "audio",
  "auto_update",
  "backtrace",
@@ -14430,7 +14430,6 @@ dependencies = [
  "image_viewer",
  "inline_completion_button",
  "install_cli",
- "isahc",
  "isahc_http_client",
  "journal",
  "language",
@@ -14466,6 +14465,7 @@ dependencies = [
  "session",
  "settings",
  "settings_ui",
+ "shellexpand 2.1.2",
  "simplelog",
  "smol",
  "snippet_provider",
@@ -14617,7 +14617,7 @@ dependencies = [
 
 [[package]]
 name = "zed_lua"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14681,7 +14681,7 @@ dependencies = [
 
 [[package]]
 name = "zed_terraform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

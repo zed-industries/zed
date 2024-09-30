@@ -22,12 +22,12 @@ async function main() {
   const startDate = new Date(process.argv[2]);
   const today = new Date();
 
-  console.log(`Changes from ${startDate} to ${today}\n`);
+  console.log(`Pull requests from ${startDate} to ${today}\n`);
 
   let pullRequestNumbers = getPullRequestNumbers(startDate, today);
 
   // Fetch the pull requests from the GitHub API.
-  console.log("Merged Pull requests:");
+  console.log("Merged pull requests:");
   for (const pullRequestNumber of pullRequestNumbers) {
     const webURL = `https://github.com/zed-industries/zed/pull/${pullRequestNumber}`;
     const apiURL = `https://api.github.com/repos/zed-industries/zed/pulls/${pullRequestNumber}`;

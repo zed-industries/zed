@@ -264,6 +264,18 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
 
 fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx);
+
+    let url = match release_channel {
+        ReleaseChannel::Nightly => Some("https://github.com/zed-industries/zed/commits/nightly/"),
+        ReleaseChannel::Dev => Some("https://github.com/zed-industries/zed/commits/main/"),
+        _ => None,
+    };
+
+    if let Some(url) = url {
+        cx.open_url(url);
+        return;
+    }
+
     let version = AppVersion::global(cx).to_string();
 
     let client = client::Client::global(cx).http_client();
@@ -345,15 +357,17 @@ pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
             workspace.update(&mut cx, |workspace, cx| {
+                let workspace_handle = workspace.weak_handle();
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),
                     cx,
-                    |cx| cx.new_view(|_| UpdateNotification::new(version)),
+                    |cx| cx.new_view(|_| UpdateNotification::new(version, workspace_handle)),
                 );
-                updater
-                    .read(cx)
-                    .set_should_show_update_notification(false, cx)
-                    .detach_and_log_err(cx);
+                updater.update(cx, |updater, cx| {
+                    updater
+                        .set_should_show_update_notification(false, cx)
+                        .detach_and_log_err(cx);
+                });
             })?;
         }
         anyhow::Ok(())

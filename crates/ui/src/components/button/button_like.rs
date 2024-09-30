@@ -523,10 +523,8 @@ impl RenderOnce for ButtonLike {
                         })
                 },
             )
-            .when(!self.selected, |this| {
-                this.when_some(self.tooltip, |this, tooltip| {
-                    this.tooltip(move |cx| tooltip(cx))
-                })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |cx| tooltip(cx))
             })
             .children(self.children)
     }

@@ -15,9 +15,11 @@
   // text editor:
   //
   // 1. "VSCode"
-  // 2. "JetBrains"
-  // 3. "SublimeText"
-  // 4. "Atom"
+  // 2. "Atom"
+  // 3. "JetBrains"
+  // 4. "None"
+  // 5. "SublimeText"
+  // 6. "TextMate"
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
@@ -533,17 +535,16 @@
   // How to soft-wrap long lines of text.
   // Possible values:
   //
-  // 1. Do not soft wrap.
+  // 1. Prefer a single line generally, unless an overly long line is encountered.
   //      "soft_wrap": "none",
-  // 2. Prefer a single line generally, unless an overly long line is encountered.
-  //      "soft_wrap": "prefer_line",
-  // 3. Soft wrap lines that overflow the editor.
+  //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
+  // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 4. Soft wrap lines at the preferred line length.
+  // 3. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
-  // 5. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
-  "soft_wrap": "prefer_line",
+  "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -760,6 +761,7 @@
   // }
   //
   "file_types": {
+    "Plain Text": ["txt"],
     "JSON": ["flake.lock"],
     "JSONC": [
       "**/.zed/**/*.json",
@@ -767,8 +769,24 @@
       "**/Zed/**/*.json",
       "tsconfig.json",
       "pyrightconfig.json"
-    ]
+    ],
+    "TOML": ["uv.lock"]
   },
+  /// By default use a recent system version of node, or install our own.
+  /// You can override this to use a version of node that is not in $PATH with:
+  /// {
+  ///   "node": {
+  ///     "node_path": "/path/to/node"
+  ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
+  ///   }
+  /// }
+  /// or to ensure Zed always downloads and installs an isolated version of node:
+  /// {
+  ///   "node": {
+  ///     "ignore_system_version": true,
+  ///   }
+  /// NOTE: changing this setting currently requires restarting Zed.
+  "node": {},
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings

@@ -3,7 +3,7 @@ use crate::provider::anthropic::map_to_language_model_completion_events;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
 };
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
@@ -18,8 +18,7 @@ use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
     Subscription, Task,
 };
-use http_client::{AsyncBody, HttpClient, Method, Response};
-use isahc::config::Configurable;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response};
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -220,9 +219,6 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     models.insert(model.id().to_string(), CloudModel::Google(model));
                 }
             }
-            for model in ZedModel::iter() {
-                models.insert(model.id().to_string(), CloudModel::Zed(model));
-            }
         } else {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
@@ -396,7 +392,7 @@ impl CloudLanguageModel {
         let response = loop {
             let mut request_builder = http_client::Request::builder();
             if let Some(low_speed_timeout) = low_speed_timeout {
-                request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+                request_builder = request_builder.read_timeout(low_speed_timeout);
             };
             let request = request_builder
                 .method(Method::POST)
@@ -473,7 +469,7 @@ impl LanguageModel for CloudLanguageModel {
                         min_total_token: cache.min_total_token,
                     })
             }
-            CloudModel::OpenAi(_) | CloudModel::Google(_) | CloudModel::Zed(_) => None,
+            CloudModel::OpenAi(_) | CloudModel::Google(_) => None,
         }
     }
 
@@ -502,9 +498,6 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(response.token_count as usize)
                 }
                 .boxed()
-            }
-            CloudModel::Zed(_) => {
-                count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
             }
         }
     }
@@ -595,35 +588,6 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(google_ai::extract_text_from_events(response_lines(
                         response,
                     )))
-                });
-                async move {
-                    Ok(future
-                        .await?
-                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                        .boxed())
-                }
-                .boxed()
-            }
-            CloudModel::Zed(model) => {
-                let client = self.client.clone();
-                let mut request = request.into_open_ai(model.id().into(), None);
-                request.max_tokens = Some(4000);
-                let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream(async move {
-                    let response = Self::perform_llm_completion(
-                        client.clone(),
-                        llm_api_token,
-                        PerformCompletionParams {
-                            provider: client::LanguageModelProvider::Zed,
-                            model: request.model.clone(),
-                            provider_request: RawValue::from_string(serde_json::to_string(
-                                &request,
-                            )?)?,
-                        },
-                        None,
-                    )
-                    .await?;
-                    Ok(open_ai::extract_text_from_events(response_lines(response)))
                 });
                 async move {
                     Ok(future
@@ -735,51 +699,6 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Google(_) => {
                 future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
-            }
-            CloudModel::Zed(model) => {
-                // All Zed models are OpenAI-based at the time of writing.
-                let mut request = request.into_open_ai(model.id().into(), None);
-                request.tool_choice = Some(open_ai::ToolChoice::Other(
-                    open_ai::ToolDefinition::Function {
-                        function: open_ai::FunctionDefinition {
-                            name: tool_name.clone(),
-                            description: None,
-                            parameters: None,
-                        },
-                    },
-                ));
-                request.tools = vec![open_ai::ToolDefinition::Function {
-                    function: open_ai::FunctionDefinition {
-                        name: tool_name.clone(),
-                        description: Some(tool_description),
-                        parameters: Some(input_schema),
-                    },
-                }];
-
-                self.request_limiter
-                    .run(async move {
-                        let response = Self::perform_llm_completion(
-                            client.clone(),
-                            llm_api_token,
-                            PerformCompletionParams {
-                                provider: client::LanguageModelProvider::Zed,
-                                model: request.model.clone(),
-                                provider_request: RawValue::from_string(serde_json::to_string(
-                                    &request,
-                                )?)?,
-                            },
-                            None,
-                        )
-                        .await?;
-
-                        Ok(open_ai::extract_tool_args_from_events(
-                            tool_name,
-                            Box::pin(response_lines(response)),
-                        )
-                        .await?
-                        .boxed())
-                    })
-                    .boxed()
             }
         }
     }

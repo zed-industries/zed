@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
-use node_runtime::DummyNodeRuntime;
+use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
@@ -44,20 +44,23 @@ impl HeadlessProject {
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
+        let node_runtime = NodeRuntime::unavailable();
+
+        languages::init(languages.clone(), node_runtime.clone(), cx);
+
         let worktree_store = cx.new_model(|cx| {
-            let mut store = WorktreeStore::new(None, true, fs.clone());
+            let mut store = WorktreeStore::local(true, fs.clone());
             store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             store
         });
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store =
-                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                DummyNodeRuntime::new(),
+                node_runtime,
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
@@ -108,6 +111,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
+        client.add_request_handler(cx.weak_model(), Self::handle_check_file_exists);
 
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
@@ -115,12 +119,6 @@ impl HeadlessProject {
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
-
-        client.add_model_request_handler(LspStore::handle_create_language_server);
-        client.add_model_request_handler(LspStore::handle_which_command);
-        client.add_model_request_handler(LspStore::handle_shell_env);
-        client.add_model_request_handler(LspStore::handle_try_exec);
-        client.add_model_request_handler(LspStore::handle_read_text_file);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
@@ -189,11 +187,34 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::AddWorktreeResponse> {
+        use client::ErrorCodeExt;
         let path = shellexpand::tilde(&message.payload.path).to_string();
+
+        let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
+        let path = PathBuf::from(path);
+
+        let canonicalized = match fs.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(e) => {
+                let mut parent = path
+                    .parent()
+                    .ok_or(e)
+                    .map_err(|_| anyhow!("{:?} does not exist", path))?;
+                if parent == Path::new("") {
+                    parent = util::paths::home_dir();
+                }
+                let parent = fs.canonicalize(parent).await.map_err(|_| {
+                    anyhow!(proto::ErrorCode::DevServerProjectPathDoesNotExist
+                        .with_tag("path", &path.to_string_lossy().as_ref()))
+                })?;
+                parent.join(path.file_name().unwrap())
+            }
+        };
+
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Path::new(&path),
+                    Arc::from(canonicalized),
                     true,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
@@ -297,5 +318,21 @@ impl HeadlessProject {
             }
         }
         Ok(proto::ListRemoteDirectoryResponse { entries })
+    }
+
+    pub async fn handle_check_file_exists(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::CheckFileExists>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::CheckFileExistsResponse> {
+        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+
+        let exists = fs.is_file(&PathBuf::from(expanded.clone())).await;
+
+        Ok(proto::CheckFileExistsResponse {
+            exists,
+            path: expanded,
+        })
     }
 }

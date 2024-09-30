@@ -11,7 +11,7 @@ use futures::{
     future::BoxFuture,
     select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, StreamExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion};
+use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, Task};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
@@ -51,11 +51,12 @@ pub struct SshSession {
     spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
     client_socket: Option<SshSocket>,
     state: Mutex<ProtoMessageHandlerSet>, // Lock
+    _io_task: Option<Task<Result<()>>>,
 }
 
 struct SshClientState {
     socket: SshSocket,
-    _master_process: process::Child,
+    master_process: process::Child,
     _temp_dir: TempDir,
 }
 
@@ -128,6 +129,7 @@ pub trait SshClientDelegate {
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
+    fn set_error(&self, error_message: String, cx: &mut AsyncAppContext);
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
@@ -173,8 +175,7 @@ impl SshSession {
         let mut child_stdout = remote_server_child.stdout.take().unwrap();
         let mut child_stdin = remote_server_child.stdin.take().unwrap();
 
-        let executor = cx.background_executor().clone();
-        executor.clone().spawn(async move {
+        let io_task = cx.background_executor().spawn(async move {
             let mut stdin_buffer = Vec::new();
             let mut stdout_buffer = Vec::new();
             let mut stderr_buffer = Vec::new();
@@ -208,16 +209,16 @@ impl SshSession {
 
                     result = child_stdout.read(&mut stdout_buffer).fuse() => {
                         match result {
-                            Ok(len) => {
-                                if len == 0 {
-                                    child_stdin.close().await?;
-                                    let status = remote_server_child.status().await?;
-                                    if !status.success() {
-                                        log::info!("channel exited with status: {status:?}");
-                                    }
-                                    return Ok(());
+                            Ok(0) => {
+                                child_stdin.close().await?;
+                                outgoing_rx.close();
+                                let status = remote_server_child.status().await?;
+                                if !status.success() {
+                                    log::error!("channel exited with status: {status:?}");
                                 }
-
+                                return Ok(());
+                            }
+                            Ok(len) => {
                                 if len < stdout_buffer.len() {
                                     child_stdout.read_exact(&mut stdout_buffer[len..]).await?;
                                 }
@@ -264,9 +265,18 @@ impl SshSession {
                     }
                 }
             }
-        }).detach();
+        });
 
-        cx.update(|cx| Self::new(incoming_rx, outgoing_tx, spawn_process_tx, Some(socket), cx))
+        cx.update(|cx| {
+            Self::new(
+                incoming_rx,
+                outgoing_tx,
+                spawn_process_tx,
+                Some(socket),
+                Some(io_task),
+                cx,
+            )
+        })
     }
 
     pub fn server(
@@ -275,7 +285,7 @@ impl SshSession {
         cx: &AppContext,
     ) -> Arc<SshSession> {
         let (tx, _rx) = mpsc::unbounded();
-        Self::new(incoming_rx, outgoing_tx, tx, None, cx)
+        Self::new(incoming_rx, outgoing_tx, tx, None, None, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -293,6 +303,7 @@ impl SshSession {
                     client_to_server_tx,
                     tx.clone(),
                     None, // todo()
+                    None,
                     cx,
                 )
             }),
@@ -301,6 +312,7 @@ impl SshSession {
                     client_to_server_rx,
                     server_to_client_tx,
                     tx.clone(),
+                    None,
                     None,
                     cx,
                 )
@@ -313,6 +325,7 @@ impl SshSession {
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
         client_socket: Option<SshSocket>,
+        io_task: Option<Task<Result<()>>>,
         cx: &AppContext,
     ) -> Arc<SshSession> {
         let this = Arc::new(Self {
@@ -322,13 +335,18 @@ impl SshSession {
             spawn_process_tx,
             client_socket,
             state: Default::default(),
+            _io_task: io_task,
         });
 
         cx.spawn(|cx| {
-            let this = this.clone();
+            let this = Arc::downgrade(&this);
             async move {
                 let peer_id = PeerId { owner_id: 0, id: 0 };
                 while let Some(incoming) = incoming_rx.next().await {
+                    let Some(this) = this.upgrade() else {
+                        return anyhow::Ok(());
+                    };
+
                     if let Some(request_id) = incoming.responding_to {
                         let request_id = MessageId(request_id);
                         let sender = this.response_channels.lock().remove(&request_id);
@@ -402,8 +420,13 @@ impl SshSession {
         let mut response_channels_lock = self.response_channels.lock();
         response_channels_lock.insert(MessageId(envelope.id), tx);
         drop(response_channels_lock);
-        self.outgoing_tx.unbounded_send(envelope).ok();
+        let result = self.outgoing_tx.unbounded_send(envelope);
         async move {
+            if let Err(error) = &result {
+                log::error!("failed to send message: {}", error);
+                return Err(anyhow!("failed to send message: {}", error));
+            }
+
             let response = rx.await.context("connection lost")?.0;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
                 return Err(RpcError::from_proto(error, type_name));
@@ -508,22 +531,25 @@ impl SshClientState {
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
 
-        let askpass_task = cx.spawn(|mut cx| async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let mut buffer = Vec::new();
-                let mut reader = BufReader::new(&mut stream);
-                if reader.read_until(b'\0', &mut buffer).await.is_err() {
-                    buffer.clear();
-                }
-                let password_prompt = String::from_utf8_lossy(&buffer);
-                if let Some(password) = delegate
-                    .ask_password(password_prompt.to_string(), &mut cx)
-                    .await
-                    .context("failed to get ssh password")
-                    .and_then(|p| p)
-                    .log_err()
-                {
-                    stream.write_all(password.as_bytes()).await.log_err();
+        let askpass_task = cx.spawn({
+            let delegate = delegate.clone();
+            |mut cx| async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let mut buffer = Vec::new();
+                    let mut reader = BufReader::new(&mut stream);
+                    if reader.read_until(b'\0', &mut buffer).await.is_err() {
+                        buffer.clear();
+                    }
+                    let password_prompt = String::from_utf8_lossy(&buffer);
+                    if let Some(password) = delegate
+                        .ask_password(password_prompt.to_string(), &mut cx)
+                        .await
+                        .context("failed to get ssh password")
+                        .and_then(|p| p)
+                        .log_err()
+                    {
+                        stream.write_all(password.as_bytes()).await.log_err();
+                    }
                 }
             }
         });
@@ -558,7 +584,22 @@ impl SshClientState {
         // has completed.
         let stdout = master_process.stdout.as_mut().unwrap();
         let mut output = Vec::new();
-        stdout.read_to_end(&mut output).await?;
+        let connection_timeout = std::time::Duration::from_secs(10);
+        let result = read_with_timeout(stdout, connection_timeout, &mut output).await;
+        if let Err(e) = result {
+            let error_message = if e.kind() == std::io::ErrorKind::TimedOut {
+                format!(
+                    "Failed to connect to host. Timed out after {:?}.",
+                    connection_timeout
+                )
+            } else {
+                format!("Failed to connect to host: {}.", e)
+            };
+
+            delegate.set_error(error_message, cx);
+            return Err(e.into());
+        }
+
         drop(askpass_task);
 
         if master_process.try_status()?.is_some() {
@@ -576,7 +617,7 @@ impl SshClientState {
                 connection_options,
                 socket_path,
             },
-            _master_process: master_process,
+            master_process,
             _temp_dir: temp_dir,
         })
     }
@@ -695,6 +736,37 @@ impl SshClientState {
                 dest_path.display(),
                 String::from_utf8_lossy(&output.stderr)
             ))
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn read_with_timeout(
+    stdout: &mut process::ChildStdout,
+    timeout: std::time::Duration,
+    output: &mut Vec<u8>,
+) -> Result<(), std::io::Error> {
+    smol::future::or(
+        async {
+            stdout.read_to_end(output).await?;
+            Ok::<_, std::io::Error>(())
+        },
+        async {
+            smol::Timer::after(timeout).await;
+
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Read operation timed out",
+            ))
+        },
+    )
+    .await
+}
+
+impl Drop for SshClientState {
+    fn drop(&mut self) {
+        if let Err(error) = self.master_process.kill() {
+            log::error!("failed to kill SSH master process: {}", error);
         }
     }
 }
