@@ -360,8 +360,11 @@ impl Editor {
 
                     h_flex()
                         .id(cx.block_id)
-                        .w_full()
                         .h(cx.line_height())
+                        .w_full()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .bg(cx.theme().colors().editor_background)
                         .child(
                             div()
                                 .id("gutter-strip")
@@ -381,12 +384,10 @@ impl Editor {
                         )
                         .child(
                             h_flex()
-                                .pl_1p5()
+                                .pl_2()
                                 .pr_6()
                                 .size_full()
                                 .justify_between()
-                                .border_t_1()
-                                .border_color(border_color)
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -513,7 +514,7 @@ impl Editor {
                                                 }),
                                         )
                                         .child(
-                                            IconButton::new("discard", IconName::RotateCcw)
+                                            IconButton::new("discard", IconName::Undo)
                                                 .shape(IconButtonShape::Square)
                                                 .icon_size(IconSize::Small)
                                                 .tooltip({
