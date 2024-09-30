@@ -1646,7 +1646,16 @@ impl EditorElement {
                         return None;
                     }
                     if snapshot.is_line_folded(multibuffer_row) {
-                        return None;
+                        // Skip folded indicators, unless it's the starting line of a fold.
+                        if multibuffer_row
+                            .0
+                            .checked_sub(1)
+                            .map_or(false, |previous_row| {
+                                snapshot.is_line_folded(MultiBufferRow(previous_row))
+                            })
+                        {
+                            return None;
+                        }
                     }
                     let button = editor.render_run_indicator(
                         &self.style,
