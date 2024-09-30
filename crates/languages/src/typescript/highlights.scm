@@ -2,6 +2,23 @@
 
 (identifier) @variable
 
+; Special identifiers
+
+((identifier) @constructor
+ (#match? @constructor "^[A-Z]"))
+
+((identifier) @type
+ (#match? @type "^[A-Z]"))
+(type_identifier) @type
+(predefined_type) @type.builtin
+
+([
+  (identifier)
+  (shorthand_property_identifier)
+  (shorthand_property_identifier_pattern)
+ ] @constant
+ (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
+
 ; Properties
 
 (property_identifier) @property
@@ -42,23 +59,6 @@
 (assignment_expression
   left: (identifier) @function
   right: [(function_expression) (arrow_function)])
-
-; Special identifiers
-
-((identifier) @constructor
- (#match? @constructor "^[A-Z]"))
-
-((identifier) @type
- (#match? @type "^[A-Z]"))
-(type_identifier) @type
-(predefined_type) @type.builtin
-
-([
-  (identifier)
-  (shorthand_property_identifier)
-  (shorthand_property_identifier_pattern)
- ] @constant
- (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
 
 ; Literals
 
@@ -156,53 +156,6 @@
   "}"
 ]  @punctuation.bracket
 
-[
-  "as"
-  "async"
-  "await"
-  "break"
-  "case"
-  "catch"
-  "class"
-  "const"
-  "continue"
-  "debugger"
-  "default"
-  "delete"
-  "do"
-  "else"
-  "export"
-  "extends"
-  "finally"
-  "for"
-  "from"
-  "function"
-  "get"
-  "if"
-  "import"
-  "in"
-  "instanceof"
-  "is"
-  "let"
-  "new"
-  "of"
-  "return"
-  "satisfies"
-  "set"
-  "static"
-  "switch"
-  "target"
-  "throw"
-  "try"
-  "typeof"
-  "using"
-  "var"
-  "void"
-  "while"
-  "with"
-  "yield"
-] @keyword
-
 (template_substitution
   "${" @punctuation.special
   "}" @punctuation.special) @embedded
@@ -217,19 +170,63 @@
 
 ; Keywords
 
-[ "abstract"
+[
+  "abstract"
+  "as"
+  "async"
+  "await"
+  "break"
+  "case"
+  "catch"
+  "class"
+  "const"
+  "continue"
+  "debugger"
   "declare"
+  "default"
+  "delete"
+  "do"
+  "else"
   "enum"
   "export"
+  "extends"
+  "finally"
+  "for"
+  "from"
+  "function"
+  "get"
+  "if"
   "implements"
+  "import"
+  "in"
   "infer"
+  "instanceof"
   "interface"
+  "is"
   "keyof"
+  "let"
   "namespace"
+  "new"
+  "of"
+  "override"
   "private"
   "protected"
   "public"
-  "type"
   "readonly"
-  "override"
+  "return"
+  "satisfies"
+  "set"
+  "static"
+  "switch"
+  "target"
+  "throw"
+  "try"
+  "type"
+  "typeof"
+  "using"
+  "var"
+  "void"
+  "while"
+  "with"
+  "yield"
 ] @keyword
