@@ -2,21 +2,32 @@
 #
 # This script installs an up-to-date version of CMake.
 #
+# For MacOS use Homebrew to install the latest version.
+#
 # For Ubuntu use the official KitWare Apt repository with backports.
 # See: https://apt.kitware.com/
 #
 # For other systems (RHEL 8.x, 9.x, AmazonLinux, SUSE, Fedora, Arch, etc)
 # use the official CMake installer script from KitWare.
 #
+# Note this is similar to how GitHub Actions runners install cmake:
+# https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/install-cmake.sh
+#
 # Upstream:  3.30.4 (2024-09-27)
 
 set -euo pipefail
 
-if [ -z "${1:-}" ]; then
-  echo "Usage: $0 3.30.4"
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  brew --version >/dev/null \
+    || echo "Error: Homebrew is required to install cmake on MacOS." && exit 1
+  echo "Installing cmake via Homebrew (can't pin to old versions)."
+  brew install cmake
+  exit 0
+elif [ -z "${1:-}" ]; then
+  echo "Usage: $0 [3.30.4]"
   exit 1
 fi
-
 CMAKE_VERSION="${CMAKE_VERSION:-${1:-3.30.4}}"
 
 if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -v doas || true)"; fi
@@ -24,8 +35,6 @@ if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -
 if cmake --version | grep -q "$CMAKE_VERSION"; then
   echo "CMake $CMAKE_VERSION is already installed."
   exit 0
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-  brew install cmake
 elif [ "$(uname -s)" != "Linux" ]; then
   echo "Error: This script is intended for MacOS/Linux systems only."
   exit 1
@@ -43,7 +52,7 @@ elif [ -e /etc/lsb-release ] && grep -qP 'DISTRIB_ID=Ubuntu' /etc/lsb-release; t
     | $SUDO tee /etc/apt/sources.list.d/kitware.list >/dev/null
   $SUDO apt-get update
   $SUDO apt-get install -y kitware-archive-keyring cmake==$CMAKE_VERSION
-elif [[ "$(uname -s)" == "Linux" ]]; then
+else
   arch="$(uname -m)"
   if [ "$arch" != "x86_64" ] && [ "$arch" != "aarch64" ]; then
     echo "Error. Only x86_64 and aarch64 are supported."

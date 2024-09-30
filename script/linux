@@ -75,6 +75,7 @@ if [[ -n $dnf ]]; then
     sqlite-devel
     jq
     git
+    tar
   )
   if grep -qP '^ID="(fedora)' /etc/os-release; then
     deps+=(
