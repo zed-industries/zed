@@ -5,10 +5,13 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lib]
+path = "src/story.rs"
+
 [lints]
 workspace = true
 
 [dependencies]
 gpui.workspace = true
-itertools = { package = "itertools", version = "0.10" }
+itertools = { package = "itertools", version = "0.13" }
 smallvec.workspace = true

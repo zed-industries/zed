@@ -225,8 +225,15 @@ impl ViewInputHandler for TextInput {
         Some(self.content[range].to_string())
     }
 
-    fn selected_text_range(&mut self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
-        Some(self.range_to_utf16(&self.selected_range))
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _cx: &mut ViewContext<Self>,
+    ) -> Option<UTF16Selection> {
+        Some(UTF16Selection {
+            range: self.range_to_utf16(&self.selected_range),
+            reversed: self.selection_reversed,
+        })
     }
 
     fn marked_text_range(&self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
@@ -291,9 +298,7 @@ impl ViewInputHandler for TextInput {
         bounds: Bounds<Pixels>,
         _cx: &mut ViewContext<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let Some(last_layout) = self.last_layout.as_ref() else {
-            return None;
-        };
+        let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
@@ -462,9 +467,12 @@ impl Element for TextElement {
         let line = prepaint.line.take().unwrap();
         line.paint(bounds.origin, cx.line_height(), cx).unwrap();
 
-        if let Some(cursor) = prepaint.cursor.take() {
-            cx.paint_quad(cursor);
+        if focus_handle.is_focused(cx) {
+            if let Some(cursor) = prepaint.cursor.take() {
+                cx.paint_quad(cursor);
+            }
         }
+
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
@@ -494,7 +502,6 @@ impl Render for TextInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .bg(rgb(0xeeeeee))
-            .size_full()
             .line_height(px(30.))
             .text_size(px(24.))
             .child(
@@ -519,6 +526,13 @@ impl FocusableView for TextInput {
 struct InputExample {
     text_input: View<TextInput>,
     recent_keystrokes: Vec<Keystroke>,
+    focus_handle: FocusHandle,
+}
+
+impl FocusableView for InputExample {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl InputExample {
@@ -535,6 +549,7 @@ impl Render for InputExample {
         let num_keystrokes = self.recent_keystrokes.len();
         div()
             .bg(rgb(0xaaaaaa))
+            .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
             .size_full()
@@ -610,9 +625,10 @@ fn main() {
                         last_bounds: None,
                         is_selecting: false,
                     });
-                    cx.new_view(|_| InputExample {
+                    cx.new_view(|cx| InputExample {
                         text_input,
                         recent_keystrokes: vec![],
+                        focus_handle: cx.focus_handle(),
                     })
                 },
             )

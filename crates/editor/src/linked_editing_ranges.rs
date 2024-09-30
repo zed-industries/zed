@@ -73,7 +73,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
 
-                    let linked_edits_task = project.linked_edit(&buffer, *start, cx);
+                    let linked_edits_task = project.linked_edit(buffer, *start, cx);
                     let highlights = move || async move {
                         let edits = linked_edits_task.await.log_err()?;
                         // Find the range containing our current selection.
@@ -87,9 +87,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                             range.start.to_point(&snapshot) <= start_point
                                 && range.end.to_point(&snapshot) >= end_point
                         });
-                        if _current_selection_contains_range.is_none() {
-                            return None;
-                        }
+                        _current_selection_contains_range?;
                         // Now link every range as each-others sibling.
                         let mut siblings: HashMap<Range<text::Anchor>, Vec<_>> = Default::default();
                         let mut insert_sorted_anchor =

@@ -8,7 +8,7 @@ impl RenderOnce for ListSeparator {
         div()
             .h_px()
             .w_full()
-            .my_1()
+            .my(Spacing::Medium.rems(cx))
             .bg(cx.theme().colors().border_variant)
     }
 }

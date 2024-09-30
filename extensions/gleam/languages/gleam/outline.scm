@@ -29,3 +29,5 @@
     (visibility_modifier)? @context
     "const" @context
     name: (_) @name) @item
+
+(statement_comment) @annotation

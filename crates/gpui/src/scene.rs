@@ -23,7 +23,7 @@ pub(crate) struct Scene {
     pub(crate) underlines: Vec<Underline>,
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
-    pub(crate) surfaces: Vec<Surface>,
+    pub(crate) surfaces: Vec<PaintSurface>,
 }
 
 impl Scene {
@@ -183,7 +183,7 @@ pub(crate) enum Primitive {
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
-    Surface(Surface),
+    Surface(PaintSurface),
 }
 
 impl Primitive {
@@ -231,9 +231,9 @@ struct BatchIterator<'a> {
     polychrome_sprites: &'a [PolychromeSprite],
     polychrome_sprites_start: usize,
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
-    surfaces: &'a [Surface],
+    surfaces: &'a [PaintSurface],
     surfaces_start: usize,
-    surfaces_iter: Peekable<slice::Iter<'a, Surface>>,
+    surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -411,7 +411,7 @@ pub(crate) enum PrimitiveBatch<'a> {
         texture_id: AtlasTextureId,
         sprites: &'a [PolychromeSprite],
     },
-    Surfaces(&'a [Surface]),
+    Surfaces(&'a [PaintSurface]),
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
@@ -592,9 +592,9 @@ impl TransformationMatrix {
     pub fn apply(&self, point: Point<Pixels>) -> Point<Pixels> {
         let input = [point.x.0, point.y.0];
         let mut output = self.translation;
-        for i in 0..2 {
-            for k in 0..2 {
-                output[i] += self.rotation_scale[i][k] * input[k];
+        for (i, output_cell) in output.iter_mut().enumerate() {
+            for (k, input_cell) in input.iter().enumerate() {
+                *output_cell += self.rotation_scale[i][k] * *input_cell;
             }
         }
         Point::new(output[0].into(), output[1].into())
@@ -640,16 +640,19 @@ impl From<MonochromeSprite> for Primitive {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
     pub order: DrawOrder,
+    pub pad: u32, // align to 8 bytes
     pub grayscale: bool,
+    pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
 }
+impl Eq for PolychromeSprite {}
 
 impl Ord for PolychromeSprite {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -673,7 +676,7 @@ impl From<PolychromeSprite> for Primitive {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Surface {
+pub(crate) struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
@@ -681,20 +684,20 @@ pub(crate) struct Surface {
     pub image_buffer: media::core_video::CVImageBuffer,
 }
 
-impl Ord for Surface {
+impl Ord for PaintSurface {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.order.cmp(&other.order)
     }
 }
 
-impl PartialOrd for Surface {
+impl PartialOrd for PaintSurface {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl From<Surface> for Primitive {
-    fn from(surface: Surface) -> Self {
+impl From<PaintSurface> for Primitive {
+    fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
     }
 }

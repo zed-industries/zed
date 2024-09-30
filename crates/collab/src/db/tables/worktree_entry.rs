@@ -21,6 +21,7 @@ pub struct Model {
     pub is_external: bool,
     pub is_deleted: bool,
     pub scan_id: i64,
+    pub is_fifo: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

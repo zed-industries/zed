@@ -1,4 +1,6 @@
-#[path = "../wit/since_v0.0.7/settings.rs"]
+//! Provides access to Zed settings.
+
+#[path = "../wit/since_v0.1.0/settings.rs"]
 mod types;
 
 use crate::{wit, Result, SettingsLocation, Worktree};

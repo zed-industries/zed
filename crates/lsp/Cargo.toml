@@ -17,7 +17,7 @@ test-support = ["async-pipe"]
 
 [dependencies]
 anyhow.workspace = true
-async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553", optional = true }
+async-pipe = { workspace = true, optional = true }
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -35,7 +35,7 @@ release_channel.workspace = true
 windows.workspace = true
 
 [dev-dependencies]
-async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
+async-pipe.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

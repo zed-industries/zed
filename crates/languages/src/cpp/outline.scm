@@ -28,6 +28,10 @@
 (enumerator
     name: (_) @name) @item
 
+(concept_definition
+    "concept" @context
+    name: (_) @name) @item
+
 (declaration
     (storage_class_specifier) @context
     (type_qualifier)? @context
@@ -147,3 +151,5 @@
                     ")" @context)))
     ]
     (type_qualifier)? @context) @item
+
+(comment) @annotation

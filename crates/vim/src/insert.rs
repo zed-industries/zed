@@ -1,31 +1,26 @@
-use crate::{
-    normal::{mark::create_mark, repeat},
-    state::Mode,
-    Vim,
-};
-use editor::{scroll::Autoscroll, Bias};
+use crate::{state::Mode, Vim};
+use editor::{scroll::Autoscroll, Bias, Editor};
 use gpui::{actions, Action, ViewContext};
 use language::SelectionGoal;
-use workspace::Workspace;
 
 actions!(vim, [NormalBefore]);
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(normal_before);
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, Vim::normal_before);
 }
 
-fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<Workspace>) {
-    let should_repeat = Vim::update(cx, |vim, cx| {
-        if vim.state().active_operator().is_some() {
-            vim.update_state(|state| state.operator_stack.clear());
-            vim.sync_vim_settings(cx);
-            return false;
+impl Vim {
+    fn normal_before(&mut self, action: &NormalBefore, cx: &mut ViewContext<Self>) {
+        if self.active_operator().is_some() {
+            self.operator_stack.clear();
+            self.sync_vim_settings(cx);
+            return;
         }
-        let count = vim.take_count(cx).unwrap_or(1);
-        vim.stop_recording_immediately(action.boxed_clone());
-        if count <= 1 || vim.workspace_state.dot_replaying {
-            create_mark(vim, "^".into(), false, cx);
-            vim.update_active_editor(cx, |_, editor, cx| {
+        let count = self.take_count(cx).unwrap_or(1);
+        self.stop_recording_immediately(action.boxed_clone(), cx);
+        if count <= 1 || Vim::globals(cx).dot_replaying {
+            self.create_mark("^".into(), false, cx);
+            self.update_editor(cx, |_, editor, cx| {
                 editor.dismiss_menus_and_popups(false, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_cursors_with(|map, mut cursor, _| {
@@ -34,15 +29,11 @@ fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<
                     });
                 });
             });
-            vim.switch_mode(Mode::Normal, false, cx);
-            false
-        } else {
-            true
+            self.switch_mode(Mode::Normal, false, cx);
+            return;
         }
-    });
 
-    if should_repeat {
-        repeat::repeat(cx, true)
+        self.repeat(true, cx)
     }
 }
 

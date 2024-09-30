@@ -1,8 +1,6 @@
+use crate::{BufferSnapshot, Point, ToPoint};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
-    relative, AppContext, BackgroundExecutor, FontStyle, HighlightStyle, StyledText, TextStyle,
-    WhiteSpace,
-};
+use gpui::{relative, AppContext, BackgroundExecutor, HighlightStyle, StyledText, TextStyle};
 use settings::Settings;
 use std::ops::Range;
 use theme::{color_alpha, ActiveTheme, ThemeSettings};
@@ -16,13 +14,39 @@ pub struct Outline<T> {
     path_candidate_prefixes: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
     pub text: String,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
+    pub body_range: Option<Range<T>>,
+    pub annotation_range: Option<Range<T>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolPath(pub String);
+
+impl<T: ToPoint> OutlineItem<T> {
+    /// Converts to an equivalent outline item, but with parameterized over Points.
+    pub fn to_point(&self, buffer: &BufferSnapshot) -> OutlineItem<Point> {
+        OutlineItem {
+            depth: self.depth,
+            range: self.range.start.to_point(buffer)..self.range.end.to_point(buffer),
+            text: self.text.clone(),
+            highlight_ranges: self.highlight_ranges.clone(),
+            name_ranges: self.name_ranges.clone(),
+            body_range: self
+                .body_range
+                .as_ref()
+                .map(|r| r.start.to_point(buffer)..r.end.to_point(buffer)),
+            annotation_range: self
+                .annotation_range
+                .as_ref()
+                .map(|r| r.start.to_point(buffer)..r.end.to_point(buffer)),
+        }
+    }
 }
 
 impl<T> Outline<T> {
@@ -63,6 +87,31 @@ impl<T> Outline<T> {
         }
     }
 
+    /// Find the most similar symbol to the provided query using normalized Levenshtein distance.
+    pub fn find_most_similar(&self, query: &str) -> Option<(SymbolPath, &OutlineItem<T>)> {
+        const SIMILARITY_THRESHOLD: f64 = 0.6;
+
+        let (position, similarity) = self
+            .path_candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                let similarity = strsim::normalized_levenshtein(&candidate.string, query);
+                (index, similarity)
+            })
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;
+
+        if similarity >= SIMILARITY_THRESHOLD {
+            self.path_candidates
+                .get(position)
+                .map(|candidate| SymbolPath(candidate.string.clone()))
+                .zip(self.items.get(position))
+        } else {
+            None
+        }
+    }
+
+    /// Find all outline symbols according to a longest subsequence match with the query, ordered descending by match score.
     pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
         let query = query.trim_start();
         let is_path_query = query.contains(' ');
@@ -149,8 +198,10 @@ pub fn render_item<T>(
     match_ranges: impl IntoIterator<Item = Range<usize>>,
     cx: &AppContext,
 ) -> StyledText {
-    let mut highlight_style = HighlightStyle::default();
-    highlight_style.background_color = Some(color_alpha(cx.theme().colors().text_accent, 0.3));
+    let highlight_style = HighlightStyle {
+        background_color: Some(color_alpha(cx.theme().colors().text_accent, 0.3)),
+        ..Default::default()
+    };
     let custom_highlights = match_ranges
         .into_iter()
         .map(|range| (range, highlight_style));
@@ -164,14 +215,11 @@ pub fn render_item<T>(
         color: cx.theme().colors().text,
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
-        font_style: FontStyle::Normal,
         line_height: relative(1.),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-        white_space: WhiteSpace::Normal,
+        ..Default::default()
     };
     let highlights = gpui::combine_highlights(
         custom_highlights,
@@ -179,4 +227,47 @@ pub fn render_item<T>(
     );
 
     StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_most_similar_with_low_similarity() {
+        let outline = Outline::new(vec![
+            OutlineItem {
+                depth: 0,
+                range: Point::new(0, 0)..Point::new(5, 0),
+                text: "fn process".to_string(),
+                highlight_ranges: vec![],
+                name_ranges: vec![3..10],
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                range: Point::new(7, 0)..Point::new(12, 0),
+                text: "struct DataProcessor".to_string(),
+                highlight_ranges: vec![],
+                name_ranges: vec![7..20],
+                body_range: None,
+                annotation_range: None,
+            },
+        ]);
+        assert_eq!(
+            outline.find_most_similar("pub fn process"),
+            Some((SymbolPath("fn process".into()), &outline.items[0]))
+        );
+        assert_eq!(
+            outline.find_most_similar("async fn process"),
+            Some((SymbolPath("fn process".into()), &outline.items[0])),
+        );
+        assert_eq!(
+            outline.find_most_similar("struct Processor"),
+            Some((SymbolPath("struct DataProcessor".into()), &outline.items[1]))
+        );
+        assert_eq!(outline.find_most_similar("struct User"), None);
+        assert_eq!(outline.find_most_similar("struct"), None);
+    }
 }

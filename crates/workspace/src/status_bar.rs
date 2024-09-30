@@ -121,7 +121,7 @@ impl StatusBar {
                 return Some(index + self.left_items.len());
             }
         }
-        return None;
+        None
     }
 
     pub fn insert_item_after<T>(

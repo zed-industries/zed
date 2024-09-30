@@ -51,6 +51,7 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-t": "editor::Transpose",
+      "alt-q": "editor::Rewrap",
       "cmd-backspace": "editor::DeleteToBeginningOfLine",
       "cmd-delete": "editor::DeleteToEndOfLine",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
@@ -127,7 +128,9 @@
       "cmd-'": "editor::ToggleHunkDiff",
       "cmd-\"": "editor::ExpandAllHunkDiffs",
       "cmd-alt-g b": "editor::ToggleGitBlame",
-      "cmd-i": "editor::ShowSignatureHelp"
+      "cmd-i": "editor::ShowSignatureHelp",
+      "ctrl-f12": "editor::GoToDeclaration",
+      "alt-ctrl-f12": "editor::GoToDeclarationSplit"
     }
   },
   {
@@ -135,6 +138,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
+      "cmd-enter": "editor::NewlineBelow",
       "cmd-shift-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
@@ -147,17 +151,11 @@
     }
   },
   {
-    "context": "Editor && mode == full && !jupyter",
-    "bindings": {
-      "cmd-enter": "editor::NewlineBelow"
-    }
-  },
-  {
     "context": "Editor && mode == full && inline_completion",
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "cmd-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -181,11 +179,22 @@
     }
   },
   {
+    "context": "Editor && jupyter && !ContextEditor",
+    "bindings": {
+      "ctrl-shift-enter": "repl::Run",
+      "ctrl-alt-enter": "repl::RunInPlace"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "bindings": {
+      "cmd-k c": "assistant::CopyCode",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector"
+      "alt-m": "assistant::ToggleModelSelector",
+      "cmd-k h": "assistant::DeployHistory",
+      "cmd-k l": "assistant::DeployPromptLibrary",
+      "cmd-n": "assistant::NewContext"
     }
   },
   {
@@ -223,7 +232,7 @@
     }
   },
   {
-    "context": "BufferSearchBar && in_replace",
+    "context": "BufferSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "cmd-enter": "search::ReplaceAll"
@@ -278,6 +287,8 @@
       "cmd-}": "pane::ActivateNextItem",
       "alt-cmd-left": "pane::ActivatePrevItem",
       "alt-cmd-right": "pane::ActivateNextItem",
+      "ctrl-shift-pageup": "pane::SwapItemLeft",
+      "ctrl-shift-pagedown": "pane::SwapItemRight",
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": "pane::CloseInactiveItems",
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
@@ -292,8 +303,8 @@
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
       "alt-cmd-f": "project_search::ToggleFilters",
-      "alt-cmd-g": "search::ToggleRegex",
-      "alt-cmd-x": "search::ToggleRegex"
+      "alt-cmd-x": "search::ToggleRegex",
+      "cmd-k shift-enter": "pane::TogglePinTab"
     }
   },
   // Bindings from VS Code
@@ -336,6 +347,11 @@
       "cmd-shift-\\": "editor::MoveToEnclosingBracket",
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
+      "cmd-k cmd-l": "editor::ToggleFold",
+      "cmd-k cmd-[": "editor::FoldRecursive",
+      "cmd-k cmd-]": "editor::UnfoldRecursive",
+      "cmd-k cmd-0": "editor::FoldAll",
+      "cmd-k cmd-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "alt-cmd-r": "editor::RevealInFileManager",
@@ -469,7 +485,7 @@
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
-      "tab": "editor::ConfirmCompletion"
+      "tab": "editor::ComposeCompletion"
     }
   },
   {
@@ -517,13 +533,20 @@
     }
   },
   {
+    "context": "PromptEditor",
+    "bindings": {
+      "ctrl-[": "assistant::CyclePreviousInlineAssist",
+      "ctrl-]": "assistant::CycleNextInlineAssist"
+    }
+  },
+  {
     "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "cmd-enter": "project_search::SearchInNew"
     }
   },
   {
-    "context": "OutlinePanel",
+    "context": "OutlinePanel && not_editing",
     "bindings": {
       "escape": "menu::Cancel",
       "left": "outline_panel::CollapseSelectedEntry",
@@ -531,7 +554,7 @@
       "cmd-alt-c": "outline_panel::CopyPath",
       "alt-cmd-shift-c": "outline_panel::CopyRelativePath",
       "alt-cmd-r": "outline_panel::RevealInFileManager",
-      "space": "outline_panel::Open",
+      "space": ["outline_panel::Open", { "change_selection": false }],
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev"
     }
@@ -556,8 +579,8 @@
       "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFileManager",
+      "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
-
       "alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
@@ -568,12 +591,6 @@
     "context": "ProjectPanel && not_editing",
     "bindings": {
       "space": "project_panel::Open"
-    }
-  },
-  {
-    "context": "Editor && jupyter && !ContextEditor",
-    "bindings": {
-      "cmd-enter": "repl::Run"
     }
   },
   {
@@ -628,6 +645,7 @@
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
+      "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
       "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences

@@ -13,7 +13,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["tempfile", "git2"]
+test-support = ["tempfile", "git2", "rand"]
 
 [dependencies]
 anyhow.workspace = true
@@ -23,7 +23,7 @@ futures.workspace = true
 git2 = { workspace = true, optional = true }
 globset.workspace = true
 log.workspace = true
-rand.workspace = true
+rand = {workspace = true, optional = true}
 regex.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
@@ -40,3 +40,4 @@ tendril = "0.4.3"
 [dev-dependencies]
 git2.workspace = true
 tempfile.workspace = true
+rand.workspace = true

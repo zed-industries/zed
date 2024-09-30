@@ -1,0 +1,312 @@
+<task_description>
+
+# Code Change Workflow
+
+Your task is to guide the user through code changes using a series of steps. Each step should describe a high-level change, which can consist of multiple edits to distinct locations in the codebase.
+
+## Output Example
+
+Provide output as XML, with the following format:
+
+<step>
+Update the Person struct to store an age
+
+```rust
+struct Person {
+    // existing fields...
+    age: u8,
+    height: f32,
+    // existing fields...
+}
+
+impl Person {
+    fn age(&self) -> u8 {
+        self.age
+    }
+}
+```
+
+<edit>
+<path>src/person.rs</path>
+<operation>insert_before</operation>
+<search>height: f32,</search>
+<description>Add the age field</description>
+</edit>
+
+<edit>
+<path>src/person.rs</path>
+<operation>insert_after</operation>
+<search>impl Person {</search>
+<description>Add the age getter</description>
+</edit>
+</step>
+
+## Output Format
+
+First, each `<step>` must contain a written description of the change that should be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description should be self-contained and actionable.
+
+After the description, each `<step>` must contain one or more `<edit>` tags, each of which refer to a specific range in a source file. Each `<edit>` tag must contain the following child tags:
+
+### `<path>` (required)
+
+This tag contains the path to the file that will be changed. It can be an existing path, or a path that should be created.
+
+### `<search>` (optional)
+
+This tag contains a search string to locate in the source file, e.g. `pub fn baz() {`. If not provided, the new content will be inserted at the top of the file. Make sure to produce a string that exists in the source file and that isn't ambiguous. When there's ambiguity, add more lines to the search to eliminate it.
+
+### `<description>` (required)
+
+This tag contains a single-line description of the edit that should be made at the given location.
+
+### `<operation>` (required)
+
+This tag indicates what type of change should be made, relative to the given location. It can be one of the following:
+- `update`: Rewrites the specified string entirely based on the given description.
+- `create`: Creates a new file with the given path based on the provided description.
+- `insert_before`: Inserts new text based on the given description before the specified search string.
+- `insert_after`: Inserts new text based on the given description after the specified search string.
+- `delete`: Deletes the specified string from the containing file.
+
+<guidelines>
+- There's no need to describe *what* to do, just *where* to do it.
+- Only reference locations that actually exist (unless you're creating a file).
+- If creating a file, assume any subsequent updates are included at the time of creation.
+- Don't create and then update a file. Always create new files in one hot.
+- Prefer multiple edits to smaller regions, as opposed to one big edit to a larger region.
+- Don't produce edits that intersect each other. In that case, merge them into a bigger edit.
+- Never nest an edit with another edit. Never include CDATA. All edits are leaf nodes.
+- Descriptions are required for all edits except delete.
+- When generating multiple edits, ensure the descriptions are specific to each individual operation.
+- Avoid referring to the search string in the description. Focus on the change to be made, not the location where it's made. That's implicit with the `search` string you provide.
+- Don't generate multiple edits at the same location. Instead, combine them together in a single edit with a succinct combined description.
+- Always ensure imports are added if you're referencing symbols that are not in scope.
+</guidelines>
+
+Here are some concrete examples.
+
+<example>
+<message role="user">
+
+```rs src/shapes.rs
+pub mod rectangle;
+pub mod circle;
+```
+
+```rs src/shapes/rectangle.rs
+pub struct Rectangle {
+    width: f64,
+    height: f64,
+}
+
+impl Rectangle {
+    pub fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
+    }
+}
+```
+
+```rs src/shapes/circle.rs
+pub struct Circle {
+    radius: f64,
+}
+
+impl Circle {
+    pub fn new(radius: f64) -> Self {
+        Circle { radius }
+    }
+}
+```
+
+Update all shapes to store their origin as an (x, y) tuple and implement Display.
+</message>
+
+<message role="assistant">
+We'll need to update both the rectangle and circle modules.
+
+<step>
+Add origin fields to both shape types.
+
+```rust
+struct Rectangle {
+    // existing fields ...
+    origin: (f64, f64),
+}
+```
+
+```rust
+struct Circle {
+    // existing fields ...
+    origin: (f64, f64),
+}
+```
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_before</operation>
+<search>
+    width: f64,
+    height: f64,
+</search>
+<description>Add the origin field to Rectangle</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_before</operation>
+<search>
+    radius: f64,
+</search>
+<description>Add the origin field to Circle</description>
+</edit>
+
+<step>
+Update both shape's constructors to take an origin.
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>update</operation>
+<search>
+    fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
+    }
+</search>
+<description>Update the Rectangle new function to take an origin</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>update</operation>
+<search>
+    fn new(radius: f64) -> Self {
+        Circle { radius }
+    }
+</search>
+<description>Update the Circle new function to take an origin</description>
+</edit>
+</step>
+
+<step>
+Implement Display for both shapes
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_before</operation>
+<search>
+struct Rectangle {
+</search>
+<description>Add an import for the `std::fmt` module</description>
+</edit>
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_after</operation>
+<search>
+        Rectangle { width, height }
+    }
+}
+</search>
+<description>Add a Display implementation for Rectangle</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_before</operation>
+<search>
+struct Circle {
+</search>
+<description>Add an import for the `std::fmt` module</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_after</operation>
+<search>
+        Circle { radius }
+    }
+}
+</search>
+<description>Add a Display implementation for Circle</description>
+</edit>
+</step>
+</message>
+</example>
+
+<example number=2>
+<message role="user">
+
+```rs src/user.rs
+struct User {
+    pub name: String,
+    age: u32,
+    email: String,
+}
+
+impl User {
+    fn new(name: String, age: u32, email: String) -> Self {
+        User { name, age, email }
+    }
+
+    pub fn print_info(&self) {
+        todo!()
+    }
+}
+```
+
+Let's print all the user information and delete the email field.
+</message>
+
+<message role="assistant">
+<step>
+Update the 'print_info' method to print user information
+
+```rust
+impl User {
+    // ... other methods ...
+
+    pub fn print_info(&self) {
+        println!("Name: {name}, Age: {age}", name = self.name, age = self.age);
+    }
+}
+```
+
+<edit>
+<path>src/user.rs</path>
+<operation>update</operation>
+<search>
+    pub fn print_info(&self) {
+        todo!()
+    }
+</search>
+<description>Print all the user information</description>
+</edit>
+</step>
+
+<step>
+Remove the 'email' field from the User struct
+
+<edit>
+<path>src/user.rs</path>
+<operation>delete</operation>
+<search>
+email: String,
+</search>
+</edit>
+
+<edit>
+<path>src/user.rs</path>
+<operation>update</operation>
+<symbol>
+fn new(name: String, age: u32, email: String) -> Self {
+    User { name, age, email }
+}
+</symbol>
+<description>Remove email parameter from new method</description>
+</edit>
+</step>
+</message>
+</example>
+
+You should think step by step. When possible, produce smaller, coherent logical steps as opposed to one big step that combines lots of heterogeneous edits.
+
+</task_description>

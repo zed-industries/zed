@@ -1,0 +1,10 @@
+name = "RBS"
+grammar = "rbs"
+path_suffixes = ["rbs"]
+autoclose_before = "]})"
+brackets = [
+    { start = "(", end = ")", close = true, newline = false },
+    { start = "{", end = "}", close = true, newline = false },
+    { start = "[", end = "]", close = true, newline = false },
+]
+line_comments = ["#"]

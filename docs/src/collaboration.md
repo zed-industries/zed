@@ -4,8 +4,6 @@ Only collaborate with people that you trust. Since sharing a project gives them 
 
 In the future, we will do more to prevent this type of access beyond the shared project and add more control over what collaborators can do, but for now, only collaborate with people you trust.
 
-Note: we are working on a new version of this feature called [Channels](channels/). If you'd like to be part of the private beta, please contact us!
-
 ## Adding a collaborator to a call
 
 Before you can collaborate, you'll need to add a collaborator to your contacts. To do this:
@@ -26,13 +24,17 @@ When you invite a collaborator to a project not in a call they will receive a no
 
 ### Inviting non-Zed users
 
-If someone you want to collaborate with has not yet signed up for Zed, they will need to [download the app](https://zed.dev/download) and sign in for the first time before you can add them.
+If someone you want to collaborate with has not yet signed up for Zed, they will need to [download the app](https://zed.dev/download) and sign in for the first time before you can add them. Identity is tied to GitHub accounts, so new users will need to authenticate with GitHub in order to sign into Zed.
+
+### Voice chat
+
+When joining a call, Zed will automatically share your microphone with other users in the call, if your OS allows it. This isn't tied to your project. You can disable this for your client via the [`mute_on_join`](./configuring-zed.md#calls) setting.
 
 ## Collaborating on a project
 
 ### Share a project
 
-When you invite a collaborator to join your project, a new call begins. Your Zed windows will show the call participants in the top right of the window.
+When you invite a collaborator to join your project, a new call begins. Your Zed windows will show the call participants in the title bar of the window.
 
 ![A new Zed call with two collaborators](https://zed.dev/img/collaboration/new-call.png)
 

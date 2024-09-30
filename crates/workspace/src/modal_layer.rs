@@ -1,9 +1,5 @@
-use gpui::{
-    div, prelude::*, px, AnyView, DismissEvent, FocusHandle, ManagedView, Render, Subscription,
-    View, ViewContext, WindowContext,
-};
-use theme::ActiveTheme as _;
-use ui::{h_flex, v_flex};
+use gpui::{AnyView, DismissEvent, FocusHandle, ManagedView, Subscription, View};
+use ui::prelude::*;
 
 pub enum DismissDecision {
     Dismiss(bool),
@@ -50,6 +46,12 @@ pub struct ActiveModal {
 pub struct ModalLayer {
     active_modal: Option<ActiveModal>,
     dismiss_on_focus_lost: bool,
+}
+
+impl Default for ModalLayer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ModalLayer {

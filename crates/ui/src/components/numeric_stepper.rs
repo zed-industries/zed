@@ -4,24 +4,35 @@ use crate::{prelude::*, IconButtonShape};
 
 #[derive(IntoElement)]
 pub struct NumericStepper {
+    id: ElementId,
     value: SharedString,
     on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
+    /// Whether to reserve space for the reset button.
+    reserve_space_for_reset: bool,
     on_reset: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl NumericStepper {
     pub fn new(
+        id: impl Into<ElementId>,
         value: impl Into<SharedString>,
         on_decrement: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
         on_increment: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         Self {
+            id: id.into(),
             value: value.into(),
             on_decrement: Box::new(on_decrement),
             on_increment: Box::new(on_increment),
+            reserve_space_for_reset: false,
             on_reset: None,
         }
+    }
+
+    pub fn reserve_space_for_reset(mut self, reserve_space_for_reset: bool) -> Self {
+        self.reserve_space_for_reset = reserve_space_for_reset;
+        self
     }
 
     pub fn on_reset(
@@ -39,6 +50,7 @@ impl RenderOnce for NumericStepper {
         let icon_size = IconSize::Small;
 
         h_flex()
+            .id(self.id)
             .gap_1()
             .map(|element| {
                 if let Some(on_reset) = self.on_reset {
@@ -48,13 +60,15 @@ impl RenderOnce for NumericStepper {
                             .icon_size(icon_size)
                             .on_click(on_reset),
                     )
-                } else {
+                } else if self.reserve_space_for_reset {
                     element.child(
                         h_flex()
                             .size(icon_size.square(cx))
                             .flex_none()
                             .into_any_element(),
                     )
+                } else {
+                    element
                 }
             })
             .child(

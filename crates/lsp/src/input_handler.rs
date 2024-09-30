@@ -16,17 +16,14 @@ use crate::{
     AnyNotification, AnyResponse, IoHandler, IoKind, RequestId, ResponseHandler, CONTENT_LEN_HEADER,
 };
 
-const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
+const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
 /// Handler for stdout of language server.
 pub struct LspStdoutHandler {
     pub(super) loop_handle: Task<Result<()>>,
     pub(super) notifications_channel: UnboundedReceiver<AnyNotification>,
 }
 
-pub(self) async fn read_headers<Stdout>(
-    reader: &mut BufReader<Stdout>,
-    buffer: &mut Vec<u8>,
-) -> Result<()>
+async fn read_headers<Stdout>(reader: &mut BufReader<Stdout>, buffer: &mut Vec<u8>) -> Result<()>
 where
     Stdout: AsyncRead + Unpin + Send + 'static,
 {

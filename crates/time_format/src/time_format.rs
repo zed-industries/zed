@@ -163,14 +163,12 @@ fn calculate_month_difference(timestamp: OffsetDateTime, reference: OffsetDateTi
     let year_diff = (reference_year - timestamp_year) as usize;
     if year_diff == 0 {
         reference_month as usize - timestamp_month as usize
+    } else if month_diff == 0 {
+        year_diff * 12
+    } else if timestamp_month > reference_month {
+        (year_diff - 1) * 12 + month_diff
     } else {
-        if month_diff == 0 {
-            year_diff * 12
-        } else if timestamp_month > reference_month {
-            (year_diff - 1) * 12 + month_diff
-        } else {
-            year_diff * 12 + month_diff
-        }
+        year_diff * 12 + month_diff
     }
 }
 

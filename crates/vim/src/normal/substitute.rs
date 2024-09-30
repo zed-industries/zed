@@ -1,84 +1,87 @@
-use editor::movement;
-use gpui::{actions, ViewContext, WindowContext};
+use editor::{movement, Editor};
+use gpui::{actions, ViewContext};
 use language::Point;
-use workspace::Workspace;
 
-use crate::{motion::Motion, normal::yank::copy_selections_content, Mode, Vim};
+use crate::{motion::Motion, Mode, Vim};
 
 actions!(vim, [Substitute, SubstituteLine]);
 
-pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_: &mut Workspace, _: &Substitute, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.start_recording(cx);
-            let count = vim.take_count(cx);
-            substitute(vim, count, vim.state().mode == Mode::VisualLine, cx);
-        })
+pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &Substitute, cx| {
+        vim.start_recording(cx);
+        let count = vim.take_count(cx);
+        vim.substitute(count, vim.mode == Mode::VisualLine, cx);
     });
 
-    workspace.register_action(|_: &mut Workspace, _: &SubstituteLine, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.start_recording(cx);
-            if matches!(vim.state().mode, Mode::VisualBlock | Mode::Visual) {
-                vim.switch_mode(Mode::VisualLine, false, cx)
-            }
-            let count = vim.take_count(cx);
-            substitute(vim, count, true, cx)
-        })
+    Vim::action(editor, cx, |vim, _: &SubstituteLine, cx| {
+        vim.start_recording(cx);
+        if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
+            vim.switch_mode(Mode::VisualLine, false, cx)
+        }
+        let count = vim.take_count(cx);
+        vim.substitute(count, true, cx)
     });
 }
 
-pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut WindowContext) {
-    vim.update_active_editor(cx, |vim, editor, cx| {
-        editor.set_clip_at_line_ends(false, cx);
-        editor.transact(cx, |editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.change_selections(None, cx, |s| {
-                s.move_with(|map, selection| {
-                    if selection.start == selection.end {
-                        Motion::Right.expand_selection(
-                            map,
-                            selection,
-                            count,
-                            true,
-                            &text_layout_details,
-                        );
-                    }
-                    if line_mode {
-                        // in Visual mode when the selection contains the newline at the end
-                        // of the line, we should exclude it.
-                        if !selection.is_empty() && selection.end.column() == 0 {
-                            selection.end = movement::left(map, selection.end);
+impl Vim {
+    pub fn substitute(
+        &mut self,
+        count: Option<usize>,
+        line_mode: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.store_visual_marks(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            editor.transact(cx, |editor, cx| {
+                let text_layout_details = editor.text_layout_details(cx);
+                editor.change_selections(None, cx, |s| {
+                    s.move_with(|map, selection| {
+                        if selection.start == selection.end {
+                            Motion::Right.expand_selection(
+                                map,
+                                selection,
+                                count,
+                                true,
+                                &text_layout_details,
+                            );
                         }
-                        Motion::CurrentLine.expand_selection(
-                            map,
-                            selection,
-                            None,
-                            false,
-                            &text_layout_details,
-                        );
-                        if let Some((point, _)) = (Motion::FirstNonWhitespace {
-                            display_lines: false,
-                        })
-                        .move_point(
-                            map,
-                            selection.start,
-                            selection.goal,
-                            None,
-                            &text_layout_details,
-                        ) {
-                            selection.start = point;
+                        if line_mode {
+                            // in Visual mode when the selection contains the newline at the end
+                            // of the line, we should exclude it.
+                            if !selection.is_empty() && selection.end.column() == 0 {
+                                selection.end = movement::left(map, selection.end);
+                            }
+                            Motion::CurrentLine.expand_selection(
+                                map,
+                                selection,
+                                None,
+                                false,
+                                &text_layout_details,
+                            );
+                            if let Some((point, _)) = (Motion::FirstNonWhitespace {
+                                display_lines: false,
+                            })
+                            .move_point(
+                                map,
+                                selection.start,
+                                selection.goal,
+                                None,
+                                &text_layout_details,
+                            ) {
+                                selection.start = point;
+                            }
                         }
-                    }
-                })
+                    })
+                });
+                vim.copy_selections_content(editor, line_mode, cx);
+                let selections = editor.selections.all::<Point>(cx).into_iter();
+                let edits = selections.map(|selection| (selection.start..selection.end, ""));
+                editor.edit(edits, cx);
             });
-            copy_selections_content(vim, editor, line_mode, cx);
-            let selections = editor.selections.all::<Point>(cx).into_iter();
-            let edits = selections.map(|selection| (selection.start..selection.end, ""));
-            editor.edit(edits, cx);
         });
-    });
-    vim.switch_mode(Mode::Insert, true, cx);
+        self.switch_mode(Mode::Insert, true, cx);
+    }
 }
 
 #[cfg(test)]

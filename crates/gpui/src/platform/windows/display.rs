@@ -27,6 +27,10 @@ pub(crate) struct WindowsDisplay {
     uuid: Uuid,
 }
 
+// The `HMONITOR` is thread-safe.
+unsafe impl Send for WindowsDisplay {}
+unsafe impl Sync for WindowsDisplay {}
+
 impl WindowsDisplay {
     pub(crate) fn new(display_id: DisplayId) -> Option<Self> {
         let screen = available_monitors().into_iter().nth(display_id.0 as _)?;

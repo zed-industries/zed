@@ -16,6 +16,7 @@ use metal_renderer as renderer;
 #[cfg(feature = "macos-blade")]
 use crate::platform::blade as renderer;
 
+mod attributed_string;
 mod open_type;
 mod platform;
 mod text_system;

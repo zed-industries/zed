@@ -9,7 +9,7 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
+        NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -20,7 +20,7 @@ use cocoa::{
         NSSize, NSString, NSUInteger,
     },
 };
-use core_graphics::display::{CGDirectDisplayID, CGRect};
+use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
 use objc::{
@@ -54,7 +54,7 @@ static mut VIEW_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
-    unsafe { NSWindowStyleMask::from_bits_unchecked(1 << 7) };
+    NSWindowStyleMask::from_bits_retain(1 << 7);
 #[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
 #[allow(non_upper_case_globals)]
@@ -233,7 +233,7 @@ unsafe fn build_classes() {
 pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
-        // MacOS screen coordinates are relative to bottom left
+        // macOS screen coordinates are relative to bottom left
         window_height - px(position.y as f32),
     )
 }
@@ -449,7 +449,7 @@ impl MacWindowState {
         window_frame.origin.y =
             screen_frame.size.height - window_frame.origin.y - window_frame.size.height;
 
-        let bounds = Bounds::new(
+        Bounds::new(
             point(
                 px((window_frame.origin.x - screen_frame.origin.x) as f32),
                 px((window_frame.origin.y + screen_frame.origin.y) as f32),
@@ -458,8 +458,7 @@ impl MacWindowState {
                 px(window_frame.size.width as f32),
                 px(window_frame.size.height as f32),
             ),
-        );
-        bounds
+        )
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -537,7 +536,7 @@ impl MacWindow {
 
             let display = display_id
                 .and_then(MacDisplay::find_by_id)
-                .unwrap_or_else(|| MacDisplay::primary());
+                .unwrap_or_else(MacDisplay::primary);
 
             let mut target_screen = nil;
             let mut screen_frame = None;
@@ -736,6 +735,25 @@ impl MacWindow {
             } else {
                 None
             }
+        }
+    }
+
+    pub fn ordered_windows() -> Vec<AnyWindowHandle> {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let windows: id = msg_send![app, orderedWindows];
+            let count: NSUInteger = msg_send![windows, count];
+
+            let mut window_handles = Vec::new();
+            for i in 0..count {
+                let window: id = msg_send![windows, objectAtIndex:i];
+                if msg_send![window, isKindOfClass: WINDOW_CLASS] {
+                    let handle = get_window_state(&*window).lock().handle;
+                    window_handles.push(handle);
+                }
+            }
+
+            window_handles
         }
     }
 }
@@ -1096,6 +1114,17 @@ impl PlatformWindow for MacWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
+
+    fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
+        None
+    }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        unsafe {
+            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
+            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+        }
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {
@@ -1280,11 +1309,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
             if !handled && is_held {
                 if let Some(text) = previous_keydown_inserted_text {
-                    // MacOS IME is a bit funky, and even when you've told it there's nothing to
+                    // macOS IME is a bit funky, and even when you've told it there's nothing to
                     // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
                     // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
                     with_input_handler(this, |input_handler| {
-                        if input_handler.selected_text_range().is_none() {
+                        if input_handler.selected_text_range(false).is_none() {
                             handled = true;
                             input_handler.replace_text_in_range(None, &text)
                         }
@@ -1656,10 +1685,12 @@ extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
-    let selected_range_result =
-        with_input_handler(this, |input_handler| input_handler.selected_text_range()).flatten();
+    let selected_range_result = with_input_handler(this, |input_handler| {
+        input_handler.selected_text_range(false)
+    })
+    .flatten();
 
-    selected_range_result.map_or(NSRange::invalid(), |range| range.into())
+    selected_range_result.map_or(NSRange::invalid(), |selection| selection.range.into())
 }
 
 extern "C" fn first_rect_for_character_range(
@@ -1945,13 +1976,10 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
             }
             window_state.lock().input_handler = Some(input_handler);
         } else {
-            match ime {
-                ImeInput::InsertText(text, range) => {
-                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                        ime_input.push((text, range));
-                    }
+            if let ImeInput::InsertText(text, range) = ime {
+                if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
+                    ime_input.push((text, range));
                 }
-                _ => {}
             }
         }
     }

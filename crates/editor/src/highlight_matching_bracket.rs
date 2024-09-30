@@ -1,4 +1,5 @@
 use gpui::ViewContext;
+use language::CursorShape;
 
 use crate::{Editor, RangeToAnchorExt};
 
@@ -13,18 +14,25 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
         return;
     }
 
-    let head = newest_selection.head();
     let snapshot = editor.snapshot(cx);
+    let head = newest_selection.head();
+    let mut tail = head;
+    if (editor.cursor_shape == CursorShape::Block || editor.cursor_shape == CursorShape::Hollow)
+        && head < snapshot.buffer_snapshot.len()
+    {
+        tail += 1;
+    }
+
     if let Some((opening_range, closing_range)) = snapshot
         .buffer_snapshot
-        .innermost_enclosing_bracket_ranges(head..head, None)
+        .innermost_enclosing_bracket_ranges(head..tail, None)
     {
         editor.highlight_background::<MatchingBracketHighlight>(
             &[
                 opening_range.to_anchors(&snapshot.buffer_snapshot),
                 closing_range.to_anchors(&snapshot.buffer_snapshot),
             ],
-            |theme| theme.editor_document_highlight_read_background,
+            |theme| theme.editor_document_highlight_bracket_background,
             cx,
         )
     }
@@ -70,7 +78,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_brackets_query(indoc! {r#"
                 ("{" @open "}" @close)

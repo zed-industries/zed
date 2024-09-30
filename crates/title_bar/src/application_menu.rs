@@ -1,16 +1,19 @@
-use ui::{prelude::*, ContextMenu, NumericStepper, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, NumericStepper, PopoverMenu, PopoverMenuHandle, Tooltip};
 
-#[derive(IntoElement)]
-pub struct ApplicationMenu;
+pub struct ApplicationMenu {
+    context_menu_handle: PopoverMenuHandle<ContextMenu>,
+}
 
 impl ApplicationMenu {
-    pub fn new() -> Self {
-        Self
+    pub fn new(_: &mut ViewContext<Self>) -> Self {
+        Self {
+            context_menu_handle: PopoverMenuHandle::default(),
+        }
     }
 }
 
-impl RenderOnce for ApplicationMenu {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+impl Render for ApplicationMenu {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         PopoverMenu::new("application-menu")
             .menu(move |cx| {
                 ContextMenu::build(cx, move |menu, cx| {
@@ -26,6 +29,7 @@ impl RenderOnce for ApplicationMenu {
                                 .child(Label::new("Buffer Font Size"))
                                 .child(
                                     NumericStepper::new(
+                                        "buffer-font-size",
                                         theme::get_buffer_font_size(cx).to_string(),
                                         |_, cx| {
                                             cx.dispatch_action(Box::new(
@@ -38,6 +42,7 @@ impl RenderOnce for ApplicationMenu {
                                             ))
                                         },
                                     )
+                                    .reserve_space_for_reset(true)
                                     .when(
                                         theme::has_adjusted_buffer_font_size(cx),
                                         |stepper| {
@@ -60,6 +65,7 @@ impl RenderOnce for ApplicationMenu {
                                 .child(Label::new("UI Font Size"))
                                 .child(
                                     NumericStepper::new(
+                                        "ui-font-size",
                                         theme::get_ui_font_size(cx).to_string(),
                                         |_, cx| {
                                             cx.dispatch_action(Box::new(
@@ -72,6 +78,7 @@ impl RenderOnce for ApplicationMenu {
                                             ))
                                         },
                                     )
+                                    .reserve_space_for_reset(true)
                                     .when(
                                         theme::has_adjusted_ui_font_size(cx),
                                         |stepper| {
@@ -121,9 +128,12 @@ impl RenderOnce for ApplicationMenu {
             .trigger(
                 IconButton::new("application-menu", ui::IconName::Menu)
                     .style(ButtonStyle::Subtle)
-                    .tooltip(|cx| Tooltip::text("Open Application Menu", cx))
-                    .icon_size(IconSize::Small),
+                    .icon_size(IconSize::Small)
+                    .when(!self.context_menu_handle.is_deployed(), |this| {
+                        this.tooltip(|cx| Tooltip::text("Open Application Menu", cx))
+                    }),
             )
+            .with_handle(self.context_menu_handle.clone())
             .into_any_element()
     }
 }

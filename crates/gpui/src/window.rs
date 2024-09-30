@@ -1,26 +1,26 @@
 use crate::{
-    hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
+    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
+    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent,
+    KeystrokeObserver, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString,
-    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use futures::{future::Shared, FutureExt};
+use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
@@ -464,6 +464,7 @@ impl Frame {
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.deferred_draws.clear();
+        self.focus = None;
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -520,6 +521,7 @@ pub struct Window {
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     pub(crate) rendered_frame: Frame,
@@ -573,32 +575,8 @@ pub(crate) enum DrawPhase {
 #[derive(Default, Debug)]
 struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
-    bindings: SmallVec<[KeyBinding; 1]>,
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
-}
-
-impl PendingInput {
-    fn input(&self) -> String {
-        self.keystrokes
-            .iter()
-            .flat_map(|k| k.ime_key.clone())
-            .collect::<Vec<String>>()
-            .join("")
-    }
-
-    fn used_by_binding(&self, binding: &KeyBinding) -> bool {
-        if self.keystrokes.is_empty() {
-            return true;
-        }
-        let keystroke = &self.keystrokes[0];
-        for candidate in keystroke.match_candidates() {
-            if binding.match_keystrokes(&[candidate]) == KeyMatch::Pending {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 pub(crate) struct ElementStateBox {
@@ -821,6 +799,7 @@ impl Window {
             text_style_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
+            element_opacity: None,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -968,10 +947,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = Some(handle.id);
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
+        self.clear_pending_keystrokes();
         self.refresh();
     }
 
@@ -1068,20 +1044,8 @@ impl<'a> WindowContext<'a> {
                         action: action.as_ref().map(|action| action.boxed_clone()),
                     },
                     self,
-                );
-                true
+                )
             });
-    }
-
-    pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
-        self.window
-            .next_frame
-            .dispatch_tree
-            .clear_pending_keystrokes();
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1161,6 +1125,29 @@ impl<'a> WindowContext<'a> {
         )
     }
 
+    /// Register a callback to be invoked when the given Model or View is released.
+    pub fn observe_release<E, T>(
+        &mut self,
+        entity: &E,
+        mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
+        let entity_id = entity.entity_id();
+        let window_handle = self.window.handle;
+        let (subscription, activate) = self.app.release_listeners.insert(
+            entity_id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
     /// await points in async code.
     pub fn to_async(&self) -> AsyncWindowContext {
@@ -1170,6 +1157,23 @@ impl<'a> WindowContext<'a> {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
         RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
+    }
+
+    /// Schedule a frame to be drawn on the next animation frame.
+    ///
+    /// This is useful for elements that need to animate continuously, such as a video player or an animated GIF.
+    /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
+    ///
+    /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    pub fn request_animation_frame(&mut self) {
+        let parent_id = self.parent_view_id();
+        self.on_next_frame(move |cx| {
+            if let Some(parent_id) = parent_id {
+                cx.notify(parent_id)
+            } else {
+                cx.refresh()
+            }
+        });
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -1363,11 +1367,7 @@ impl<'a> WindowContext<'a> {
 
     /// The line height associated with the current text style.
     pub fn line_height(&self) -> Pixels {
-        let rem_size = self.rem_size();
-        let text_style = self.text_style();
-        text_style
-            .line_height
-            .to_pixels(text_style.font_size, rem_size)
+        self.text_style().line_height_in_pixels(self.rem_size())
     }
 
     /// Call to prevent the default action of an event. Currently only used to prevent
@@ -1429,15 +1429,6 @@ impl<'a> WindowContext<'a> {
 
         self.draw_roots();
         self.window.dirty_views.clear();
-
-        self.window
-            .next_frame
-            .dispatch_tree
-            .preserve_pending_keystrokes(
-                &mut self.window.rendered_frame.dispatch_tree,
-                self.window.focus,
-            );
-        self.window.next_frame.focus = self.window.focus;
         self.window.next_frame.window_active = self.window.active.get();
 
         // Register requested input handler with the platform window.
@@ -1551,7 +1542,7 @@ impl<'a> WindowContext<'a> {
         self.paint_deferred_draws(&sorted_deferred_draws);
 
         if let Some(mut prompt_element) = prompt_element {
-            prompt_element.paint(self)
+            prompt_element.paint(self);
         } else if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self);
         } else if let Some(mut tooltip_element) = tooltip_element {
@@ -1707,7 +1698,13 @@ impl<'a> WindowContext<'a> {
         let reused_subtree = window.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut window.rendered_frame.dispatch_tree,
+            window.focus,
         );
+
+        if reused_subtree.contains_focus() {
+            window.next_frame.focus = window.focus;
+        }
+
         window.next_frame.deferred_draws.extend(
             window.rendered_frame.deferred_draws
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
@@ -1894,6 +1891,28 @@ impl<'a> WindowContext<'a> {
         result
     }
 
+    pub(crate) fn with_element_opacity<R>(
+        &mut self,
+        opacity: Option<f32>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if opacity.is_none() {
+            return f(self);
+        }
+
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during prepaint, or paint"
+        );
+        self.window_mut().element_opacity = opacity;
+        let result = f(self);
+        self.window_mut().element_opacity = None;
+        result
+    }
+
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
@@ -1960,36 +1979,6 @@ impl<'a> WindowContext<'a> {
         self.window.requested_autoscroll.take()
     }
 
-    /// Remove an asset from GPUI's cache
-    pub fn remove_cached_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> Option<A::Output> {
-        self.asset_cache.remove::<A>(source)
-    }
-
-    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
-    /// Your view will be re-drawn once the asset has finished loading.
-    ///
-    /// Note that the multiple calls to this method will only result in one `Asset::load` call.
-    /// The results of that call will be cached, and returned on subsequent uses of this API.
-    ///
-    /// Use [Self::remove_cached_asset] to reload your asset.
-    pub fn use_cached_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> Option<A::Output> {
-        self.asset_cache.get::<A>(source).or_else(|| {
-            if let Some(asset) = self.use_asset::<A>(source) {
-                self.asset_cache
-                    .insert::<A>(source.to_owned(), asset.clone());
-                Some(asset)
-            } else {
-                None
-            }
-        })
-    }
-
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     /// Your view will be re-drawn once the asset has finished loading.
     ///
@@ -1998,19 +1987,7 @@ impl<'a> WindowContext<'a> {
     ///
     /// This asset will not be cached by default, see [Self::use_cached_asset]
     pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
-        let asset_id = (TypeId::of::<A>(), hash(source));
-        let mut is_first = false;
-        let task = self
-            .loading_assets
-            .remove(&asset_id)
-            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
-            .unwrap_or_else(|| {
-                is_first = true;
-                let future = A::load(source.clone(), self);
-                let task = self.background_executor().spawn(future).shared();
-                task
-            });
-
+        let (task, is_first) = self.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
                 let parent_id = self.parent_view_id();
@@ -2031,12 +2008,9 @@ impl<'a> WindowContext<'a> {
                 .detach();
             }
 
-            self.loading_assets.insert(asset_id, Box::new(task));
-
             None
         })
     }
-
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
@@ -2050,6 +2024,19 @@ impl<'a> WindowContext<'a> {
             .last()
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Obtain the current element opacity. This method should only be called during the
+    /// prepaint phase of element drawing.
+    pub(crate) fn element_opacity(&self) -> f32 {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during prepaint, or paint"
+        );
+        self.window().element_opacity.unwrap_or(1.0)
     }
 
     /// Obtain the current content mask. This method should only be called during element drawing.
@@ -2073,7 +2060,7 @@ impl<'a> WindowContext<'a> {
             })
     }
 
-    /// Provide elements in the called function with a new namespace in which their identiers must be unique.
+    /// Provide elements in the called function with a new namespace in which their identifiers must be unique.
     /// This can be used within a custom element to distinguish multiple sets of child elements.
     pub fn with_element_namespace<R>(
         &mut self,
@@ -2289,6 +2276,7 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
         for shadow in shadows {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
@@ -2299,7 +2287,7 @@ impl<'a> WindowContext<'a> {
                 bounds: shadow_bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
                 corner_radii: corner_radii.scale(scale_factor),
-                color: shadow.color,
+                color: shadow.color.opacity(opacity),
             });
         }
     }
@@ -2318,13 +2306,14 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
         self.window.next_frame.scene.insert_primitive(Quad {
             order: 0,
             pad: 0,
             bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
-            background: quad.background,
-            border_color: quad.border_color,
+            background: quad.background.opacity(opacity),
+            border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(scale_factor),
             border_widths: quad.border_widths.scale(scale_factor),
         });
@@ -2342,8 +2331,9 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
         path.content_mask = content_mask;
-        path.color = color.into();
+        path.color = color.into().opacity(opacity);
         self.window
             .next_frame
             .scene
@@ -2376,13 +2366,14 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
+        let element_opacity = self.element_opacity();
 
         self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
-            color: style.color.unwrap_or_default(),
+            color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness: style.thickness.scale(scale_factor),
             wavy: style.wavy,
         });
@@ -2410,6 +2401,7 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
 
         self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
@@ -2417,7 +2409,7 @@ impl<'a> WindowContext<'a> {
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             thickness: style.thickness.scale(scale_factor),
-            color: style.color.unwrap_or_default(),
+            color: style.color.unwrap_or_default().opacity(opacity),
             wavy: false,
         });
     }
@@ -2444,6 +2436,7 @@ impl<'a> WindowContext<'a> {
             "this method can only be called during paint"
         );
 
+        let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let subpixel_variant = Point {
@@ -2482,7 +2475,7 @@ impl<'a> WindowContext<'a> {
                     pad: 0,
                     bounds,
                     content_mask,
-                    color,
+                    color: color.opacity(element_opacity),
                     tile,
                     transformation: TransformationMatrix::unit(),
                 });
@@ -2539,17 +2532,20 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let opacity = self.element_opacity();
 
             self.window
                 .next_frame
                 .scene
                 .insert_primitive(PolychromeSprite {
                     order: 0,
+                    pad: 0,
                     grayscale: false,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
+                    opacity,
                 });
         }
         Ok(())
@@ -2571,6 +2567,7 @@ impl<'a> WindowContext<'a> {
             "this method can only be called during paint"
         );
 
+        let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         // Render the SVG at twice the size to get a higher quality result.
@@ -2601,9 +2598,11 @@ impl<'a> WindowContext<'a> {
             .insert_primitive(MonochromeSprite {
                 order: 0,
                 pad: 0,
-                bounds,
+                bounds: bounds
+                    .map_origin(|origin| origin.floor())
+                    .map_size(|size| size.ceil()),
                 content_mask,
-                color,
+                color: color.opacity(element_opacity),
                 tile,
                 transformation,
             });
@@ -2612,13 +2611,15 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Paint an image into the scene for the next frame at the current z-index.
+    /// This method will panic if the frame_index is not valid
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
-        data: Arc<ImageData>,
+        data: Arc<RenderImage>,
+        frame_index: usize,
         grayscale: bool,
     ) -> Result<()> {
         debug_assert_eq!(
@@ -2629,28 +2630,40 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
-        let params = RenderImageParams { image_id: data.id };
+        let params = RenderImageParams {
+            image_id: data.id,
+            frame_index,
+        };
 
         let tile = self
             .window
             .sprite_atlas
             .get_or_insert_with(&params.clone().into(), &mut || {
-                Ok(Some((data.size(), Cow::Borrowed(data.as_bytes()))))
+                Ok(Some((
+                    data.size(frame_index),
+                    Cow::Borrowed(
+                        data.as_bytes(frame_index)
+                            .expect("It's the caller's job to pass a valid frame index"),
+                    ),
+                )))
             })?
             .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
+        let opacity = self.element_opacity();
 
         self.window
             .next_frame
             .scene
             .insert_primitive(PolychromeSprite {
                 order: 0,
+                pad: 0,
                 grayscale,
                 bounds,
                 content_mask,
                 corner_radii,
                 tile,
+                opacity,
             });
         Ok(())
     }
@@ -2660,6 +2673,8 @@ impl<'a> WindowContext<'a> {
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+        use crate::PaintSurface;
+
         debug_assert_eq!(
             self.window.draw_phase,
             DrawPhase::Paint,
@@ -2669,15 +2684,12 @@ impl<'a> WindowContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        self.window
-            .next_frame
-            .scene
-            .insert_primitive(crate::Surface {
-                order: 0,
-                bounds,
-                content_mask,
-                image_buffer,
-            });
+        self.window.next_frame.scene.insert_primitive(PaintSurface {
+            order: 0,
+            bounds,
+            content_mask,
+            image_buffer,
+        });
     }
 
     #[must_use]
@@ -2822,13 +2834,16 @@ impl<'a> WindowContext<'a> {
     /// Sets the focus handle for the current element. This handle will be used to manage focus state
     /// and keyboard event dispatch for the element.
     ///
-    /// This method should only be called as part of the paint phase of element drawing.
+    /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
         debug_assert_eq!(
             self.window.draw_phase,
-            DrawPhase::Paint,
-            "this method can only be called during paint"
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
         );
+        if focus_handle.is_focused(self) {
+            self.window.next_frame.focus = Some(focus_handle.id);
+        }
         self.window
             .next_frame
             .dispatch_tree
@@ -3221,8 +3236,6 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        let mut bindings: SmallVec<[KeyBinding; 1]> = SmallVec::new();
-        let mut pending = false;
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
@@ -3230,36 +3243,23 @@ impl<'a> WindowContext<'a> {
                 && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.window.pending_modifier.saw_keystroke
             {
-                if event.modifiers.number_of_modifiers() == 0 {
-                    let key = match self.window.pending_modifier.modifiers {
-                        modifiers if modifiers.shift => Some("shift"),
-                        modifiers if modifiers.control => Some("control"),
-                        modifiers if modifiers.alt => Some("alt"),
-                        modifiers if modifiers.platform => Some("platform"),
-                        modifiers if modifiers.function => Some("function"),
-                        _ => None,
-                    };
-                    if let Some(key) = key {
-                        let key = Keystroke {
-                            key: key.to_string(),
-                            ime_key: None,
-                            modifiers: Modifiers::default(),
-                        };
-                        let KeymatchResult {
-                            bindings: modifier_bindings,
-                            pending: pending_bindings,
-                        } = self
-                            .window
-                            .rendered_frame
-                            .dispatch_tree
-                            .dispatch_key(&key, &dispatch_path);
-
-                        keystroke = Some(key);
-                        bindings = modifier_bindings;
-                        pending = pending_bindings;
-                    }
+                let key = match self.window.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => Some("shift"),
+                    modifiers if modifiers.control => Some("control"),
+                    modifiers if modifiers.alt => Some("alt"),
+                    modifiers if modifiers.platform => Some("platform"),
+                    modifiers if modifiers.function => Some("function"),
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    keystroke = Some(Keystroke {
+                        key: key.to_string(),
+                        ime_key: None,
+                        modifiers: Modifiers::default(),
+                    });
                 }
             }
+
             if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
@@ -3268,73 +3268,68 @@ impl<'a> WindowContext<'a> {
             self.window.pending_modifier.modifiers = event.modifiers
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.window.pending_modifier.saw_keystroke = true;
-            let KeymatchResult {
-                bindings: key_down_bindings,
-                pending: key_down_pending,
-            } = self
-                .window
-                .rendered_frame
-                .dispatch_tree
-                .dispatch_key(&key_down_event.keystroke, &dispatch_path);
-
             keystroke = Some(key_down_event.keystroke.clone());
-
-            bindings = key_down_bindings;
-            pending = key_down_pending;
         }
 
-        if keystroke.is_none() {
+        let Some(keystroke) = keystroke else {
             self.finish_dispatch_key_event(event, dispatch_path);
             return;
+        };
+
+        let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
+        if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
+            currently_pending = PendingInput::default();
         }
 
-        if pending {
-            let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
-            if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
-                currently_pending = PendingInput::default();
-            }
-            currently_pending.focus = self.window.focus;
-            if let Some(keystroke) = keystroke {
-                currently_pending.keystrokes.push(keystroke.clone());
-            }
-            for binding in bindings {
-                currently_pending.bindings.push(binding);
-            }
+        let match_result = self.window.rendered_frame.dispatch_tree.dispatch_key(
+            currently_pending.keystrokes,
+            keystroke,
+            &dispatch_path,
+        );
+        if !match_result.to_replay.is_empty() {
+            self.replay_pending_input(match_result.to_replay)
+        }
 
+        if !match_result.pending.is_empty() {
+            currently_pending.keystrokes = match_result.pending;
+            currently_pending.focus = self.window.focus;
             currently_pending.timer = Some(self.spawn(|mut cx| async move {
                 cx.background_executor.timer(Duration::from_secs(1)).await;
                 cx.update(move |cx| {
-                    cx.clear_pending_keystrokes();
-                    let Some(currently_pending) = cx.window.pending_input.take() else {
+                    let Some(currently_pending) = cx
+                        .window
+                        .pending_input
+                        .take()
+                        .filter(|pending| pending.focus == cx.window.focus)
+                    else {
                         return;
                     };
-                    cx.replay_pending_input(currently_pending);
-                    cx.pending_input_changed();
+
+                    let dispatch_path = cx
+                        .window
+                        .rendered_frame
+                        .dispatch_tree
+                        .dispatch_path(node_id);
+
+                    let to_replay = cx
+                        .window
+                        .rendered_frame
+                        .dispatch_tree
+                        .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+                    cx.replay_pending_input(to_replay)
                 })
                 .log_err();
             }));
-
             self.window.pending_input = Some(currently_pending);
             self.pending_input_changed();
-
             self.propagate_event = false;
             return;
-        } else if let Some(currently_pending) = self.window.pending_input.take() {
-            self.pending_input_changed();
-            if bindings
-                .iter()
-                .all(|binding| !currently_pending.used_by_binding(binding))
-            {
-                self.replay_pending_input(currently_pending)
-            }
         }
 
-        if !bindings.is_empty() {
-            self.clear_pending_keystrokes();
-        }
-
+        self.pending_input_changed();
         self.propagate_event = true;
-        for binding in bindings {
+        for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref());
             if !self.propagate_event {
                 self.dispatch_keystroke_observers(event, Some(binding.action));
@@ -3421,10 +3416,11 @@ impl<'a> WindowContext<'a> {
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .has_pending_keystrokes()
+        self.window.pending_input.is_some()
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
+        self.window.pending_input.take();
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -3435,7 +3431,7 @@ impl<'a> WindowContext<'a> {
             .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
-    fn replay_pending_input(&mut self, currently_pending: PendingInput) {
+    fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>) {
         let node_id = self
             .window
             .focus
@@ -3447,42 +3443,36 @@ impl<'a> WindowContext<'a> {
             })
             .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
 
-        if self.window.focus != currently_pending.focus {
-            return;
-        }
-
-        let input = currently_pending.input();
-
-        self.propagate_event = true;
-        for binding in currently_pending.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.as_ref());
-            if !self.propagate_event {
-                return;
-            }
-        }
-
         let dispatch_path = self
             .window
             .rendered_frame
             .dispatch_tree
             .dispatch_path(node_id);
 
-        for keystroke in currently_pending.keystrokes {
+        'replay: for replay in replays {
             let event = KeyDownEvent {
-                keystroke,
+                keystroke: replay.keystroke.clone(),
                 is_held: false,
             };
 
+            self.propagate_event = true;
+            for binding in replay.bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref());
+                if !self.propagate_event {
+                    self.dispatch_keystroke_observers(&event, Some(binding.action));
+                    continue 'replay;
+                }
+            }
+
             self.dispatch_key_down_up_event(&event, &dispatch_path);
             if !self.propagate_event {
-                return;
+                continue 'replay;
             }
-        }
-
-        if !input.is_empty() {
-            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                input_handler.dispatch_input(&input, self);
-                self.window.platform_window.set_input_handler(input_handler)
+            if let Some(input) = replay.keystroke.ime_key.as_ref().cloned() {
+                if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                    input_handler.dispatch_input(&input, self);
+                    self.window.platform_window.set_input_handler(input_handler)
+                }
             }
         }
     }
@@ -3613,6 +3603,18 @@ impl<'a> WindowContext<'a> {
     /// Toggle full screen status on the current window at the platform level.
     pub fn toggle_fullscreen(&self) {
         self.window.platform_window.toggle_fullscreen();
+    }
+
+    /// Updates the IME panel position suggestions for languages like japanese, chinese.
+    pub fn invalidate_character_coordinates(&mut self) {
+        self.on_next_frame(|cx| {
+            if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
+                if let Some(bounds) = input_handler.selected_bounds(cx) {
+                    cx.window.platform_window.update_ime_position(bounds);
+                }
+                cx.window.platform_window.set_input_handler(input_handler);
+            }
+        });
     }
 
     /// Present a platform dialog.
@@ -3770,6 +3772,12 @@ impl<'a> WindowContext<'a> {
             .next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
+    }
+
+    /// Read information about the GPU backing this window.
+    /// Currently returns None on Mac and Windows.
+    pub fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.window.platform_window.gpu_specs()
     }
 }
 
@@ -4242,6 +4250,36 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Register a callback to be invoked when a keystroke is received by the application
+    /// in any window. Note that this fires after all other action and event mechanisms have resolved
+    /// and that this API will not be invoked if the event's propagation is stopped.
+    pub fn observe_keystrokes(
+        &mut self,
+        mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        fn inner(
+            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_observers.insert((), handler);
+            activate();
+            subscription
+        }
+
+        let view = self.view.downgrade();
+        inner(
+            &mut self.keystroke_observers,
+            Box::new(move |event, cx| {
+                if let Some(view) = view.upgrade() {
+                    view.update(cx, |view, cx| f(view, event, cx));
+                    true
+                } else {
+                    false
+                }
+            }),
+        )
+    }
+
     /// Register a callback to be invoked when the window's pending input changes.
     pub fn observe_pending_input(
         &mut self,
@@ -4451,7 +4489,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Many GPUI callbacks take the form of `Fn(&E, &mut WindowContext)`,
     /// but it's often useful to be able to access view state in these
     /// callbacks. This method provides a convenient way to do so.
-    pub fn listener<E>(
+    pub fn listener<E: ?Sized>(
         &self,
         f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
     ) -> impl Fn(&E, &mut WindowContext) + 'static {
@@ -4581,6 +4619,12 @@ impl WindowId {
     /// Converts this window ID to a `u64`.
     pub fn as_u64(&self) -> u64 {
         self.0.as_ffi()
+    }
+}
+
+impl From<u64> for WindowId {
+    fn from(value: u64) -> Self {
+        WindowId(slotmap::KeyData::from_ffi(value))
     }
 }
 

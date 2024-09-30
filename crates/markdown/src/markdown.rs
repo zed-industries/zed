@@ -10,7 +10,7 @@ use gpui::{
     TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
-use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
+use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
@@ -61,6 +61,7 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
+    parse_links_only: bool,
 }
 
 actions!(markdown, [Copy]);
@@ -86,6 +87,33 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
+            parse_links_only: false,
+        };
+        this.parse(cx);
+        this
+    }
+
+    pub fn new_text(
+        source: String,
+        style: MarkdownStyle,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut ViewContext<Self>,
+        fallback_code_block_language: Option<String>,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        let mut this = Self {
+            source,
+            selection: Selection::default(),
+            pressed_link: None,
+            autoscroll_request: None,
+            style,
+            should_reparse: false,
+            parsed_markdown: ParsedMarkdown::default(),
+            pending_parse: None,
+            focus_handle,
+            language_registry,
+            fallback_code_block_language,
+            parse_links_only: true,
         };
         this.parse(cx);
         this
@@ -122,7 +150,7 @@ impl Markdown {
             return;
         }
         let text = text.text_for_range(self.selection.start..self.selection.end);
-        cx.write_to_clipboard(ClipboardItem::new(text));
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
@@ -136,9 +164,13 @@ impl Markdown {
         }
 
         let text = self.source.clone();
+        let parse_text_only = self.parse_links_only;
         let parsed = cx.background_executor().spawn(async move {
             let text = SharedString::from(text);
-            let events = Arc::from(parse_markdown(text.as_ref()));
+            let events = match parse_text_only {
+                true => Arc::from(parse_links_only(text.as_ref())),
+                false => Arc::from(parse_markdown(text.as_ref())),
+            };
             anyhow::Ok(ParsedMarkdown {
                 source: text,
                 events,
@@ -216,7 +248,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
@@ -228,16 +260,7 @@ impl ParsedMarkdown {
     }
 
     pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
-        return &self.events;
-    }
-}
-
-impl Default for ParsedMarkdown {
-    fn default() -> Self {
-        Self {
-            source: SharedString::default(),
-            events: Arc::from([]),
-        }
+        &self.events
     }
 }
 
@@ -450,17 +473,15 @@ impl MarkdownElement {
                             cx.open_url(&pressed_link.destination_url);
                         }
                     }
-                } else {
-                    if markdown.selection.pending {
-                        markdown.selection.pending = false;
-                        #[cfg(target_os = "linux")]
-                        {
-                            let text = rendered_text
-                                .text_for_range(markdown.selection.start..markdown.selection.end);
-                            cx.write_to_primary(ClipboardItem::new(text))
-                        }
-                        cx.notify();
+                } else if markdown.selection.pending {
+                    markdown.selection.pending = false;
+                    #[cfg(target_os = "linux")]
+                    {
+                        let text = rendered_text
+                            .text_for_range(markdown.selection.start..markdown.selection.end);
+                        cx.write_to_primary(ClipboardItem::new_string(text))
                     }
+                    cx.notify();
                 }
             }
         });
@@ -640,7 +661,7 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                         builder.pop_text_style()
                     }
-                    MarkdownTagEnd::BlockQuote => {
+                    MarkdownTagEnd::BlockQuote(_kind) => {
                         builder.pop_text_style();
                         builder.pop_div()
                     }
@@ -719,6 +740,9 @@ impl Element for MarkdownElement {
         rendered_markdown: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
+        let focus_handle = self.markdown.read(cx).focus_handle.clone();
+        cx.set_focus_handle(&focus_handle);
+
         let hitbox = cx.insert_hitbox(bounds, false);
         rendered_markdown.element.prepaint(cx);
         self.autoscroll(&rendered_markdown.text, cx);
@@ -733,9 +757,6 @@ impl Element for MarkdownElement {
         hitbox: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        let focus_handle = self.markdown.read(cx).focus_handle.clone();
-        cx.set_focus_handle(&focus_handle);
-
         let mut context = KeyContext::default();
         context.add("Markdown");
         cx.set_key_context(context);

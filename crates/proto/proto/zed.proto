@@ -13,13 +13,6 @@ message Envelope {
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
 
-    /*
-        When you are adding a new message type, instead of adding it in semantic order
-        and bumping the message ID's of everything that follows, add it at the end of the
-        file and bump the max number. See this
-        https://github.com/zed-industries/zed/pull/7890#discussion_r1496621823
-
-    */
     oneof payload {
         Hello hello = 4;
         Ack ack = 5;
@@ -55,6 +48,8 @@ message Envelope {
 
         GetDefinition get_definition = 32;
         GetDefinitionResponse get_definition_response = 33;
+        GetDeclaration get_declaration = 237;
+        GetDeclarationResponse get_declaration_response = 238;
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
 
@@ -113,8 +108,6 @@ message Envelope {
         PrepareRenameResponse prepare_rename_response = 84;
         PerformRename perform_rename = 85;
         PerformRenameResponse perform_rename_response = 86;
-        SearchProject search_project = 87;
-        SearchProjectResponse search_project_response = 88;
 
         UpdateContacts update_contacts = 89;
         UpdateInviteInfo update_invite_info = 90;
@@ -133,7 +126,10 @@ message Envelope {
         Unfollow unfollow = 101;
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
+        UpdateUserPlan update_user_plan = 234;
         UpdateDiffBase update_diff_base = 104;
+        AcceptTermsOfService accept_terms_of_service = 239;
+        AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
         OnTypeFormatting on_type_formatting = 105;
         OnTypeFormattingResponse on_type_formatting_response = 106;
@@ -201,10 +197,8 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        CompleteWithLanguageModel complete_with_language_model = 166;
-        LanguageModelResponse language_model_response = 167;
-        CountTokensWithLanguageModel count_tokens_with_language_model = 168;
-        CountTokensResponse count_tokens_response = 169;
+        CountLanguageModelTokens count_language_model_tokens = 230;
+        CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
@@ -260,18 +254,42 @@ message Envelope {
         AdvertiseContexts advertise_contexts = 211;
         OpenContext open_context = 212;
         OpenContextResponse open_context_response = 213;
+        CreateContext create_context = 232;
+        CreateContextResponse create_context_response = 233;
         UpdateContext update_context = 214;
         SynchronizeContexts synchronize_contexts = 215;
         SynchronizeContextsResponse synchronize_contexts_response = 216;
 
         GetSignatureHelp get_signature_help = 217;
         GetSignatureHelpResponse get_signature_help_response = 218;
+
         ListRemoteDirectory list_remote_directory = 219;
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
-        UpdateDevServerProject update_dev_server_project = 221; // current max
+        UpdateDevServerProject update_dev_server_project = 221;
+        AddWorktree add_worktree = 222;
+        AddWorktreeResponse add_worktree_response = 223;
+
+        GetLlmToken get_llm_token = 235;
+        GetLlmTokenResponse get_llm_token_response = 236;
+
+        LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
+
+        FindSearchCandidates find_search_candidates = 243;
+        FindSearchCandidatesResponse find_search_candidates_response = 244;
+
+        CloseBuffer close_buffer = 245;
+        UpdateUserSettings update_user_settings = 246;
+
+        CheckFileExists check_file_exists = 255;
+        CheckFileExistsResponse check_file_exists_response = 256; // current max
     }
 
+    reserved 87 to 88;
     reserved 158 to 161;
+    reserved 166 to 169;
+    reserved 224 to 229;
+    reserved 247 to 254;
 }
 
 // Messages
@@ -308,6 +326,7 @@ enum ErrorCode {
     DevServerOffline = 15;
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
+    RateLimitExceeded = 18;
     reserved 6;
 }
 
@@ -473,6 +492,7 @@ message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     optional uint64 dev_server_project_id = 3;
+    bool is_ssh_project = 4;
 }
 
 message ShareProjectResponse {
@@ -641,6 +661,7 @@ message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
+    optional string relative_worktree_source_path = 4;
 }
 
 message DeleteProjectEntry {
@@ -689,9 +710,20 @@ message GetDefinition {
      uint64 buffer_id = 2;
      Anchor position = 3;
      repeated VectorClockEntry version = 4;
- }
+}
 
 message GetDefinitionResponse {
+    repeated LocationLink links = 1;
+}
+
+message GetDeclaration {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+}
+
+message GetDeclarationResponse {
     repeated LocationLink links = 1;
 }
 
@@ -843,6 +875,11 @@ message SaveBuffer {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     optional ProjectPath new_path = 4;
+}
+
+message CloseBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
 }
 
 message ProjectPath {
@@ -1173,6 +1210,7 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    bytes lsp_completion = 6;
 }
 
 message ResolveInlayHint {
@@ -1199,8 +1237,7 @@ message PerformRenameResponse {
     ProjectTransaction transaction = 2;
 }
 
-message SearchProject {
-    uint64 project_id = 1;
+message SearchQuery {
     string query = 2;
     bool regex = 3;
     bool whole_word = 4;
@@ -1210,9 +1247,14 @@ message SearchProject {
     bool include_ignored = 8;
 }
 
-message SearchProjectResponse {
-    repeated Location locations = 1;
-    bool limit_reached = 2;
+message FindSearchCandidates {
+    uint64 project_id = 1;
+    SearchQuery query = 2;
+    uint64 limit = 3;
+}
+
+message FindSearchCandidatesResponse {
+    repeated uint64 buffer_ids = 1;
 }
 
 message CodeAction {
@@ -1676,6 +1718,22 @@ message GetPrivateUserInfoResponse {
     string metrics_id = 1;
     bool staff = 2;
     repeated string flags = 3;
+    optional uint64 accepted_tos_at = 4;
+}
+
+enum Plan {
+    Free = 0;
+    ZedPro = 1;
+}
+
+message UpdateUserPlan {
+    Plan plan = 1;
+}
+
+message AcceptTermsOfService {}
+
+message AcceptTermsOfServiceResponse {
+    uint64 accepted_tos_at = 1;
 }
 
 // Entities
@@ -1777,6 +1835,8 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     optional GitStatus git_status = 9;
+    bool is_fifo = 10;
+    optional uint64 size = 11;
 }
 
 message RepositoryEntry {
@@ -1886,6 +1946,7 @@ message Diagnostic {
         Information = 3;
         Hint = 4;
     }
+    optional string data = 12;
 }
 
 message Operation {
@@ -2041,100 +2102,42 @@ message LspExtExpandMacroResponse {
     string expansion = 2;
 }
 
+message LspExtSwitchSourceHeader {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message LspExtSwitchSourceHeaderResponse {
+    string target_file = 1;
+}
+
 message SetRoomParticipantRole {
     uint64 room_id = 1;
     uint64 user_id = 2;
     ChannelRole role = 3;
 }
 
-message CompleteWithLanguageModel {
-    string model = 1;
-    repeated LanguageModelRequestMessage messages = 2;
-    repeated string stop = 3;
-    float temperature = 4;
-    repeated ChatCompletionTool tools = 5;
-    optional string tool_choice = 6;
-}
-
-// A tool presented to the language model for its use
-message ChatCompletionTool {
-    oneof variant {
-        FunctionObject function = 1;
-    }
-
-    message FunctionObject {
-        string name = 1;
-        optional string description = 2;
-        optional string parameters = 3;
-    }
-}
-
-// A message to the language model
-message LanguageModelRequestMessage {
-    LanguageModelRole role = 1;
-    string content = 2;
-    optional string tool_call_id = 3;
-    repeated ToolCall tool_calls = 4;
-}
-
 enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
-    LanguageModelTool = 3;
+    reserved 3;
 }
 
-message LanguageModelResponseMessage {
-    optional LanguageModelRole role = 1;
-    optional string content = 2;
-    repeated ToolCallDelta tool_calls = 3;
+message CountLanguageModelTokens {
+    LanguageModelProvider provider = 1;
+    string request = 2;
 }
 
-// A request to call a tool, by the language model
-message ToolCall {
-    string id = 1;
-
-    oneof variant {
-        FunctionCall function = 2;
-    }
-
-    message FunctionCall {
-        string name = 1;
-        string arguments = 2;
-    }
-}
-
-message ToolCallDelta {
-    uint32 index = 1;
-    optional string id = 2;
-
-    oneof variant {
-        FunctionCallDelta function = 3;
-    }
-
-    message FunctionCallDelta {
-        optional string name = 1;
-        optional string arguments = 2;
-    }
-}
-
-message LanguageModelResponse {
-    repeated LanguageModelChoiceDelta choices = 1;
-}
-
-message LanguageModelChoiceDelta {
-    uint32 index = 1;
-    LanguageModelResponseMessage delta = 2;
-    optional string finish_reason = 3;
-}
-
-message CountTokensWithLanguageModel {
-    string model = 1;
-    repeated LanguageModelRequestMessage messages = 2;
-}
-
-message CountTokensResponse {
+message CountLanguageModelTokensResponse {
     uint32 token_count = 1;
+}
+
+enum LanguageModelProvider {
+    Anthropic = 0;
+    OpenAI = 1;
+    Google = 2;
+    Zed = 3;
 }
 
 message GetCachedEmbeddings {
@@ -2253,6 +2256,7 @@ message TaskContextForLocation {
 message TaskContext {
     optional string cwd = 1;
     map<string, string> task_variables = 2;
+    map<string, string> project_env = 3;
 }
 
 message TaskTemplates {
@@ -2279,12 +2283,35 @@ message TaskTemplate {
     bool use_new_terminal = 6;
     bool allow_concurrent_runs = 7;
     RevealStrategy reveal = 8;
+    HideStrategy hide = 10;
     repeated string tags = 9;
+    Shell shell = 11;
 }
 
+message Shell {
+    message WithArguments {
+        string program = 1;
+        repeated string args = 2;
+    }
+
+    oneof shell_type {
+        System system = 1;
+        string program = 2;
+        WithArguments with_arguments = 3;
+    }
+}
+
+message System {}
+
 enum RevealStrategy {
-    Always = 0;
-    Never = 1;
+    RevealAlways = 0;
+    RevealNever = 1;
+}
+
+enum HideStrategy {
+    HideAlways = 0;
+    HideNever = 1;
+    HideOnSuccess = 2;
 }
 
 message TaskSourceKind {
@@ -2318,6 +2345,7 @@ message ContextMessageStatus {
         Done done = 1;
         Pending pending = 2;
         Error error = 3;
+        Canceled canceled = 4;
     }
 
     message Done {}
@@ -2327,6 +2355,8 @@ message ContextMessageStatus {
     message Error {
         string message = 1;
     }
+
+    message Canceled {}
 }
 
 message ContextMessage {
@@ -2340,6 +2370,7 @@ message SlashCommandOutputSection {
     AnchorRange range = 1;
     string icon_name = 2;
     string label = 3;
+    optional string metadata = 4;
 }
 
 message ContextOperation {
@@ -2406,6 +2437,15 @@ message OpenContextResponse {
     Context context = 1;
 }
 
+message CreateContext {
+    uint64 project_id = 1;
+}
+
+message CreateContextResponse {
+    string context_id = 1;
+    Context context = 2;
+}
+
 message UpdateContext {
     uint64 project_id = 1;
     string context_id = 2;
@@ -2425,4 +2465,36 @@ message SynchronizeContexts {
 
 message SynchronizeContextsResponse {
     repeated ContextVersion contexts = 1;
+}
+
+message GetLlmToken {}
+
+message GetLlmTokenResponse {
+    string token = 1;
+}
+
+// Remote FS
+
+message AddWorktree {
+    uint64 project_id = 2;
+    string path = 1;
+}
+
+message AddWorktreeResponse {
+    uint64 worktree_id = 1;
+}
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string content = 2;
+}
+
+message CheckFileExists {
+    uint64 project_id = 1;
+    string path = 2;
+}
+
+message CheckFileExistsResponse {
+    bool exists = 1;
+    string path = 2;
 }

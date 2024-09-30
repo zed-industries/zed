@@ -1,26 +1,26 @@
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
-use crate::TerminalView;
+use crate::{default_working_directory, TerminalView};
 use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
+    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use project::{Fs, ProjectEntryId};
+use project::{terminals::TerminalKind, Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{RevealStrategy, SpawnInTerminal, TaskId, TerminalWorkDir};
+use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId};
 use terminal::{
-    terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
+    terminal_settings::{TerminalDockPosition, TerminalSettings},
     Terminal,
 };
 use ui::{
-    h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize, Selectable,
+    h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu, Selectable,
     Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
@@ -33,6 +33,7 @@ use workspace::{
 };
 
 use anyhow::Result;
+use zed_actions::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
@@ -68,6 +69,8 @@ pub struct TerminalPanel {
     _subscriptions: Vec<Subscription>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
+    assistant_enabled: bool,
+    assistant_tab_bar_button: Option<AnyView>,
 }
 
 impl TerminalPanel {
@@ -85,63 +88,6 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
-            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                h_flex()
-                    .gap_2()
-                    .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let focus_handle = pane.focus_handle(cx);
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action(
-                                        "New Terminal",
-                                        workspace::NewTerminal.boxed_clone(),
-                                    )
-                                    .entry(
-                                        "Spawn task",
-                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
-                                        move |cx| {
-                                            // We want the focus to go back to terminal panel once task modal is dismissed,
-                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                            // context menu will be gone the moment we spawn the modal.
-                                            cx.focus(&focus_handle);
-                                            cx.dispatch_action(
-                                                tasks_ui::Spawn::modal().boxed_clone(),
-                                            );
-                                        },
-                                    )
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
-                    )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Pane::render_menu_overlay(new_item_menu))
-                    })
-                    .child({
-                        let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
-                            .selected(zoomed)
-                            .selected_icon(IconName::Minimize)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                pane.toggle_zoom(&workspace::ToggleZoom, cx);
-                            }))
-                            .tooltip(move |cx| {
-                                Tooltip::for_action(
-                                    if zoomed { "Zoom Out" } else { "Zoom In" },
-                                    &ToggleZoom,
-                                    cx,
-                                )
-                            })
-                    })
-                    .into_any_element()
-            });
 
             let workspace = workspace.weak_handle();
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
@@ -198,7 +144,7 @@ impl TerminalPanel {
             cx.subscribe(&pane, Self::handle_pane_event),
         ];
         let project = workspace.project().read(cx);
-        let enabled = project.is_local() || project.supports_remote_terminal(cx);
+        let enabled = project.supports_terminal(cx);
         let this = Self {
             pane,
             fs: workspace.app_state().fs.clone(),
@@ -210,8 +156,94 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             _subscriptions: subscriptions,
             enabled,
+            assistant_enabled: false,
+            assistant_tab_bar_button: None,
         };
+        this.apply_tab_bar_buttons(cx);
         this
+    }
+
+    pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+        self.assistant_enabled = enabled;
+        if enabled {
+            let focus_handle = self
+                .pane
+                .read(cx)
+                .active_item()
+                .map(|item| item.focus_handle(cx))
+                .unwrap_or(self.focus_handle(cx));
+            self.assistant_tab_bar_button = Some(
+                cx.new_view(move |_| InlineAssistTabBarButton { focus_handle })
+                    .into(),
+            );
+        } else {
+            self.assistant_tab_bar_button = None;
+        }
+        self.apply_tab_bar_buttons(cx);
+    }
+
+    fn apply_tab_bar_buttons(&self, cx: &mut ViewContext<Self>) {
+        let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
+        self.pane.update(cx, |pane, cx| {
+            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
+                    return (None, None);
+                }
+                let focus_handle = pane.focus_handle(cx);
+                let right_children = h_flex()
+                    .gap_2()
+                    .children(assistant_tab_bar_button.clone())
+                    .child(
+                        PopoverMenu::new("terminal-tab-bar-popover-menu")
+                            .trigger(
+                                IconButton::new("plus", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("New...", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.new_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                let focus_handle = focus_handle.clone();
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.context(focus_handle.clone())
+                                        .action(
+                                            "New Terminal",
+                                            workspace::NewTerminal.boxed_clone(),
+                                        )
+                                        // We want the focus to go back to terminal panel once task modal is dismissed,
+                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                        // context menu will be gone the moment we spawn the modal.
+                                        .action(
+                                            "Spawn task",
+                                            tasks_ui::Spawn::modal().boxed_clone(),
+                                        )
+                                });
+
+                                Some(menu)
+                            }),
+                    )
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        IconButton::new("toggle_zoom", IconName::Maximize)
+                            .icon_size(IconSize::Small)
+                            .selected(zoomed)
+                            .selected_icon(IconName::Minimize)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                pane.toggle_zoom(&workspace::ToggleZoom, cx);
+                            }))
+                            .tooltip(move |cx| {
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
+                            })
+                    })
+                    .into_any_element()
+                    .into();
+                (None, right_children)
+            });
+        });
     }
 
     pub async fn load(
@@ -323,8 +355,8 @@ impl TerminalPanel {
     ) {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
-            pane::Event::RemoveItem { .. } => self.serialize(cx),
-            pane::Event::Remove => cx.emit(PanelEvent::Close),
+            pane::Event::RemovedItem { .. } => self.serialize(cx),
+            pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
 
@@ -348,14 +380,13 @@ impl TerminalPanel {
             return;
         };
 
-        let terminal_work_dir = workspace
-            .project()
-            .read(cx)
-            .terminal_work_dir_for(Some(&action.working_directory), cx);
-
         terminal_panel
             .update(cx, |panel, cx| {
-                panel.add_terminal(terminal_work_dir, None, RevealStrategy::Always, cx)
+                panel.add_terminal(
+                    TerminalKind::Shell(Some(action.working_directory.clone())),
+                    RevealStrategy::Always,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     }
@@ -363,34 +394,34 @@ impl TerminalPanel {
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
-        let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
-            Shell::System => Shell::retrieve_system_shell().map(|shell| (shell, Vec::new())),
+        let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
+            Shell::System => retrieve_system_shell().map(|shell| (shell, Vec::new())),
             Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
             return;
         };
         #[cfg(target_os = "windows")]
-        let windows_shell_type = Shell::to_windows_shell_type(&shell);
+        let windows_shell_type = to_windows_shell_type(&shell);
 
         #[cfg(not(target_os = "windows"))]
         {
-            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+            spawn_task.command_label = format!("{shell} -i -c '{}'", spawn_task.command_label);
         }
         #[cfg(target_os = "windows")]
         {
-            use terminal::terminal_settings::WindowsShellType;
+            use crate::terminal_panel::WindowsShellType;
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
-                    spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} -C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Cmd => {
-                    spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} /C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Other => {
                     spawn_task.command_label =
-                        format!("{shell} -i -c `{}`", spawn_task.command_label)
+                        format!("{shell} -i -c '{}'", spawn_task.command_label)
                 }
             }
         }
@@ -404,7 +435,7 @@ impl TerminalPanel {
                 #[cfg(not(target_os = "windows"))]
                 command.push_str(&arg);
                 #[cfg(target_os = "windows")]
-                command.push_str(&Shell::to_windows_shell_variable(windows_shell_type, arg));
+                command.push_str(&to_windows_shell_variable(windows_shell_type, arg));
                 command
             });
 
@@ -412,7 +443,7 @@ impl TerminalPanel {
         user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         #[cfg(target_os = "windows")]
         {
-            use terminal::terminal_settings::WindowsShellType;
+            use crate::terminal_panel::WindowsShellType;
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
@@ -484,7 +515,7 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         let reveal = spawn_task.reveal;
-        self.add_terminal(spawn_task.cwd.clone(), Some(spawn_task), reveal, cx)
+        self.add_terminal(TerminalKind::Task(spawn_task), reveal, cx)
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
@@ -497,9 +528,11 @@ impl TerminalPanel {
             return;
         };
 
+        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal(None, None, RevealStrategy::Always, cx)
+                this.add_terminal(kind, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -533,22 +566,14 @@ impl TerminalPanel {
 
     fn add_terminal(
         &mut self,
-        working_directory: Option<TerminalWorkDir>,
-        spawn_task: Option<SpawnInTerminal>,
+        kind: TerminalKind,
         reveal_strategy: RevealStrategy,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         if !self.enabled {
-            if spawn_task.is_none()
-                || !matches!(
-                    spawn_task.as_ref().unwrap().cwd,
-                    Some(TerminalWorkDir::Ssh { .. })
-                )
-            {
-                return Task::ready(Err(anyhow::anyhow!(
-                    "terminal not yet supported for remote projects"
-                )));
-            }
+            return Task::ready(Err(anyhow::anyhow!(
+                "terminal not yet supported for remote projects"
+            )));
         }
 
         let workspace = self.workspace.clone();
@@ -557,18 +582,10 @@ impl TerminalPanel {
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
             let result = workspace.update(&mut cx, |workspace, cx| {
-                let working_directory = if let Some(working_directory) = working_directory {
-                    Some(working_directory)
-                } else {
-                    let working_directory_strategy =
-                        TerminalSettings::get_global(cx).working_directory.clone();
-                    crate::get_working_directory(workspace, cx, working_directory_strategy)
-                };
-
                 let window = cx.window_handle();
-                let terminal = workspace.project().update(cx, |project, cx| {
-                    project.create_terminal(working_directory, spawn_task, window, cx)
-                })?;
+                let terminal = workspace
+                    .project()
+                    .update(cx, |project, cx| project.create_terminal(kind, window, cx))?;
                 let terminal_view = Box::new(cx.new_view(|cx| {
                     TerminalView::new(
                         terminal.clone(),
@@ -655,7 +672,7 @@ impl TerminalPanel {
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
             project
-                .create_terminal(spawn_task.cwd.clone(), Some(spawn_task), window, cx)
+                .create_terminal(TerminalKind::Task(spawn_task), window, cx)
                 .log_err()
         })?;
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
@@ -679,12 +696,12 @@ impl TerminalPanel {
         Some(())
     }
 
-    pub fn pane(&self) -> &View<Pane> {
-        &self.pane
-    }
-
     fn has_no_terminals(&self, cx: &WindowContext) -> bool {
         self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
+    }
+
+    pub fn assistant_enabled(&self) -> bool {
+        self.assistant_enabled
     }
 }
 
@@ -760,23 +777,27 @@ impl Panel for TerminalPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<TerminalSettings>(self.fs.clone(), cx, move |settings| {
-            let dock = match position {
-                DockPosition::Left => TerminalDockPosition::Left,
-                DockPosition::Bottom => TerminalDockPosition::Bottom,
-                DockPosition::Right => TerminalDockPosition::Right,
-            };
-            settings.dock = Some(dock);
-        });
+        settings::update_settings_file::<TerminalSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left => TerminalDockPosition::Left,
+                    DockPosition::Bottom => TerminalDockPosition::Bottom,
+                    DockPosition::Right => TerminalDockPosition::Right,
+                };
+                settings.dock = Some(dock);
+            },
+        );
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {
         let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or_else(|| settings.default_width)
+                self.width.unwrap_or(settings.default_width)
             }
-            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
+            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
         }
     }
 
@@ -798,10 +819,19 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.has_no_terminals(cx) {
-            self.add_terminal(None, None, RevealStrategy::Never, cx)
-                .detach_and_log_err(cx)
+        if !active || !self.has_no_terminals(cx) {
+            return;
         }
+        cx.defer(|this, cx| {
+            let Ok(kind) = this.workspace.update(cx, |workspace, cx| {
+                TerminalKind::Shell(default_working_directory(workspace, cx))
+            }) else {
+                return;
+            };
+
+            this.add_terminal(kind, RevealStrategy::Never, cx)
+                .detach_and_log_err(cx)
+        })
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
@@ -832,6 +862,28 @@ impl Panel for TerminalPanel {
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }
+
+    fn pane(&self) -> Option<View<Pane>> {
+        Some(self.pane.clone())
+    }
+}
+
+struct InlineAssistTabBarButton {
+    focus_handle: FocusHandle,
+}
+
+impl Render for InlineAssistTabBarButton {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
+        IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
+            .icon_size(IconSize::Small)
+            .on_click(cx.listener(|_, _, cx| {
+                cx.dispatch_action(InlineAssist::default().boxed_clone());
+            }))
+            .tooltip(move |cx| {
+                Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
+            })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -840,4 +892,98 @@ struct SerializedTerminalPanel {
     active_item_id: Option<u64>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+}
+
+fn retrieve_system_shell() -> Option<String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        use anyhow::Context;
+        use util::ResultExt;
+
+        std::env::var("SHELL")
+            .context("Error finding SHELL in env.")
+            .log_err()
+    }
+    // `alacritty_terminal` uses this as default on Windows. See:
+    // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
+    #[cfg(target_os = "windows")]
+    return Some("powershell".to_owned());
+}
+
+#[cfg(target_os = "windows")]
+fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> String {
+    match shell_type {
+        WindowsShellType::Powershell => to_powershell_variable(input),
+        WindowsShellType::Cmd => to_cmd_variable(input),
+        WindowsShellType::Other => input,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn to_windows_shell_type(shell: &str) -> WindowsShellType {
+    if shell == "powershell"
+        || shell.ends_with("powershell.exe")
+        || shell == "pwsh"
+        || shell.ends_with("pwsh.exe")
+    {
+        WindowsShellType::Powershell
+    } else if shell == "cmd" || shell.ends_with("cmd.exe") {
+        WindowsShellType::Cmd
+    } else {
+        // Someother shell detected, the user might install and use a
+        // unix-like shell.
+        WindowsShellType::Other
+    }
+}
+
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `%SOME_VAR%`.
+#[inline]
+#[cfg(target_os = "windows")]
+fn to_cmd_variable(input: String) -> String {
+    if let Some(var_str) = input.strip_prefix("${") {
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("%{}%", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("%{}%", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
+}
+
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `$env:SOME_VAR`.
+#[inline]
+#[cfg(target_os = "windows")]
+fn to_powershell_variable(input: String) -> String {
+    if let Some(var_str) = input.strip_prefix("${") {
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("$env:{}", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("$env:{}", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowsShellType {
+    Powershell,
+    Cmd,
+    Other,
 }

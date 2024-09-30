@@ -34,11 +34,11 @@ pub struct ConnectionId {
     pub id: u32,
 }
 
-impl Into<PeerId> for ConnectionId {
-    fn into(self) -> PeerId {
+impl From<ConnectionId> for PeerId {
+    fn from(id: ConnectionId) -> Self {
         PeerId {
-            owner_id: self.owner_id,
-            id: self.id,
+            owner_id: id.owner_id,
+            id: id.id,
         }
     }
 }
@@ -478,7 +478,7 @@ impl Peer {
             let (response, received_at, _barrier) =
                 rx.await.map_err(|_| anyhow!("connection was closed"))?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                return Err(RpcError::from_proto(&error, type_name));
+                return Err(RpcError::from_proto(error, type_name));
             }
             Ok((response, received_at))
         }
@@ -516,11 +516,7 @@ impl Peer {
                 future::ready(match response {
                     Ok(response) => {
                         if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                            Some(Err(anyhow!(
-                                "RPC request {} failed - {}",
-                                T::NAME,
-                                error.message
-                            )))
+                            Some(Err(RpcError::from_proto(error, T::NAME)))
                         } else if let Some(proto::envelope::Payload::EndStream(_)) =
                             &response.payload
                         {
@@ -643,14 +639,13 @@ impl Peer {
 
     pub fn respond_with_unhandled_message(
         &self,
-        envelope: Box<dyn AnyTypedEnvelope>,
+        sender_id: ConnectionId,
+        request_message_id: u32,
+        message_type_name: &'static str,
     ) -> Result<()> {
-        let connection = self.connection_state(envelope.sender_id().into())?;
+        let connection = self.connection_state(sender_id)?;
         let response = ErrorCode::Internal
-            .message(format!(
-                "message {} was not handled",
-                envelope.payload_type_name()
-            ))
+            .message(format!("message {} was not handled", message_type_name))
             .to_proto();
         let message_id = connection
             .next_message_id
@@ -659,7 +654,7 @@ impl Peer {
             .outgoing_tx
             .unbounded_send(proto::Message::Envelope(response.into_envelope(
                 message_id,
-                Some(envelope.message_id()),
+                Some(request_message_id),
                 None,
             )))?;
         Ok(())

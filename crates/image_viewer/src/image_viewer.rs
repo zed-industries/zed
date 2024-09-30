@@ -7,11 +7,13 @@ use gpui::{
 use persistence::IMAGE_VIEWER;
 use ui::prelude::*;
 
+use file_icons::FileIcons;
 use project::{Project, ProjectEntryId, ProjectPath};
+use settings::Settings;
 use std::{ffi::OsStr, path::PathBuf};
 use workspace::{
     item::{Item, ProjectItem, SerializableItem, TabContentParams},
-    ItemId, Pane, Workspace, WorkspaceId,
+    ItemId, ItemSettings, Pane, Workspace, WorkspaceId,
 };
 
 const IMAGE_VIEWER_KIND: &str = "ImageView";
@@ -83,6 +85,14 @@ impl Item for ImageView {
             .color(params.text_color())
             .italic(params.preview)
             .into_any_element()
+    }
+
+    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+        ItemSettings::get_global(cx)
+            .file_icons
+            .then(|| FileIcons::get_icon(self.path.as_path(), cx))
+            .flatten()
+            .map(Icon::from_path)
     }
 
     fn clone_on_split(

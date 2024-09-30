@@ -68,3 +68,5 @@
                         ")" @context))))
     ]
 ) @item
+
+(comment) @annotation

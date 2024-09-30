@@ -106,7 +106,7 @@ fn main() -> Result<()> {
     TermLogger::init(
         LevelFilter::Trace,
         log_config,
-        TerminalMode::Mixed,
+        TerminalMode::Stderr,
         ColorChoice::Auto,
     )
     .expect("could not initialize logger");

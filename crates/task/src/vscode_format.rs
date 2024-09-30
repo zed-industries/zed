@@ -67,7 +67,7 @@ impl EnvVariableReplacer {
                 // Got a VSCode->Zed hit, perform a substitution
                 let mut name = format!("${{{substitution}");
                 append_previous_default(&mut name);
-                name.push_str("}");
+                name.push('}');
                 return Some(name);
             }
             // This is an unknown variable.
@@ -84,7 +84,7 @@ impl EnvVariableReplacer {
 }
 
 impl VsCodeTaskDefinition {
-    fn to_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
+    fn into_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
         if self.other_attributes.contains_key("dependsOn") {
             bail!("Encountered unsupported `dependsOn` key during deserialization");
         }
@@ -143,7 +143,7 @@ impl TryFrom<VsCodeTaskFile> for TaskTemplates {
         let templates = value
             .tasks
             .into_iter()
-            .filter_map(|vscode_definition| vscode_definition.to_zed_format(&replacer).log_err())
+            .filter_map(|vscode_definition| vscode_definition.into_zed_format(&replacer).log_err())
             .collect();
         Ok(Self(templates))
     }
@@ -200,9 +200,9 @@ mod tests {
 
     #[test]
     fn can_deserialize_ts_tasks() {
-        static TYPESCRIPT_TASKS: &'static str = include_str!("../test_data/typescript.json");
+        static TYPESCRIPT_TASKS: &str = include_str!("../test_data/typescript.json");
         let vscode_definitions: VsCodeTaskFile =
-            serde_json_lenient::from_str(&TYPESCRIPT_TASKS).unwrap();
+            serde_json_lenient::from_str(TYPESCRIPT_TASKS).unwrap();
 
         let expected = vec![
             VsCodeTaskDefinition {
@@ -290,9 +290,9 @@ mod tests {
 
     #[test]
     fn can_deserialize_rust_analyzer_tasks() {
-        static RUST_ANALYZER_TASKS: &'static str = include_str!("../test_data/rust-analyzer.json");
+        static RUST_ANALYZER_TASKS: &str = include_str!("../test_data/rust-analyzer.json");
         let vscode_definitions: VsCodeTaskFile =
-            serde_json_lenient::from_str(&RUST_ANALYZER_TASKS).unwrap();
+            serde_json_lenient::from_str(RUST_ANALYZER_TASKS).unwrap();
         let expected = vec![
             VsCodeTaskDefinition {
                 label: "Build Extension in Background".to_string(),

@@ -13,6 +13,7 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
+use isahc_http_client::IsahcHttpClient;
 use language::LanguageConfig;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
@@ -38,7 +39,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let fs = Arc::new(RealFs::default());
     let engine = wasmtime::Engine::default();
-    let mut wasm_store = WasmStore::new(engine)?;
+    let mut wasm_store = WasmStore::new(&engine)?;
 
     let extension_path = args
         .source_dir
@@ -58,7 +59,21 @@ async fn main() -> Result<()> {
     let mut manifest = ExtensionManifest::load(fs.clone(), &extension_path).await?;
 
     log::info!("compiling extension");
-    let builder = ExtensionBuilder::new(scratch_dir);
+
+    let user_agent = format!(
+        "Zed Extension CLI/{} ({}; {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let http_client = Arc::new(
+        IsahcHttpClient::builder()
+            .default_header("User-Agent", user_agent)
+            .build()
+            .map(IsahcHttpClient::from)?,
+    );
+
+    let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
         .compile_extension(
             &extension_path,
@@ -80,7 +95,7 @@ async fn main() -> Result<()> {
 
     let tar_output = Command::new("tar")
         .current_dir(&output_dir)
-        .args(&["-czvf", "archive.tar.gz", "-C", "archive", "."])
+        .args(["-czvf", "archive.tar.gz", "-C", "archive", "."])
         .output()
         .context("failed to run tar")?;
     if !tar_output.status.success() {
@@ -113,7 +128,7 @@ async fn copy_extension_resources(
     output_dir: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    fs::create_dir_all(&output_dir).context("failed to create output dir")?;
+    fs::create_dir_all(output_dir).context("failed to create output dir")?;
 
     let manifest_toml = toml::to_string(&manifest).context("failed to serialize manifest")?;
     fs::write(output_dir.join("extension.toml"), &manifest_toml)
@@ -135,8 +150,8 @@ async fn copy_extension_resources(
             let mut grammar_filename = PathBuf::from(grammar_name.as_ref());
             grammar_filename.set_extension("wasm");
             fs::copy(
-                &source_grammars_dir.join(&grammar_filename),
-                &output_grammars_dir.join(&grammar_filename),
+                source_grammars_dir.join(&grammar_filename),
+                output_grammars_dir.join(&grammar_filename),
             )
             .with_context(|| format!("failed to copy grammar '{}'", grammar_filename.display()))?;
         }

@@ -13,6 +13,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
+    pub is_dir: bool,
     pub path: &'a Path,
     pub char_bag: CharBag,
 }
@@ -24,6 +25,7 @@ pub struct PathMatch {
     pub worktree_id: usize,
     pub path: Arc<Path>,
     pub path_prefix: Arc<str>,
+    pub is_dir: bool,
     /// Number of steps removed from a shared parent with the relative path
     /// Used to order closer paths first in the search list
     pub distance_to_relative_ancestor: usize,
@@ -119,8 +121,9 @@ pub fn match_fixed_path_set(
             score,
             worktree_id,
             positions: Vec::new(),
+            is_dir: candidate.is_dir,
             path: Arc::from(candidate.path),
-            path_prefix: Arc::from(""),
+            path_prefix: Arc::default(),
             distance_to_relative_ancestor: usize::MAX,
         },
     );
@@ -195,6 +198,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                     worktree_id,
                                     positions: Vec::new(),
                                     path: Arc::from(candidate.path),
+                                    is_dir: candidate.is_dir,
                                     path_prefix: candidate_set.prefix(),
                                     distance_to_relative_ancestor: relative_to.as_ref().map_or(
                                         usize::MAX,

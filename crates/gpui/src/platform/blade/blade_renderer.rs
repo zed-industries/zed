@@ -3,9 +3,9 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
-    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Underline,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, GPUSpecs, Hsla,
+    MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -18,10 +18,11 @@ use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use std::{mem, sync::Arc};
 
-const MAX_FRAME_TIME_MS: u32 = 1000;
+const MAX_FRAME_TIME_MS: u32 = 10000;
 
 #[cfg(target_os = "macos")]
-pub type Context = ();
+#[derive(Clone, Default)]
+pub struct Context {}
 #[cfg(target_os = "macos")]
 pub type Renderer = BladeRenderer;
 
@@ -335,6 +336,17 @@ impl BladePipelines {
             }),
         }
     }
+
+    fn destroy(&mut self, gpu: &gpu::Context) {
+        gpu.destroy_render_pipeline(&mut self.quads);
+        gpu.destroy_render_pipeline(&mut self.shadows);
+        gpu.destroy_render_pipeline(&mut self.path_rasterization);
+        gpu.destroy_render_pipeline(&mut self.paths);
+        gpu.destroy_render_pipeline(&mut self.underlines);
+        gpu.destroy_render_pipeline(&mut self.mono_sprites);
+        gpu.destroy_render_pipeline(&mut self.poly_sprites);
+        gpu.destroy_render_pipeline(&mut self.surfaces);
+    }
 }
 
 pub struct BladeSurfaceConfig {
@@ -412,7 +424,8 @@ impl BladeRenderer {
     fn wait_for_gpu(&mut self) {
         if let Some(last_sp) = self.last_sync_point.take() {
             if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
-                panic!("GPU hung");
+                log::error!("GPU hung");
+                while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
             }
         }
     }
@@ -436,6 +449,7 @@ impl BladeRenderer {
             self.wait_for_gpu();
             self.surface_config.transparent = transparent;
             let surface_info = self.gpu.resize(self.surface_config);
+            self.pipelines.destroy(&self.gpu);
             self.pipelines = BladePipelines::new(&self.gpu, surface_info);
             self.alpha_mode = surface_info.alpha;
         }
@@ -448,6 +462,18 @@ impl BladeRenderer {
 
     pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
         &self.atlas
+    }
+
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub fn gpu_specs(&self) -> GPUSpecs {
+        let info = self.gpu.device_information();
+
+        GPUSpecs {
+            is_software_emulated: info.is_software_emulated,
+            device_name: info.device_name.clone(),
+            driver_name: info.driver_name.clone(),
+            driver_info: info.driver_info.clone(),
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -467,7 +493,11 @@ impl BladeRenderer {
         let mut vertices_by_texture_id = HashMap::default();
 
         for path in paths {
-            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+            let clipped_bounds = path
+                .bounds
+                .intersect(&path.content_mask.bounds)
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil());
             let tile = self.atlas.allocate_for_rendering(
                 clipped_bounds.size.map(Into::into),
                 AtlasTextureKind::Path,
@@ -520,8 +550,10 @@ impl BladeRenderer {
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
         self.atlas.destroy();
+        self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
+        self.pipelines.destroy(&self.gpu);
     }
 
     pub fn draw(&mut self, scene: &Scene) {

@@ -1,17 +1,54 @@
+mod editable_setting_control;
+mod json_schema;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
 
 use gpui::AppContext;
 use rust_embed::RustEmbed;
-use std::{borrow::Cow, str};
+use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
+pub use editable_setting_control::*;
+pub use json_schema::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{
-    Settings, SettingsJsonSchemaParams, SettingsLocation, SettingsSources, SettingsStore,
+    InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore,
 };
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub struct WorktreeId(usize);
+
+impl From<WorktreeId> for usize {
+    fn from(value: WorktreeId) -> Self {
+        value.0
+    }
+}
+
+impl WorktreeId {
+    pub fn from_usize(handle_id: usize) -> Self {
+        Self(handle_id)
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for WorktreeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
@@ -21,7 +58,7 @@ pub use settings_store::{
 pub struct SettingsAssets;
 
 pub fn init(cx: &mut AppContext) {
-    let mut settings = SettingsStore::default();
+    let mut settings = SettingsStore::new(cx);
     settings
         .set_default_settings(&default_settings(), cx)
         .unwrap();

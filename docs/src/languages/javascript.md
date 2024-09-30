@@ -2,10 +2,10 @@
 
 JavaScript support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
-- Language Server: [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
+- Tree Sitter: [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
+- Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
-### Code formatting
+## Code formatting
 
 Formatting on save is enabled by default for JavaScript, using TypeScript's built-in code formatting. But many JavaScript projects use other command-line code-formatting tools, such as [Prettier](https://prettier.io/). You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings. See the [configuration](../configuring-zed.md) documentation for more information.
 
@@ -15,7 +15,7 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 {
   "languages": {
     "JavaScript": {
-      "format_on_save": {
+      "formatter": {
         "external": {
           "command": "prettier",
           "arguments": ["--stdin-filepath", "{buffer_path}"]
@@ -26,10 +26,20 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 }
 ```
 
-### ESLint
+## JSX
+
+Zed supports JSX syntax highlighting out of the box.
+
+In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used provide autocompletion for Tailwind CSS classes.
+
+## JSDoc
+
+Zed supports JSDoc syntax in JavaScript and TypeScript comments that match the JSDoc syntax. Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc) for parsing and highlighting JSDoc.
+
+## ESLint
 
 You can configure Zed to format code using `eslint --fix` by running the ESLint
-code action when formatting (requires Zed `0.125.0`):
+code action when formatting:
 
 ```json
 {
@@ -72,7 +82,7 @@ You can also only execute a single ESLint rule when using `fixAll`:
 > errors.
 
 If you **only** want to run ESLint on save, you can configure code actions as
-the formatter (requires Zed `0.130.x`):
+the formatter:
 
 ```json
 {
@@ -88,9 +98,9 @@ the formatter (requires Zed `0.130.x`):
 }
 ```
 
-#### Configure ESLint's `nodePath`:
+### Configure ESLint's `nodePath`:
 
-You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
+You can configure ESLint's `nodePath` setting:
 
 ```json
 {
@@ -104,9 +114,9 @@ You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
 }
 ```
 
-#### Configure ESLint's `problems`:
+### Configure ESLint's `problems`:
 
-You can configure ESLint's `problems` setting (requires Zed `0.130.x`).
+You can configure ESLint's `problems` setting.
 
 For example, here's how to set `problems.shortenToSingleLine`:
 
@@ -124,7 +134,7 @@ For example, here's how to set `problems.shortenToSingleLine`:
 }
 ```
 
-#### Configure ESLint's `rulesCustomizations`:
+### Configure ESLint's `rulesCustomizations`:
 
 You can configure ESLint's `rulesCustomizations` setting:
 
@@ -143,6 +153,7 @@ You can configure ESLint's `rulesCustomizations` setting:
 }
 ```
 
+## See also
 
-## Yarn integration
-See [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
+- [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
+- [TypeScript documentation](./typescript.md)

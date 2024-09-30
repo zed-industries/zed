@@ -356,7 +356,7 @@ async fn test_channel_message_changes(
     let project_b = client_b.build_empty_local_project(cx_b);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-    let chat_panel_b = workspace_b.update(cx_b, |workspace, cx| ChatPanel::new(workspace, cx));
+    let chat_panel_b = workspace_b.update(cx_b, ChatPanel::new);
     chat_panel_b
         .update(cx_b, |chat_panel, cx| {
             chat_panel.set_active(true, cx);

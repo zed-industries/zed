@@ -150,7 +150,7 @@ fn gaussian(x: f32, sigma: f32) -> f32{
 fn erf(v: vec2<f32>) -> vec2<f32> {
     let s = sign(v);
     let a = abs(v);
-    let r1 = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    let r1 = 1.0 + (0.278393 + (0.230389 + (0.000972 + 0.078108 * a) * a) * a) * a;
     let r2 = r1 * r1;
     return s - s / (r2 * r2);
 }
@@ -488,8 +488,8 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 
     let half_thickness = underline.thickness * 0.5;
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
-    let frequency = M_PI_F * 3.0 * underline.thickness / 8.0;
-    let amplitude = 1.0 / (2.0 * underline.thickness);
+    let frequency = M_PI_F * 3.0 * underline.thickness / 3.0;
+    let amplitude = 1.0 / (4.0 * underline.thickness);
     let sine = sin(st.x * frequency) * amplitude;
     let dSine = cos(st.x * frequency) * amplitude * frequency;
     let distance = (st.y - sine) / sqrt(1.0 + dSine * dSine);
@@ -548,7 +548,9 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
 
 struct PolychromeSprite {
     order: u32,
+    pad: u32,
     grayscale: u32,
+    opacity: f32,
     bounds: Bounds,
     content_mask: Bounds,
     corner_radii: Corners,
@@ -592,7 +594,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, saturate(0.5 - distance));
+    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
 }
 
 // --- surfaces --- //

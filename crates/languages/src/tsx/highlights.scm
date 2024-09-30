@@ -181,6 +181,7 @@
   "import"
   "in"
   "instanceof"
+  "is"
   "let"
   "new"
   "of"

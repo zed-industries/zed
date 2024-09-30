@@ -33,10 +33,11 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
     WeakModel,
 };
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -148,7 +149,7 @@ impl Global for GlobalExtensionStore {}
 pub struct ExtensionIndex {
     pub extensions: BTreeMap<Arc<str>, ExtensionIndexEntry>,
     pub themes: BTreeMap<Arc<str>, ExtensionIndexThemeEntry>,
-    pub languages: BTreeMap<Arc<str>, ExtensionIndexLanguageEntry>,
+    pub languages: BTreeMap<LanguageName, ExtensionIndexLanguageEntry>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -176,7 +177,7 @@ actions!(zed, [ReloadExtensions]);
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -188,6 +189,7 @@ pub fn init(
             paths::extensions_dir().clone(),
             None,
             fs,
+            client.http_client().clone(),
             client.http_client().clone(),
             Some(client.telemetry().clone()),
             node_runtime,
@@ -224,8 +226,9 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
@@ -243,7 +246,7 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(build_dir)),
+            builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
@@ -285,7 +288,7 @@ impl ExtensionStore {
         // it must be asynchronously rebuilt.
         let mut extension_index = ExtensionIndex::default();
         let mut extension_index_needs_rebuild = true;
-        if let Some(index_content) = index_content.ok() {
+        if let Ok(index_content) = index_content {
             if let Some(index) = serde_json::from_str(&index_content).log_err() {
                 extension_index = index;
                 if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
@@ -364,9 +367,9 @@ impl ExtensionStore {
             let installed_dir = this.installed_dir.clone();
             async move {
                 let (mut paths, _) = fs.watch(&installed_dir, FS_WATCH_LATENCY).await;
-                while let Some(paths) = paths.next().await {
-                    for path in paths {
-                        let Ok(event_path) = path.strip_prefix(&installed_dir) else {
+                while let Some(events) = paths.next().await {
+                    for event in events {
+                        let Ok(event_path) = event.path.strip_prefix(&installed_dir) else {
                             continue;
                         };
 
@@ -577,11 +580,11 @@ impl ExtensionStore {
         query: &[(&str, &str)],
         cx: &mut ModelContext<'_, ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        let url = self.http_client.build_zed_api_url(path, &query);
+        let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {
             let mut response = http_client
-                .get(&url?.as_ref(), AsyncBody::empty(), true)
+                .get(url?.as_ref(), AsyncBody::empty(), true)
                 .await?;
 
             let mut body = Vec::new();
@@ -646,7 +649,7 @@ impl ExtensionStore {
             });
 
             let mut response = http_client
-                .get(&url.as_ref(), Default::default(), true)
+                .get(url.as_ref(), Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading extension: {}", err))?;
 
@@ -661,7 +664,7 @@ impl ExtensionStore {
 
             let content_length = response
                 .headers()
-                .get(isahc::http::header::CONTENT_LENGTH)
+                .get(http_client::http::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
             let mut body = BufReader::new(response.body_mut());
@@ -682,14 +685,11 @@ impl ExtensionStore {
             })?
             .await;
 
-            match operation {
-                ExtensionOperation::Install => {
-                    this.update(&mut cx, |_, cx| {
-                        cx.emit(Event::ExtensionInstalled(extension_id));
-                    })
-                    .ok();
-                }
-                _ => {}
+            if let ExtensionOperation::Install = operation {
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(Event::ExtensionInstalled(extension_id));
+                })
+                .ok();
             }
 
             anyhow::Ok(())
@@ -767,6 +767,7 @@ impl ExtensionStore {
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
+        let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
@@ -787,6 +788,15 @@ impl ExtensionStore {
                     .ok();
                 }
             });
+
+            fs.remove_dir(
+                &work_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
 
             fs.remove_dir(
                 &extension_dir,
@@ -858,10 +868,10 @@ impl ExtensionStore {
                 .await?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
-            if let Some(metadata) = fs.metadata(&output_path).await? {
+            if let Some(metadata) = fs.metadata(output_path).await? {
                 if metadata.is_symlink {
                     fs.remove_file(
-                        &output_path,
+                        output_path,
                         RemoveOptions {
                             recursive: false,
                             ignore_if_not_exists: true,
@@ -952,7 +962,7 @@ impl ExtensionStore {
                     (Some(_), None) => {
                         extensions_to_unload.push(old_keys.next().unwrap().0.clone());
                     }
-                    (Some((old_key, _)), Some((new_key, _))) => match old_key.cmp(&new_key) {
+                    (Some((old_key, _)), Some((new_key, _))) => match old_key.cmp(new_key) {
                         Ordering::Equal => {
                             let (old_key, old_value) = old_keys.next().unwrap();
                             let (new_key, new_value) = new_keys.next().unwrap();
@@ -1125,7 +1135,7 @@ impl ExtensionStore {
                     async move {
                         for theme_path in &themes_to_add {
                             theme_registry
-                                .load_user_theme(&theme_path, fs.clone())
+                                .load_user_theme(theme_path, fs.clone())
                                 .await
                                 .log_err();
                         }
@@ -1211,7 +1221,10 @@ impl ExtensionStore {
                                 command: crate::wit::SlashCommand {
                                     name: slash_command_name.to_string(),
                                     description: slash_command.description.to_string(),
-                                    tooltip_text: slash_command.tooltip_text.to_string(),
+                                    // We don't currently expose this as a configurable option, as it currently drives
+                                    // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
+                                    // defined in extensions, as they are not able to be added to the menu.
+                                    tooltip_text: String::new(),
                                     requires_argument: slash_command.requires_argument,
                                 },
                                 extension: wasm_extension.clone(),

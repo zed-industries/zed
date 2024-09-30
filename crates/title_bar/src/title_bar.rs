@@ -11,14 +11,15 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
+use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
+    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
-use rpc::proto::DevServerStatus;
+use rpc::proto::{self, DevServerStatus};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -64,6 +65,7 @@ pub struct TitleBar {
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
     should_move: bool,
+    application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -130,12 +132,7 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .children(match self.platform_style {
-                                PlatformStyle::Mac => None,
-                                PlatformStyle::Linux | PlatformStyle::Windows => {
-                                    Some(ApplicationMenu::new())
-                                }
-                            })
+                            .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
                             .children(self.render_project_host(cx))
                             .child(self.render_project_name(cx))
                             .children(self.render_project_branch(cx))
@@ -181,6 +178,12 @@ impl Render for TitleBar {
                             .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
                                 this.should_move = false;
                             }))
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _ev, _cx| {
+                                    this.should_move = false;
+                                }),
+                            )
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(move |this, _ev, _cx| {
@@ -208,6 +211,15 @@ impl TitleBar {
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
+
+        let platform_style = PlatformStyle::platform();
+        let application_menu = match platform_style {
+            PlatformStyle::Mac => None,
+            PlatformStyle::Linux | PlatformStyle::Windows => {
+                Some(cx.new_view(ApplicationMenu::new))
+            }
+        };
+
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -220,9 +232,10 @@ impl TitleBar {
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         Self {
-            platform_style: PlatformStyle::platform(),
+            platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
+            application_menu,
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
@@ -507,16 +520,32 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        if let Some(user) = self.user_store.read(cx).current_user() {
+        let user_store = self.user_store.read(cx);
+        if let Some(user) = user_store.current_user() {
+            let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
-                .menu(|cx| {
-                    ContextMenu::build(cx, |menu, _| {
-                        menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                .menu(move |cx| {
+                    ContextMenu::build(cx, |menu, cx| {
+                        menu.when(cx.has_flag::<ZedPro>(), |menu| {
+                            menu.action(
+                                format!(
+                                    "Current Plan: {}",
+                                    match plan {
+                                        None => "",
+                                        Some(proto::Plan::Free) => "Free",
+                                        Some(proto::Plan::ZedPro) => "Pro",
+                                    }
+                                ),
+                                zed_actions::OpenAccountSettings.boxed_clone(),
+                            )
                             .separator()
-                            .action("Sign Out", client::SignOut.boxed_clone())
+                        })
+                        .action("Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .action("Themes…", theme_selector::Toggle::default().boxed_clone())
+                        .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                        .separator()
+                        .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
                 })

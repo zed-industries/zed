@@ -1,6 +1,6 @@
 use crate::{
-    h_flex, rems_from_px, v_flex, Clickable, Color, Headline, HeadlineSize, IconButton,
-    IconButtonShape, IconName, Label, LabelCommon, LabelSize, Spacing,
+    h_flex, v_flex, Clickable, Color, Headline, HeadlineSize, IconButton, IconButtonShape,
+    IconName, Label, LabelCommon, LabelSize, Spacing,
 };
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -97,6 +97,12 @@ pub struct ModalHeader {
     show_back_button: bool,
 }
 
+impl Default for ModalHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModalHeader {
     pub fn new() -> Self {
         Self {
@@ -182,6 +188,12 @@ pub struct ModalRow {
     children: SmallVec<[AnyElement; 2]>,
 }
 
+impl Default for ModalRow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModalRow {
     pub fn new() -> Self {
         Self {
@@ -198,7 +210,7 @@ impl ParentElement for ModalRow {
 
 impl RenderOnce for ModalRow {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        h_flex().w_full().px_2().py_1().children(self.children)
+        h_flex().w_full().py_1().children(self.children)
     }
 }
 
@@ -206,6 +218,12 @@ impl RenderOnce for ModalRow {
 pub struct ModalFooter {
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
+}
+
+impl Default for ModalFooter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ModalFooter {
@@ -245,6 +263,12 @@ pub struct Section {
     header: Option<SectionHeader>,
     meta: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
+}
+
+impl Default for Section {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Section {
@@ -302,7 +326,6 @@ impl RenderOnce for Section {
                     .border_color(cx.theme().colors().border)
                     .bg(section_bg)
                     .py(Spacing::Medium.rems(cx))
-                    .px(Spacing::Large.rems(cx) - rems_from_px(1.0))
                     .gap_y(Spacing::Small.rems(cx))
                     .child(div().flex().flex_1().size_full().children(self.children)),
             )
@@ -310,7 +333,7 @@ impl RenderOnce for Section {
             v_flex()
                 .w_full()
                 .gap_y(Spacing::Small.rems(cx))
-                .px(Spacing::Large.rems(cx) + Spacing::Large.rems(cx))
+                .px(Spacing::Medium.rems(cx) + Spacing::Medium.rems(cx))
                 .children(self.children)
         };
 
@@ -381,15 +404,15 @@ impl RenderOnce for SectionHeader {
     }
 }
 
-impl Into<SectionHeader> for SharedString {
-    fn into(self) -> SectionHeader {
-        SectionHeader::new(self)
+impl From<SharedString> for SectionHeader {
+    fn from(val: SharedString) -> Self {
+        SectionHeader::new(val)
     }
 }
 
-impl Into<SectionHeader> for &'static str {
-    fn into(self) -> SectionHeader {
-        let label: SharedString = self.into();
+impl From<&'static str> for SectionHeader {
+    fn from(val: &'static str) -> Self {
+        let label: SharedString = val.into();
         SectionHeader::new(label)
     }
 }

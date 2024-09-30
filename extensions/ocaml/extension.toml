@@ -1,7 +1,7 @@
 id = "ocaml"
 name = "OCaml"
 description = "OCaml support."
-version = "0.0.2"
+version = "0.1.0"
 schema_version = 1
 authors = ["Rashid Almheiri <69181766+huwaireb@users.noreply.github.com>"]
 repository = "https://github.com/zed-industries/zed"
@@ -19,3 +19,7 @@ path = "grammars/ocaml"
 repository = "https://github.com/tree-sitter/tree-sitter-ocaml"
 commit = "0b12614ded3ec7ed7ab7933a9ba4f695ba4c342e"
 path = "grammars/interface"
+
+[grammars.dune]
+repository = "https://github.com/WHForks/tree-sitter-dune"
+commit = "b3f7882e1b9a1d8811011bf6f0de1c74c9c93949"

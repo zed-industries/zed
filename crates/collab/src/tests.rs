@@ -16,6 +16,7 @@ mod notification_tests;
 mod random_channel_buffer_tests;
 mod random_project_collaboration_tests;
 mod randomized_test_helpers;
+mod remote_editing_collaboration_tests;
 mod test_server;
 
 use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
@@ -62,6 +63,6 @@ fn rust_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }

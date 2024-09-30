@@ -15,9 +15,11 @@
   // text editor:
   //
   // 1. "VSCode"
-  // 2. "JetBrains"
-  // 3. "SublimeText"
-  // 4. "Atom"
+  // 2. "Atom"
+  // 3. "JetBrains"
+  // 4. "None"
+  // 5. "SublimeText"
+  // 6. "TextMate"
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
@@ -26,6 +28,9 @@
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
+  // Set the buffer text's font fallbacks, this will be merged with
+  // the platform's default fallbacks.
+  "buffer_font_fallbacks": null,
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -47,8 +52,11 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SystemUIFont" to use the system font
+  // You can set this to ".SystemUIFont" to use the system font
   "ui_font_family": "Zed Plex Sans",
+  // Set the UI's font fallbacks, this will be merged with the platform's
+  // default font fallbacks.
+  "ui_font_fallbacks": null,
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -58,9 +66,15 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // How much to fade out unused code.
+  "unnecessary_code_fade": 0.3,
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
+  // The direction that you want to split panes horizontally. Defaults to "up"
+  "pane_split_direction_horizontal": "up",
+  // The direction that you want to split panes horizontally. Defaults to "left"
+  "pane_split_direction_vertical": "left",
   // Centered layout related settings.
   "centered_layout": {
     // The relative width of the left padding of the central pane from the
@@ -82,7 +96,7 @@
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
-  "restore_on_startup": "last_workspace",
+  "restore_on_startup": "last_session",
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -99,6 +113,18 @@
   "use_system_path_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // Cursor shape for the default editor.
+  //  1. A vertical bar
+  //     "bar"
+  //  2. A block that surrounds the following character
+  //     "block"
+  //  3. An underline that runs along the following character
+  //     "underscore"
+  //  4. A box drawn around the following character
+  //     "hollow"
+  //
+  // Default: not set, defaults to "bar"
+  "cursor_shape": null,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -215,6 +241,8 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // Enable middle-click paste on Linux.
+  "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).
   // May take 2 values:
@@ -265,6 +293,13 @@
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
+  // Search options to enable by default when opening new project and buffer searches.
+  "search": {
+    "whole_word": false,
+    "case_sensitive": false,
+    "include_ignored": false,
+    "regex": false
+  },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //
@@ -275,6 +310,7 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
@@ -284,6 +320,10 @@
     "show_parameter_hints": true,
     // Corresponds to null/None LSP hint type value.
     "show_other_hints": true,
+    // Whether to show a background for inlay hints.
+    //
+    // If set to `true`, the background will use the `hint.background` color from the current theme.
+    "show_background": false,
     // Time to wait after editing the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "edit_debounce_ms": 700,
@@ -312,7 +352,7 @@
     "auto_reveal_entries": true,
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
-    "auto_fold_dirs": false,
+    "auto_fold_dirs": true,
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
@@ -375,7 +415,7 @@
   },
   "assistant": {
     // Version of this setting.
-    "version": "1",
+    "version": "2",
     // Whether the assistant is enabled.
     "enabled": true,
     // Whether to show the assistant panel button in the status bar.
@@ -386,17 +426,25 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // AI provider.
-    "provider": {
-      "name": "openai",
-      // The default model to use when creating new contexts. This
-      // setting can take three values:
-      //
-      // 1. "gpt-3.5-turbo"
-      // 2. "gpt-4"
-      // 3. "gpt-4-turbo-preview"
-      // 4. "gpt-4o"
-      "default_model": "gpt-4o"
+    // The default model to use when creating new contexts.
+    "default_model": {
+      // The provider to use.
+      "provider": "zed.dev",
+      // The model to use.
+      "model": "claude-3-5-sonnet"
+    }
+  },
+  // The settings for slash commands.
+  "slash_commands": {
+    // Settings for the `/docs` slash command.
+    "docs": {
+      // Whether `/docs` is enabled.
+      "enabled": false
+    },
+    // Settings for the `/project` slash command.
+    "project": {
+      // Whether `/project` is enabled.
+      "enabled": false
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
@@ -450,6 +498,11 @@
     // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
     "enable_preview_from_code_navigation": false
   },
+  // Settings related to the file finder.
+  "file_finder": {
+    // Whether to show file icons in the file finder.
+    "file_icons": true
+  },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
   "remove_trailing_whitespace_on_save": true,
@@ -482,15 +535,16 @@
   // How to soft-wrap long lines of text.
   // Possible values:
   //
-  // 1. Do not soft wrap.
+  // 1. Prefer a single line generally, unless an overly long line is encountered.
   //      "soft_wrap": "none",
-  // 2. Prefer a single line generally, unless an overly long line is encountered.
-  //      "soft_wrap": "prefer_line",
-  // 3. Soft wrap lines that overflow the editor.
+  //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
+  // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 4. Soft wrap lines at the preferred line length.
+  // 3. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
-  "soft_wrap": "prefer_line",
+  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  //      "soft_wrap": "bounded",
+  "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -579,7 +633,7 @@
     //     "shell": {
     //         "with_arguments": {
     //           "program": "/bin/bash",
-    //           "arguments": ["--login"]
+    //           "args": ["--login"]
     //         }
     //     }
     "shell": "system",
@@ -634,7 +688,7 @@
     //         "option_to_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
     //         "option_to_meta": true,
-    "option_as_meta": false,
+    "option_as_meta": true,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
@@ -666,7 +720,7 @@
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
-        // Can also be `csh`, `fish`, and `nushell`
+        // Can also be `csh`, `fish`, `nushell` and `power_shell`
         "activate_script": "default"
       }
     },
@@ -680,6 +734,10 @@
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Plex Mono",
+    // Set the terminal's font fallbacks. If this option is not included,
+    // the terminal will default to matching the buffer's font fallbacks.
+    // This will be merged with the platform's default font fallbacks
+    // "font_fallbacks": ["FiraCode Nerd Fonts"],
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
@@ -703,9 +761,32 @@
   // }
   //
   "file_types": {
+    "Plain Text": ["txt"],
     "JSON": ["flake.lock"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "tsconfig.json",
+      "pyrightconfig.json"
+    ],
+    "TOML": ["uv.lock"]
   },
+  /// By default use a recent system version of node, or install our own.
+  /// You can override this to use a version of node that is not in $PATH with:
+  /// {
+  ///   "node": {
+  ///     "node_path": "/path/to/node"
+  ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
+  ///   }
+  /// }
+  /// or to ensure Zed always downloads and installs an isolated version of node:
+  /// {
+  ///   "node": {
+  ///     "ignore_system_version": true,
+  ///   }
+  /// NOTE: changing this setting currently requires restarting Zed.
+  "node": {},
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
@@ -741,6 +822,9 @@
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "Erlang": {
+      "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Go": {
       "code_actions_on_format": {
@@ -811,7 +895,11 @@
         "plugins": ["prettier-plugin-sql"]
       }
     },
+    "Starlark": {
+      "language_servers": ["starpls", "!buck2-lsp", "..."]
+    },
     "Svelte": {
+      "language_servers": ["svelte-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-svelte"]
@@ -835,6 +923,7 @@
       }
     },
     "Vue.js": {
+      "language_servers": ["vue-language-server", "..."],
       "prettier": {
         "allowed": true
       }
@@ -849,6 +938,25 @@
       "prettier": {
         "allowed": true
       }
+    }
+  },
+  // Different settings for specific language models.
+  "language_models": {
+    "anthropic": {
+      "version": "1",
+      "api_url": "https://api.anthropic.com"
+    },
+    "google": {
+      "api_url": "https://generativelanguage.googleapis.com"
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "low_speed_timeout_in_seconds": 60
+    },
+    "openai": {
+      "version": "1",
+      "api_url": "https://api.openai.com/v1",
+      "low_speed_timeout_in_seconds": 600
     }
   },
   // Zed's Prettier integration settings.
@@ -883,11 +991,22 @@
     //     }
     // }
   },
+  // Jupyter settings
+  "jupyter": {
+    "enabled": true
+    // Specify the language name as the key and the kernel name as the value.
+    // "kernel_selections": {
+    //    "python": "conda-base"
+    //    "typescript": "deno"
+    // }
+  },
   // Vim settings
   "vim": {
+    "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,
-    "use_smartcase_find": false
+    "use_smartcase_find": false,
+    "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
@@ -933,7 +1052,42 @@
   // environment variables.
   //
   // Examples:
-  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "socks5h://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
-  "proxy": null
+  "proxy": null,
+  // Set to configure aliases for the command palette.
+  // When typing a query which is a key of this object, the value will be used instead.
+  //
+  // Examples:
+  // {
+  //   "W": "workspace::Save"
+  // }
+  "command_aliases": {},
+  // ssh_connections is an array of ssh connections.
+  // By default this setting is null, which disables the direct ssh connection support.
+  // You can configure these from `project: Open Remote` in the command palette.
+  // Zed's ssh support will pull configuration from your ~/.ssh too.
+  // Examples:
+  // [
+  //   {
+  //     "host": "example-box",
+  //     "projects": [
+  //       {
+  //         "paths": ["/home/user/code/zed"]
+  //       }
+  //     ]
+  //   }
+  // ]
+  "ssh_connections": null,
+  // Configures the Context Server Protocol binaries
+  //
+  // Examples:
+  // {
+  //   "id": "server-1",
+  //   "executable": "/path",
+  //   "args": ['arg1", "args2"]
+  // }
+  "experimental.context_servers": {
+    "servers": []
+  }
 }

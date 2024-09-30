@@ -50,6 +50,7 @@ pub enum TintColor {
     Accent,
     Negative,
     Warning,
+    Positive,
 }
 
 impl TintColor {
@@ -73,6 +74,12 @@ impl TintColor {
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
+            TintColor::Positive => ButtonLikeStyles {
+                background: cx.theme().status().success_background,
+                border_color: cx.theme().status().success_border,
+                label_color: cx.theme().colors().text,
+                icon_color: cx.theme().colors().text,
+            },
         }
     }
 }
@@ -83,6 +90,7 @@ impl From<TintColor> for Color {
             TintColor::Accent => Color::Accent,
             TintColor::Negative => Color::Error,
             TintColor::Warning => Color::Warning,
+            TintColor::Positive => Color::Success,
         }
     }
 }
@@ -276,7 +284,7 @@ impl ButtonStyle {
         elevation: Option<Elevation>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        let filled_background = element_bg_from_elevation(elevation, cx).fade_out(0.82);
+        element_bg_from_elevation(elevation, cx).fade_out(0.82);
 
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
@@ -515,10 +523,8 @@ impl RenderOnce for ButtonLike {
                         })
                 },
             )
-            .when(!self.selected, |this| {
-                this.when_some(self.tooltip, |this, tooltip| {
-                    this.tooltip(move |cx| tooltip(cx))
-                })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |cx| tooltip(cx))
             })
             .children(self.children)
     }

@@ -16,14 +16,12 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-hmac = "0.12"
-jwt = "0.16"
+jsonwebtoken.workspace = true
 log.workspace = true
 prost.workspace = true
 prost-types.workspace = true
 reqwest = "0.11"
 serde.workspace = true
-sha2.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

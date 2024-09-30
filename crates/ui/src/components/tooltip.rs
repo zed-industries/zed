@@ -1,4 +1,4 @@
-use gpui::{Action, AnyView, IntoElement, Render, VisualContext};
+use gpui::{Action, AnyView, FocusHandle, IntoElement, Render, VisualContext};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -34,6 +34,19 @@ impl Tooltip {
         .into()
     }
 
+    pub fn for_action_in(
+        title: impl Into<SharedString>,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.new_view(|cx| Self {
+            title: title.into(),
+            meta: None,
+            key_binding: KeyBinding::for_action_in(action, focus_handle, cx),
+        })
+        .into()
+    }
     pub fn with_meta(
         title: impl Into<SharedString>,
         action: Option<&dyn Action>,

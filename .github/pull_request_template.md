@@ -1,12 +1,14 @@
-
+Closes #ISSUE
 
 Release Notes:
 
-- Added/Fixed/Improved ... ([#NNNNN](https://github.com/zed-industries/zed/issues/NNNNN)).
+- Added/Fixed/Improved ...
 
 Optionally, include screenshots / media showcasing your addition that can be included in the release notes.
 
 ### Or...
+
+Closes #ISSUE
 
 Release Notes:
 

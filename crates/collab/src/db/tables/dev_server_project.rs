@@ -48,7 +48,7 @@ impl Model {
             id: self.id.to_proto(),
             project_id: project.map(|p| p.id.to_proto()),
             dev_server_id: self.dev_server_id.to_proto(),
-            path: self.paths().get(0).cloned().unwrap_or_default(),
+            path: self.paths().first().cloned().unwrap_or_default(),
             paths: self.paths().clone(),
         }
     }

@@ -217,7 +217,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         let mat = &self.matches[ix];
         let buffer_language_name = self.buffer.read(cx).language().map(|l| l.name());
         let mut label = mat.string.clone();
-        if buffer_language_name.as_deref() == Some(mat.string.as_str()) {
+        if buffer_language_name.map(|n| n.0).as_deref() == Some(mat.string.as_str()) {
             label.push_str(" (current)");
         }
 

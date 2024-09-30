@@ -28,7 +28,7 @@ impl From<proto::DevServerProject> for DevServerProject {
     fn from(project: proto::DevServerProject) -> Self {
         Self {
             id: DevServerProjectId(project.id),
-            project_id: project.project_id.map(|id| ProjectId(id)),
+            project_id: project.project_id.map(ProjectId),
             paths: project.paths.into_iter().map(|path| path.into()).collect(),
             dev_server_id: DevServerId(project.dev_server_id),
         }

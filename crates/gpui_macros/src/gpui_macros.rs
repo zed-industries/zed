@@ -1,4 +1,5 @@
 mod derive_into_element;
+mod derive_path_static_str;
 mod derive_render;
 mod register_action;
 mod styles;
@@ -25,6 +26,12 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
+}
+
+#[proc_macro_derive(PathStaticStr)]
+#[doc(hidden)]
+pub fn derive_path_static_str(input: TokenStream) -> TokenStream {
+    derive_path_static_str::derive_path_static_str(input)
 }
 
 /// Used by GPUI to generate the style helpers.
@@ -96,7 +103,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 /// In addition to passing a TestAppContext, you can also ask for a `StdRnd` instance.
 /// this will be seeded with the `SEED` environment variable and is used internally by
 /// the ForegroundExecutor and BackgroundExecutor to run tasks deterministically in tests.
-/// Using the same `StdRng` for behaviour in your test will allow you to exercise a wide
+/// Using the same `StdRng` for behavior in your test will allow you to exercise a wide
 /// variety of scenarios and interleavings just by changing the seed.
 ///
 /// #[gpui::test] also takes three different arguments:

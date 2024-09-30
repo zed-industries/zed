@@ -4,14 +4,13 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
-use http::github::{build_tarball_url, GitHubLspBinaryVersion};
+use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::lsp_store::language_server_settings;
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
-use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
@@ -58,18 +57,23 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![server_path.into(), "--stdio".into()]
+    vec![
+        "--max-old-space-size=8192".into(),
+        server_path.into(),
+        "--stdio".into(),
+    ]
 }
 
 pub struct TypeScriptLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl TypeScriptLspAdapter {
     const OLD_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
-    const SERVER_NAME: &'static str = "typescript-language-server";
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static("typescript-language-server");
+    pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
     }
     async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
@@ -94,7 +98,7 @@ struct TypeScriptVersions {
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -157,14 +161,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -232,14 +229,12 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
-                .and_then(|s| s.initialization_options.clone())
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
         })?;
         if let Some(options) = override_options {
             return Ok(options);
@@ -262,7 +257,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
 async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);
@@ -291,20 +286,30 @@ async fn get_cached_ts_server_binary(
 }
 
 pub struct EsLintLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl EsLintLspAdapter {
-    const CURRENT_VERSION: &'static str = "release/2.4.4";
+    const CURRENT_VERSION: &'static str = "2.4.4";
+    const CURRENT_VERSION_TAG_NAME: &'static str = "release/2.4.4";
+
+    #[cfg(not(windows))]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    #[cfg(windows)]
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
 
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
-    const SERVER_NAME: &'static str = "eslint";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("eslint");
 
     const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
         &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         EsLintLspAdapter { node }
+    }
+
+    fn build_destination_path(container_dir: &Path) -> PathBuf {
+        container_dir.join(format!("vscode-eslint-{}", Self::CURRENT_VERSION))
     }
 }
 
@@ -325,9 +330,7 @@ impl LspAdapter for EsLintLspAdapter {
         let workspace_root = delegate.worktree_root_path();
 
         let eslint_user_settings = cx.update(|cx| {
-            ProjectSettings::get_global(cx)
-                .lsp
-                .get(Self::SERVER_NAME)
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;
@@ -378,7 +381,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "workspaceFolder": {
                     "uri": workspace_root,
                     "name": workspace_root.file_name()
-                        .unwrap_or_else(|| workspace_root.as_os_str()),
+                        .unwrap_or(workspace_root.as_os_str()),
                 },
                 "problems": problems,
                 "codeActionOnSave": code_action_on_save,
@@ -399,14 +402,18 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
         &self,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let url = build_tarball_url("microsoft/vscode-eslint", Self::CURRENT_VERSION)?;
+        let url = build_asset_url(
+            "microsoft/vscode-eslint",
+            Self::CURRENT_VERSION_TAG_NAME,
+            Self::GITHUB_ASSET_KIND,
+        )?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
             name: Self::CURRENT_VERSION.into(),
@@ -421,7 +428,7 @@ impl LspAdapter for EsLintLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
+        let destination_path = Self::build_destination_path(&container_dir);
         let server_path = destination_path.join(Self::SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
@@ -432,21 +439,46 @@ impl LspAdapter for EsLintLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&destination_path).await?;
+            match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await?;
+                }
+                AssetKind::Zip => {
+                    node_runtime::extract_zip(
+                        &destination_path,
+                        BufReader::new(response.body_mut()),
+                    )
+                    .await?;
+                }
+            }
 
             let mut dir = fs::read_dir(&destination_path).await?;
             let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await?;
 
+            #[cfg(target_os = "windows")]
+            {
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("client").join("src").join("shared"),
+                )
+                .await?;
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("server").join("src").join("shared"),
+                )
+                .await?;
+            }
+
             self.node
-                .run_npm_subcommand(Some(&repo_root), "install", &[])
+                .run_npm_subcommand(&repo_root, "install", &[])
                 .await?;
 
             self.node
-                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
+                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
                 .await?;
         }
 
@@ -462,38 +494,33 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_eslint_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_eslint_server_binary(container_dir, &*self.node).await
-    }
-}
-
-async fn get_cached_eslint_server_binary(
-    container_dir: PathBuf,
-    node: &dyn NodeRuntime,
-) -> Option<LanguageServerBinary> {
-    maybe!(async {
-        // This is unfortunate but we don't know what the version is to build a path directly
-        let mut dir = fs::read_dir(&container_dir).await?;
-        let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
-        if !first.file_type().await?.is_dir() {
-            return Err(anyhow!("First entry is not a directory"));
-        }
-        let server_path = first.path().join(EsLintLspAdapter::SERVER_PATH);
-
-        Ok(LanguageServerBinary {
-            path: node.binary_path().await?,
+        let server_path =
+            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
             env: None,
             arguments: eslint_server_binary_arguments(&server_path),
         })
-    })
-    .await
-    .log_err()
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
+    if fs::metadata(&src_dir).await.is_err() {
+        return Err(anyhow!("Directory {} not present.", src_dir.display()));
+    }
+    if fs::metadata(&dest_dir).await.is_ok() {
+        fs::remove_file(&dest_dir).await?;
+    }
+    fs::create_dir_all(&dest_dir).await?;
+    let mut entries = fs::read_dir(&src_dir).await?;
+    while let Some(entry) = entries.try_next().await? {
+        let entry_path = entry.path();
+        let entry_name = entry.file_name();
+        let dest_path = dest_dir.join(&entry_name);
+        fs::copy(&entry_path, &dest_path).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -503,7 +530,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::language("typescript", tree_sitter_typescript::language_typescript());
+        let language = crate::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
 
         let text = r#"
             function a() {

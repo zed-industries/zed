@@ -11,7 +11,7 @@ If you're looking for ideas about what to work on, check out:
 - Our [public roadmap](https://zed.dev/roadmap) contains a rough outline of our near-term priorities for Zed.
 - Our [top-ranking issues](https://github.com/zed-industries/zed/issues/5393) based on votes by the community.
 
-For adding themes or support for a new language to Zed, check out our [extension docs](https://github.com/zed-industries/extensions/blob/main/AUTHORING_EXTENSIONS.md).
+For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
 
 ## Proposing changes
 

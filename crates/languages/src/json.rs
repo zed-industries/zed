@@ -6,7 +6,7 @@ use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
-use http::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -59,13 +59,13 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct JsonLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
     languages: Arc<LanguageRegistry>,
     workspace_config: OnceLock<Value>,
 }
 
 impl JsonLspAdapter {
-    pub fn new(node: Arc<dyn NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
+    pub fn new(node: NodeRuntime, languages: Arc<LanguageRegistry>) -> Self {
         Self {
             node,
             languages,
@@ -117,7 +117,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": KeymapFile::generate_json_schema(&action_names),
+                        "schema": KeymapFile::generate_json_schema(action_names),
                     },
                     {
                         "fileMatch": [
@@ -166,11 +166,9 @@ impl LspAdapter for JsonLspAdapter {
             .await;
 
         if should_install_language_server {
-            // TODO: the postinstall fails on Windows
             self.node
                 .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
-                .await
-                .log_err();
+                .await?;
         }
 
         Ok(LanguageServerBinary {
@@ -185,14 +183,7 @@ impl LspAdapter for JsonLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &self.node).await
     }
 
     async fn initialization_options(
@@ -228,7 +219,7 @@ impl LspAdapter for JsonLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_version_dir = None;
@@ -375,18 +366,6 @@ impl LspAdapter for NodeVersionAdapter {
         _delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_version_server_binary(container_dir).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_version_server_binary(container_dir)
-            .await
-            .map(|mut binary| {
-                binary.arguments = vec!["--version".into()];
-                binary
-            })
     }
 }
 

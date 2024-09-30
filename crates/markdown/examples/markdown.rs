@@ -1,19 +1,28 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, Task, View, WindowOptions};
+use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
 use ui::prelude::*;
 use ui::{div, WindowContext};
 
-const MARKDOWN_EXAMPLE: &'static str = r#"
+const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document
 
 ## Headings
 Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
+
+```rust
+gpui::window::ViewContext
+impl<'a, V> ViewContext<'a, V>
+pub fn on_blur(&mut self, handle: &FocusHandle, listener: impl FnMut(&mut V, &mut iewContext<V>) + 'static) -> Subscription
+where
+    // Bounds from impl:
+    V: 'static,
+```
 
 ## Emphasis
 Emphasis can be added with italics or bold. *This text will be italic*. _This will also be italic_
@@ -93,13 +102,13 @@ pub fn main() {
         });
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
-        let node_runtime = FakeNodeRuntime::new();
-        let language_registry = Arc::new(LanguageRegistry::new(
-            Task::ready(()),
-            cx.background_executor().clone(),
-        ));
-        languages::init(language_registry.clone(), node_runtime, cx);
+        let node_runtime = NodeRuntime::unavailable();
         theme::init(LoadThemes::JustBase, cx);
+
+        let language_registry = LanguageRegistry::new(cx.background_executor().clone());
+        language_registry.set_theme(cx.theme().clone());
+        let language_registry = Arc::new(language_registry);
+        languages::init(language_registry.clone(), node_runtime, cx);
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);

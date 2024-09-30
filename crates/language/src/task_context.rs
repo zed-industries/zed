@@ -25,6 +25,7 @@ pub trait ContextProvider: Send + Sync {
         &self,
         _variables: &TaskVariables,
         _location: &Location,
+        _project_env: Option<&HashMap<String, String>>,
         _cx: &mut AppContext,
     ) -> Result<TaskVariables> {
         Ok(TaskVariables::default())
