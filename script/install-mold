@@ -30,7 +30,7 @@ MOLD_REPO="${MOLD_REPO:-https://github.com/rui314/mold}"
 MOLD_URL="${MOLD_URL:-$MOLD_REPO}/releases/download/v$MOLD_VERSION/mold-$MOLD_VERSION-$(uname -m)-linux.tar.gz"
 
 echo "Downloading from $MOLD_URL"
-curl --location --show-error --output - --retry 3 --retry-delay 5 "$MOLD_URL" \
+curl -fsSL --output - "$MOLD_URL" \
     | $SUDO tar -C /usr/local --strip-components=1 --no-overwrite-dir -xzf -
 
 # Note this binary depends on the system libatomic.so.1 which is usually

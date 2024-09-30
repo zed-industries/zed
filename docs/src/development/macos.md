@@ -35,6 +35,12 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   brew install cmake
   ```
 
+- (Optional) Install `mold` to speed up link times
+
+  ```sh
+  brew install mold
+  ```
+
 ## Backend Dependencies
 
 If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
