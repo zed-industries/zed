@@ -18,12 +18,15 @@
 set -euo pipefail
 
 
-if [[ "$OSTYPE" == "darwin"* ]]; then
+if [[ "$(uname -s)" == "darwin" ]]; then
   brew --version >/dev/null \
     || echo "Error: Homebrew is required to install cmake on MacOS." && exit 1
   echo "Installing cmake via Homebrew (can't pin to old versions)."
   brew install cmake
   exit 0
+elif [ "$(uname -s)" != "Linux" ]; then
+  echo "Error: This script is intended for MacOS/Linux systems only."
+  exit 1
 elif [ -z "${1:-}" ]; then
   echo "Usage: $0 [3.30.4]"
   exit 1
@@ -35,9 +38,6 @@ if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -
 if cmake --version | grep -q "$CMAKE_VERSION"; then
   echo "CMake $CMAKE_VERSION is already installed."
   exit 0
-elif [ "$(uname -s)" != "Linux" ]; then
-  echo "Error: This script is intended for MacOS/Linux systems only."
-  exit 1
 elif [ -e /usr/local/bin/cmake ]; then
   echo "Warning: existing cmake found at /usr/local/bin/cmake. Skipping installation."
   exit 0
