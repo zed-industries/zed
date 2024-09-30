@@ -1,21 +1,17 @@
-use super::{
-    diagnostics_command::write_single_file_diagnostics,
-    file_command::{build_entry_output_section, codeblock_fence_for_path},
-    SlashCommand, SlashCommandOutput,
-};
+use super::{file_command::append_buffer_to_output, SlashCommand, SlashCommandOutput};
 use anyhow::{Context, Result};
-use assistant_slash_command::ArgumentCompletion;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
 use gpui::{Entity, Task, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
-    fmt::Write,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::{ActiveTheme, WindowContext};
+use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) struct TabSlashCommand;
@@ -131,6 +127,8 @@ impl SlashCommand for TabSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -144,40 +142,11 @@ impl SlashCommand for TabSlashCommand {
         );
 
         cx.background_executor().spawn(async move {
-            let mut sections = Vec::new();
-            let mut text = String::new();
-            let mut has_diagnostics = false;
+            let mut output = SlashCommandOutput::default();
             for (full_path, buffer, _) in tab_items_search.await? {
-                let section_start_ix = text.len();
-                text.push_str(&codeblock_fence_for_path(full_path.as_deref(), None));
-                for chunk in buffer.as_rope().chunks() {
-                    text.push_str(chunk);
-                }
-                if !text.ends_with('\n') {
-                    text.push('\n');
-                }
-                writeln!(text, "```").unwrap();
-                if write_single_file_diagnostics(&mut text, full_path.as_deref(), &buffer) {
-                    has_diagnostics = true;
-                }
-                if !text.ends_with('\n') {
-                    text.push('\n');
-                }
-
-                let section_end_ix = text.len() - 1;
-                sections.push(build_entry_output_section(
-                    section_start_ix..section_end_ix,
-                    full_path.as_deref(),
-                    false,
-                    None,
-                ));
+                append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
             }
-
-            Ok(SlashCommandOutput {
-                text,
-                sections,
-                run_commands_in_text: has_diagnostics,
-            })
+            Ok(output)
         })
     }
 }

@@ -89,7 +89,10 @@ impl RuffExtension {
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
         let version_dir = format!("ruff-{}", release.version);
-        let binary_path = format!("{version_dir}/{asset_stem}/ruff");
+        let binary_path = match platform {
+            zed::Os::Windows => format!("{version_dir}/ruff.exe"),
+            _ => format!("{version_dir}/{asset_stem}/ruff"),
+        };
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(

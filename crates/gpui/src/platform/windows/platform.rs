@@ -8,6 +8,7 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
+use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -46,6 +47,8 @@ pub(crate) struct WindowsPlatform {
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
+    main_receiver: flume::Receiver<Runnable>,
+    dispatch_event: HANDLE,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<DirectWriteTextSystem>,
@@ -89,7 +92,9 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
-        let dispatcher = Arc::new(WindowsDispatcher::new());
+        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
+        let dispatch_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
+        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let bitmap_factory = ManuallyDrop::new(unsafe {
@@ -113,6 +118,8 @@ impl WindowsPlatform {
             state,
             raw_window_handles,
             icon,
+            main_receiver,
+            dispatch_event,
             background_executor,
             foreground_executor,
             text_system,
@@ -176,6 +183,24 @@ impl WindowsPlatform {
 
         lock.is_empty()
     }
+
+    #[inline]
+    fn run_foreground_tasks(&self) {
+        for runnable in self.main_receiver.drain() {
+            runnable.run();
+        }
+    }
+
+    fn generate_creation_info(&self) -> WindowCreationInfo {
+        WindowCreationInfo {
+            icon: self.icon,
+            executor: self.foreground_executor.clone(),
+            current_cursor: self.state.borrow().current_cursor,
+            windows_version: self.windows_version,
+            validation_number: self.validation_number,
+            main_receiver: self.main_receiver.clone(),
+        }
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -197,16 +222,21 @@ impl Platform for WindowsPlatform {
         begin_vsync(*vsync_event);
         'a: loop {
             let wait_result = unsafe {
-                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
+                MsgWaitForMultipleObjects(
+                    Some(&[*vsync_event, self.dispatch_event]),
+                    false,
+                    INFINITE,
+                    QS_ALLINPUT,
+                )
             };
 
             match wait_result {
                 // compositor clock ticked so we should draw a frame
-                WAIT_EVENT(0) => {
-                    self.redraw_all();
-                }
+                WAIT_EVENT(0) => self.redraw_all(),
+                // foreground tasks are dispatched
+                WAIT_EVENT(1) => self.run_foreground_tasks(),
                 // Windows thread messages are posted
-                WAIT_EVENT(1) => {
+                WAIT_EVENT(2) => {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -230,6 +260,8 @@ impl Platform for WindowsPlatform {
                             }
                         }
                     }
+                    // foreground tasks may have been queued in the message handlers
+                    self.run_foreground_tasks();
                 }
                 _ => {
                     log::error!("Something went wrong while waiting {:?}", wait_result);
@@ -319,17 +351,7 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let lock = self.state.borrow();
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            self.icon,
-            self.foreground_executor.clone(),
-            lock.current_cursor,
-            self.windows_version,
-            self.validation_number,
-        )?;
-        drop(lock);
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
@@ -558,6 +580,15 @@ impl Drop for WindowsPlatform {
     }
 }
 
+pub(crate) struct WindowCreationInfo {
+    pub(crate) icon: HICON,
+    pub(crate) executor: ForegroundExecutor,
+    pub(crate) current_cursor: HCURSOR,
+    pub(crate) windows_version: WindowsVersion,
+    pub(crate) validation_number: usize,
+    pub(crate) main_receiver: flume::Receiver<Runnable>,
+}
+
 fn open_target(target: &str) {
     unsafe {
         let ret = ShellExecuteW(
@@ -631,22 +662,33 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 
 fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
-    if let Some(full_path) = directory.canonicalize().log_err() {
-        let full_path = full_path.to_string_lossy().to_string();
-        if !full_path.is_empty() {
-            let path_item: IShellItem =
-                unsafe { SHCreateItemFromParsingName(&HSTRING::from(&full_path), None)? };
-            unsafe { dialog.SetFolder(&path_item).log_err() };
+    if !directory.to_string_lossy().is_empty() {
+        if let Some(full_path) = directory.canonicalize().log_err() {
+            let full_path = full_path.to_string_lossy().to_string();
+            if !full_path.is_empty() {
+                let path_item: IShellItem =
+                    unsafe { SHCreateItemFromParsingName(&HSTRING::from(&full_path), None)? };
+                unsafe { dialog.SetFolder(&path_item).log_err() };
+            }
         }
     }
     unsafe {
+        dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {
+            pszName: windows::core::w!("All files"),
+            pszSpec: windows::core::w!("*.*"),
+        }])?;
         if dialog.Show(None).is_err() {
             // User cancelled
             return Ok(None);
         }
     }
     let shell_item = unsafe { dialog.GetResult()? };
-    let file_path_string = unsafe { shell_item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
+    let file_path_string = unsafe {
+        let pwstr = shell_item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let string = pwstr.to_string()?;
+        CoTaskMemFree(Some(pwstr.0 as _));
+        string
+    };
     Ok(Some(PathBuf::from(file_path_string)))
 }
 

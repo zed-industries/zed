@@ -12,7 +12,7 @@ use assistant_slash_command::{
 use collections::HashSet;
 use fs::FakeFs;
 use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
-use language::{Buffer, LanguageRegistry, LspAdapterDelegate};
+use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
 use project::Project;
@@ -1089,6 +1089,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             range: section_start..section_end,
                             icon: ui::IconName::Ai,
                             label: "section".into(),
+                            metadata: None,
                         });
                     }
 
@@ -1165,9 +1166,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     );
 
                     network.lock().broadcast(replica_id, ops_to_send);
-                    context
-                        .update(cx, |context, cx| context.apply_ops(ops_to_receive, cx))
-                        .unwrap();
+                    context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
                 } else if rng.gen_bool(0.1) && replica_id != 0 {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
@@ -1179,9 +1178,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                         .unwrap();
-                    context
-                        .update(cx, |context, cx| context.apply_ops(ops, cx))
-                        .unwrap();
+                    context.update(cx, |context, cx| context.apply_ops(ops, cx));
                 }
             }
         }
@@ -1425,6 +1422,8 @@ impl SlashCommand for FakeSlashCommand {
     fn run(
         self: Arc<Self>,
         _arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,

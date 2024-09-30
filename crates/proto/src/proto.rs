@@ -279,8 +279,6 @@ messages!(
     (SaveBuffer, Foreground),
     (SetChannelMemberRole, Foreground),
     (SetChannelVisibility, Foreground),
-    (SearchProject, Background),
-    (SearchProjectResponse, Background),
     (SendChannelMessage, Background),
     (SendChannelMessageResponse, Background),
     (ShareProject, Foreground),
@@ -365,11 +363,8 @@ messages!(
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
-    (CreateLanguageServer, Foreground),
-    (WhichCommand, Foreground),
-    (WhichCommandResponse, Foreground),
-    (ShellEnv, Foreground),
-    (ShellEnvResponse, Foreground),
+    (CheckFileExists, Background),
+    (CheckFileExistsResponse, Background)
 );
 
 request_messages!(
@@ -457,7 +452,6 @@ request_messages!(
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
-    (SearchProject, SearchProjectResponse),
     (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
@@ -493,9 +487,7 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CreateLanguageServer, Ack),
-    (WhichCommand, WhichCommandResponse),
-    (ShellEnv, ShellEnvResponse)
+    (CheckFileExists, CheckFileExistsResponse)
 );
 
 entity_messages!(
@@ -546,7 +538,6 @@ entity_messages!(
     ResolveCompletionDocumentation,
     ResolveInlayHint,
     SaveBuffer,
-    SearchProject,
     StartLanguageServer,
     SynchronizeBuffers,
     TaskContextForLocation,
@@ -569,9 +560,7 @@ entity_messages!(
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
-    CreateLanguageServer,
-    WhichCommand,
-    ShellEnv
+    CheckFileExists,
 );
 
 entity_messages!(

@@ -21,7 +21,7 @@ use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
@@ -278,7 +278,7 @@ impl TestServer {
             languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: FakeNodeRuntime::new(),
+            node_runtime: NodeRuntime::unavailable(),
             session,
         });
 
@@ -408,7 +408,7 @@ impl TestServer {
             languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: FakeNodeRuntime::new(),
+            node_runtime: NodeRuntime::unavailable(),
             session,
         });
 
@@ -679,8 +679,6 @@ impl TestServer {
                 stripe_api_key: None,
                 stripe_price_id: None,
                 supermaven_admin_api_key: None,
-                runpod_api_key: None,
-                runpod_api_summary_url: None,
                 user_backfiller_github_access_token: None,
             },
         })
@@ -921,7 +919,7 @@ impl TestClient {
         })
     }
 
-    pub async fn build_dev_server_project(
+    pub async fn join_remote_project(
         &self,
         host_project_id: u64,
         guest_cx: &mut TestAppContext,

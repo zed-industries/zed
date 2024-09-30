@@ -27,6 +27,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/evals",
     "crates/extension",
     "crates/extension_api",
     "crates/extension_cli",
@@ -51,6 +52,7 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
+    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -225,6 +227,7 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
+isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
@@ -393,6 +396,8 @@ runtimelib = { version = "0.15", default-features = false, features = [
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
+rustls = "0.20.3"
+rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -415,7 +420,7 @@ strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"
 sys-locale = "0.3.1"
-sysinfo = "0.30.7"
+sysinfo = "0.31.0"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.9"
@@ -489,7 +494,6 @@ features = [
     "implement",
     "Foundation_Numerics",
     "Storage",
-    "System",
     "System_Threading",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
@@ -520,6 +524,7 @@ features = [
     "Win32_UI_Input_Ime",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ]
 

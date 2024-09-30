@@ -22,7 +22,7 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-use http_client::IsahcHttpClient;
+use isahc_http_client::IsahcHttpClient;
 use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -72,6 +72,7 @@ impl LlmState {
         let http_client = IsahcHttpClient::builder()
             .default_header("User-Agent", user_agent)
             .build()
+            .map(IsahcHttpClient::from)
             .context("failed to construct http client")?;
 
         let this = Self {
@@ -390,42 +391,6 @@ async fn perform_completion(
                         // TODO - implement token counting for Google AI
                         let input_tokens = 0;
                         let output_tokens = 0;
-                        (
-                            serde_json::to_vec(&chunk).unwrap(),
-                            input_tokens,
-                            output_tokens,
-                        )
-                    })
-                })
-                .boxed()
-        }
-        LanguageModelProvider::Zed => {
-            let api_key = state
-                .config
-                .runpod_api_key
-                .as_ref()
-                .context("no Qwen2-7B API key configured on the server")?;
-            let api_url = state
-                .config
-                .runpod_api_summary_url
-                .as_ref()
-                .context("no Qwen2-7B URL configured on the server")?;
-            let chunks = open_ai::stream_completion(
-                &state.http_client,
-                api_url,
-                api_key,
-                serde_json::from_str(params.provider_request.get())?,
-                None,
-            )
-            .await?;
-
-            chunks
-                .map(|event| {
-                    event.map(|chunk| {
-                        let input_tokens =
-                            chunk.usage.as_ref().map_or(0, |u| u.prompt_tokens) as usize;
-                        let output_tokens =
-                            chunk.usage.as_ref().map_or(0, |u| u.completion_tokens) as usize;
                         (
                             serde_json::to_vec(&chunk).unwrap(),
                             input_tokens,

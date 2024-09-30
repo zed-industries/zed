@@ -32,6 +32,7 @@ macro_rules! id_type {
             #[allow(unused)]
             #[allow(missing_docs)]
             pub fn from_proto(value: u64) -> Self {
+                debug_assert!(value != 0);
                 Self(value as i32)
             }
 
@@ -104,7 +105,7 @@ pub enum ChannelRole {
     /// Admin can read/write and change permissions.
     #[sea_orm(string_value = "admin")]
     Admin,
-    /// Member can read/write, but not change pemissions.
+    /// Member can read/write, but not change permissions.
     #[sea_orm(string_value = "member")]
     #[default]
     Member,

@@ -1337,6 +1337,7 @@ mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 

@@ -1,7 +1,7 @@
 use super::create_label_for_command;
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::ArgumentCompletion;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
@@ -87,6 +87,8 @@ impl SlashCommand for AutoCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: language::BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -214,7 +216,7 @@ async fn commands_for_summaries(
         }],
         tools: Vec::new(),
         stop: Vec::new(),
-        temperature: 1.0,
+        temperature: None,
     };
 
     while let Some(current_summaries) = stack.pop() {

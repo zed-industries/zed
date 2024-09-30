@@ -15,8 +15,7 @@ concurrency:
 jobs:
   bump_patch_version:
     runs-on:
-      - self-hosted
-      - test
+      - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Checkout code
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
@@ -42,7 +41,7 @@ jobs:
               exit 1
               ;;
           esac
-          which cargo-set-version > /dev/null || cargo install cargo-edit --features vendored-openssl
+          which cargo-set-version > /dev/null || cargo install cargo-edit
           output=$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')
           git commit -am "Bump to $output for @$GITHUB_ACTOR" --author "Zed Bot <hi@zed.dev>"
           git tag v${output}${tag_suffix}

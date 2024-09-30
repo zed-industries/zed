@@ -29,7 +29,7 @@ pub struct GitBlameEntrySummary {
 impl sum_tree::Item for GitBlameEntry {
     type Summary = GitBlameEntrySummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         GitBlameEntrySummary { rows: self.rows }
     }
 }
@@ -37,12 +37,20 @@ impl sum_tree::Item for GitBlameEntry {
 impl sum_tree::Summary for GitBlameEntrySummary {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _cx: &()) {
         self.rows += summary.rows;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a GitBlameEntrySummary, _cx: &()) {
         *self += summary.rows;
     }
@@ -191,12 +199,33 @@ impl GitBlame {
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
-        let mut cursor = self.entries.cursor::<u32>();
+        let mut cursor = self.entries.cursor::<u32>(&());
         rows.into_iter().map(move |row| {
             let row = row?;
             cursor.seek_forward(&row.0, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
+    }
+
+    pub fn max_author_length(&mut self, cx: &mut ModelContext<Self>) -> usize {
+        self.sync(cx);
+
+        let mut max_author_length = 0;
+
+        for entry in self.entries.iter() {
+            let author_len = entry
+                .blame
+                .as_ref()
+                .and_then(|entry| entry.author.as_ref())
+                .map(|author| author.len());
+            if let Some(author_len) = author_len {
+                if author_len > max_author_length {
+                    max_author_length = author_len;
+                }
+            }
+        }
+
+        max_author_length
     }
 
     pub fn blur(&mut self, _: &mut ModelContext<Self>) {
@@ -249,8 +278,8 @@ impl GitBlame {
             })
             .peekable();
 
-        let mut new_entries = SumTree::new();
-        let mut cursor = self.entries.cursor::<u32>();
+        let mut new_entries = SumTree::default();
+        let mut cursor = self.entries.cursor::<u32>(&());
 
         while let Some(mut edit) = row_edits.next() {
             while let Some(next_edit) = row_edits.peek() {

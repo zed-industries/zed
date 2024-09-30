@@ -12,7 +12,7 @@ use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
     ProviderId,
 };
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
 use ui::prelude::*;
 use util::{maybe, ResultExt};
@@ -269,6 +269,8 @@ impl SlashCommand for DocsSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -349,6 +351,7 @@ impl SlashCommand for DocsSlashCommand {
                         range,
                         icon: IconName::FileDoc,
                         label: format!("docs ({provider}): {key}",).into(),
+                        metadata: None,
                     })
                     .collect(),
                 run_commands_in_text: false,

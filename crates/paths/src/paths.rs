@@ -59,6 +59,12 @@ pub fn support_dir() -> &'static PathBuf {
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
     TEMP_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return dirs::cache_dir()
+                .expect("failed to determine cachesDirectory directory")
+                .join("Zed");
+        }
+
         if cfg!(target_os = "windows") {
             return dirs::cache_dir()
                 .expect("failed to determine LocalAppData directory")

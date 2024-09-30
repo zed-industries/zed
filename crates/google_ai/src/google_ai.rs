@@ -2,8 +2,7 @@ mod supported_countries;
 
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -30,7 +29,7 @@ pub async fn stream_generate_content(
         .header("Content-Type", "application/json");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
@@ -85,7 +84,7 @@ pub async fn count_tokens(
         .header("Content-Type", "application/json");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
 
     let http_request = request_builder.body(AsyncBody::from(request))?;

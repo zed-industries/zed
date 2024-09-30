@@ -5,28 +5,28 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
-use serde_json::{json, Value};
+use project::lsp_store::language_server_settings;
+use serde_json::Value;
 use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, merge_json_value_into, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
 pub struct VtslsLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl VtslsLspAdapter {
     const SERVER_PATH: &'static str = "node_modules/@vtsls/language-server/bin/vtsls.js";
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         VtslsLspAdapter { node }
     }
     async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
@@ -48,11 +48,11 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
-const SERVER_NAME: &str = "vtsls";
+const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vtsls");
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(SERVER_NAME.into())
+        SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -71,40 +71,15 @@ impl LspAdapter for VtslsLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, SERVER_NAME, cx).and_then(|s| s.binary.clone())
-        });
-
-        match configured_binary {
-            Ok(Some(BinarySettings {
-                path: Some(path),
-                arguments,
-                ..
-            })) => Some(LanguageServerBinary {
-                path: path.into(),
-                arguments: arguments
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|arg| arg.into())
-                    .collect(),
-                env: None,
-            }),
-            Ok(Some(BinarySettings {
-                path_lookup: Some(false),
-                ..
-            })) => None,
-            _ => {
-                let env = delegate.shell_env().await;
-                let path = delegate.which(SERVER_NAME.as_ref()).await?;
-                Some(LanguageServerBinary {
-                    path: path.clone(),
-                    arguments: typescript_server_binary_arguments(&path),
-                    env: Some(env),
-                })
-            }
-        }
+        let env = delegate.shell_env().await;
+        let path = delegate.which(SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path: path.clone(),
+            arguments: typescript_server_binary_arguments(&path),
+            env: Some(env),
+        })
     }
 
     async fn fetch_server_binary(
@@ -154,14 +129,7 @@ impl LspAdapter for VtslsLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -212,11 +180,12 @@ impl LspAdapter for VtslsLspAdapter {
         })
     }
 
-    async fn initialization_options(
+    async fn workspace_configuration(
         self: Arc<Self>,
-        adapter: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(adapter).await;
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let tsdk_path = Self::tsdk_path(delegate).await;
         let config = serde_json::json!({
             "tsdk": tsdk_path,
             "suggest": {
@@ -243,10 +212,13 @@ impl LspAdapter for VtslsLspAdapter {
                 "enumMemberValues": {
                     "enabled": true
                 }
-            }
+            },
+            "tsserver": {
+                "maxTsServerMemory": 8092
+            },
         });
 
-        Ok(Some(json!({
+        let mut default_workspace_configuration = serde_json::json!({
             "typescript": config,
             "javascript": config,
             "vtsls": {
@@ -258,33 +230,18 @@ impl LspAdapter for VtslsLspAdapter {
                 },
                "autoUseWorkspaceTsdk": true
             }
-        })))
-    }
+        });
 
-    async fn workspace_configuration(
-        self: Arc<Self>,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Value> {
         let override_options = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), SERVER_NAME, cx)
+            language_server_settings(delegate.as_ref(), &SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
         })?;
 
-        if let Some(options) = override_options {
-            return Ok(options);
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut default_workspace_configuration)
         }
 
-        let config = serde_json::json!({
-            "tsserver": {
-                "maxTsServerMemory": 8092
-            },
-        });
-
-        Ok(serde_json::json!({
-            "typescript": config,
-            "javascript": config
-        }))
+        Ok(default_workspace_configuration)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -298,7 +255,7 @@ impl LspAdapter for VtslsLspAdapter {
 
 async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let server_path = container_dir.join(VtslsLspAdapter::SERVER_PATH);

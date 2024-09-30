@@ -15,7 +15,7 @@ use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
+    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -65,6 +65,7 @@ pub struct TitleBar {
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
     should_move: bool,
+    application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -131,12 +132,7 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .children(match self.platform_style {
-                                PlatformStyle::Mac => None,
-                                PlatformStyle::Linux | PlatformStyle::Windows => {
-                                    Some(ApplicationMenu::new())
-                                }
-                            })
+                            .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
                             .children(self.render_project_host(cx))
                             .child(self.render_project_name(cx))
                             .children(self.render_project_branch(cx))
@@ -215,6 +211,15 @@ impl TitleBar {
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
+
+        let platform_style = PlatformStyle::platform();
+        let application_menu = match platform_style {
+            PlatformStyle::Mac => None,
+            PlatformStyle::Linux | PlatformStyle::Windows => {
+                Some(cx.new_view(ApplicationMenu::new))
+            }
+        };
+
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -227,9 +232,10 @@ impl TitleBar {
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         Self {
-            platform_style: PlatformStyle::platform(),
+            platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
+            application_menu,
             workspace: workspace.weak_handle(),
             should_move: false,
             project,

@@ -132,9 +132,15 @@
       "z z": "editor::ScrollCursorCenter",
       "z .": ["workspace::SendKeystrokes", "z z ^"],
       "z b": "editor::ScrollCursorBottom",
+      "z a": "editor::ToggleFold",
+      "z A": "editor::ToggleFoldRecursive",
       "z c": "editor::Fold",
+      "z C": "editor::FoldRecursive",
       "z o": "editor::UnfoldLines",
+      "z O": "editor::UnfoldRecursive",
       "z f": "editor::FoldSelectedRanges",
+      "z M": "editor::FoldAll",
+      "z R": "editor::UnfoldAll",
       "shift-z shift-q": ["pane::CloseActiveItem", { "saveIntent": "skip" }],
       "shift-z shift-z": ["pane::CloseActiveItem", { "saveIntent": "saveAll" }],
       // Count support
@@ -239,6 +245,8 @@
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
       "\"": ["vim::PushOperator", "Register"],
+      "g q": ["vim::PushOperator", "Rewrap"],
+      "g w": ["vim::PushOperator", "Rewrap"],
       "q": "vim::ToggleRecord",
       "shift-q": "vim::ReplayLastRecording",
       "@": ["vim::PushOperator", "ReplayRegister"],
@@ -290,6 +298,8 @@
       "g ctrl-x": ["vim::Decrement", { "step": true }],
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
+      "g I": "vim::VisualInsertFirstNonWhiteSpace",
+      "g A": "vim::VisualInsertEndOfLine",
       "shift-j": "vim::JoinLines",
       "r": ["vim::PushOperator", "Replace"],
       "ctrl-c": ["vim::SwitchMode", "Normal"],
@@ -300,6 +310,7 @@
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
       "g c": "vim::ToggleComments",
+      "g q": "vim::Rewrap",
       "\"": ["vim::PushOperator", "Register"],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
@@ -425,6 +436,15 @@
     "bindings": {
       "g ~": "vim::CurrentLine",
       "~": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == gq",
+    "bindings": {
+      "g q": "vim::CurrentLine",
+      "q": "vim::CurrentLine",
+      "g w": "vim::CurrentLine",
+      "w": "vim::CurrentLine"
     }
   },
   {
