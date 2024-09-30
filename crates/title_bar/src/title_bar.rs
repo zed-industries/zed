@@ -76,7 +76,7 @@ impl Render for TitleBar {
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
         let titlebar_color = if cfg!(target_os = "linux") {
-            if cx.is_window_active() {
+            if cx.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
             } else {
                 cx.theme().colors().title_bar_inactive_background
