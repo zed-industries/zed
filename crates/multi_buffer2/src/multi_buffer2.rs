@@ -112,118 +112,159 @@ impl MultiBuffer {
         let mut cursor = self
             .snapshot
             .excerpts
-            .cursor::<Option<ExcerptKey>>(&self.snapshot.buffer_snapshots);
+            .cursor::<(Option<ExcerptKey>, usize)>(&self.snapshot.buffer_snapshots);
         let mut new_tree = SumTree::<Excerpt>::new(&self.snapshot.buffer_snapshots);
         let mut new_excerpts = new_excerpts.into_iter().peekable();
-
-        while let Some(new_excerpt) = new_excerpts.next() {
-            let new_excerpt_start = ExcerptContaining {
-                path: new_excerpt.key.path.clone(),
-                buffer_id: new_excerpt.key.buffer_id,
-                position: new_excerpt.key.range.start,
-            };
-            let new_excerpt_end = ExcerptContaining {
-                path: new_excerpt.key.path.clone(),
-                buffer_id: new_excerpt.key.buffer_id,
-                position: new_excerpt.key.range.end,
-            };
-
-            if new_excerpt_start
-                .cmp(cursor.start(), &new_excerpt.snapshot)
-                .is_gt()
-            {
-                new_tree.append(
-                    cursor.slice(
-                        &new_excerpt_start,
-                        Bias::Left,
-                        &self.snapshot.buffer_snapshots,
-                    ),
+        let mut edits = Patch::default();
+        while let Some(mut new_excerpt) = new_excerpts.next() {
+            // Reinsert all excerpts preceding the start of the new excerpt
+            new_tree.append(
+                cursor.slice(
+                    &ExcerptAnchor {
+                        path: new_excerpt.key.path.clone(),
+                        buffer_id: new_excerpt.key.buffer_id,
+                        anchor: new_excerpt.key.range.start,
+                    },
+                    Bias::Left,
                     &self.snapshot.buffer_snapshots,
-                );
-
-                if let Some(old_excerpt) = cursor.item() {
-                    if old_excerpt
-                        .key
-                        .cmp(&new_excerpt.key, &new_excerpt.snapshot)
-                        .is_le()
-                    {
-                        push_new_excerpt(
-                            &mut new_tree,
-                            old_excerpt.key.clone(),
-                            &self.snapshot.buffer_snapshots,
-                        );
-                        cursor.next(&self.snapshot.buffer_snapshots);
-                    }
-                }
-            }
-
-            push_new_excerpt(
-                &mut new_tree,
-                new_excerpt.key.clone(),
+                ),
                 &self.snapshot.buffer_snapshots,
             );
 
-            if SeekTarget::cmp(
-                &new_excerpt_end,
-                &cursor.end(&self.snapshot.buffer_snapshots),
-                &self.snapshot.buffer_snapshots,
-            )
-            .is_gt()
-            {
+            let mut edit_old_start = cursor.start().1;
+
+            // If the new excerpt start is inside of an existing excerpt, adjust the start
+            // offset of the edit by the overshoot.
+            if let Some(old_excerpt) = cursor.item() {
+                if old_excerpt.key.buffer_id == new_excerpt.key.buffer_id
+                    && new_excerpt
+                        .key
+                        .range
+                        .start
+                        .cmp(&old_excerpt.key.range.start, &new_excerpt.snapshot)
+                        .is_gt()
+                {
+                    edit_old_start += new_excerpt.snapshot.text_summary_for_range::<usize, _>(
+                        old_excerpt.key.range.start..new_excerpt.key.range.start,
+                    );
+                    new_excerpt.key.range.start = old_excerpt.key.range.start;
+                }
+            }
+
+            let edit_old_end = loop {
                 cursor.seek_forward(
-                    &new_excerpt_end,
+                    &ExcerptAnchor {
+                        path: new_excerpt.key.path.clone(),
+                        buffer_id: new_excerpt.key.buffer_id,
+                        anchor: new_excerpt.key.range.end,
+                    },
                     Bias::Left,
                     &self.snapshot.buffer_snapshots,
                 );
-            }
 
-            if let Some(old_excerpt) = cursor.item() {
-                if new_excerpt_end
-                    .cmp(&Some(old_excerpt.key.clone()), &new_excerpt.snapshot)
-                    .is_ge()
-                {
-                    push_new_excerpt(
-                        &mut new_tree,
-                        old_excerpt.key.clone(),
-                        &self.snapshot.buffer_snapshots,
-                    );
-                    cursor.next(&self.snapshot.buffer_snapshots);
-                }
-            }
+                let mut edit_old_end_offset = cursor.start().1;
 
-            // If any old excerpts start where the new excerpt ends, push them
-            // again so we can update their show_header values.
-            while let Some(next_old_excerpt) = cursor.item() {
-                if next_old_excerpt.key.buffer_id != new_excerpt.key.buffer_id {
-                    break;
-                }
-
-                if next_old_excerpt
-                    .key
-                    .range
-                    .start
-                    .to_offset(&new_excerpt.snapshot)
-                    > new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
-                {
-                    break;
-                }
-
-                if let Some(next_new_excerpt) = new_excerpts.peek() {
-                    if next_old_excerpt
-                        .key
-                        .cmp(&next_new_excerpt.key, &next_new_excerpt.snapshot)
-                        .is_gt()
+                // If the new excerpt end is inside of an existing excerpt, adjust the end
+                // offset of the edit by the overshoot.
+                if let Some(old_excerpt) = cursor.item() {
+                    if old_excerpt.key.buffer_id == new_excerpt.key.buffer_id
+                        && new_excerpt
+                            .key
+                            .range
+                            .end
+                            .cmp(&old_excerpt.key.range.start, &new_excerpt.snapshot)
+                            .is_gt()
                     {
-                        break;
+                        edit_old_end_offset +=
+                            new_excerpt.snapshot.text_summary_for_range::<usize, _>(
+                                old_excerpt.key.range.start..new_excerpt.key.range.end,
+                            );
+                        new_excerpt.key.range.end = old_excerpt.key.range.end;
+                        cursor.next(&self.snapshot.buffer_snapshots);
                     }
                 }
 
-                push_new_excerpt(
-                    &mut new_tree,
-                    next_old_excerpt.key.clone(),
-                    &self.snapshot.buffer_snapshots,
-                );
-                cursor.next(&self.snapshot.buffer_snapshots);
+                if let Some(next_new_excerpt) = new_excerpts.peek() {
+                    if next_new_excerpt.key.buffer_id == new_excerpt.key.buffer_id
+                        && next_new_excerpt
+                            .key
+                            .range
+                            .start
+                            .cmp(&new_excerpt.key.range.end, &new_excerpt.snapshot)
+                            .is_le()
+                    {
+                        new_excerpt.key.range.end = next_new_excerpt.key.range.end;
+                        new_excerpts.next();
+                    } else {
+                        break edit_old_end_offset;
+                    }
+                } else {
+                    break edit_old_end_offset;
+                }
+            };
+
+            let edit_new_start = new_tree.summary().text.len;
+            let new_excerpt_offset_range = new_excerpt.key.range.to_offset(&new_excerpt.snapshot);
+            // Don't show a header if this excerpt is empty or is adjacent to a previous excerpt
+            let show_header = !(new_excerpt_offset_range.is_empty()
+                || new_tree
+                    .summary()
+                    .last_header
+                    .as_ref()
+                    .map_or(false, |last_header| {
+                        last_header.buffer_id == new_excerpt.key.buffer_id
+                            && last_header.range.end.to_offset(&new_excerpt.snapshot)
+                                == new_excerpt_offset_range.start
+                    }));
+            new_tree.push(
+                Excerpt {
+                    key: new_excerpt.key.clone(),
+                    show_header,
+                },
+                &self.snapshot.buffer_snapshots,
+            );
+            let edit_new_end = new_tree.summary().text.len;
+            edits.push(Edit {
+                old: edit_old_start..edit_old_end,
+                new: edit_new_start..edit_new_end,
+            });
+
+            if show_header {
+                // If any old excerpts are adjacent to the new excerpts in offset
+                // space, ensure they don't have a header.
+                while let Some(next_old_excerpt) = cursor.item() {
+                    if next_old_excerpt.key.buffer_id != new_excerpt.key.buffer_id {
+                        break;
+                    }
+
+                    // Only process old excerpts if we don't have more new excerpts
+                    // preceding them in the same buffer.
+                    if let Some(next_new_excerpt) = new_excerpts.peek() {
+                        if next_new_excerpt.key.buffer_id == new_excerpt.key.buffer_id
+                            && next_new_excerpt
+                                .key
+                                .range
+                                .start
+                                .cmp(
+                                    &next_old_excerpt.key.range.start,
+                                    &next_new_excerpt.snapshot,
+                                )
+                                .is_le()
+                        {
+                            break;
+                        }
+                    }
+
+                    if new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
+                        == next_old_excerpt
+                            .key
+                            .range
+                            .start
+                            .to_offset(&new_excerpt.snapshot)
+                    {
+                        // todo!(update header...)
+                    }
+                }
             }
         }
 
@@ -386,10 +427,10 @@ impl MultiBuffer {
             let edit_end = snapshot.anchor_after(edit.new.end);
             new_tree.append(
                 cursor.slice(
-                    &ExcerptContaining {
+                    &ExcerptAnchor {
                         path: path.clone(),
                         buffer_id,
-                        position: edit_start,
+                        anchor: edit_start,
                     },
                     Bias::Left,
                     &self.snapshot.buffer_snapshots,
@@ -600,13 +641,13 @@ impl ExcerptKey {
 }
 
 #[derive(Debug)]
-struct ExcerptContaining {
+struct ExcerptAnchor {
     path: Option<Arc<Path>>,
     buffer_id: BufferId,
-    position: language::Anchor,
+    anchor: language::Anchor,
 }
 
-impl ExcerptContaining {
+impl ExcerptAnchor {
     fn cmp(&self, key: &Option<ExcerptKey>, snapshot: &BufferSnapshot) -> Ordering {
         if let Some(cursor_location) = key {
             self.path
@@ -614,13 +655,13 @@ impl ExcerptContaining {
                 .then_with(|| self.buffer_id.cmp(&cursor_location.buffer_id))
                 .then_with(|| {
                     if self
-                        .position
+                        .anchor
                         .cmp(&cursor_location.range.start, snapshot)
                         .is_lt()
                     {
                         Ordering::Less
                     } else if self
-                        .position
+                        .anchor
                         .cmp(&cursor_location.range.end, snapshot)
                         .is_gt()
                     {
@@ -635,7 +676,7 @@ impl ExcerptContaining {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for ExcerptContaining {
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for ExcerptAnchor {
     fn cmp(
         &self,
         cursor_location: &Option<ExcerptKey>,
@@ -643,6 +684,17 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for Excerp
     ) -> Ordering {
         let snapshot = buffer_snapshots.get(&self.buffer_id).unwrap();
         self.cmp(cursor_location, snapshot)
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, (Option<ExcerptKey>, usize)> for ExcerptAnchor {
+    fn cmp(
+        &self,
+        cursor_location: &(Option<ExcerptKey>, usize),
+        buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
+    ) -> Ordering {
+        let snapshot = buffer_snapshots.get(&self.buffer_id).unwrap();
+        self.cmp(&cursor_location.0, snapshot)
     }
 }
 
