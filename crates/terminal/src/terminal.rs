@@ -18,7 +18,9 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
+    vte::ansi::{
+        ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
+    },
     Term,
 };
 use anyhow::{bail, Result};
@@ -40,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
-use terminal_settings::{AlternateScroll, TerminalBlink, TerminalSettings};
+use terminal_settings::{AlternateScroll, CursorShape, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
@@ -314,6 +316,7 @@ impl TerminalBuilder {
         shell: Shell,
         mut env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
+        cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
@@ -353,6 +356,7 @@ impl TerminalBuilder {
         // Setup Alacritty's env, which modifies the current process's environment
         alacritty_terminal::tty::setup_env();
 
+        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
             // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
@@ -365,6 +369,7 @@ impl TerminalBuilder {
         };
         let config = Config {
             scrolling_history,
+            default_cursor_style,
             ..Config::default()
         };
 
@@ -949,6 +954,10 @@ impl Terminal {
 
     pub fn last_content(&self) -> &TerminalContent {
         &self.last_content
+    }
+
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape) {
+        self.term.lock().set_cursor_style(Some(cursor_shape.into()));
     }
 
     pub fn total_lines(&self) -> usize {

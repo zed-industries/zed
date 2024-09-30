@@ -19,7 +19,7 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
+    terminal_settings::{CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
     TerminalSize,
@@ -102,6 +102,7 @@ pub struct TerminalView {
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
     context_menu: Option<(View<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
+    cursor_shape: CursorShape,
     blink_state: bool,
     blinking_on: bool,
     blinking_paused: bool,
@@ -171,6 +172,9 @@ impl TerminalView {
         let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, _event, cx| {
             terminal_view.focus_out(cx);
         });
+        let cursor_shape = TerminalSettings::get_global(cx)
+            .cursor_shape
+            .unwrap_or_default();
 
         Self {
             terminal,
@@ -178,6 +182,7 @@ impl TerminalView {
             has_bell: false,
             focus_handle,
             context_menu: None,
+            cursor_shape,
             blink_state: true,
             blinking_on: false,
             blinking_paused: false,
@@ -255,6 +260,16 @@ impl TerminalView {
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         let settings = TerminalSettings::get_global(cx);
         self.show_title = settings.toolbar.title;
+
+        let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
+        let old_cursor_shape = self.cursor_shape;
+        if old_cursor_shape != new_cursor_shape {
+            self.cursor_shape = new_cursor_shape;
+            self.terminal.update(cx, |term, _| {
+                term.set_cursor_shape(self.cursor_shape);
+            });
+        }
+
         cx.notify();
     }
 
@@ -903,7 +918,10 @@ impl TerminalView {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).focus_in();
+        self.terminal.update(cx, |terminal, _| {
+            terminal.set_cursor_shape(self.cursor_shape);
+            terminal.focus_in();
+        });
         self.blink_cursors(self.blink_epoch, cx);
         cx.invalidate_character_coordinates();
         cx.notify();
@@ -912,6 +930,7 @@ impl TerminalView {
     fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
+            terminal.set_cursor_shape(CursorShape::Hollow);
         });
         cx.notify();
     }
