@@ -871,14 +871,13 @@ mod tests {
                         let mut new_excerpts = Vec::new();
                         for _ in 0..5 {
                             let buffer = buffer_handle.read(cx);
-                            let start = rng.gen_range(0..=buffer.len());
-                            let end = rng.gen_range(start..=buffer.len());
+                            let range = buffer.random_byte_range(0, &mut rng);
                             let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
                             let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
                             new_excerpts.push((
                                 buffer_handle.clone(),
-                                buffer.anchor_at(start, start_bias)
-                                    ..buffer.anchor_at(end, end_bias),
+                                buffer.anchor_at(range.start, start_bias)
+                                    ..buffer.anchor_at(range.end, end_bias),
                             ));
                         }
 
