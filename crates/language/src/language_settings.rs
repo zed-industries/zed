@@ -661,7 +661,7 @@ pub enum Formatter {
         /// The external program to run.
         command: Arc<str>,
         /// The arguments to pass to the program.
-        arguments: Arc<[String]>,
+        arguments: Option<Arc<[String]>>,
     },
     /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),

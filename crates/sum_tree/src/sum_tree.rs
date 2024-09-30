@@ -20,7 +20,7 @@ pub const TREE_BASE: usize = 6;
 pub trait Item: Clone {
     type Summary: Summary;
 
-    fn summary(&self) -> Self::Summary;
+    fn summary(&self, cx: &<Self::Summary as Summary>::Context) -> Self::Summary;
 }
 
 /// An [`Item`] whose summary has a specific key that can be used to identify it
@@ -211,7 +211,7 @@ impl<T: Item> SumTree<T> {
         while iter.peek().is_some() {
             let items: ArrayVec<T, { 2 * TREE_BASE }> = iter.by_ref().take(2 * TREE_BASE).collect();
             let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                items.iter().map(|item| item.summary()).collect();
+                items.iter().map(|item| item.summary(cx)).collect();
 
             let mut summary = item_summaries[0].clone();
             for item_summary in &item_summaries[1..] {
@@ -281,7 +281,7 @@ impl<T: Item> SumTree<T> {
             .map(|items| {
                 let items: ArrayVec<T, { 2 * TREE_BASE }> = items.into_iter().collect();
                 let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                    items.iter().map(|item| item.summary()).collect();
+                    items.iter().map(|item| item.summary(cx)).collect();
                 let mut summary = item_summaries[0].clone();
                 for item_summary in &item_summaries[1..] {
                     <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
@@ -405,7 +405,7 @@ impl<T: Item> SumTree<T> {
                 if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
                 {
                     (f)(item);
-                    *item_summary = item.summary();
+                    *item_summary = item.summary(cx);
                     *summary = sum(item_summaries.iter(), cx);
                     Some(summary.clone())
                 } else {
@@ -461,7 +461,7 @@ impl<T: Item> SumTree<T> {
     }
 
     pub fn push(&mut self, item: T, cx: &<T::Summary as Summary>::Context) {
-        let summary = item.summary();
+        let summary = item.summary(cx);
         self.append(
             SumTree(Arc::new(Node::Leaf {
                 summary: summary.clone(),
@@ -1352,7 +1352,7 @@ mod tests {
     impl Item for u8 {
         type Summary = IntegersSummary;
 
-        fn summary(&self) -> Self::Summary {
+        fn summary(&self, _cx: &()) -> Self::Summary {
             IntegersSummary {
                 count: 1,
                 sum: *self as usize,

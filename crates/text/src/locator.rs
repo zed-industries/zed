@@ -69,7 +69,7 @@ impl Default for Locator {
 impl sum_tree::Item for Locator {
     type Summary = Locator;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.clone()
     }
 }

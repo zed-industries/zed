@@ -455,7 +455,7 @@ impl EventEmitter<NotificationEvent> for NotificationStore {}
 impl sum_tree::Item for NotificationEntry {
     type Summary = NotificationSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         NotificationSummary {
             max_id: self.id,
             count: 1,
