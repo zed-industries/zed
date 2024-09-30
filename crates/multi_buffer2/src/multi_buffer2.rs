@@ -109,6 +109,14 @@ impl MultiBuffer {
             }
         });
 
+        log::info!(
+            "inserting new excerpts... {:?}",
+            new_excerpts
+                .iter()
+                .map(|excerpt| { excerpt.key.range.to_offset(&excerpt.snapshot) })
+                .collect::<Vec<_>>()
+        );
+
         let mut cursor = self
             .snapshot
             .excerpts
@@ -117,6 +125,11 @@ impl MultiBuffer {
         let mut new_excerpts = new_excerpts.into_iter().peekable();
         let mut edits = Patch::default();
         while let Some(mut new_excerpt) = new_excerpts.next() {
+            log::info!(
+                "inserting new excerpt {:?}",
+                new_excerpt.key.range.to_offset(&new_excerpt.snapshot)
+            );
+
             // Reinsert all excerpts preceding the start of the new excerpt
             new_tree.append(
                 cursor.slice(
@@ -142,7 +155,7 @@ impl MultiBuffer {
                         .range
                         .start
                         .cmp(&old_excerpt.key.range.start, &new_excerpt.snapshot)
-                        .is_gt()
+                        .is_ge()
                 {
                     edit_old_start += new_excerpt.snapshot.text_summary_for_range::<usize, _>(
                         old_excerpt.key.range.start..new_excerpt.key.range.start,
@@ -173,7 +186,7 @@ impl MultiBuffer {
                             .range
                             .end
                             .cmp(&old_excerpt.key.range.start, &new_excerpt.snapshot)
-                            .is_gt()
+                            .is_ge()
                     {
                         edit_old_end_offset +=
                             new_excerpt.snapshot.text_summary_for_range::<usize, _>(
@@ -193,7 +206,15 @@ impl MultiBuffer {
                             .cmp(&new_excerpt.key.range.end, &new_excerpt.snapshot)
                             .is_le()
                     {
-                        new_excerpt.key.range.end = next_new_excerpt.key.range.end;
+                        if next_new_excerpt
+                            .key
+                            .range
+                            .end
+                            .cmp(&new_excerpt.key.range.end, &new_excerpt.snapshot)
+                            .is_gt()
+                        {
+                            new_excerpt.key.range.end = next_new_excerpt.key.range.end;
+                        }
                         new_excerpts.next();
                     } else {
                         break edit_old_end_offset;
@@ -229,41 +250,53 @@ impl MultiBuffer {
                 new: edit_new_start..edit_new_end,
             });
 
-            if show_header {
-                // If any old excerpts are adjacent to the new excerpts in offset
-                // space, ensure they don't have a header.
-                while let Some(next_old_excerpt) = cursor.item() {
-                    if next_old_excerpt.key.buffer_id != new_excerpt.key.buffer_id {
-                        break;
-                    }
+            // If any old excerpts are adjacent to the new excerpts in offset
+            // space, ensure they don't have a header.
+            while let Some(next_old_excerpt) = cursor.item() {
+                if next_old_excerpt.key.buffer_id != new_excerpt.key.buffer_id {
+                    break;
+                }
 
-                    // Only process old excerpts if we don't have more new excerpts
-                    // preceding them in the same buffer.
-                    if let Some(next_new_excerpt) = new_excerpts.peek() {
-                        if next_new_excerpt.key.buffer_id == new_excerpt.key.buffer_id
-                            && next_new_excerpt
-                                .key
-                                .range
-                                .start
-                                .cmp(
-                                    &next_old_excerpt.key.range.start,
-                                    &next_new_excerpt.snapshot,
-                                )
-                                .is_le()
-                        {
-                            break;
-                        }
-                    }
-
-                    if new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
-                        == next_old_excerpt
+                // Only fix up subsequent old excerpts if no new excerpts intersect
+                // them. If new excerpts intersect them, we'll reconstruct them when
+                // processing those new excerpts.
+                if let Some(next_new_excerpt) = new_excerpts.peek() {
+                    if next_new_excerpt.key.buffer_id == new_excerpt.key.buffer_id
+                        && next_new_excerpt
                             .key
                             .range
                             .start
-                            .to_offset(&new_excerpt.snapshot)
+                            .cmp(&next_old_excerpt.key.range.end, &next_new_excerpt.snapshot)
+                            .is_le()
                     {
-                        // todo!(update header...)
+                        break;
                     }
+                }
+
+                if new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
+                    == next_old_excerpt
+                        .key
+                        .range
+                        .start
+                        .to_offset(&new_excerpt.snapshot)
+                {
+                    let mut next_old_excerpt = next_old_excerpt.clone();
+                    cursor.next(&self.snapshot.buffer_snapshots);
+
+                    if next_old_excerpt.show_header {
+                        edits.push(Edit {
+                            old: edit_old_end..edit_old_end + 1,
+                            new: edit_new_end..edit_new_end,
+                        });
+
+                        next_old_excerpt.show_header = false;
+                        new_tree.push(next_old_excerpt, &self.snapshot.buffer_snapshots);
+                        break;
+                    } else {
+                        new_tree.push(next_old_excerpt, &self.snapshot.buffer_snapshots);
+                    }
+                } else {
+                    break;
                 }
             }
         }
@@ -274,7 +307,23 @@ impl MultiBuffer {
         );
         drop(cursor);
         self.snapshot.excerpts = new_tree;
+
+        log::info!("========================");
+        for excerpt in self.snapshot.excerpts.iter() {
+            log::info!(
+                "range: {:?}",
+                excerpt.key.range.to_offset(
+                    self.snapshot
+                        .buffer_snapshots
+                        .get(&excerpt.key.buffer_id)
+                        .unwrap(),
+                )
+            )
+        }
+
         self.check_invariants();
+
+        self.edits.publish(edits);
     }
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
@@ -638,6 +687,15 @@ impl ExcerptKey {
             .then_with(|| self.buffer_id.cmp(&other.buffer_id))
             .then_with(|| self.range.cmp(&other.range, snapshot))
     }
+
+    fn intersects(&self, other: &Self, snapshot: &BufferSnapshot) -> bool {
+        if self.buffer_id == other.buffer_id {
+            self.range.end.cmp(&other.range.start, snapshot).is_ge()
+                && other.range.end.cmp(&self.range.start, snapshot).is_ge()
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -991,7 +1049,7 @@ mod tests {
             let mut excerpts = Vec::new();
 
             for _ in 0..operations {
-                // println!("=====================================");
+                log::info!("=====================================");
                 let buffer_handle = match rng.gen_range(0..3) {
                     0 => fruits.clone(),
                     1 => cars.clone(),
