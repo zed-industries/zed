@@ -76,9 +76,9 @@ if [[ -n $dnf ]]; then
     jq
     git
   )
-  # Perl dependencies are needed for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
   if grep -qP '^ID="(fedora)' /etc/os-release; then
     deps+=(
+      # for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
       perl-FindBin
       perl-IPC-Cmd
       perl-File-Compare

@@ -10,8 +10,9 @@ ARG TZ=Etc/UTC \
 
 COPY script/linux script/
 RUN ./script/linux
-COPY script/install-mold script/
+COPY script/install-mold script/install-cmake script/
 RUN ./script/install-mold "2.34.0"
+RUN ./script/install-cmake "3.30.4"
 
 COPY . .
 
