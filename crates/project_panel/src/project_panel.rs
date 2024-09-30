@@ -2006,6 +2006,20 @@ impl ProjectPanel {
         }
     }
 
+    fn entry_for_index(&self, idx: usize) -> Option<(WorktreeId, Entry)> {
+        let mut offset = 0;
+        for (id, visible_worktree_entries, _) in &self.visible_entries {
+            if offset + visible_worktree_entries.len() < idx {
+                offset += visible_worktree_entries.len();
+                continue;
+            }
+            return visible_worktree_entries
+                .get(idx - offset)
+                .map(|entry| (*id, entry.clone()));
+        }
+        None
+    }
+
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
@@ -2748,7 +2762,18 @@ impl Render for ProjectPanel {
                         }
                     })
                     .when(indent_guides, |this| {
+                        let active_parent_path = self.selection.and_then(|selection| {
+                            let worktree = self
+                                .project
+                                .read(cx)
+                                .worktree_for_id(selection.worktree_id, cx)?;
+                            let entry = worktree.read(cx).entry_for_id(selection.entry_id)?;
+                            let parent_path = entry.path.parent()?.to_path_buf();
+                            Some(parent_path)
+                        });
+
                         let line_color = cx.theme().colors().editor_indent_guide;
+                        let active_line_color = cx.theme().colors().editor_indent_guide_active;
                         this.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
@@ -2766,9 +2791,18 @@ impl Render for ProjectPanel {
                                 cx,
                             )
                             .with_render_fn(
-                                move |layout, indent_size, item_height| {
+                                cx.view().clone(),
+                                move |this, layout, indent_size, item_height, cx| {
                                     const LEFT_OFFSET: f32 = 14.;
                                     const PADDING_Y: f32 = 4.;
+
+                                    let is_active = if let Some(entry) =
+                                        this.entry_for_index(layout.offset.y)
+                                    {
+                                        active_parent_path == entry.1.path.parent().as_ref()
+                                    } else {
+                                        false
+                                    };
 
                                     ui::RenderedIndentGuide {
                                         bounds: Bounds::new(
@@ -2784,7 +2818,11 @@ impl Render for ProjectPanel {
                                                     - px(PADDING_Y * 2.),
                                             ),
                                         ),
-                                        color: Color::Custom(line_color),
+                                        color: Color::Custom(if is_active {
+                                            active_line_color
+                                        } else {
+                                            line_color
+                                        }),
                                     }
                                 },
                             ),

@@ -26,7 +26,9 @@ pub struct IndentGuides {
     line_color: Color,
     indent_size: Pixels,
     compute_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
-    render_fn: Option<Box<dyn Fn(IndentGuideLayout, Pixels, Pixels) -> RenderedIndentGuide>>,
+    render_fn: Option<
+        Box<dyn Fn(IndentGuideLayout, Pixels, Pixels, &mut WindowContext) -> RenderedIndentGuide>,
+    >,
 }
 
 impl IndentGuides {
@@ -35,10 +37,17 @@ impl IndentGuides {
         self
     }
 
-    pub fn with_render_fn(
+    pub fn with_render_fn<V: Render>(
         mut self,
-        render_fn: impl Fn(IndentGuideLayout, Pixels, Pixels) -> RenderedIndentGuide + 'static,
+        view: View<V>,
+        render_fn: impl Fn(&mut V, IndentGuideLayout, Pixels, Pixels, &mut WindowContext) -> RenderedIndentGuide
+            + 'static,
     ) -> Self {
+        let render_fn = move |layout, indent_size, item_height, cx: &mut WindowContext| {
+            view.update(cx, |this, cx| {
+                render_fn(this, layout, indent_size, item_height, cx)
+            })
+        };
         self.render_fn = Some(Box::new(render_fn));
         self
     }
@@ -69,7 +78,7 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
                     .into_iter()
                     .map(|layout| {
                         let mut indent_guide = if let Some(ref custom_render) = render_fn {
-                            custom_render(layout, indent_size, item_height)
+                            custom_render(layout, indent_size, item_height, cx)
                         } else {
                             RenderedIndentGuide {
                                 bounds: Bounds::new(
