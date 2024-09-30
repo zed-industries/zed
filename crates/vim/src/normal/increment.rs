@@ -218,8 +218,6 @@ fn find_number(
                 begin = Some(offset);
             }
             num.push(ch);
-            // println!("pushing {}", ch); // why do we println here ?
-            // println!();
         } else if begin.is_some() {
             end = Some(offset);
             break;
@@ -313,6 +311,44 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_increment_with_leading_zeros_and_zero(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            01ˇ1
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            01ˇ2
+            "});
+        cx.simulate_shared_keystrokes("1 2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            00ˇ0
+            "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_changing_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            099ˇ9
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            100ˇ0
+            "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            99ˇ8
+            "});
+    }
+
+    #[gpui::test]
     async fn test_increment_with_two_dots(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -352,9 +388,13 @@ mod test {
     async fn test_increment_sign_change_with_leading_zeros(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state(indoc! {"
-                00ˇ0
+                00ˇ1
                 "})
             .await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                00ˇ0
+                "});
         cx.simulate_shared_keystrokes("ctrl-x").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 -00ˇ1
