@@ -24,7 +24,7 @@ use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix, ResultExt};
 use worktree::WorktreeId;
 
-use crate::Project;
+use crate::worktree_store::WorktreeStore;
 
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
@@ -531,12 +531,12 @@ mod test_inventory {
 /// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
 pub struct BasicContextProvider {
-    project: Model<Project>,
+    worktree_store: Model<WorktreeStore>,
 }
 
 impl BasicContextProvider {
-    pub fn new(project: Model<Project>) -> Self {
-        Self { project }
+    pub fn new(worktree_store: Model<WorktreeStore>) -> Self {
+        Self { worktree_store }
     }
 }
 
@@ -587,7 +587,7 @@ impl ContextProvider for BasicContextProvider {
                 .file()
                 .map(|file| file.worktree_id(cx))
                 .and_then(|worktree_id| {
-                    self.project
+                    self.worktree_store
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)
                         .map(|worktree| worktree.read(cx).abs_path())

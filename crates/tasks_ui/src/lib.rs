@@ -225,6 +225,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let worktree_store = project.update(cx, |project, _| project.worktree_store().clone());
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -236,7 +237,9 @@ mod tests {
             name: (_) @name) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(
+                worktree_store.clone(),
+            )))),
         );
 
         let typescript_language = Arc::new(
@@ -254,7 +257,9 @@ mod tests {
                       ")" @context)) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(
+                worktree_store.clone(),
+            )))),
         );
 
         let worktree_id = project.update(cx, |project, cx| {

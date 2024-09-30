@@ -7,7 +7,6 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
     search::SearchQuery,
-    task_store::TaskStore,
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };

@@ -78,7 +78,7 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
+    HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables,
 };
 use task_store::TaskStore;
 use terminals::Terminals;
@@ -150,6 +150,7 @@ pub struct Project {
     worktree_store: Model<WorktreeStore>,
     buffer_store: Model<BufferStore>,
     lsp_store: Model<LspStore>,
+    task_store: Model<TaskStore>,
     _subscriptions: Vec<gpui::Subscription>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
     git_diff_debouncer: DebouncedDelay<Self>,
@@ -663,6 +664,7 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+                task_store: todo!("TODO kb"),
             }
         })
     }
@@ -765,6 +767,7 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+                task_store: todo!("TODO kb"),
             };
 
             let ssh = ssh.read(cx);
@@ -953,6 +956,7 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
                 environment: ProjectEnvironment::new(&worktree_store, None, cx),
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
+                task_store: todo!("TODO kb"),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -3498,7 +3502,7 @@ impl Project {
         let buffer_store = this.read_with(&cx, |this, cx| {
             if let Some(ssh) = &this.ssh_client {
                 let mut payload = envelope.payload.clone();
-                payload.project_id = 0;
+                payload.project_id = SSH_PROJECT_ID;
                 cx.background_executor()
                     .spawn(ssh.read(cx).to_proto_client().request(payload))
                     .detach_and_log_err(cx);
@@ -3558,61 +3562,13 @@ impl Project {
         Ok(response)
     }
 
-    // TODO kb move into some TaskStore
-    /*
-    let buffer_store = this.read_with(&cx, |this, cx| {
-        if let Some(ssh) = &this.ssh_session {
-            let mut payload = envelope.payload.clone();
-            payload.project_id = 0;
-            cx.background_executor()
-                .spawn(ssh.request(payload))
-                .detach_and_log_err(cx);
-        }
-        this.buffer_store.clone()
-    })?;
-    BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
-    */
     async fn handle_task_context_for_location(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskContextForLocation>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskContext> {
-        let location = envelope
-            .payload
-            .location
-            .context("no location given for task context handling")?;
-        let location = cx
-            .update(|cx| deserialize_location(&project, location, cx))?
-            .await?;
-        let context_task = project.update(&mut cx, |project, cx| {
-            let captured_variables = {
-                let mut variables = TaskVariables::default();
-                for range in location
-                    .buffer
-                    .read(cx)
-                    .snapshot()
-                    .runnable_ranges(location.range.clone())
-                {
-                    for (capture_name, value) in range.extra_captures {
-                        variables.insert(VariableName::Custom(capture_name.into()), value);
-                    }
-                }
-                variables
-            };
-            project.task_context_for_location(captured_variables, location, cx)
-        })?;
-        let task_context = context_task.await.unwrap_or_default();
-        Ok(proto::TaskContext {
-            project_env: task_context.project_env.into_iter().collect(),
-            cwd: task_context
-                .cwd
-                .map(|cwd| cwd.to_string_lossy().to_string()),
-            task_variables: task_context
-                .task_variables
-                .into_iter()
-                .map(|(variable_name, variable_value)| (variable_name.to_string(), variable_value))
-                .collect(),
-        })
+        let task_store = project.update(&mut cx, |project, _| project.task_store.clone())?;
+        TaskStore::handle_task_context_for_location(task_store, envelope, cx).await
     }
 
     // TODO kb has to be removed.
@@ -3626,9 +3582,10 @@ impl Project {
     ) -> Result<proto::TaskTemplatesResponse> {
         dbg!("$$$$$$$$$$$$$$$$$$");
         let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
+        let buffer_store = project.update(&mut cx, |project, _| project.buffer_store.clone())?;
         let location = match envelope.payload.location {
             Some(location) => Some(
-                cx.update(|cx| deserialize_location(&project, location, cx))?
+                cx.update(|cx| deserialize_location(&buffer_store, location, cx))?
                     .await
                     .context("task templates request location deserializing")?,
             ),
@@ -4003,21 +3960,18 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local() {
-            let (worktree_id, worktree_abs_path) = if let Some(worktree) = self.task_worktree(cx) {
-                (
-                    Some(worktree.read(cx).id()),
-                    Some(worktree.read(cx).abs_path()),
-                )
-            } else {
-                (None, None)
-            };
+            let in_worktree = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+            let worktree_abs_path = in_worktree
+                .and_then(|worktree_id| self.worktree_for_id(worktree_id, cx))
+                .map(|worktree| worktree.read(cx).abs_path());
+            let worktree_store = self.worktree_store.clone();
 
             cx.spawn(|project, mut cx| async move {
                 let project_env = project
                     .update(&mut cx, |project, cx| {
                         let worktree_abs_path = worktree_abs_path.clone();
                         project.environment.update(cx, |environment, cx| {
-                            environment.get_environment(worktree_id, worktree_abs_path, cx)
+                            environment.get_environment(in_worktree, worktree_abs_path, cx)
                         })
                     })
                     .ok()?
@@ -4029,7 +3983,7 @@ impl Project {
                             captured_variables,
                             location,
                             project_env.as_ref(),
-                            BasicContextProvider::new(project.upgrade()?),
+                            BasicContextProvider::new(worktree_store),
                             cx,
                         )
                         .log_err()
@@ -4518,8 +4472,8 @@ fn serialize_location(location: &Location, cx: &AppContext) -> proto::Location {
     }
 }
 
-fn deserialize_location(
-    project: &Model<Project>,
+pub fn deserialize_location(
+    buffer_store: &Model<BufferStore>,
     location: proto::Location,
     cx: &mut AppContext,
 ) -> Task<Result<Location>> {
@@ -4527,8 +4481,8 @@ fn deserialize_location(
         Ok(id) => id,
         Err(e) => return Task::ready(Err(e)),
     };
-    let buffer_task = project.update(cx, |project, cx| {
-        project.wait_for_remote_buffer(buffer_id, cx)
+    let buffer_task = buffer_store.update(cx, |buffer_store, cx| {
+        buffer_store.wait_for_remote_buffer(buffer_id, cx)
     });
     cx.spawn(|_| async move {
         let buffer = buffer_task.await?;
