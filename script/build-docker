@@ -18,9 +18,8 @@ fi
 
 export DOCKER_BUILDKIT=1
 cd "$(dirname "$0")/.."
-podman build \
+
+podman build . \
     -f Dockerfile-distros \
     -t many \
-    --build-arg BASE_IMAGE="$BASE_IMAGE" \
-    --build-arg GITHUB_SHA=$(git --no-pager rev-parse HEAD) \
-    .
+    --build-arg BASE_IMAGE="$BASE_IMAGE"
