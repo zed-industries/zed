@@ -1,8 +1,8 @@
 use collections::{BTreeMap, HashMap};
 use gpui::{Model, ModelContext};
 use language::{
-    AnchorRangeExt, Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, ReplicaId, TextSummary,
-    ToOffset as _,
+    AnchorRangeExt, Bias, Buffer, BufferSnapshot, Edit, OffsetRangeExt as _, ReplicaId,
+    TextSummary, ToOffset as _,
 };
 use std::{cmp::Ordering, fmt::Debug, ops::Range, path::Path, sync::Arc};
 use sum_tree::{Item, SeekTarget, SumTree, TreeMap};
@@ -16,6 +16,7 @@ struct BufferId {
 pub struct MultiBuffer {
     snapshot: MultiBufferSnapshot,
     buffers: HashMap<BufferId, Model<Buffer>>,
+    edits: text::Topic,
 }
 
 impl MultiBuffer {
@@ -23,7 +24,12 @@ impl MultiBuffer {
         Self {
             snapshot: MultiBufferSnapshot::default(),
             buffers: HashMap::default(),
+            edits: text::Topic::default(),
         }
+    }
+
+    pub fn subscribe(&mut self) -> text::Subscription {
+        self.edits.subscribe()
     }
 
     pub fn insert_excerpts(
@@ -817,6 +823,52 @@ mod tests {
                 cx,
             );
             assert_eq!(multibuffer.snapshot(cx).text(), "\nab\nefghijklmnopqr");
+
+            multibuffer
+        });
+    }
+
+    #[gpui::test]
+    fn test_edit_subscription(cx: &mut AppContext) {
+        let buffer_handle = cx.new_model(|cx| Buffer::local("abcdefghijklmnopqrstuvwxyz", cx));
+        cx.new_model(|cx| {
+            let mut multibuffer = MultiBuffer::new();
+            let subscription = multibuffer.subscribe();
+
+            let buffer = buffer_handle.read(cx);
+            multibuffer.insert_excerpts(
+                vec![
+                    (
+                        buffer_handle.clone(),
+                        buffer.anchor_before(0)..buffer.anchor_after(5),
+                    ),
+                    (
+                        buffer_handle.clone(),
+                        buffer.anchor_before(10)..buffer.anchor_after(15),
+                    ),
+                ],
+                cx,
+            );
+            assert_eq!(multibuffer.snapshot(cx).text(), "\nabcde\nklmno");
+            assert_eq!(
+                subscription.consume().into_inner(),
+                &[Edit {
+                    old: 0..0,
+                    new: 0..12
+                }]
+            );
+
+            buffer_handle.update(cx, |buffer, cx| {
+                buffer.edit([(1..3, "ABCD")], None, cx);
+            });
+            assert_eq!(multibuffer.snapshot(cx).text(), "\naABCDe\nklmno");
+            assert_eq!(
+                subscription.consume().into_inner(),
+                &[Edit {
+                    old: 2..4,
+                    new: 2..6
+                }]
+            );
 
             multibuffer
         });
