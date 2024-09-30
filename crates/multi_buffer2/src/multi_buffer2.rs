@@ -110,11 +110,6 @@ impl MultiBuffer {
         let mut new_excerpts = new_excerpts.into_iter().peekable();
 
         while let Some(new_excerpt) = new_excerpts.next() {
-            // dbg!(new_excerpt
-            //     .snapshot
-            //     .text_for_range(new_excerpt.key.range.clone())
-            //     .collect::<String>());
-
             let new_excerpt_start = ExcerptContaining {
                 path: new_excerpt.key.path.clone(),
                 buffer_id: new_excerpt.key.buffer_id,
@@ -126,12 +121,9 @@ impl MultiBuffer {
                 position: new_excerpt.key.range.end,
             };
 
-            if SeekTarget::cmp(
-                &new_excerpt_start,
-                cursor.start(),
-                &self.snapshot.buffer_snapshots,
-            )
-            .is_gt()
+            if new_excerpt_start
+                .cmp(cursor.start(), &new_excerpt.snapshot)
+                .is_gt()
             {
                 new_tree.append(
                     cursor.slice(
@@ -179,12 +171,9 @@ impl MultiBuffer {
             }
 
             if let Some(old_excerpt) = cursor.item() {
-                if SeekTarget::cmp(
-                    &new_excerpt_end,
-                    &Some(old_excerpt.key.clone()),
-                    &self.snapshot.buffer_snapshots,
-                )
-                .is_ge()
+                if new_excerpt_end
+                    .cmp(&Some(old_excerpt.key.clone()), &new_excerpt.snapshot)
+                    .is_ge()
                 {
                     push_new_excerpt(
                         &mut new_tree,
@@ -195,99 +184,40 @@ impl MultiBuffer {
                 }
             }
 
-            // If the next old excerpt starts where the new excerpt ends, push
-            // it again so it can update its show_header value.
+            // If any old excerpts start where the new excerpt ends, push them
+            // again so we can update their show_header values.
             while let Some(next_old_excerpt) = cursor.item() {
-                if next_old_excerpt.key.buffer_id == new_excerpt.key.buffer_id
-                    && new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
-                        == next_old_excerpt
-                            .key
-                            .range
-                            .start
-                            .to_offset(&new_excerpt.snapshot)
-                    && new_excerpts.peek().map_or(true, |next_new_excerpt| {
-                        next_old_excerpt
-                            .key
-                            .cmp(&next_new_excerpt.key, &next_new_excerpt.snapshot)
-                            .is_le()
-                    })
-                {
-                    push_new_excerpt(
-                        &mut new_tree,
-                        next_old_excerpt.key.clone(),
-                        &self.snapshot.buffer_snapshots,
-                    );
-                    cursor.next(&self.snapshot.buffer_snapshots);
-                } else {
+                if next_old_excerpt.key.buffer_id != new_excerpt.key.buffer_id {
                     break;
                 }
+
+                if next_old_excerpt
+                    .key
+                    .range
+                    .start
+                    .to_offset(&new_excerpt.snapshot)
+                    > new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
+                {
+                    break;
+                }
+
+                if let Some(next_new_excerpt) = new_excerpts.peek() {
+                    if next_old_excerpt
+                        .key
+                        .cmp(&next_new_excerpt.key, &next_new_excerpt.snapshot)
+                        .is_gt()
+                    {
+                        break;
+                    }
+                }
+
+                push_new_excerpt(
+                    &mut new_tree,
+                    next_old_excerpt.key.clone(),
+                    &self.snapshot.buffer_snapshots,
+                );
+                cursor.next(&self.snapshot.buffer_snapshots);
             }
-
-            // if SeekTarget::cmp(
-            //     &new_excerpt.key,
-            //     cursor.start(),
-            //     &self.snapshot.buffer_snapshots,
-            // )
-            // .is_gt()
-            // {
-            //     new_tree.append(
-            //         cursor.slice(
-            //             &new_excerpt.key,
-            //             Bias::Right,
-            //             &self.snapshot.buffer_snapshots,
-            //         ),
-            //         &self.snapshot.buffer_snapshots,
-            //     );
-            // }
-
-            // dbg!("here");
-            // push_new_excerpt(
-            //     &mut new_tree,
-            //     new_excerpt.key.clone(),
-            //     &self.snapshot.buffer_snapshots,
-            // );
-
-            // cursor.seek_forward(
-            //     &ExcerptKey {
-            //         path: new_excerpt.key.path,
-            //         buffer_id: new_excerpt.key.buffer_id,
-            //         range: new_excerpt.key.range.end..new_excerpt.key.range.end,
-            //     },
-            //     Bias::Right,
-            //     &self.snapshot.buffer_snapshots,
-            // );
-
-            // if let Some(prev_excerpt) = cursor.prev_item() {
-            //     if prev_excerpt.key.buffer_id == new_excerpt.key.buffer_id {
-            //         dbg!("here");
-            //         push_new_excerpt(
-            //             &mut new_tree,
-            //             prev_excerpt.key.clone(),
-            //             &self.snapshot.buffer_snapshots,
-            //         );
-            //     }
-            // }
-
-            // // If the next old excerpt starts where the new excerpt ends, push
-            // // it again so it can update its show_header value.
-            // if let Some(next_old_excerpt) = cursor.item() {
-            //     if next_old_excerpt.key.buffer_id == new_excerpt.key.buffer_id
-            //         && new_excerpt.key.range.end.to_offset(&new_excerpt.snapshot)
-            //             == next_old_excerpt
-            //                 .key
-            //                 .range
-            //                 .start
-            //                 .to_offset(&new_excerpt.snapshot)
-            //     {
-            //         dbg!("here");
-            //         push_new_excerpt(
-            //             &mut new_tree,
-            //             next_old_excerpt.key.clone(),
-            //             &self.snapshot.buffer_snapshots,
-            //         );
-            //         cursor.next(&self.snapshot.buffer_snapshots);
-            //     }
-            // }
         }
 
         new_tree.append(
@@ -650,18 +580,13 @@ struct ExcerptContaining {
     position: language::Anchor,
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for ExcerptContaining {
-    fn cmp(
-        &self,
-        cursor_location: &Option<ExcerptKey>,
-        buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
-    ) -> Ordering {
-        if let Some(cursor_location) = cursor_location {
+impl ExcerptContaining {
+    fn cmp(&self, key: &Option<ExcerptKey>, snapshot: &BufferSnapshot) -> Ordering {
+        if let Some(cursor_location) = key {
             self.path
                 .cmp(&cursor_location.path)
                 .then_with(|| self.buffer_id.cmp(&cursor_location.buffer_id))
                 .then_with(|| {
-                    let snapshot = buffer_snapshots.get(&self.buffer_id).unwrap();
                     if self
                         .position
                         .cmp(&cursor_location.range.start, snapshot)
@@ -681,6 +606,17 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for Excerp
         } else {
             Ordering::Greater
         }
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<ExcerptKey>> for ExcerptContaining {
+    fn cmp(
+        &self,
+        cursor_location: &Option<ExcerptKey>,
+        buffer_snapshots: &TreeMap<BufferId, BufferSnapshot>,
+    ) -> Ordering {
+        let snapshot = buffer_snapshots.get(&self.buffer_id).unwrap();
+        self.cmp(cursor_location, snapshot)
     }
 }
 
