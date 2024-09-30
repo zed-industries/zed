@@ -62,12 +62,9 @@ pub struct NodeBinarySettings {
 #[serde(rename_all = "snake_case")]
 pub enum DirenvSettings {
     /// Load direnv configuration through a shell hook
-    #[default]
     ShellHook,
     /// Load direnv configuration directly using `direnv export json`
-    ///
-    /// Warning: This option is experimental and might cause some inconsistent behavior compared to using the shell hook.
-    /// If it does, please report it to GitHub
+    #[default]
     Direct,
 }
 
