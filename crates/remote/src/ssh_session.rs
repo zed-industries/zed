@@ -99,7 +99,7 @@ pub struct SshPlatform {
     pub arch: &'static str,
 }
 
-pub trait SshClientDelegate {
+pub trait SshClientDelegate: Send + Sync {
     fn ask_password(
         &self,
         prompt: String,
