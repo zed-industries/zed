@@ -13,7 +13,7 @@ use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::io::Write;
-use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
+use std::{env, fs::File, mem, path::Path, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, AssistantPhase, CallEvent, CpuEvent,
@@ -35,6 +35,27 @@ pub struct Telemetry {
     state: Arc<Mutex<TelemetryState>>,
 }
 
+enum TelemetryFile {
+    Permanent(File, PathBuf),
+    Temporary(NamedTempFile),
+}
+
+impl TelemetryFile {
+    fn as_file_mut(&mut self) -> &mut File {
+        match self {
+            TelemetryFile::Permanent(file, _) => file,
+            TelemetryFile::Temporary(temp_file) => temp_file.as_file_mut(),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            TelemetryFile::Permanent(_, path) => path,
+            TelemetryFile::Temporary(temp_file) => temp_file.path(),
+        }
+    }
+}
+
 struct TelemetryState {
     settings: TelemetrySettings,
     system_id: Option<Arc<str>>,       // Per system
@@ -45,7 +66,7 @@ struct TelemetryState {
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
-    log_file: Option<NamedTempFile>,
+    log_file: Option<TelemetryFile>,
     is_staff: Option<bool>,
     first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
@@ -228,10 +249,20 @@ impl Telemetry {
             .spawn({
                 let state = state.clone();
                 async move {
-                    if let Some(tempfile) =
-                        NamedTempFile::new_in(paths::logs_dir().as_path()).log_err()
-                    {
-                        state.lock().log_file = Some(tempfile);
+                    let log_file =
+                        if let Some(telemetry_file_path) = std::env::var_os("ZED_TELEMETRY_FILE") {
+                            let path = PathBuf::from(telemetry_file_path);
+                            File::create(path.clone())
+                                .map(|file| TelemetryFile::Permanent(file, path))
+                                .log_err()
+                        } else {
+                            NamedTempFile::new_in(paths::logs_dir().as_path())
+                                .map(|temp_file| TelemetryFile::Temporary(temp_file))
+                                .log_err()
+                        };
+
+                    if log_file.is_some() {
+                        state.lock().log_file = log_file;
                     }
                 }
             })
@@ -280,7 +311,11 @@ impl Telemetry {
     }
 
     pub fn log_file_path(&self) -> Option<PathBuf> {
-        Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
+        self.state
+            .lock()
+            .log_file
+            .as_ref()
+            .map(|f| f.path().to_path_buf())
     }
 
     pub fn start(
