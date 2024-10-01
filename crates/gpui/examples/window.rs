@@ -150,6 +150,18 @@ impl Render for WindowDemo {
                 )
                 .unwrap();
             }))
+            .child(button("Hide Application", |cx| {
+                cx.hide();
+
+                // Restore the application after 3 seconds
+                cx.spawn(|mut cx| async move {
+                    Timer::after(std::time::Duration::from_secs(3)).await;
+                    cx.update(|cx| {
+                        cx.activate(false);
+                    })
+                })
+                .detach();
+            }))
     }
 }
 
