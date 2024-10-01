@@ -1,4 +1,3 @@
-use anyhow::Result;
 use futures::{future::Shared, FutureExt};
 use std::{path::Path, sync::Arc};
 use util::ResultExt;
@@ -9,6 +8,7 @@ use settings::Settings as _;
 use worktree::WorktreeId;
 
 use crate::{
+    direnv::DirenvWarning,
     project_settings::{DirenvSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
@@ -120,14 +120,19 @@ impl ProjectEnvironment {
             let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
             cx.spawn(|this, mut cx| async move {
-                let mut shell_env = cx
+                let (mut shell_env, warning) = cx
                     .background_executor()
                     .spawn({
                         let cwd = worktree_abs_path.clone();
                         async move { load_shell_environment(&cwd, &load_direnv).await }
                     })
                     .await
-                    .ok();
+                    .ok()
+                    .unzip();
+
+                if let Some(warning) = warning.flatten() {
+                    // ??
+                }
 
                 if let Some(shell_env) = shell_env.as_mut() {
                     this.update(&mut cx, |this, _| {
@@ -169,53 +174,46 @@ impl From<EnvironmentOrigin> for String {
 async fn load_shell_environment(
     _dir: &Path,
     _load_direnv: &DirenvSettings,
-) -> Result<HashMap<String, String>> {
-    Ok([("ZED_FAKE_TEST_ENV".into(), "true".into())]
+) -> Result<(HashMap<String, String>, Option<String>)> {
+    let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
         .into_iter()
-        .collect())
+        .collect();
+    Ok((fake_env, None))
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
-) -> Result<HashMap<String, String>> {
+) -> Result<(HashMap<String, String>, Option<String>), anyhow::Error> {
+    use crate::direnv::DirenvLoadError;
     use anyhow::{anyhow, Context};
     use std::path::PathBuf;
     use util::parse_env_output;
 
-    async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
-        let Ok(direnv_path) = which::which("direnv") else {
-            return Ok(None);
-        };
-
-        let direnv_output = smol::process::Command::new(direnv_path)
-            .args(["export", "json"])
-            .current_dir(dir)
-            .output()
-            .await
-            .context("failed to spawn direnv to get local environment variables")?;
-
-        anyhow::ensure!(
-            direnv_output.status.success(),
-            "direnv exited with error {:?}. Stderr:\n{}",
-            direnv_output.status,
-            String::from_utf8_lossy(&direnv_output.stderr)
-        );
-
-        let output = String::from_utf8_lossy(&direnv_output.stdout);
-        if output.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(
-            serde_json::from_str(&output).context("failed to parse direnv output")?,
-        ))
-    }
-
+    let mut warning = DirenvWarning::default();
     let direnv_environment = match load_direnv {
         DirenvSettings::ShellHook => None,
-        DirenvSettings::Direct => load_direnv_environment(dir).await.log_err().flatten(),
+        DirenvSettings::Direct => match crate::direnv::load_direnv_environment(dir).await {
+            Ok(env) => env,
+            Err(err) => {
+                match err {
+                    DirenvLoadError::Io(io_error) => {
+                        log::error!("failed to spawn direnv with error: {}", io_error);
+                    }
+                    DirenvLoadError::NonZeroResult { status, stderr } => {
+                        warning = DirenvWarning::from(format!(
+                            "Loading direnv environment failed (exit code {status})\nStderr:\n{}",
+                            String::from_utf8_lossy(&stderr)
+                        ));
+                    }
+                    DirenvLoadError::Serde(serde_error) => {
+                        log::error!("direnv returned incorrect json: {serde_error}");
+                    }
+                }
+                None
+            }
+        },
     }
     .unwrap_or(HashMap::default());
 
@@ -287,5 +285,5 @@ async fn load_shell_environment(
         parsed_env.insert(key, value);
     });
 
-    Ok(parsed_env)
+    Ok((parsed_env, warning.take()))
 }
