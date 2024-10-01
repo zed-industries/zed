@@ -12,6 +12,9 @@
       "tab_size": 2,
       "formatter": "prettier"
     },
+    "proto": {
+      "tab_size": 2
+    },
     "JSON": {
       "tab_size": 2,
       "preferred_line_length": 100,
