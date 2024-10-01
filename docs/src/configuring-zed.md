@@ -1954,7 +1954,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
-      "show": "always"
+      "show": null
     }
   }
 }
@@ -2074,13 +2074,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ### Scrollbar
 
-- Description: Scrollbar related settings. Possible values: "always", "never".
+- Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
 - Setting: `scrollbar`
 - Default:
 
 ```json
 "scrollbar": {
-    "show": "always"
+    "show": null
 }
 ```
 
