@@ -388,6 +388,70 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_multiple_runs() {
+        let mut wrapper = build_wrapper();
+        // Case 0: Normal
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 12, ... }
+        //
+        // Truncate res: abcd… (truncate_at = 4)
+        // Run res: Run0 { string: abcd…, len: 7, ... }
+        {
+            let text = "abcdefghijkl";
+            let result = "abcd…";
+            let dummy_run_lens = [text.len()];
+            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), px(50.), Some("…"), &mut dummy_runs),
+                result
+            );
+            assert_eq!(dummy_runs.first().unwrap().len, result.len());
+        }
+        // Case 1: Drop some runs
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdef… (truncate_at = 6)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+        // 5, ... }
+        {
+            let text = "abcdefghijkl";
+            let result = "abcdef…";
+            let dummy_run_lens = [4, 4, 4];
+            let result_text_len = [4, 5];
+            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), px(70.), Some("…"), &mut dummy_runs),
+                result
+            );
+            for (run, result_len) in dummy_runs.iter().zip(result_text_len) {
+                assert_eq!(run.len, result_len);
+            }
+        }
+        // Case 2: Truncate at start of some run
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdefgh… (truncate_at = 8)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
+        // 4, ... }, Run2 { string: …, len: 3, ... }
+        {
+            let text = "abcdefghijkl";
+            let result = "abcdefgh…";
+            let dummy_run_lens = [4, 4, 4];
+            let result_text_len = [4, 4, 3];
+            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), px(90.), Some("…"), &mut dummy_runs),
+                result
+            );
+            for (run, result_len) in dummy_runs.iter().zip(result_text_len) {
+                assert_eq!(run.len, result_len);
+            }
+        }
+    }
+
+    #[test]
     fn test_is_word_char() {
         #[track_caller]
         fn assert_word(word: &str) {
