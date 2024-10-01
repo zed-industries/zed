@@ -516,15 +516,6 @@ impl MultiBuffer {
                         )
                     );
 
-                    dbg!(new_tree.summary().last_header.as_ref().map(|header| {
-                        let snapshot = self
-                            .snapshot
-                            .buffer_snapshots
-                            .get(&header.buffer_id)
-                            .unwrap();
-                        header.range.to_offset(snapshot)
-                    }));
-
                     push_new_excerpt(
                         &mut new_tree,
                         excerpt.key.clone(),
@@ -548,7 +539,7 @@ impl MultiBuffer {
         for excerpt in self.snapshot.excerpts.iter() {
             log::info!(
                 "{:?} {:?} (header? {})",
-                excerpt.key.buffer_id
+                excerpt.key.buffer_id,
                 excerpt.key.range.to_offset(
                     self.snapshot
                         .buffer_snapshots
@@ -703,7 +694,7 @@ impl MultiBufferSnapshot {
         while let Some(excerpt) = cursor.item() {
             let snapshot = self.buffer_snapshots.get(&excerpt.key.buffer_id).unwrap();
             if excerpt.show_header {
-                text.push('🤯');
+                text.push('\n');
             }
             text.extend(snapshot.text_for_range(excerpt.key.range.clone()));
             cursor.next(&self.buffer_snapshots);
@@ -820,7 +811,7 @@ impl sum_tree::Item for Excerpt {
         };
         text += range_summary;
         ExcerptSummary {
-            min_contiguous_range: Some(self.key.clone()),
+            min_contiguous_key: Some(self.key.clone()),
             max_key: Some(self.key.clone()),
             text,
             last_header: self.show_header.then_some(self.key.clone()),
@@ -830,7 +821,7 @@ impl sum_tree::Item for Excerpt {
 
 #[derive(Clone, Debug, Default)]
 struct ExcerptSummary {
-    min_contiguous_range: Option<ExcerptKey>,
+    min_contiguous_key: Option<ExcerptKey>,
     max_key: Option<ExcerptKey>,
     text: TextSummary,
     last_header: Option<ExcerptKey>,
@@ -844,26 +835,31 @@ impl sum_tree::Summary for ExcerptSummary {
     }
 
     fn add_summary(&mut self, summary: &Self, snapshots: &TreeMap<BufferId, BufferSnapshot>) {
-        if self.min_contiguous_range.is_none() {
-            self.min_contiguous_range = summary.min_contiguous_range.clone();
+        let other_min_contiguous_key = summary.min_contiguous_key.as_ref().unwrap();
+        if let Some(min_contiguous_key) = self.min_contiguous_key.as_mut() {
+            if min_contiguous_key.buffer_id == other_min_contiguous_key.buffer_id {
+                let snapshot = snapshots.get(&min_contiguous_key.buffer_id).unwrap();
+                if min_contiguous_key.range.end.to_offset(snapshot)
+                    == other_min_contiguous_key.range.start.to_offset(snapshot)
+                {
+                    min_contiguous_key.range.end = other_min_contiguous_key.range.end;
+                }
+            }
+        } else {
+            self.min_contiguous_key = summary.min_contiguous_key.clone();
         }
+
         self.max_key = summary.max_key.clone();
         self.text += &summary.text;
         if summary.last_header.is_some() {
             self.last_header = summary.last_header.clone();
         } else if let Some(last_header) = self.last_header.as_mut() {
-            if let Some((other_min_key, other_max_key)) = summary
-                .min_contiguous_range
-                .as_ref()
-                .zip(summary.max_key.as_ref())
-            {
-                if last_header.buffer_id == other_min_key.buffer_id {
-                    let snapshot = snapshots.get(&last_header.buffer_id).unwrap();
-                    if last_header.range.end.to_offset(snapshot)
-                        == other_min_key.range.start.to_offset(snapshot)
-                    {
-                        last_header.range.end = other_max_key.range.end;
-                    }
+            if last_header.buffer_id == other_min_contiguous_key.buffer_id {
+                let snapshot = snapshots.get(&last_header.buffer_id).unwrap();
+                if last_header.range.end.to_offset(snapshot)
+                    == other_min_contiguous_key.range.start.to_offset(snapshot)
+                {
+                    last_header.range.end = other_min_contiguous_key.range.end;
                 }
             }
         }
@@ -1213,7 +1209,7 @@ mod tests {
                                     || last_header_range.end < offset_range.start
                             },
                         ) {
-                            expected_text.push('🤯');
+                            expected_text.push('\n');
                             last_header = Some((buffer.remote_id(), offset_range.clone()));
                         }
 
