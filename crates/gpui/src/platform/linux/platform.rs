@@ -45,7 +45,7 @@ use crate::{
 
 use super::x11::X11Client;
 
-pub(crate) const SCROLL_LINES: f64 = 3.0;
+pub(crate) const SCROLL_LINES: f32 = 3.0;
 
 // Values match the defaults on GTK.
 // Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
