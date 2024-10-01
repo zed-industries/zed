@@ -167,8 +167,7 @@ impl Item for ProposedChangesEditor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| Item::deactivated(editor, cx));
+        self.editor.update(cx, Item::deactivated);
     }
 
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
