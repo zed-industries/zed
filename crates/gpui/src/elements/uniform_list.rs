@@ -90,13 +90,17 @@ pub struct UniformListScrollHandle(pub Rc<RefCell<UniformListScrollState>>);
 pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
     pub deferred_scroll_to_item: Option<usize>,
+    /// Size of the item, captured during last layout.
     pub last_item_size: Option<ItemSize>,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-#[allow(missing_docs)]
+/// The size of the item and its contents.
 pub struct ItemSize {
+    /// The size of the item.
     pub item: Size<Pixels>,
+    /// The size of the item's contents, which may be larger than the item itself,
+    /// if the item was bounded by a parent element.
     pub contents: Size<Pixels>,
 }
 

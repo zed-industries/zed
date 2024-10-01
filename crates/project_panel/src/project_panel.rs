@@ -2706,7 +2706,8 @@ impl ProjectPanel {
             .last_item_size
             .filter(|_| {
                 self.show_scrollbar || self.horizontal_scrollbar_drag_thumb_offset.get().is_some()
-            })?
+            })
+            .filter(|size| size.contents.width > size.item.width)?
             .contents
             .width
             .0 as f64;
