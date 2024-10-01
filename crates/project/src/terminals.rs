@@ -68,7 +68,7 @@ impl Project {
 
     fn ssh_command(&self, cx: &AppContext) -> Option<SshCommand> {
         if let Some(args) = self
-            .ssh_session
+            .ssh_client
             .as_ref()
             .and_then(|session| session.ssh_args())
         {
