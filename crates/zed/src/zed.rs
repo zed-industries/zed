@@ -229,15 +229,13 @@ pub fn initialize_workspace(
                 .unwrap_or(true)
         });
 
-        let project = workspace.project().clone();
-        if project.update(cx, |project, cx| {
-            project.is_local() || project.is_via_ssh() || project.ssh_connection_string(cx).is_some()
-        }) {
-            project.update(cx, |project, cx| {
-                let fs = app_state.fs.clone();
-                project.task_inventory(cx).update(cx, |inventory, cx| {
-                    let tasks_file_rx =
-                        watch_config_file(cx.background_executor(), fs, paths::tasks_file().clone());
+        workspace.project().update(cx, |project, cx| {
+            let fs = app_state.fs.clone();
+            // TODO kb is this correct for all remotes? Move watch elsewherre?
+            if let Some(task_inventory) = project.task_inventory(cx) {
+                let tasks_file_rx =
+                    watch_config_file(cx.background_executor(), fs, paths::tasks_file().clone());
+                task_inventory.update(cx, |inventory, cx| {
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks".into(),
@@ -246,9 +244,10 @@ pub fn initialize_workspace(
                         |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                         cx,
                     );
-                })
-            });
-        }
+                });
+
+            }
+        });
 
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {

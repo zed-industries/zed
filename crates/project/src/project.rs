@@ -474,6 +474,7 @@ impl Hover {
     }
 }
 
+// TODO kb task store event subscription?
 enum EntitySubscription {
     Project(PendingEntitySubscription<Project>),
     BufferStore(PendingEntitySubscription<BufferStore>),
@@ -631,8 +632,8 @@ impl Project {
 
             let task_store = cx.new_model(|cx| {
                 TaskStore::local(
+                    buffer_store.downgrade(),
                     worktree_store.clone(),
-                    buffer_store.clone(),
                     environment.clone(),
                     cx,
                 )
@@ -742,7 +743,7 @@ impl Project {
 
             let task_store = cx.new_model(|cx| {
                 TaskStore::remote(
-                    buffer_store.clone(),
+                    buffer_store.downgrade(),
                     worktree_store.clone(),
                     ssh.to_proto_client(),
                     SSH_PROJECT_ID,
@@ -854,6 +855,7 @@ impl Project {
             response,
             subscriptions,
             client,
+            false,
             user_store,
             languages,
             fs,
@@ -866,6 +868,7 @@ impl Project {
         response: TypedEnvelope<proto::JoinProjectResponse>,
         subscriptions: [EntitySubscription; 5],
         client: Arc<Client>,
+        run_tasks: bool,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -903,13 +906,17 @@ impl Project {
         })?;
 
         let task_store = cx.new_model(|cx| {
-            TaskStore::remote(
-                buffer_store.clone(),
-                worktree_store.clone(),
-                client.clone().into(),
-                remote_id,
-                cx,
-            )
+            if run_tasks {
+                TaskStore::remote(
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    client.clone().into(),
+                    remote_id,
+                    cx,
+                )
+            } else {
+                TaskStore::Empty
+            }
         })?;
 
         let settings_observer =
@@ -939,6 +946,7 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
+            // TODO kb task store event subscription?
 
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -1059,6 +1067,7 @@ impl Project {
             response,
             subscriptions,
             client,
+            true,
             user_store,
             languages,
             fs,
@@ -1291,8 +1300,8 @@ impl Project {
         }
     }
 
-    pub fn task_inventory(&self, cx: &AppContext) -> Model<Inventory> {
-        self.task_store.read(cx).task_inventory().clone()
+    pub fn task_inventory(&self, cx: &AppContext) -> Option<Model<Inventory>> {
+        self.task_store.read(cx).task_inventory().cloned()
     }
 
     pub fn snippets(&self) -> &Model<SnippetProvider> {
@@ -2165,9 +2174,11 @@ impl Project {
             return;
         }
 
-        self.task_inventory(cx).update(cx, |inventory, _| {
-            inventory.remove_worktree_sources(id_to_remove);
-        });
+        if let Some(inventory) = self.task_inventory(cx) {
+            inventory.update(cx, |inventory, _| {
+                inventory.remove_worktree_sources(id_to_remove);
+            });
+        }
 
         cx.notify();
     }
@@ -3156,6 +3167,9 @@ impl Project {
         if worktree.read(cx).is_remote() {
             return;
         }
+        let Some(task_inventory) = self.task_inventory(cx) else {
+            return;
+        };
         let remote_worktree_id = worktree.read(cx).id();
 
         for (path, _, change) in changes.iter() {
@@ -3169,7 +3183,7 @@ impl Project {
             };
 
             if path.ends_with(local_tasks_file_relative_path()) {
-                self.task_inventory(cx).update(cx, |task_inventory, cx| {
+                task_inventory.update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
                     } else {
@@ -3189,7 +3203,7 @@ impl Project {
                     }
                 })
             } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
-                self.task_inventory(cx).update(cx, |task_inventory, cx| {
+                task_inventory.update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
                     } else {
@@ -3981,10 +3995,10 @@ impl Project {
                 )
             })
             .unwrap_or_default();
-        Task::ready(Ok(self
-            .task_inventory(cx)
-            .read(cx)
-            .list_tasks(file, language, worktree, cx)))
+        Task::ready(Ok(self.task_inventory(cx).map_or_else(
+            || Vec::new(),
+            |inventory| inventory.read(cx).list_tasks(file, language, worktree, cx),
+        )))
     }
 }
 

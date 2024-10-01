@@ -212,9 +212,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .find(|(source_kind, _)| source_kind == &global_task_source_kind)
         .expect("should have one global task");
     project.update(cx, |project, cx| {
-        project.task_inventory(cx).update(cx, |inventory, _| {
-            inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
-        });
+        project
+            .task_inventory(cx)
+            .unwrap()
+            .update(cx, |inventory, _| {
+                inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
+            });
     });
 
     let tasks = serde_json::to_string(&TaskTemplates(vec![TaskTemplate {
@@ -235,14 +238,17 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     let (tx, rx) = futures::channel::mpsc::unbounded();
     cx.update(|cx| {
         project.update(cx, |project, cx| {
-            project.task_inventory(cx).update(cx, |inventory, cx| {
-                inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
-                inventory.add_source(
-                    global_task_source_kind.clone(),
-                    |tx, cx| StaticSource::new(TrackedFile::new(rx, tx, cx)),
-                    cx,
-                );
-            });
+            project
+                .task_inventory(cx)
+                .unwrap()
+                .update(cx, |inventory, cx| {
+                    inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
+                    inventory.add_source(
+                        global_task_source_kind.clone(),
+                        |tx, cx| StaticSource::new(TrackedFile::new(rx, tx, cx)),
+                        cx,
+                    );
+                });
         })
     });
     tx.unbounded_send(tasks).unwrap();
@@ -5420,6 +5426,7 @@ fn get_all_tasks(
     let resolved_tasks = project.update(cx, |project, cx| {
         project
             .task_inventory(cx)
+            .unwrap()
             .read(cx)
             .used_and_current_resolved_tasks(worktree_id, None, task_context, cx)
     });

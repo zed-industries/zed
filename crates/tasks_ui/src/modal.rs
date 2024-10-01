@@ -125,9 +125,11 @@ impl TasksModalDelegate {
         // the original list without a removed entry.
         candidates.remove(ix);
         self.project.update(cx, |project, cx| {
-            project.task_inventory(cx).update(cx, |inventory, _| {
-                inventory.delete_previously_used(&task.id);
-            })
+            if let Some(inventory) = project.task_inventory(cx) {
+                inventory.update(cx, |inventory, _| {
+                    inventory.delete_previously_used(&task.id);
+                })
+            }
         });
     }
 }
@@ -218,14 +220,14 @@ impl PickerDelegate for TasksModalDelegate {
                             else {
                                 return Task::ready(Ok(Vec::new()));
                             };
+                            let Some(task_inventory) =
+                                picker.delegate.project.read(cx).task_inventory(cx)
+                            else {
+                                return Task::ready(Ok(Vec::new()));
+                            };
 
-                            let resolved_task = picker
-                                .delegate
-                                .project
-                                .read(cx)
-                                .task_inventory(cx)
-                                .read(cx)
-                                .used_and_current_resolved_tasks(
+                            let resolved_task =
+                                task_inventory.read(cx).used_and_current_resolved_tasks(
                                     worktree,
                                     location,
                                     &picker.delegate.task_context,
@@ -473,7 +475,7 @@ impl PickerDelegate for TasksModalDelegate {
         let left_button = if self
             .project
             .read(cx)
-            .task_inventory(cx)
+            .task_inventory(cx)?
             .read(cx)
             .last_scheduled_task(None)
             .is_some()
@@ -1014,10 +1016,12 @@ mod tests {
                 .unwrap()
         });
         project.update(cx, |project, cx| {
-            project.task_inventory(cx).update(cx, |inventory, _| {
-                let (kind, task) = scheduled_task;
-                inventory.task_scheduled(kind, task);
-            })
+            if let Some(task_inventory) = project.task_inventory(cx) {
+                task_inventory.update(cx, |inventory, _| {
+                    let (kind, task) = scheduled_task;
+                    inventory.task_scheduled(kind, task);
+                });
+            }
         });
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);

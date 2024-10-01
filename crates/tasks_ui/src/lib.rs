@@ -21,7 +21,7 @@ pub fn init(cx: &mut AppContext) {
                     if let Some((task_source_kind, mut last_scheduled_task)) =
                         workspace.project().update(cx, |project, cx| {
                             project
-                                .task_inventory(cx)
+                                .task_inventory(cx)?
                                 .read(cx)
                                 .last_scheduled_task(action.task_id.as_ref())
                         })

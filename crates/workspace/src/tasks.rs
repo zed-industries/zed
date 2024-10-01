@@ -36,9 +36,11 @@ pub fn schedule_resolved_task(
         if !omit_history {
             resolved_task.resolved = Some(spawn_in_terminal.clone());
             workspace.project().update(cx, |project, cx| {
-                project.task_inventory(cx).update(cx, |inventory, _| {
-                    inventory.task_scheduled(task_source_kind, resolved_task);
-                })
+                if let Some(task_inventory) = project.task_inventory(cx) {
+                    task_inventory.update(cx, |inventory, _| {
+                        inventory.task_scheduled(task_source_kind, resolved_task);
+                    })
+                }
             });
         }
         cx.emit(crate::Event::SpawnTask(Box::new(spawn_in_terminal)));
