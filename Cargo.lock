@@ -2405,7 +2405,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "http_client",
- "language",
  "log",
  "once_cell",
  "parking_lot",

@@ -154,6 +154,7 @@ pub struct AssistantEvent {
     pub phase: AssistantPhase,
     /// Name of the AI model used (gpt-4o, claude-3-5-sonnet, etc)
     pub model: String,
+    pub model_provider: String,
     pub response_latency: Option<Duration>,
     pub error_message: Option<String>,
     pub language_name: Option<LanguageName>,

@@ -50,6 +50,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase, Event};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
@@ -211,21 +212,22 @@ impl InlineAssistant {
     ) {
         if let Some(telemetry) = self.telemetry.as_ref() {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                let language = editor
+                let language_name = editor
                     .read(cx)
                     .buffer()
                     .read(cx)
                     .language(cx)
                     .map(|l| l.name());
-                telemetry.report_assistant_event(
-                    None,
-                    telemetry_events::AssistantKind::Inline,
-                    telemetry_events::AssistantPhase::Invoked,
-                    model.telemetry_id(),
-                    None,
-                    None,
-                    language,
-                );
+                telemetry.report_event(Event::Assistant(AssistantEvent {
+                    conversation_id: None,
+                    kind: AssistantKind::Inline,
+                    phase: AssistantPhase::Invoked,
+                    model: model.telemetry_id().to_string(),
+                    model_provider: model.provider_id().to_string(),
+                    response_latency: None,
+                    error_message: None,
+                    language_name,
+                }));
             }
         }
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -771,7 +773,7 @@ impl InlineAssistant {
         if let Some(assist) = self.assists.get(&assist_id) {
             if let Some(telemetry) = self.telemetry.as_ref() {
                 if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                    let language = assist.editor.upgrade().and_then(|editor| {
+                    let language_name = assist.editor.upgrade().and_then(|editor| {
                         editor
                             .read(cx)
                             .buffer()
@@ -779,19 +781,20 @@ impl InlineAssistant {
                             .language(cx)
                             .map(|l| l.name())
                     });
-                    telemetry.report_assistant_event(
-                        None,
-                        telemetry_events::AssistantKind::Inline,
-                        if undo {
-                            telemetry_events::AssistantPhase::Rejected
+                    telemetry.report_event(Event::Assistant(AssistantEvent {
+                        conversation_id: None,
+                        kind: AssistantKind::Inline,
+                        phase: if undo {
+                            AssistantPhase::Rejected
                         } else {
-                            telemetry_events::AssistantPhase::Accepted
+                            AssistantPhase::Accepted
                         },
-                        model.telemetry_id(),
-                        None,
-                        None,
-                        language,
-                    );
+                        model: model.telemetry_id().to_string(),
+                        model_provider: model.provider_id().to_string(),
+                        response_latency: None,
+                        error_message: None,
+                        language_name,
+                    }));
                 }
             }
 
@@ -2723,6 +2726,7 @@ impl CodegenAlternative {
         self.edit_position = Some(self.range.start.bias_right(&self.snapshot));
 
         let telemetry_id = model.telemetry_id();
+        let provider_id = model.provider_id();
         let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(stream::empty().boxed()) }.boxed_local()
@@ -2733,7 +2737,7 @@ impl CodegenAlternative {
                     .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
                 async move { Ok(chunks.await?.boxed()) }.boxed_local()
             };
-        self.handle_stream(telemetry_id, chunks, cx);
+        self.handle_stream(telemetry_id, provider_id.to_string(), chunks, cx);
         Ok(())
     }
 
@@ -2797,6 +2801,7 @@ impl CodegenAlternative {
     pub fn handle_stream(
         &mut self,
         model_telemetry_id: String,
+        model_provider_id: String,
         stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2827,7 +2832,7 @@ impl CodegenAlternative {
         }
 
         let telemetry = self.telemetry.clone();
-        let language = self.buffer.read(cx).language(cx).map(|l| l.name());
+        let language_name = self.buffer.read(cx).language(cx).map(|l| l.name());
 
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
@@ -2939,15 +2944,16 @@ impl CodegenAlternative {
                             let error_message =
                                 result.as_ref().err().map(|error| error.to_string());
                             if let Some(telemetry) = telemetry {
-                                telemetry.report_assistant_event(
-                                    None,
-                                    telemetry_events::AssistantKind::Inline,
-                                    telemetry_events::AssistantPhase::Response,
-                                    model_telemetry_id,
+                                telemetry.report_event(Event::Assistant(AssistantEvent {
+                                    conversation_id: None,
+                                    kind: telemetry_events::AssistantKind::Inline,
+                                    phase: telemetry_events::AssistantPhase::Response,
+                                    model: model_telemetry_id.to_string(),
+                                    model_provider: model_provider_id.to_string(),
                                     response_latency,
                                     error_message,
-                                    language,
-                                );
+                                    language_name,
+                                }));
                             }
 
                             result?;
@@ -3560,6 +3566,7 @@ mod tests {
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
+                String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3630,6 +3637,7 @@ mod tests {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
+                String::new(),
                 String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
@@ -3705,6 +3713,7 @@ mod tests {
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
+                String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3778,6 +3787,7 @@ mod tests {
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
+                String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3840,6 +3850,7 @@ mod tests {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
+                String::new(),
                 String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,

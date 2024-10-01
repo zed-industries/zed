@@ -7,7 +7,6 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use http_client::{self, HttpClient, HttpClientWithUrl, Method};
-use language::LanguageName;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -17,9 +16,8 @@ use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, AssistantKind, AssistantPhase, CallEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent,
-    InlineCompletionEvent, MemoryEvent, ReplEvent, SettingEvent,
+    ActionEvent, AppEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event, EventRequestBody,
+    EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -392,29 +390,6 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_assistant_event(
-        self: &Arc<Self>,
-        conversation_id: Option<String>,
-        kind: AssistantKind,
-        phase: AssistantPhase,
-        model: String,
-        response_latency: Option<Duration>,
-        error_message: Option<String>,
-        language_name: Option<LanguageName>,
-    ) {
-        let event = Event::Assistant(AssistantEvent {
-            conversation_id,
-            kind,
-            phase,
-            model: model.to_string(),
-            response_latency,
-            error_message,
-            language_name,
-        });
-
-        self.report_event(event)
-    }
-
     pub fn report_call_event(
         self: &Arc<Self>,
         operation: &'static str,
@@ -561,7 +536,7 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    fn report_event(self: &Arc<Self>, event: Event) {
+    pub fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
         if !state.settings.metrics {
