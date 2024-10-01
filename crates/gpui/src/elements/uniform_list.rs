@@ -297,7 +297,7 @@ impl Element for UniformList {
                                     item_height * ix + scroll_offset.y + padding.top,
                                 );
                             let available_width = if can_scroll_horizontally {
-                                padded_bounds.size.width.max(content_width)
+                                padded_bounds.size.width + scroll_offset.x.abs()
                             } else {
                                 padded_bounds.size.width
                             };

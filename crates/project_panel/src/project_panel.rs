@@ -263,32 +263,9 @@ impl ProjectPanel {
 
             cx.subscribe(
                 &filename_editor,
-                |project_panel, filename_editor, editor_event, cx| match editor_event {
+                |project_panel, _, editor_event, cx| match editor_event {
                     EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
-                        let scroll_handle = project_panel.scroll_handle.0.borrow();
-                        let Some(selection_point) = filename_editor.update(cx, |editor, cx| {
-                            let editor_snapshot = editor.snapshot(cx);
-                            let end_anchor = editor_snapshot
-                                .buffer_snapshot
-                                .anchor_after(editor_snapshot.buffer_snapshot.len());
-                            let end_pixel_point =
-                                editor.to_pixel_point(end_anchor, &editor_snapshot, cx)?;
-                            if Some(end_pixel_point.x) > project_panel.width {
-                                editor.to_pixel_point(
-                                    editor.selections.newest_anchor().head(),
-                                    &editor_snapshot,
-                                    cx,
-                                )
-                            } else {
-                                None
-                            }
-                        }) else {
-                            return;
-                        };
-                        let new_offset =
-                            Point::new(-selection_point.x, scroll_handle.base_handle.offset().y);
-                        scroll_handle.base_handle.set_offset(new_offset);
                     }
                     EditorEvent::Blurred => {
                         if project_panel
