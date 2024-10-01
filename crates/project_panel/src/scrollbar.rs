@@ -2,14 +2,14 @@ use std::{cell::Cell, ops::Range, rc::Rc};
 
 use gpui::{
     point, quad, Bounds, ContentMask, Corners, Edges, EntityId, Hitbox, Hsla, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Size, Style, UniformListScrollHandle,
+    MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Style, UniformListScrollHandle,
 };
 use ui::{prelude::*, px, relative, IntoElement};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ScrollbarKind {
-    Horizontal { viewport_width: Pixels },
-    Vertical { item_count: usize },
+    Horizontal,
+    Vertical,
 }
 
 pub(crate) struct ProjectPanelScrollbar {
@@ -27,13 +27,12 @@ impl ProjectPanelScrollbar {
         scroll: UniformListScrollHandle,
         scrollbar_drag_state: Rc<Cell<Option<f32>>>,
         parent_id: EntityId,
-        item_count: usize,
     ) -> Self {
         Self {
             thumb,
             scroll,
             scrollbar_drag_state,
-            kind: ScrollbarKind::Vertical { item_count },
+            kind: ScrollbarKind::Vertical,
             parent_id,
         }
     }
@@ -43,19 +42,18 @@ impl ProjectPanelScrollbar {
         scroll: UniformListScrollHandle,
         scrollbar_drag_state: Rc<Cell<Option<f32>>>,
         parent_id: EntityId,
-        viewport_width: Pixels,
     ) -> Self {
         Self {
             thumb,
             scroll,
             scrollbar_drag_state,
-            kind: ScrollbarKind::Horizontal { viewport_width },
+            kind: ScrollbarKind::Horizontal,
             parent_id,
         }
     }
 
     fn is_vertical(&self) -> bool {
-        matches!(self.kind, ScrollbarKind::Vertical { .. })
+        matches!(self.kind, ScrollbarKind::Vertical)
     }
 }
 
@@ -175,30 +173,26 @@ impl gpui::Element for ProjectPanelScrollbar {
                     if phase.bubble() && bounds.contains(&event.position) {
                         if !thumb_bounds.contains(&event.position) {
                             let scroll = scroll.0.borrow();
-                            if let Some(Size {
-                                height: last_height,
-                                width: last_width,
-                            }) = scroll.last_item_size
-                            {
+                            if let Some(item_size) = scroll.last_item_size {
                                 match kind {
-                                    ScrollbarKind::Horizontal { viewport_width } => {
+                                    ScrollbarKind::Horizontal => {
                                         let percentage = (event.position.x - bounds.origin.x)
                                             / bounds.size.width;
-                                        let max_offset = viewport_width.max(last_width).0;
+                                        let max_offset = item_size.contents.width;
                                         let percentage = percentage.min(1. - thumb_percentage_size);
                                         scroll.base_handle.set_offset(point(
-                                            px(-max_offset * percentage),
+                                            -max_offset * percentage,
                                             scroll.base_handle.offset().y,
                                         ));
                                     }
-                                    ScrollbarKind::Vertical { item_count } => {
+                                    ScrollbarKind::Vertical => {
                                         let percentage = (event.position.y - bounds.origin.y)
                                             / bounds.size.height;
-                                        let max_offset = item_count as f32 * last_height.0;
+                                        let max_offset = item_size.contents.height;
                                         let percentage = percentage.min(1. - thumb_percentage_size);
                                         scroll.base_handle.set_offset(point(
                                             scroll.base_handle.offset().x,
-                                            px(-max_offset * percentage),
+                                            -max_offset * percentage,
                                         ));
                                     }
                                 }
@@ -233,14 +227,10 @@ impl gpui::Element for ProjectPanelScrollbar {
             cx.on_mouse_event(move |event: &MouseMoveEvent, _, cx| {
                 if let Some(drag_state) = drag_state.get().filter(|_| event.dragging()) {
                     let scroll = scroll.0.borrow();
-                    if let Some(Size {
-                        height: last_height,
-                        width: last_width,
-                    }) = scroll.last_item_size
-                    {
+                    if let Some(item_size) = scroll.last_item_size {
                         match kind {
-                            ScrollbarKind::Horizontal { .. } => {
-                                let max_offset = last_width;
+                            ScrollbarKind::Horizontal => {
+                                let max_offset = item_size.contents.width;
                                 let percentage = (event.position.x - bounds.origin.x)
                                     / bounds.size.width
                                     - drag_state;
@@ -251,8 +241,8 @@ impl gpui::Element for ProjectPanelScrollbar {
                                     scroll.base_handle.offset().y,
                                 ));
                             }
-                            ScrollbarKind::Vertical { item_count } => {
-                                let max_offset = item_count as f32 * last_height;
+                            ScrollbarKind::Vertical => {
+                                let max_offset = item_size.contents.height;
                                 let percentage = (event.position.y - bounds.origin.y)
                                     / bounds.size.height
                                     - drag_state;

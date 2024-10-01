@@ -17,12 +17,13 @@ use collections::{hash_map, BTreeSet, HashMap};
 use core::f32;
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent, Entity,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement,
+    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView,
+    WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -2435,6 +2436,22 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_marked || is_active)
+                    .when_some(canonical_path, |this, path| {
+                        this.end_slot::<AnyElement>(
+                            div()
+                                .id("symlink_icon")
+                                .pr_3()
+                                .tooltip(move |cx| {
+                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
+                                })
+                                .child(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::Indicator)
+                                        .color(filename_text_color),
+                                )
+                                .into_any_element(),
+                        )
+                    })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
@@ -2447,108 +2464,79 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            h_flex()
-                                .h_6()
-                                .map(|this| {
-                                    if let Some(folded_ancestors) =
-                                        is_active.then(|| self.ancestors.get(&entry_id)).flatten()
-                                    {
-                                        let Some(part_to_highlight) = Path::new(&file_name)
-                                            .ancestors()
-                                            .nth(folded_ancestors.current_ancestor_depth)
-                                        else {
-                                            return this;
-                                        };
+                            h_flex().h_6().map(|this| {
+                                if let Some(folded_ancestors) =
+                                    is_active.then(|| self.ancestors.get(&entry_id)).flatten()
+                                {
+                                    let Some(part_to_highlight) = Path::new(&file_name)
+                                        .ancestors()
+                                        .nth(folded_ancestors.current_ancestor_depth)
+                                    else {
+                                        return this;
+                                    };
 
-                                        let suffix = Path::new(&file_name)
-                                            .strip_prefix(part_to_highlight)
-                                            .ok()
-                                            .filter(|suffix| !suffix.as_os_str().is_empty());
-                                        let prefix = part_to_highlight
-                                            .parent()
-                                            .filter(|prefix| !prefix.as_os_str().is_empty());
-                                        let Some(part_to_highlight) = part_to_highlight
-                                            .file_name()
-                                            .and_then(|name| name.to_str().map(String::from))
-                                        else {
-                                            return this;
-                                        };
+                                    let suffix = Path::new(&file_name)
+                                        .strip_prefix(part_to_highlight)
+                                        .ok()
+                                        .filter(|suffix| !suffix.as_os_str().is_empty());
+                                    let prefix = part_to_highlight
+                                        .parent()
+                                        .filter(|prefix| !prefix.as_os_str().is_empty());
+                                    let Some(part_to_highlight) = part_to_highlight
+                                        .file_name()
+                                        .and_then(|name| name.to_str().map(String::from))
+                                    else {
+                                        return this;
+                                    };
 
-                                        this.children(prefix.and_then(|prefix| {
-                                            Some(
-                                                h_flex()
-                                                    .child(
-                                                        Label::new(
-                                                            prefix.to_str().map(String::from)?,
-                                                        )
+                                    this.children(prefix.and_then(|prefix| {
+                                        Some(
+                                            h_flex()
+                                                .child(
+                                                    Label::new(prefix.to_str().map(String::from)?)
                                                         .single_line()
                                                         .color(filename_text_color),
-                                                    )
+                                                )
+                                                .child(
+                                                    Label::new(std::path::MAIN_SEPARATOR_STR)
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                ),
+                                        )
+                                    }))
+                                    .child(
+                                        Label::new(part_to_highlight)
+                                            .single_line()
+                                            .color(filename_text_color)
+                                            .underline(true),
+                                    )
+                                    .children(
+                                        suffix.and_then(|suffix| {
+                                            Some(
+                                                h_flex()
                                                     .child(
                                                         Label::new(std::path::MAIN_SEPARATOR_STR)
                                                             .single_line()
                                                             .color(filename_text_color),
+                                                    )
+                                                    .child(
+                                                        Label::new(
+                                                            suffix.to_str().map(String::from)?,
+                                                        )
+                                                        .single_line()
+                                                        .color(filename_text_color),
                                                     ),
                                             )
-                                        }))
-                                        .child(
-                                            Label::new(part_to_highlight)
-                                                .single_line()
-                                                .color(filename_text_color)
-                                                .underline(true),
-                                        )
-                                        .children(
-                                            suffix.and_then(|suffix| {
-                                                Some(
-                                                    h_flex()
-                                                        .child(
-                                                            Label::new(
-                                                                std::path::MAIN_SEPARATOR_STR,
-                                                            )
-                                                            .single_line()
-                                                            .color(filename_text_color),
-                                                        )
-                                                        .child(
-                                                            Label::new(
-                                                                suffix
-                                                                    .to_str()
-                                                                    .map(String::from)?,
-                                                            )
-                                                            .single_line()
-                                                            .color(filename_text_color),
-                                                        ),
-                                                )
-                                            }),
-                                        )
-                                    } else {
-                                        this.child(
-                                            Label::new(file_name)
-                                                .single_line()
-                                                .color(filename_text_color),
-                                        )
-                                    }
-                                })
-                                .when_some(canonical_path, |this, path| {
-                                    this.child(
-                                        div()
-                                            .id("symlink_icon")
-                                            .pl_2()
-                                            .pr_2()
-                                            .tooltip(move |cx| {
-                                                Tooltip::with_meta(
-                                                    path.to_string(),
-                                                    None,
-                                                    "Symbolic Link",
-                                                    cx,
-                                                )
-                                            })
-                                            .child(
-                                                Icon::new(IconName::ArrowUpRight)
-                                                    .size(IconSize::Indicator)
-                                                    .color(filename_text_color),
-                                            ),
+                                        }),
                                     )
-                                })
+                                } else {
+                                    this.child(
+                                        Label::new(file_name)
+                                            .single_line()
+                                            .color(filename_text_color),
+                                    )
+                                }
+                            })
                         }
                         .ml_1(),
                     )
@@ -2652,25 +2640,20 @@ impl ProjectPanel {
             )
     }
 
-    fn render_vertical_scrollbar(
-        &self,
-        items_count: usize,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Stateful<Div>> {
+    fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
         let settings = ProjectPanelSettings::get_global(cx);
         if settings.scrollbar.show == ShowScrollbar::Never {
             return None;
         }
         let scroll_handle = self.scroll_handle.0.borrow();
-
-        let height = scroll_handle
+        let total_list_length = scroll_handle
             .last_item_size
             .filter(|_| {
                 self.show_scrollbar || self.vertical_scrollbar_drag_thumb_offset.get().is_some()
             })?
-            .height;
-
-        let total_list_length = height.0 as f64 * items_count as f64;
+            .contents
+            .height
+            .0 as f64;
         let current_offset = scroll_handle.base_handle.offset().y.0.min(0.).abs() as f64;
         let mut percentage = current_offset / total_list_length;
         let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.height.0 as f64)
@@ -2732,7 +2715,6 @@ impl ProjectPanel {
                     self.scroll_handle.clone(),
                     self.vertical_scrollbar_drag_thumb_offset.clone(),
                     cx.view().entity_id(),
-                    items_count,
                 )),
         )
     }
@@ -2748,24 +2730,25 @@ impl ProjectPanel {
             .filter(|_| {
                 self.show_scrollbar || self.horizontal_scrollbar_drag_thumb_offset.get().is_some()
             })?
+            .contents
             .width
-            .0;
-        let current_offset = scroll_handle.base_handle.offset().x.0.min(0.).abs();
+            .0 as f64;
+        let current_offset = scroll_handle.base_handle.offset().x.0.min(0.).abs() as f64;
         let mut percentage = current_offset / longest_item_width;
-        let end_offset =
-            (current_offset + scroll_handle.base_handle.bounds().size.width.0) / longest_item_width;
+        let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.width.0 as f64)
+            / longest_item_width;
         // Uniform scroll handle might briefly report an offset greater than the length of a list;
         // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
         let overshoot = (end_offset - 1.).clamp(0., 1.);
         if overshoot > 0. {
             percentage -= overshoot;
         }
-        const MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH: f32 = 0.005;
+        const MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH: f64 = 0.005;
         if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH > 1.0 || end_offset > longest_item_width
         {
             return None;
         }
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 {
+        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
             return None;
         }
         let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH, 1.);
@@ -2806,15 +2789,14 @@ impl ProjectPanel {
                 .bottom_1()
                 .h(px(12.))
                 .cursor_default()
-                .children(self.width.map(|width| {
-                    ProjectPanelScrollbar::horizontal(
-                        percentage..end_offset,
+                .when(self.width.is_some(), |this| {
+                    this.child(ProjectPanelScrollbar::horizontal(
+                        percentage as f32..end_offset as f32,
                         self.scroll_handle.clone(),
                         self.horizontal_scrollbar_drag_thumb_offset.clone(),
                         cx.view().entity_id(),
-                        width,
-                    )
-                })),
+                    ))
+                }),
         )
     }
 
@@ -2912,7 +2894,7 @@ impl Render for ProjectPanel {
         let project = self.project.read(cx);
 
         if has_worktree {
-            let items_count = self
+            let item_count = self
                 .visible_entries
                 .iter()
                 .map(|(_, worktree_entries, _)| worktree_entries.len())
@@ -3003,7 +2985,7 @@ impl Render for ProjectPanel {
                 )
                 .track_focus(&self.focus_handle)
                 .child(
-                    uniform_list(cx.view().clone(), "entries", items_count, {
+                    uniform_list(cx.view().clone(), "entries", item_count, {
                         |this, range, cx| {
                             let mut items = Vec::with_capacity(range.end - range.start);
                             this.for_each_visible_entry(range, cx, |id, details, cx| {
@@ -3018,7 +3000,7 @@ impl Render for ProjectPanel {
                     .with_width_from_item(self.max_width_item_index)
                     .track_scroll(self.scroll_handle.clone()),
                 )
-                .children(self.render_vertical_scrollbar(items_count, cx))
+                .children(self.render_vertical_scrollbar(cx))
                 .children(self.render_horizontal_scrollbar(cx))
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(

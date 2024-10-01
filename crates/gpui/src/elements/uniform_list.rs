@@ -77,7 +77,6 @@ pub struct UniformList {
 
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
-    item_size: Size<Pixels>,
     items: SmallVec<[AnyElement; 32]>,
 }
 
@@ -91,7 +90,14 @@ pub struct UniformListScrollHandle(pub Rc<RefCell<UniformListScrollState>>);
 pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
     pub deferred_scroll_to_item: Option<usize>,
-    pub last_item_size: Option<Size<Pixels>>,
+    pub last_item_size: Option<ItemSize>,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+#[allow(missing_docs)]
+pub struct ItemSize {
+    pub item: Size<Pixels>,
+    pub contents: Size<Pixels>,
 }
 
 impl UniformListScrollHandle {
@@ -174,7 +180,6 @@ impl Element for UniformList {
         (
             layout_id,
             UniformListFrameState {
-                item_size,
                 items: SmallVec::new(),
             },
         )
@@ -201,25 +206,26 @@ impl Element for UniformList {
             self.horizontal_sizing_behavior,
             ListHorizontalSizingBehavior::Unconstrained
         );
+
+        let longest_item_size = self.measure_item(None, cx);
         let content_width = if can_scroll_horizontally {
-            padded_bounds.size.width.max(frame_state.item_size.width)
+            padded_bounds.size.width.max(longest_item_size.width)
         } else {
             padded_bounds.size.width
         };
-        let measurement = self.measure_item(
-            Some(padded_bounds.size.width).filter(|_| !can_scroll_horizontally),
-            cx,
-        );
         let content_size = Size {
             width: content_width,
-            height: frame_state.item_size.height * self.item_count + padding.top + padding.bottom,
+            height: longest_item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
-        let item_height = measurement.height;
+        let item_height = longest_item_size.height;
         let shared_scroll_to_item = self.scroll_handle.as_mut().and_then(|handle| {
             let mut handle = handle.0.borrow_mut();
-            handle.last_item_size = Some(measurement);
+            handle.last_item_size = Some(ItemSize {
+                item: padded_bounds.size,
+                contents: content_size,
+            });
             handle.deferred_scroll_to_item.take()
         });
 
@@ -251,7 +257,7 @@ impl Element for UniformList {
                         scroll_offset.y = min_vertical_scroll_offset;
                     }
 
-                    let content_width = measurement.width + padding.left + padding.right;
+                    let content_width = content_size.width + padding.left + padding.right;
                     let is_scrolled_horizontally =
                         can_scroll_horizontally && !scroll_offset.x.is_zero();
                     if is_scrolled_horizontally && content_width <= padded_bounds.size.width {
