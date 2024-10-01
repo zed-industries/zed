@@ -7,8 +7,9 @@ use gpui::{AppContext, Context, Model, ModelContext, Task};
 use settings::Settings as _;
 use worktree::WorktreeId;
 
+use anyhow::Result;
+
 use crate::{
-    direnv::DirenvWarning,
     project_settings::{DirenvSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
@@ -185,8 +186,8 @@ async fn load_shell_environment(
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
-) -> Result<(HashMap<String, String>, Option<String>), anyhow::Error> {
-    use crate::direnv::DirenvLoadError;
+) -> Result<(HashMap<String, String>, Option<String>)> {
+    use crate::direnv::{DirenvLoadError, DirenvWarning};
     use anyhow::{anyhow, Context};
     use std::path::PathBuf;
     use util::parse_env_output;
