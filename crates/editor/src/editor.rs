@@ -6193,13 +6193,17 @@ impl Editor {
     }
 
     fn apply_selected_diff_hunks(&mut self, _: &ApplyDiffHunk, cx: &mut ViewContext<Self>) {
-        // let snapshot = self.buffer.read(cx).snapshot(cx);
-        // let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
-        // self.transact(cx, |editor, cx| {
-        //     for hunk in hunks {
-        //         self.apply_changes_in_range(hunk.buffer_range.clone(), cx);
-        //     }
-        // });
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
+        self.transact(cx, |editor, cx| {
+            for hunk in hunks {
+                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.merge_into_base(Some(hunk.buffer_range.to_offset(buffer)), cx);
+                    });
+                }
+            }
+        });
     }
 
     pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {

@@ -328,7 +328,7 @@ impl Editor {
         Some(())
     }
 
-    pub(crate) fn apply_changes_in_range(
+    fn apply_changes_in_range(
         &mut self,
         range: Range<Anchor>,
         cx: &mut ViewContext<'_, Editor>,
@@ -340,13 +340,8 @@ impl Editor {
             .into_iter()
             .next()?;
 
-        let base_buffer = buffer.read(cx).diff_base_buffer()?;
-
-        base_buffer.update(cx, |base_buffer, cx| {
-            let branch_buffer = buffer.read(cx);
-            let range =
-                branch_buffer.anchor_before(range.start)..branch_buffer.anchor_after(range.end);
-            base_buffer.merge(&buffer, Some(range), cx);
+        buffer.update(cx, |branch_buffer, cx| {
+            branch_buffer.merge_into_base(Some(range), cx);
         });
 
         None
@@ -355,11 +350,9 @@ impl Editor {
     pub(crate) fn apply_all_changes(&self, cx: &mut ViewContext<Self>) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
-            if let Some(base_buffer) = branch_buffer.read(cx).diff_base_buffer() {
-                base_buffer.update(cx, |base_buffer, cx| {
-                    base_buffer.merge(&branch_buffer, None, cx)
-                });
-            }
+            branch_buffer.update(cx, |branch_buffer, cx| {
+                branch_buffer.merge_into_base(None, cx);
+            });
         }
     }
 
@@ -448,43 +441,10 @@ impl Editor {
                                                     let hunk = hunk.clone();
                                                     move |_event, cx| {
                                                         editor.update(cx, |editor, cx| {
-                                                            let snapshot = editor.snapshot(cx);
-                                                            let position = hunk
-                                                                .multi_buffer_range
-                                                                .end
-                                                                .to_point(
-                                                                    &snapshot.buffer_snapshot,
-                                                                );
-                                                            if let Some(hunk) = editor
-                                                                .go_to_hunk_after_position(
-                                                                    &snapshot, position, cx,
-                                                                )
-                                                            {
-                                                                let multi_buffer_start = snapshot
-                                                                    .buffer_snapshot
-                                                                    .anchor_before(Point::new(
-                                                                        hunk.row_range.start.0,
-                                                                        0,
-                                                                    ));
-                                                                let multi_buffer_end = snapshot
-                                                                    .buffer_snapshot
-                                                                    .anchor_after(Point::new(
-                                                                        hunk.row_range.end.0,
-                                                                        0,
-                                                                    ));
-                                                                editor.expand_diff_hunk(
-                                                                    None,
-                                                                    &HoveredHunk {
-                                                                        multi_buffer_range:
-                                                                            multi_buffer_start
-                                                                                ..multi_buffer_end,
-                                                                        status: hunk_status(&hunk),
-                                                                        diff_base_byte_range: hunk
-                                                                            .diff_base_byte_range,
-                                                                    },
-                                                                    cx,
-                                                                );
-                                                            }
+                                                            editor.go_to_subsequent_hunk(
+                                                                hunk.multi_buffer_range.end,
+                                                                cx,
+                                                            );
                                                         });
                                                     }
                                                 }),
@@ -509,43 +469,10 @@ impl Editor {
                                                     let hunk = hunk.clone();
                                                     move |_event, cx| {
                                                         editor.update(cx, |editor, cx| {
-                                                            let snapshot = editor.snapshot(cx);
-                                                            let position = hunk
-                                                                .multi_buffer_range
-                                                                .start
-                                                                .to_point(
-                                                                    &snapshot.buffer_snapshot,
-                                                                );
-                                                            let hunk = editor
-                                                                .go_to_hunk_before_position(
-                                                                    &snapshot, position, cx,
-                                                                );
-                                                            if let Some(hunk) = hunk {
-                                                                let multi_buffer_start = snapshot
-                                                                    .buffer_snapshot
-                                                                    .anchor_before(Point::new(
-                                                                        hunk.row_range.start.0,
-                                                                        0,
-                                                                    ));
-                                                                let multi_buffer_end = snapshot
-                                                                    .buffer_snapshot
-                                                                    .anchor_after(Point::new(
-                                                                        hunk.row_range.end.0,
-                                                                        0,
-                                                                    ));
-                                                                editor.expand_diff_hunk(
-                                                                    None,
-                                                                    &HoveredHunk {
-                                                                        multi_buffer_range:
-                                                                            multi_buffer_start
-                                                                                ..multi_buffer_end,
-                                                                        status: hunk_status(&hunk),
-                                                                        diff_base_byte_range: hunk
-                                                                            .diff_base_byte_range,
-                                                                    },
-                                                                    cx,
-                                                                );
-                                                            }
+                                                            editor.go_to_preceding_hunk(
+                                                                hunk.multi_buffer_range.start,
+                                                                cx,
+                                                            );
                                                         });
                                                     }
                                                 }),
@@ -940,6 +867,51 @@ impl Editor {
                 hash_map::Entry::Vacant(_) => None,
             }
         })
+    }
+
+    fn go_to_subsequent_hunk(&mut self, position: Anchor, cx: &mut ViewContext<Self>) {
+        let snapshot = self.snapshot(cx);
+        let position = position.to_point(&snapshot.buffer_snapshot);
+        if let Some(hunk) = self.go_to_hunk_after_position(&snapshot, position, cx) {
+            let multi_buffer_start = snapshot
+                .buffer_snapshot
+                .anchor_before(Point::new(hunk.row_range.start.0, 0));
+            let multi_buffer_end = snapshot
+                .buffer_snapshot
+                .anchor_after(Point::new(hunk.row_range.end.0, 0));
+            self.expand_diff_hunk(
+                None,
+                &HoveredHunk {
+                    multi_buffer_range: multi_buffer_start..multi_buffer_end,
+                    status: hunk_status(&hunk),
+                    diff_base_byte_range: hunk.diff_base_byte_range,
+                },
+                cx,
+            );
+        }
+    }
+
+    fn go_to_preceding_hunk(&mut self, position: Anchor, cx: &mut ViewContext<Self>) {
+        let snapshot = self.snapshot(cx);
+        let position = position.to_point(&snapshot.buffer_snapshot);
+        let hunk = self.go_to_hunk_before_position(&snapshot, position, cx);
+        if let Some(hunk) = hunk {
+            let multi_buffer_start = snapshot
+                .buffer_snapshot
+                .anchor_before(Point::new(hunk.row_range.start.0, 0));
+            let multi_buffer_end = snapshot
+                .buffer_snapshot
+                .anchor_after(Point::new(hunk.row_range.end.0, 0));
+            self.expand_diff_hunk(
+                None,
+                &HoveredHunk {
+                    multi_buffer_range: multi_buffer_start..multi_buffer_end,
+                    status: hunk_status(&hunk),
+                    diff_base_byte_range: hunk.diff_base_byte_range,
+                },
+                cx,
+            );
+        }
     }
 }
 
