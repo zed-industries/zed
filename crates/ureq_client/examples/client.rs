@@ -1,6 +1,6 @@
-use async_ureq::AsyncUreq;
 use futures::AsyncReadExt;
 use http_client::{AsyncBody, HttpClient};
+use ureq_client::AsyncUreq;
 
 fn main() {
     gpui::App::headless().run(|cx| {

@@ -51,7 +51,7 @@ workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
-async_ureq.workspace = true
+ureq_client.workspace = true
 env_logger.workspace = true
 client = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }

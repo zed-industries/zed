@@ -1,6 +1,5 @@
 use ::fs::{Fs, RealFs};
 use anyhow::Result;
-use async_ureq::AsyncUreq;
 use clap::Parser;
 use client::{Client, UserStore};
 use clock::RealSystemClock;
@@ -33,6 +32,7 @@ use std::{
         Arc,
     },
 };
+use ureq_client::AsyncUreq;
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";

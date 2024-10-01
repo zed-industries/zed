@@ -1,5 +1,5 @@
 [package]
-name = "async_ureq"
+name = "ureq_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,7 +12,7 @@ workspace = true
 test-support = []
 
 [lib]
-path = "src/async_ureq.rs"
+path = "src/ureq_client.rs"
 doctest = true
 
 [[example]]

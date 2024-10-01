@@ -927,21 +927,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async_ureq"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.30",
- "gpui",
- "http_client",
- "parking_lot",
- "serde",
- "smol",
- "ureq",
- "util",
-]
-
-[[package]]
 name = "async_zip"
 version = "0.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3998,7 +3983,6 @@ name = "evals"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async_ureq",
  "clap",
  "client",
  "clock",
@@ -4019,6 +4003,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "ureq_client",
 ]
 
 [[package]]
@@ -4094,7 +4079,6 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
- "async_ureq",
  "client",
  "collections",
  "ctor",
@@ -4123,6 +4107,7 @@ dependencies = [
  "theme",
  "toml 0.8.19",
  "ui",
+ "ureq_client",
  "url",
  "util",
  "wasm-encoder 0.215.0",
@@ -10101,7 +10086,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
- "async_ureq",
  "blake3",
  "client",
  "clock",
@@ -10131,6 +10115,7 @@ dependencies = [
  "tree-sitter",
  "ui",
  "unindent",
+ "ureq_client",
  "util",
  "workspace",
  "worktree",
@@ -12715,6 +12700,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ureq_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.30",
+ "gpui",
+ "http_client",
+ "parking_lot",
+ "serde",
+ "smol",
+ "ureq",
+ "util",
+]
+
+[[package]]
 name = "url"
 version = "2.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14603,7 +14603,6 @@ dependencies = [
  "assets",
  "assistant",
  "async-watch",
- "async_ureq",
  "audio",
  "auto_update",
  "backtrace",
@@ -14692,6 +14691,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
+ "ureq_client",
  "url",
  "urlencoding",
  "util",

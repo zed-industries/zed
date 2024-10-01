@@ -8,7 +8,6 @@ mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
 use assistant::PromptBuilder;
-use async_ureq::AsyncUreq;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -27,6 +26,7 @@ use gpui::{
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
+use ureq_client::AsyncUreq;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};

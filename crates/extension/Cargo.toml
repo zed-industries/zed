@@ -56,7 +56,7 @@ task.workspace = true
 serde_json_lenient.workspace = true
 
 [dev-dependencies]
-async_ureq.workspace = true
+ureq_client.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 parking_lot.workspace = true

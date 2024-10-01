@@ -16,7 +16,7 @@ path = "src/eval.rs"
 [dependencies]
 clap.workspace = true
 anyhow.workspace = true
-async_ureq.workspace = true
+ureq_client.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true

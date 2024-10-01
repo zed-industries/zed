@@ -7,7 +7,6 @@ use crate::{
 };
 use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
-use async_ureq::AsyncUreq;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
@@ -28,6 +27,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
+use ureq_client::AsyncUreq;
 use util::test::temp_tree;
 
 #[cfg(test)]
