@@ -369,7 +369,7 @@ impl Editor {
                 buffer.read(cx).diff_base_buffer().is_some()
             });
 
-        let border_color = cx.theme().colors().border_disabled;
+        let border_color = cx.theme().colors().border_variant;
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => cx.theme().status().created,
             DiffHunkStatus::Modified => cx.theme().status().modified,
@@ -391,8 +391,11 @@ impl Editor {
 
                     h_flex()
                         .id(cx.block_id)
-                        .w_full()
                         .h(cx.line_height())
+                        .w_full()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .bg(cx.theme().colors().editor_background)
                         .child(
                             div()
                                 .id("gutter-strip")
@@ -412,6 +415,8 @@ impl Editor {
                         )
                         .child(
                             h_flex()
+                                .pl_2()
+                                .pr_6()
                                 .size_full()
                                 .justify_between()
                                 .border_t_1()
@@ -420,7 +425,7 @@ impl Editor {
                                 .border_color(border_color)
                                 .child(
                                     h_flex()
-                                        .gap_2()
+                                        .gap_1()
                                         .child(
                                             IconButton::new("next-hunk", IconName::ArrowDown)
                                                 .shape(IconButtonShape::Square)
@@ -478,7 +483,7 @@ impl Editor {
                                                 }),
                                         )
                                         .child(
-                                            IconButton::new("discard", IconName::RotateCcw)
+                                            IconButton::new("discard", IconName::Undo)
                                                 .shape(IconButtonShape::Square)
                                                 .icon_size(IconSize::Small)
                                                 .tooltip({

@@ -23,8 +23,8 @@ use crate::{
     point, Action, AnyWindowHandle, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds,
     DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
     GPUSpecs, GlyphId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, SharedString, Size,
-    SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    SharedString, Size, SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -381,7 +381,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GPUSpecs>;
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>);
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

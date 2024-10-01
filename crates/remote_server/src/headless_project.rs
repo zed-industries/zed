@@ -10,7 +10,7 @@ use project::{
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
-use remote::SshSession;
+use remote::ssh_session::ChannelClient;
 use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
@@ -41,7 +41,7 @@ impl HeadlessProject {
         project::Project::init_settings(cx);
     }
 
-    pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(session: Arc<ChannelClient>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
         let node_runtime = NodeRuntime::unavailable();

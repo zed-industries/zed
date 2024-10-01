@@ -1,34 +1,54 @@
 use std::{cell::Cell, ops::Range, rc::Rc};
 
 use gpui::{
-    point, AnyView, Bounds, ContentMask, Hitbox, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ScrollWheelEvent, Style, UniformListScrollHandle,
+    point, quad, Bounds, ContentMask, Corners, Edges, EntityId, Hitbox, Hsla, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Style, UniformListScrollHandle,
 };
 use ui::{prelude::*, px, relative, IntoElement};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScrollbarKind {
+    Horizontal,
+    Vertical,
+}
 
 pub(crate) struct ProjectPanelScrollbar {
     thumb: Range<f32>,
     scroll: UniformListScrollHandle,
     // If Some(), there's an active drag, offset by percentage from the top of thumb.
     scrollbar_drag_state: Rc<Cell<Option<f32>>>,
-    item_count: usize,
-    view: AnyView,
+    kind: ScrollbarKind,
+    parent_id: EntityId,
 }
 
 impl ProjectPanelScrollbar {
-    pub(crate) fn new(
+    pub(crate) fn vertical(
         thumb: Range<f32>,
         scroll: UniformListScrollHandle,
         scrollbar_drag_state: Rc<Cell<Option<f32>>>,
-        view: AnyView,
-        item_count: usize,
+        parent_id: EntityId,
     ) -> Self {
         Self {
             thumb,
             scroll,
             scrollbar_drag_state,
-            item_count,
-            view,
+            kind: ScrollbarKind::Vertical,
+            parent_id,
+        }
+    }
+
+    pub(crate) fn horizontal(
+        thumb: Range<f32>,
+        scroll: UniformListScrollHandle,
+        scrollbar_drag_state: Rc<Cell<Option<f32>>>,
+        parent_id: EntityId,
+    ) -> Self {
+        Self {
+            thumb,
+            scroll,
+            scrollbar_drag_state,
+            kind: ScrollbarKind::Horizontal,
+            parent_id,
         }
     }
 }
@@ -50,8 +70,14 @@ impl gpui::Element for ProjectPanelScrollbar {
         let mut style = Style::default();
         style.flex_grow = 1.;
         style.flex_shrink = 1.;
-        style.size.width = px(12.).into();
-        style.size.height = relative(1.).into();
+        if self.kind == ScrollbarKind::Vertical {
+            style.size.width = px(12.).into();
+            style.size.height = relative(1.).into();
+        } else {
+            style.size.width = relative(1.).into();
+            style.size.height = px(12.).into();
+        }
+
         (cx.request_layout(style, None), ())
     }
 
@@ -77,25 +103,65 @@ impl gpui::Element for ProjectPanelScrollbar {
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let colors = cx.theme().colors();
-            let scrollbar_background = colors.scrollbar_track_background;
             let thumb_background = colors.scrollbar_thumb_background;
-            cx.paint_quad(gpui::fill(bounds, scrollbar_background));
+            let is_vertical = self.kind == ScrollbarKind::Vertical;
+            let extra_padding = px(5.0);
+            let padded_bounds = if is_vertical {
+                Bounds::from_corners(
+                    bounds.origin + point(Pixels::ZERO, extra_padding),
+                    bounds.lower_right() - point(Pixels::ZERO, extra_padding * 3),
+                )
+            } else {
+                Bounds::from_corners(
+                    bounds.origin + point(extra_padding, Pixels::ZERO),
+                    bounds.lower_right() - point(extra_padding * 3, Pixels::ZERO),
+                )
+            };
 
-            let thumb_offset = self.thumb.start * bounds.size.height;
-            let thumb_end = self.thumb.end * bounds.size.height;
-
-            let thumb_percentage_size = self.thumb.end - self.thumb.start;
-            let thumb_bounds = {
-                let thumb_upper_left = point(bounds.origin.x, bounds.origin.y + thumb_offset);
+            let mut thumb_bounds = if is_vertical {
+                let thumb_offset = self.thumb.start * padded_bounds.size.height;
+                let thumb_end = self.thumb.end * padded_bounds.size.height;
+                let thumb_upper_left = point(
+                    padded_bounds.origin.x,
+                    padded_bounds.origin.y + thumb_offset,
+                );
                 let thumb_lower_right = point(
-                    bounds.origin.x + bounds.size.width,
-                    bounds.origin.y + thumb_end,
+                    padded_bounds.origin.x + padded_bounds.size.width,
+                    padded_bounds.origin.y + thumb_end,
+                );
+                Bounds::from_corners(thumb_upper_left, thumb_lower_right)
+            } else {
+                let thumb_offset = self.thumb.start * padded_bounds.size.width;
+                let thumb_end = self.thumb.end * padded_bounds.size.width;
+                let thumb_upper_left = point(
+                    padded_bounds.origin.x + thumb_offset,
+                    padded_bounds.origin.y,
+                );
+                let thumb_lower_right = point(
+                    padded_bounds.origin.x + thumb_end,
+                    padded_bounds.origin.y + padded_bounds.size.height,
                 );
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right)
             };
-            cx.paint_quad(gpui::fill(thumb_bounds, thumb_background));
+            let corners = if is_vertical {
+                thumb_bounds.size.width /= 1.5;
+                Corners::all(thumb_bounds.size.width / 2.0)
+            } else {
+                thumb_bounds.size.height /= 1.5;
+                Corners::all(thumb_bounds.size.height / 2.0)
+            };
+            cx.paint_quad(quad(
+                thumb_bounds,
+                corners,
+                thumb_background,
+                Edges::default(),
+                Hsla::transparent_black(),
+            ));
+
             let scroll = self.scroll.clone();
-            let item_count = self.item_count;
+            let kind = self.kind;
+            let thumb_percentage_size = self.thumb.end - self.thumb.start;
+
             cx.on_mouse_event({
                 let scroll = self.scroll.clone();
                 let is_dragging = self.scrollbar_drag_state.clone();
@@ -103,20 +169,37 @@ impl gpui::Element for ProjectPanelScrollbar {
                     if phase.bubble() && bounds.contains(&event.position) {
                         if !thumb_bounds.contains(&event.position) {
                             let scroll = scroll.0.borrow();
-                            if let Some(last_height) = scroll.last_item_height {
-                                let max_offset = item_count as f32 * last_height;
-                                let percentage =
-                                    (event.position.y - bounds.origin.y) / bounds.size.height;
-
-                                let percentage = percentage.min(1. - thumb_percentage_size);
-                                scroll
-                                    .base_handle
-                                    .set_offset(point(px(0.), -max_offset * percentage));
+                            if let Some(item_size) = scroll.last_item_size {
+                                match kind {
+                                    ScrollbarKind::Horizontal => {
+                                        let percentage = (event.position.x - bounds.origin.x)
+                                            / bounds.size.width;
+                                        let max_offset = item_size.contents.width;
+                                        let percentage = percentage.min(1. - thumb_percentage_size);
+                                        scroll.base_handle.set_offset(point(
+                                            -max_offset * percentage,
+                                            scroll.base_handle.offset().y,
+                                        ));
+                                    }
+                                    ScrollbarKind::Vertical => {
+                                        let percentage = (event.position.y - bounds.origin.y)
+                                            / bounds.size.height;
+                                        let max_offset = item_size.contents.height;
+                                        let percentage = percentage.min(1. - thumb_percentage_size);
+                                        scroll.base_handle.set_offset(point(
+                                            scroll.base_handle.offset().x,
+                                            -max_offset * percentage,
+                                        ));
+                                    }
+                                }
                             }
                         } else {
-                            let thumb_top_offset =
-                                (event.position.y - thumb_bounds.origin.y) / bounds.size.height;
-                            is_dragging.set(Some(thumb_top_offset));
+                            let thumb_offset = if is_vertical {
+                                (event.position.y - thumb_bounds.origin.y) / bounds.size.height
+                            } else {
+                                (event.position.x - thumb_bounds.origin.x) / bounds.size.width
+                            };
+                            is_dragging.set(Some(thumb_offset));
                         }
                     }
                 }
@@ -127,6 +210,7 @@ impl gpui::Element for ProjectPanelScrollbar {
                     if phase.bubble() && bounds.contains(&event.position) {
                         let scroll = scroll.0.borrow_mut();
                         let current_offset = scroll.base_handle.offset();
+
                         scroll
                             .base_handle
                             .set_offset(current_offset + event.delta.pixel_delta(cx.line_height()));
@@ -134,19 +218,39 @@ impl gpui::Element for ProjectPanelScrollbar {
                 }
             });
             let drag_state = self.scrollbar_drag_state.clone();
-            let view_id = self.view.entity_id();
+            let view_id = self.parent_id;
+            let kind = self.kind;
             cx.on_mouse_event(move |event: &MouseMoveEvent, _, cx| {
                 if let Some(drag_state) = drag_state.get().filter(|_| event.dragging()) {
                     let scroll = scroll.0.borrow();
-                    if let Some(last_height) = scroll.last_item_height {
-                        let max_offset = item_count as f32 * last_height;
-                        let percentage =
-                            (event.position.y - bounds.origin.y) / bounds.size.height - drag_state;
+                    if let Some(item_size) = scroll.last_item_size {
+                        match kind {
+                            ScrollbarKind::Horizontal => {
+                                let max_offset = item_size.contents.width;
+                                let percentage = (event.position.x - bounds.origin.x)
+                                    / bounds.size.width
+                                    - drag_state;
 
-                        let percentage = percentage.min(1. - thumb_percentage_size);
-                        scroll
-                            .base_handle
-                            .set_offset(point(px(0.), -max_offset * percentage));
+                                let percentage = percentage.min(1. - thumb_percentage_size);
+                                scroll.base_handle.set_offset(point(
+                                    -max_offset * percentage,
+                                    scroll.base_handle.offset().y,
+                                ));
+                            }
+                            ScrollbarKind::Vertical => {
+                                let max_offset = item_size.contents.height;
+                                let percentage = (event.position.y - bounds.origin.y)
+                                    / bounds.size.height
+                                    - drag_state;
+
+                                let percentage = percentage.min(1. - thumb_percentage_size);
+                                scroll.base_handle.set_offset(point(
+                                    scroll.base_handle.offset().x,
+                                    -max_offset * percentage,
+                                ));
+                            }
+                        };
+
                         cx.notify(view_id);
                     }
                 } else {

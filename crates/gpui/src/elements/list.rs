@@ -89,6 +89,16 @@ pub enum ListSizingBehavior {
     Auto,
 }
 
+/// The horizontal sizing behavior to apply during layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ListHorizontalSizingBehavior {
+    /// List items' width can never exceed the width of the list.
+    #[default]
+    FitList,
+    /// List items' width may go over the width of the list, if any item is wider.
+    Unconstrained,
+}
+
 struct LayoutItemsResponse {
     max_item_width: Pixels,
     scroll_top: ListOffset,
@@ -858,7 +868,7 @@ impl Styled for List {
 impl sum_tree::Item for ListItem {
     type Summary = ListItemSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         match self {
             ListItem::Unmeasured { focus_handle } => ListItemSummary {
                 count: 1,

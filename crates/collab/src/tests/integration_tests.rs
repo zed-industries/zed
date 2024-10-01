@@ -4409,7 +4409,7 @@ async fn test_formatting_buffer(
                 file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
                     vec![Formatter::External {
                         command: "awk".into(),
-                        arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                        arguments: Some(vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into()),
                     }]
                     .into(),
                 )));
