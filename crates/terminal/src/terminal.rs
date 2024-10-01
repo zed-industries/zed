@@ -333,6 +333,16 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
+        // setup_env modifies the current process's environment, which we are
+        // ignoring in favour of the env variable here. Instead, we copy over
+        // the relevant variables from the current environment after
+        // modification so that we don't have to re-implement the logic here.
+        alacritty_terminal::tty::setup_env();
+        env.insert("TERM".to_string(), std::env::var("TERM").unwrap());
+        env.insert("COLORTERM".to_string(),  std::env::var("COLORTERM").unwrap());
+        env.remove("DESKTOP_STARTUP_ID");
+        env.remove("XDG_ACTIVATION_TOKEN");
+
         let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
@@ -351,9 +361,6 @@ impl TerminalBuilder {
                 env: env.into_iter().collect(),
             }
         };
-
-        // Setup Alacritty's env, which modifies the current process's environment
-        alacritty_terminal::tty::setup_env();
 
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
