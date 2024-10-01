@@ -14,6 +14,7 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
+#[cfg(not(any(test, feature = "test-support")))]
 mod direnv;
 mod environment;
 pub mod search_history;
