@@ -67,7 +67,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use theme::{ActiveTheme, PlayerColor};
+use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::RangeExt;
@@ -1040,6 +1040,11 @@ impl EditorElement {
                                     })
                                     .unwrap_or(self.style.text.font());
 
+                                let color = match cx.theme().appearance {
+                                    Appearance::Dark => Hsla::black(),
+                                    Appearance::Light => Hsla::white(),
+                                };
+
                                 cx.text_system()
                                     .shape_line(
                                         text,
@@ -1047,7 +1052,7 @@ impl EditorElement {
                                         &[TextRun {
                                             len,
                                             font,
-                                            color: cx.theme().colors().editor_background,
+                                            color,
                                             background_color: None,
                                             strikethrough: None,
                                             underline: None,
