@@ -3595,6 +3595,11 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.activate();
     }
 
+    /// TODO:
+    pub fn show_window(&self) {
+        self.window.platform_window.show();
+    }
+
     /// Minimize the current window at the platform level.
     pub fn minimize_window(&self) {
         self.window.platform_window.minimize();

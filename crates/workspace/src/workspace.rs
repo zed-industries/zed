@@ -1190,6 +1190,7 @@ impl Workspace {
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
+                println!("-> new_local: {:#?}", options);
                 options.window_bounds = window_bounds;
                 let centered_layout = serialized_workspace
                     .as_ref()
@@ -1217,8 +1218,12 @@ impl Workspace {
                 .await
                 .unwrap_or_default();
 
+            println!("-> WORKSPACE acti");
             window
-                .update(&mut cx, |_, cx| cx.activate_window())
+                .update(&mut cx, |_, cx| {
+                    cx.show_window();
+                    cx.activate_window();
+                })
                 .log_err();
             Ok((window, opened_items))
         })
