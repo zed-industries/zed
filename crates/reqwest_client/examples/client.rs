@@ -12,5 +12,5 @@ async fn main() {
 
     let mut body = String::new();
     resp.into_body().read_to_string(&mut body).await.unwrap();
-    dbg!(&body);
+    println!("{}", &body);
 }

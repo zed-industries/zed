@@ -955,7 +955,7 @@ impl Server {
 
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
             let http_client = match ReqwestClient::user_agent(&user_agent) {
-                Ok(http_client) => Arc::new(ReqwestClient::from(http_client)),
+                Ok(http_client) => Arc::new(http_client),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;

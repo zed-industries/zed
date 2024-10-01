@@ -1,10 +1,13 @@
-use std::{io::Read, task::Poll};
+use std::{borrow::Cow, io::Read, pin::Pin, task::Poll};
 
 use anyhow::anyhow;
+use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, TryStreamExt};
-use http_client::{http, ReadTimeout};
+use http_client::{http, AsyncBody, ReadTimeout};
 use reqwest::header::{HeaderMap, HeaderValue};
 use smol::future::FutureExt;
+
+const DEFAULT_CAPACITY: usize = 4096;
 
 pub struct ReqwestClient {
     client: reqwest::Client,
@@ -32,36 +35,144 @@ impl From<reqwest::Client> for ReqwestClient {
     }
 }
 
-struct WrappedBody(http_client::AsyncBody);
+// This struct is essentially a re-implementation of
+// https://docs.rs/tokio-util/0.7.12/tokio_util/io/struct.ReaderStream.html
+// except outside of Tokio's aegis
+struct ReaderStream {
+    reader: Option<Pin<Box<dyn futures::AsyncRead + Send + Sync>>>,
+    buf: BytesMut,
+    capacity: usize,
+}
+
+impl ReaderStream {
+    fn new(reader: Pin<Box<dyn futures::AsyncRead + Send + Sync>>) -> Self {
+        Self {
+            reader: Some(reader),
+            buf: BytesMut::new(),
+            capacity: DEFAULT_CAPACITY,
+        }
+    }
+}
+
+impl futures::Stream for ReaderStream {
+    type Item = std::io::Result<Bytes>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let mut this = self.as_mut();
+
+        let mut reader = match this.reader.take() {
+            Some(r) => r,
+            None => return Poll::Ready(None),
+        };
+
+        if this.buf.capacity() == 0 {
+            let capacity = this.capacity;
+            this.buf.reserve(capacity);
+        }
+
+        match poll_read_buf(&mut reader, cx, &mut this.buf) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => {
+                self.reader = None;
+
+                Poll::Ready(Some(Err(err)))
+            }
+            Poll::Ready(Ok(0)) => {
+                self.reader = None;
+                Poll::Ready(None)
+            }
+            Poll::Ready(Ok(_)) => {
+                let chunk = this.buf.split();
+                self.reader = Some(reader);
+                Poll::Ready(Some(Ok(chunk.freeze())))
+            }
+        }
+    }
+}
+
+/// Implementation from https://docs.rs/tokio-util/0.7.12/src/tokio_util/util/poll_buf.rs.html
+/// Specialized for this use case
+pub fn poll_read_buf(
+    io: &mut Pin<Box<dyn futures::AsyncRead + Send + Sync>>,
+    cx: &mut std::task::Context<'_>,
+    buf: &mut BytesMut,
+) -> Poll<std::io::Result<usize>> {
+    if !buf.has_remaining_mut() {
+        return Poll::Ready(Ok(0));
+    }
+
+    let n = {
+        let dst = buf.chunk_mut();
+
+        // Safety: `chunk_mut()` returns a `&mut UninitSlice`, and `UninitSlice` is a
+        // transparent wrapper around `[MaybeUninit<u8>]`.
+        let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
+        let mut buf = tokio::io::ReadBuf::uninit(dst);
+        let ptr = buf.filled().as_ptr();
+        let unfilled_portion = buf.initialize_unfilled();
+        // SAFETY: Pin projection
+        let io_pin = unsafe { Pin::new_unchecked(io) };
+        std::task::ready!(io_pin.poll_read(cx, unfilled_portion)?);
+
+        // Ensure the pointer does not change from under us
+        assert_eq!(ptr, buf.filled().as_ptr());
+        buf.filled().len()
+    };
+
+    // Safety: This is guaranteed to be the number of initialized (and read)
+    // bytes due to the invariants provided by `ReadBuf::filled`.
+    unsafe {
+        buf.advance_mut(n);
+    }
+
+    Poll::Ready(Ok(n))
+}
+
+enum WrappedBodyInner {
+    None,
+    SyncReader(std::io::Cursor<Cow<'static, [u8]>>),
+    Stream(ReaderStream),
+}
+
+struct WrappedBody(WrappedBodyInner);
+
+impl WrappedBody {
+    fn new(body: AsyncBody) -> Self {
+        match body.0 {
+            http_client::Inner::Empty => Self(WrappedBodyInner::None),
+            http_client::Inner::SyncReader(cursor) => Self(WrappedBodyInner::SyncReader(cursor)),
+            http_client::Inner::AsyncReader(pin) => {
+                Self(WrappedBodyInner::Stream(ReaderStream::new(pin)))
+            }
+        }
+    }
+}
 
 impl futures::stream::Stream for WrappedBody {
-    type Item = Result<Vec<u8>, std::io::Error>;
+    type Item = Result<Bytes, std::io::Error>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        match &mut self.0 .0 {
-            http_client::Inner::Empty => Poll::Ready(None),
-            http_client::Inner::SyncReader(cursor) => {
+        match &mut self.0 {
+            WrappedBodyInner::None => Poll::Ready(None),
+            WrappedBodyInner::SyncReader(cursor) => {
                 let mut buf = Vec::new();
                 match cursor.read_to_end(&mut buf) {
                     Ok(_) => {
-                        return Poll::Ready(Some(Ok(buf)));
+                        return Poll::Ready(Some(Ok(Bytes::from(buf))));
                     }
                     Err(e) => return Poll::Ready(Some(Err(e))),
                 }
             }
-            http_client::Inner::AsyncReader(async_reader) => {
-                let mut buf = vec![0; 8192];
-                match AsyncRead::poll_read(std::pin::Pin::new(async_reader), cx, &mut buf) {
-                    Poll::Ready(Ok(n)) => {
-                        buf.truncate(n);
-                        return Poll::Ready(Some(Ok(buf)));
-                    }
-                    Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
-                    Poll::Pending => Poll::Pending,
-                }
+            WrappedBodyInner::Stream(stream) => {
+                // SAFETY: Pin projection
+                let stream = unsafe { Pin::new_unchecked(stream) };
+                futures::Stream::poll_next(stream, cx)
             }
         }
     }
@@ -99,7 +210,7 @@ impl http_client::HttpClient for ReqwestClient {
             request = request.timeout(*timeout);
         }
 
-        let body = WrappedBody(body);
+        let body = WrappedBody::new(body);
         let request = request.body(reqwest::Body::wrap_stream(body));
 
         async move {

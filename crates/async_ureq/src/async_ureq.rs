@@ -48,7 +48,7 @@ impl AsyncUreq {
         }
 
         clients
-            .entry((timeout.clone(), redirect_policy.clone()))
+            .entry((timeout, redirect_policy.clone()))
             .or_insert_with(|| {
                 let mut builder = ureq::AgentBuilder::new()
                     .timeout_connect(Duration::from_secs(5))
@@ -91,7 +91,7 @@ impl HttpClient for AsyncUreq {
                 .unwrap_or_default()
                 .0,
         );
-        let mut req = agent.request(&request.method().to_string(), &request.uri().to_string());
+        let mut req = agent.request(&request.method().as_ref(), &request.uri().to_string());
         for (name, value) in request.headers().into_iter() {
             req = req.set(name.as_str(), value.to_str().unwrap());
         }
