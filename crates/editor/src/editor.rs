@@ -3059,7 +3059,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.clear_clicked_diff_hunks(cx) {
+        if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
             return;
         }
@@ -12257,12 +12257,9 @@ impl Editor {
         let buffer = self.buffer.read(cx);
         let mut new_selections_by_buffer = HashMap::default();
         for selection in self.selections.all::<usize>(cx) {
-            for (buffer, mut range, _) in
+            for (buffer, range, _) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
-                if selection.reversed {
-                    mem::swap(&mut range.start, &mut range.end);
-                }
                 let mut range = range.to_point(buffer.read(cx));
                 range.start.column = 0;
                 range.end.column = buffer.read(cx).line_len(range.end.row);
