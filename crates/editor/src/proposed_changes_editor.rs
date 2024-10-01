@@ -161,8 +161,28 @@ impl Item for ProposedChangesEditor {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            Item::added_to_workspace(editor, workspace, cx)
+        });
+    }
+
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, Item::deactivated);
+    }
+
+    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         self.editor
-            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
+            .update(cx, |editor, cx| Item::navigate(editor, data, cx))
+    }
+
+    fn set_nav_history(
+        &mut self,
+        nav_history: workspace::ItemNavHistory,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            Item::set_nav_history(editor, nav_history, cx)
+        });
     }
 }
 
