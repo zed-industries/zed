@@ -3,8 +3,8 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use fs::RealFs;
-use futures::channel::mpsc;
-use futures::{AsyncRead, AsyncWrite};
+use futures::channel::mpsc::{self, UnboundedReceiver};
+use futures::{select, AsyncRead, AsyncWrite, FutureExt};
 use gpui::Context as _;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -13,6 +13,7 @@ use remote::{
 };
 use remote_server::HeadlessProject;
 use rpc::proto::Envelope;
+use smol::net::unix::UnixStream;
 use smol::Async;
 use smol::{io::AsyncWriteExt, net::unix::UnixListener, stream::StreamExt as _};
 use std::{
@@ -120,20 +121,29 @@ fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf)
         HeadlessProject::init(cx);
 
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let (stdin_failed_tx, stdin_failed_rx) = mpsc::unbounded::<()>();
 
         cx.background_executor()
             .spawn(async move {
-                'outer: while let Ok((mut stream, _)) = stdin_listener.accept().await {
-                    log::debug!("server: got new connection on stdin socket");
+                loop {
+                    log::info!("server: waiting for a new connection on stdin socket");
+                    let (mut stream, _) = stdin_listener
+                        .accept()
+                        .await
+                        .context("accept on stdin socket failed")?;
+                    log::info!("server: got new connection on stdin socket");
+
                     let mut input_buffer = Vec::new();
                     loop {
                         let message = match read_message(&mut stream, &mut input_buffer).await {
                             Ok(message) => message,
                             Err(error) => {
-                                log::warn!("server: error reading message: {:?}", error);
-                                log::warn!("server: Waiting for new connection on stdin socket");
-                                break 'outer;
+                                log::warn!("server: error reading message on stdin: {}", error);
+                                stdin_failed_tx.unbounded_send(()).ok();
+                                log::warn!("server: sent stdin failed message");
+                                break;
                             }
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
@@ -150,17 +160,23 @@ fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf)
 
         cx.background_executor()
             .spawn(async move {
-                log::debug!("server: waiting for a new connection on stdout socket");
-                while let Ok((mut stream, _)) = stdout_listener.accept().await {
-                    log::debug!("server: got new connection on stdout socket");
+                let mut outgoing_rx = outgoing_rx;
+                let mut stdin_failed_rx = stdin_failed_rx;
 
-                    let mut output_buffer = Vec::new();
-                    while let Some(message) = outgoing_rx.next().await {
-                        write_message(&mut stream, &mut output_buffer, message).await?;
-                        stream.flush().await?;
-                    }
+                loop {
+                    log::info!("server: waiting for a new connection on stdout socket");
+                    let Ok((stream, _)) = stdout_listener.accept().await else {
+                        log::error!("server: accept on stdout socket failed");
+                        break;
+                    };
+
+                    log::info!("server: got new connection on stdout socket");
+
+                    let (outgoing_rx_val, stdin_failed_rx_val) =
+                        handle_stdout_connection(stream, outgoing_rx, stdin_failed_rx).await;
+                    outgoing_rx = outgoing_rx_val;
+                    stdin_failed_rx = stdin_failed_rx_val;
                 }
-                anyhow::Ok(())
             })
             .detach();
 
@@ -176,6 +192,43 @@ fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf)
         mem::forget(project);
     });
     Ok(())
+}
+
+async fn handle_stdout_connection(
+    mut stream: UnixStream,
+    mut outgoing_rx: UnboundedReceiver<Envelope>,
+    mut stdin_failed_rx: UnboundedReceiver<()>,
+) -> (UnboundedReceiver<Envelope>, UnboundedReceiver<()>) {
+    let mut output_buffer = Vec::new();
+
+    loop {
+        select! {
+            message = outgoing_rx.next().fuse() => {
+                let Some(message) = message else {
+                    log::error!("server: stdout handler, no message");
+                    break;
+                };
+
+                if let Err(error) =
+                    write_message(&mut stream, &mut output_buffer, message).await
+                {
+                    log::error!("server: failed to write stdout message: {:?}", error);
+                    break;
+                }
+                if let Err(error) = stream.flush().await {
+                    log::error!("server: failed to flush stdout message: {:?}", error);
+                    break;
+                }
+            }
+            _ = stdin_failed_rx.next().fuse() => {
+                log::error!("server: stdin failed, terminating");
+                break;
+            }
+        }
+    }
+
+    log::error!("server: handle_stdout_connection done");
+    (outgoing_rx, stdin_failed_rx)
 }
 
 fn execute_proxy(unique_project_id: String) -> Result<()> {
@@ -212,6 +265,7 @@ fn execute_proxy(unique_project_id: String) -> Result<()> {
             "proxy: failed to forward messages: {:?}, terminating...",
             forwarding_result
         );
+        return Err(forwarding_result);
     }
 
     Ok(())
@@ -319,26 +373,16 @@ where
     let mut read_buffer = Vec::new();
     let mut write_buffer = Vec::new();
     loop {
-        match read_message(&mut reader, &mut read_buffer).await {
-            Ok(message) => {
-                if let Err(error) = write_message(&mut writer, &mut write_buffer, message).await {
-                    log::error!(
-                        "proxy: failed to write message to {} socket: {:?}, terminating...",
-                        socket_name,
-                        error
-                    );
-                    return Ok(());
-                }
-                writer.flush().await?;
-            }
-            Err(error) => {
-                log::error!(
-                    "proxy: failed to read message from {}: {:?}, terminating...",
-                    socket_name,
-                    error
-                );
-                return Err(error.into());
-            }
-        }
+        // TODO: We needlessly decode/encode the message here. Instead we should
+        // just read the len and then read/send.
+        let message = read_message(&mut reader, &mut read_buffer)
+            .await
+            .with_context(|| format!("proxy: failed to read message from {}", socket_name))?;
+
+        write_message(&mut writer, &mut write_buffer, message)
+            .await
+            .with_context(|| format!("proxy: failed to write message to {}", socket_name))?;
+
+        writer.flush().await?;
     }
 }
