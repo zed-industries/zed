@@ -1,4 +1,4 @@
-name = "proto"
+name = "Proto"
 grammar = "proto"
 path_suffixes = ["proto"]
 line_comments = ["// "]

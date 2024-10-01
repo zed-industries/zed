@@ -102,6 +102,7 @@ pub(crate) fn one_dark() -> Theme {
                     0.2,
                 ),
                 editor_document_highlight_write_background: gpui::red(),
+                editor_document_highlight_bracket_background: gpui::green(),
 
                 terminal_background: bg,
                 // todo("Use one colors for terminal")

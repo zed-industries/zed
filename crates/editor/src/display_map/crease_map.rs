@@ -291,7 +291,7 @@ impl sum_tree::Summary for ItemSummary {
 impl sum_tree::Item for CreaseItem {
     type Summary = ItemSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &MultiBufferSnapshot) -> Self::Summary {
         ItemSummary {
             range: self.crease.range.clone(),
         }

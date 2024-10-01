@@ -10,22 +10,46 @@ use futures::future::BoxFuture;
 use http::request::Builder;
 #[cfg(feature = "test-support")]
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 pub use url::Url;
+
+pub struct ReadTimeout(pub Duration);
+#[derive(Default, Debug, Clone)]
+pub enum RedirectPolicy {
+    #[default]
+    NoFollow,
+    FollowLimit(u32),
+    FollowAll,
+}
+pub struct FollowRedirects(pub bool);
+
+pub trait HttpRequestExt {
+    /// Set a read timeout on the request.
+    /// For isahc, this is the low_speed_timeout.
+    /// For other clients, this is the timeout used for read calls when reading the response.
+    /// In all cases this prevents servers stalling completely, but allows them to send data slowly.
+    fn read_timeout(self, timeout: Duration) -> Self;
+    /// Whether or not to follow redirects
+    fn follow_redirects(self, follow: RedirectPolicy) -> Self;
+}
+
+impl HttpRequestExt for http::request::Builder {
+    fn read_timeout(self, timeout: Duration) -> Self {
+        self.extension(ReadTimeout(timeout))
+    }
+
+    fn follow_redirects(self, follow: RedirectPolicy) -> Self {
+        self.extension(follow)
+    }
+}
 
 pub trait HttpClient: 'static + Send + Sync {
     fn send(
         &self,
         req: http::Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        self.send_with_redirect_policy(req, false)
-    }
-
-    // TODO: Make a better API for this
-    fn send_with_redirect_policy(
-        &self,
-        req: Request<AsyncBody>,
-        follow_redirects: bool,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>;
 
     fn get<'a>(
@@ -34,14 +58,17 @@ pub trait HttpClient: 'static + Send + Sync {
         body: AsyncBody,
         follow_redirects: bool,
     ) -> BoxFuture<'a, Result<Response<AsyncBody>, anyhow::Error>> {
-        let request = Builder::new().uri(uri).body(body);
+        let request = Builder::new()
+            .uri(uri)
+            .follow_redirects(if follow_redirects {
+                RedirectPolicy::FollowAll
+            } else {
+                RedirectPolicy::NoFollow
+            })
+            .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move {
-                self.send_with_redirect_policy(request, follow_redirects)
-                    .await
-                    .map_err(Into::into)
-            }),
+            Ok(request) => Box::pin(async move { self.send(request).await.map_err(Into::into) }),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
@@ -92,12 +119,11 @@ impl HttpClientWithProxy {
 }
 
 impl HttpClient for HttpClientWithProxy {
-    fn send_with_redirect_policy(
+    fn send(
         &self,
         req: Request<AsyncBody>,
-        follow_redirects: bool,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        self.client.send_with_redirect_policy(req, follow_redirects)
+        self.client.send(req)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -106,12 +132,11 @@ impl HttpClient for HttpClientWithProxy {
 }
 
 impl HttpClient for Arc<HttpClientWithProxy> {
-    fn send_with_redirect_policy(
+    fn send(
         &self,
         req: Request<AsyncBody>,
-        follow_redirects: bool,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        self.client.send_with_redirect_policy(req, follow_redirects)
+        self.client.send(req)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -218,12 +243,11 @@ impl HttpClientWithUrl {
 }
 
 impl HttpClient for Arc<HttpClientWithUrl> {
-    fn send_with_redirect_policy(
+    fn send(
         &self,
         req: Request<AsyncBody>,
-        follow_redirects: bool,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        self.client.send_with_redirect_policy(req, follow_redirects)
+        self.client.send(req)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -232,12 +256,11 @@ impl HttpClient for Arc<HttpClientWithUrl> {
 }
 
 impl HttpClient for HttpClientWithUrl {
-    fn send_with_redirect_policy(
+    fn send(
         &self,
         req: Request<AsyncBody>,
-        follow_redirects: bool,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        self.client.send_with_redirect_policy(req, follow_redirects)
+        self.client.send(req)
     }
 
     fn proxy(&self) -> Option<&Uri> {
@@ -282,14 +305,6 @@ impl HttpClient for BlockedHttpClient {
 
     fn proxy(&self) -> Option<&Uri> {
         None
-    }
-
-    fn send_with_redirect_policy(
-        &self,
-        req: Request<AsyncBody>,
-        _: bool,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
-        self.send(req)
     }
 }
 
@@ -352,10 +367,9 @@ impl fmt::Debug for FakeHttpClient {
 
 #[cfg(feature = "test-support")]
 impl HttpClient for FakeHttpClient {
-    fn send_with_redirect_policy(
+    fn send(
         &self,
         req: Request<AsyncBody>,
-        _follow_redirects: bool,
     ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
         let future = (self.handler)(req);
         future

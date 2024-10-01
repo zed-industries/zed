@@ -149,18 +149,6 @@ spec:
                 secretKeyRef:
                   name: google-ai
                   key: api_key
-            - name: RUNPOD_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: runpod
-                  key: api_key
-                  optional: true
-            - name: RUNPOD_API_SUMMARY_URL
-              valueFrom:
-                secretKeyRef:
-                  name: runpod
-                  key: summary
-                  optional: true
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

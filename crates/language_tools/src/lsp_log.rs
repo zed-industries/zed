@@ -17,7 +17,7 @@ use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selectio
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
 const SEND_LINE: &str = "// Send:";
@@ -194,12 +194,11 @@ pub fn init(cx: &mut AppContext) {
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
-                workspace.add_item_to_active_pane(
+                workspace.split_item(
+                    SplitDirection::Right,
                     Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
-                    None,
-                    true,
                     cx,
                 );
             }
@@ -911,6 +910,27 @@ impl Item for LspLogView {
 
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<WorkspaceId>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new_view(|cx| {
+            let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), cx);
+            if let Some(server_id) = self.current_server_id {
+                match self.active_entry_kind {
+                    LogKind::Rpc => new_view.show_rpc_trace_for_server(server_id, cx),
+                    LogKind::Trace => new_view.show_trace_for_server(server_id, cx),
+                    LogKind::Logs => new_view.show_logs_for_server(server_id, cx),
+                }
+            }
+            new_view
+        }))
     }
 }
 
