@@ -377,7 +377,9 @@ impl SshRemoteClient {
                             return anyhow::Ok(());
                         };
 
+                        eprintln!("sending message to child_stdin...");
                         write_message(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
+                        eprintln!("sent message to child_stdin.");
                     }
 
                     result = child_stdout.read(&mut stdout_buffer).fuse() => {
@@ -396,10 +398,14 @@ impl SshRemoteClient {
                                 if len < stdout_buffer.len() {
                                     child_stdout.read_exact(&mut stdout_buffer[len..]).await?;
                                 }
+                                eprintln!("read from child_stdout: {:?}. len: {:?}", &stdout_buffer, len);
 
                                 let message_len = message_len_from_buffer(&stdout_buffer);
+
+                                eprintln!("message_len: {:?}. starting read_message_with_len...", message_len);
                                 match read_message_with_len(&mut child_stdout, &mut stdout_buffer, message_len).await {
                                     Ok(envelope) => {
+                                        eprintln!("read_message_with_len done. message.id: {:?}", envelope.id);
                                         incoming_tx.unbounded_send(envelope).ok();
                                     }
                                     Err(error) => {
@@ -479,9 +485,11 @@ impl SshRemoteClient {
         let socket = ssh_connection.socket.clone();
         run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
 
+        delegate.set_status(Some("Starting proxy"), cx);
+
         let ssh_process = socket
             .ssh_command(format!(
-                "RUST_LOG={} RUST_BACKTRACE={} {:?} run",
+                "RUST_LOG={} RUST_BACKTRACE={} {:?} proxy",
                 std::env::var("RUST_LOG").unwrap_or_default(),
                 std::env::var("RUST_BACKTRACE").unwrap_or_default(),
                 remote_binary_path,

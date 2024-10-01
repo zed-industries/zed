@@ -22,6 +22,7 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+clap.workspace = true
 client.workspace = true
 env_logger.workspace = true
 fs.workspace = true
@@ -30,6 +31,7 @@ gpui.workspace = true
 node_runtime.workspace = true
 log.workspace = true
 project.workspace = true
+prost.workspace = true
 remote.workspace = true
 rpc.workspace = true
 settings.workspace = true

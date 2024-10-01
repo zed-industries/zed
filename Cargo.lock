@@ -9165,6 +9165,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cargo_toml",
+ "clap",
  "client",
  "clock",
  "env_logger",
@@ -9178,6 +9179,7 @@ dependencies = [
  "lsp",
  "node_runtime",
  "project",
+ "prost",
  "remote",
  "rpc",
  "serde",
