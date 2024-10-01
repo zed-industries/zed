@@ -81,6 +81,8 @@ impl DiagnosticsSlashCommand {
     }
 }
 
+const COMMAND_DESCRIPTION: &str = "Insert diagnostics";
+
 impl SlashCommand for DiagnosticsSlashCommand {
     fn name(&self) -> String {
         "diagnostics".into()
@@ -91,11 +93,11 @@ impl SlashCommand for DiagnosticsSlashCommand {
     }
 
     fn description(&self) -> String {
-        "Insert diagnostics".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Diagnostics".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn requires_argument(&self) -> bool {

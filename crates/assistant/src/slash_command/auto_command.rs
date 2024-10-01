@@ -25,17 +25,19 @@ impl FeatureFlag for AutoSlashCommandFeatureFlag {
 
 pub(crate) struct AutoCommand;
 
+const COMMAND_DESCRIPTION: &str = "Automatically infer what context to add";
+
 impl SlashCommand for AutoCommand {
     fn name(&self) -> String {
         "auto".into()
     }
 
     fn description(&self) -> String {
-        "Automatically infer what context to add, based on your prompt".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn menu_text(&self) -> String {
-        "Automatically Infer Context".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {

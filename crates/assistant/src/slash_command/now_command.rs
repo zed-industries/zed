@@ -13,17 +13,19 @@ use workspace::Workspace;
 
 pub(crate) struct NowSlashCommand;
 
+const COMMAND_DESCRIPTION: &str = "Insert current date and time";
+
 impl SlashCommand for NowSlashCommand {
     fn name(&self) -> String {
         "now".into()
     }
 
     fn description(&self) -> String {
-        "insert the current date and time".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Current Date and Time".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn requires_argument(&self) -> bool {

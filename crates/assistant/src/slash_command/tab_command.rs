@@ -16,6 +16,8 @@ use workspace::Workspace;
 
 pub(crate) struct TabSlashCommand;
 
+const COMMAND_DESCRIPTION: &str = "Insert open tabs (active tab by default)";
+
 const ALL_TABS_COMPLETION_ITEM: &str = "all";
 
 impl SlashCommand for TabSlashCommand {
@@ -24,11 +26,11 @@ impl SlashCommand for TabSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert open tabs (active tab by default)".to_owned()
+        COMMAND_DESCRIPTION.to_owned()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Open Tabs".to_owned()
+        COMMAND_DESCRIPTION.to_owned()
     }
 
     fn requires_argument(&self) -> bool {

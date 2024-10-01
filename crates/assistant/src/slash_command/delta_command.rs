@@ -13,17 +13,19 @@ use workspace::Workspace;
 
 pub(crate) struct DeltaSlashCommand;
 
+const COMMAND_DESCRIPTION: &str = "Re-insert changed files";
+
 impl SlashCommand for DeltaSlashCommand {
     fn name(&self) -> String {
         "delta".into()
     }
 
     fn description(&self) -> String {
-        "re-insert changed files".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn menu_text(&self) -> String {
-        "Re-insert Changed Files".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn requires_argument(&self) -> bool {

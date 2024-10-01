@@ -23,17 +23,19 @@ impl WorkflowSlashCommand {
     }
 }
 
+const COMMAND_DESCRIPTION: &str = "Insert prompt to opt into the edit workflow";
+
 impl SlashCommand for WorkflowSlashCommand {
     fn name(&self) -> String {
         "workflow".into()
     }
 
     fn description(&self) -> String {
-        "insert a prompt that opts into the edit workflow".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Workflow Prompt".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn requires_argument(&self) -> bool {

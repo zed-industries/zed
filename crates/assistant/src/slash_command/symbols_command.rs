@@ -11,17 +11,19 @@ use workspace::Workspace;
 
 pub(crate) struct OutlineSlashCommand;
 
+const COMMAND_DESCRIPTION: &str = "Insert symbols for active tab";
+
 impl SlashCommand for OutlineSlashCommand {
     fn name(&self) -> String {
         "symbols".into()
     }
 
     fn description(&self) -> String {
-        "insert symbols for active tab".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Symbols for Active Tab".into()
+        COMMAND_DESCRIPTION.into()
     }
 
     fn complete_argument(
