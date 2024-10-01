@@ -11,7 +11,7 @@ use text::ToOffset;
 use ui::prelude::*;
 use workspace::{
     searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView,
+    ToolbarItemView, Workspace,
 };
 
 pub struct ProposedChangesEditor {
@@ -158,6 +158,11 @@ impl Item for ProposedChangesEditor {
         } else {
             None
         }
+    }
+
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
     }
 }
 
