@@ -2133,6 +2133,7 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
+                        let language = this.buffer.read(cx).language().map(|l| l.name());
                         telemetry.report_assistant_event(
                             Some(this.id.0.clone()),
                             AssistantKind::Panel,
@@ -2140,6 +2141,7 @@ impl Context {
                             model.telemetry_id(),
                             response_latency,
                             error_message,
+                            language,
                         );
                     }
 

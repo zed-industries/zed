@@ -7,6 +7,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use http_client::{self, HttpClient, HttpClientWithUrl, Method};
+use language::LanguageName;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -399,6 +400,7 @@ impl Telemetry {
         model: String,
         response_latency: Option<Duration>,
         error_message: Option<String>,
+        language_name: Option<LanguageName>,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
@@ -407,6 +409,7 @@ impl Telemetry {
             model: model.to_string(),
             response_latency,
             error_message,
+            language_name,
         });
 
         self.report_event(event)

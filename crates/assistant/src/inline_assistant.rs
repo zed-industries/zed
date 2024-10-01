@@ -211,6 +211,12 @@ impl InlineAssistant {
     ) {
         if let Some(telemetry) = self.telemetry.as_ref() {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                let language = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .language(cx)
+                    .map(|l| l.name());
                 telemetry.report_assistant_event(
                     None,
                     telemetry_events::AssistantKind::Inline,
@@ -218,6 +224,7 @@ impl InlineAssistant {
                     model.telemetry_id(),
                     None,
                     None,
+                    language,
                 );
             }
         }
@@ -761,23 +768,33 @@ impl InlineAssistant {
     }
 
     pub fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
-        if let Some(telemetry) = self.telemetry.as_ref() {
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                telemetry.report_assistant_event(
-                    None,
-                    telemetry_events::AssistantKind::Inline,
-                    if undo {
-                        telemetry_events::AssistantPhase::Rejected
-                    } else {
-                        telemetry_events::AssistantPhase::Accepted
-                    },
-                    model.telemetry_id(),
-                    None,
-                    None,
-                );
-            }
-        }
         if let Some(assist) = self.assists.get(&assist_id) {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                    let language = assist.editor.upgrade().and_then(|editor| {
+                        editor
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .language(cx)
+                            .map(|l| l.name())
+                    });
+                    telemetry.report_assistant_event(
+                        None,
+                        telemetry_events::AssistantKind::Inline,
+                        if undo {
+                            telemetry_events::AssistantPhase::Rejected
+                        } else {
+                            telemetry_events::AssistantPhase::Accepted
+                        },
+                        model.telemetry_id(),
+                        None,
+                        None,
+                        language,
+                    );
+                }
+            }
+
             let assist_group_id = assist.group_id;
             if self.assist_groups[&assist_group_id].linked {
                 for assist_id in self.unlink_assist_group(assist_group_id, cx) {
@@ -2810,6 +2827,8 @@ impl CodegenAlternative {
         }
 
         let telemetry = self.telemetry.clone();
+        let language = self.buffer.read(cx).language(cx).map(|l| l.name());
+
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         let mut edit_start = self.range.start.to_offset(&snapshot);
@@ -2927,6 +2946,7 @@ impl CodegenAlternative {
                                     model_telemetry_id,
                                     response_latency,
                                     error_message,
+                                    language,
                                 );
                             }
 

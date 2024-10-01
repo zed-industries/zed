@@ -1,5 +1,6 @@
 //! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
 
+use language::LanguageName;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, sync::Arc, time::Duration};
@@ -155,6 +156,7 @@ pub struct AssistantEvent {
     pub model: String,
     pub response_latency: Option<Duration>,
     pub error_message: Option<String>,
+    pub language_name: Option<LanguageName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

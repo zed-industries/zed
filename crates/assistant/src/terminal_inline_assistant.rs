@@ -1070,6 +1070,7 @@ impl Codegen {
                             model_telemetry_id,
                             response_latency,
                             error_message,
+                            None,
                         );
                     }
 
