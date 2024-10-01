@@ -5,7 +5,7 @@ use language::{
     TextSummary, ToOffset as _,
 };
 use std::{cmp::Ordering, fmt::Debug, ops::Range, path::Path, sync::Arc};
-use sum_tree::{Item, SeekTarget, SumTree, TreeMap};
+use sum_tree::{Item, SumTree, TreeMap};
 use text::Patch;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -109,14 +109,6 @@ impl MultiBuffer {
             }
         });
 
-        log::info!(
-            "inserting new excerpts... {:?}",
-            new_excerpts
-                .iter()
-                .map(|excerpt| { excerpt.key.range.to_offset(&excerpt.snapshot) })
-                .collect::<Vec<_>>()
-        );
-
         let mut cursor = self
             .snapshot
             .excerpts
@@ -125,11 +117,6 @@ impl MultiBuffer {
         let mut new_excerpts = new_excerpts.into_iter().peekable();
         let mut edits = Patch::default();
         while let Some(mut new_excerpt) = new_excerpts.next() {
-            log::info!(
-                "inserting new excerpt {:?}",
-                new_excerpt.key.range.to_offset(&new_excerpt.snapshot)
-            );
-
             // Reinsert all excerpts preceding the start of the new excerpt
             new_tree.append(
                 cursor.slice(
@@ -307,22 +294,7 @@ impl MultiBuffer {
         );
         drop(cursor);
         self.snapshot.excerpts = new_tree;
-
-        log::info!("========================");
-        for excerpt in self.snapshot.excerpts.iter() {
-            log::info!(
-                "range: {:?}",
-                excerpt.key.range.to_offset(
-                    self.snapshot
-                        .buffer_snapshots
-                        .get(&excerpt.key.buffer_id)
-                        .unwrap(),
-                )
-            )
-        }
-
         self.check_invariants();
-
         self.edits.publish(edits);
     }
 
@@ -465,21 +437,6 @@ impl MultiBuffer {
     }
 
     fn apply_edits(&mut self, edits: Vec<(Option<Arc<Path>>, BufferId, language::Edit<usize>)>) {
-        log::info!("before ===================");
-        for excerpt in self.snapshot.excerpts.iter() {
-            log::info!(
-                "{:?} {:?} (header? {})",
-                excerpt.key.buffer_id,
-                excerpt.key.range.to_offset(
-                    self.snapshot
-                        .buffer_snapshots
-                        .get(&excerpt.key.buffer_id)
-                        .unwrap()
-                ),
-                excerpt.show_header,
-            )
-        }
-
         let mut cursor = self
             .snapshot
             .excerpts
@@ -506,19 +463,18 @@ impl MultiBuffer {
                 if excerpt.key.buffer_id == buffer_id
                     && excerpt.key.range.start.cmp(&edit_end, &snapshot).is_le()
                 {
-                    log::info!(
-                        "re-inserting excerpt: {:?}",
-                        excerpt.key.range.to_offset(
-                            self.snapshot
-                                .buffer_snapshots
-                                .get(&excerpt.key.buffer_id)
-                                .unwrap(),
-                        )
-                    );
-
-                    push_new_excerpt(
-                        &mut new_tree,
-                        excerpt.key.clone(),
+                    let last_header = new_tree.summary().last_header.clone();
+                    let offset_range = excerpt.key.range.to_offset(snapshot);
+                    let show_header = !offset_range.is_empty()
+                        && last_header.map_or(true, |last_header| {
+                            last_header.buffer_id != excerpt.key.buffer_id
+                                || last_header.range.end.to_offset(&snapshot) < offset_range.start
+                        });
+                    new_tree.push(
+                        Excerpt {
+                            key: excerpt.key.clone(),
+                            show_header,
+                        },
                         &self.snapshot.buffer_snapshots,
                     );
                     cursor.next(&self.snapshot.buffer_snapshots);
@@ -534,21 +490,6 @@ impl MultiBuffer {
         );
         drop(cursor);
         self.snapshot.excerpts = new_tree;
-
-        log::info!("after ===================");
-        for excerpt in self.snapshot.excerpts.iter() {
-            log::info!(
-                "{:?} {:?} (header? {})",
-                excerpt.key.buffer_id,
-                excerpt.key.range.to_offset(
-                    self.snapshot
-                        .buffer_snapshots
-                        .get(&excerpt.key.buffer_id)
-                        .unwrap()
-                ),
-                excerpt.show_header,
-            )
-        }
     }
 
     pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> MultiBufferSnapshot {
@@ -593,79 +534,6 @@ impl MultiBuffer {
                 assert_eq!(cursor.start().clone(), summary);
             }
         }
-    }
-}
-
-fn push_new_excerpt(
-    excerpts: &mut SumTree<Excerpt>,
-    new_key: ExcerptKey,
-    snapshots: &TreeMap<BufferId, BufferSnapshot>,
-) {
-    let snapshot = snapshots.get(&new_key.buffer_id).unwrap();
-    // dbg!(
-    //     snapshot.text(),
-    //     snapshot
-    //         .text_for_range(new_key.range.clone())
-    //         .collect::<String>()
-    // );
-
-    let last_header = excerpts.summary().last_header.clone();
-    let mut merged_with_previous = false;
-    excerpts.update_last(
-        |last_excerpt| {
-            if last_excerpt.key.buffer_id == new_key.buffer_id {
-                if last_excerpt
-                    .key
-                    .range
-                    .end
-                    .cmp(&new_key.range.start, snapshot)
-                    .is_ge()
-                {
-                    merged_with_previous = true;
-                    if new_key
-                        .range
-                        .end
-                        .cmp(&last_excerpt.key.range.end, snapshot)
-                        .is_gt()
-                    {
-                        last_excerpt.key.range.end = new_key.range.end;
-                        if !last_excerpt.show_header {
-                            last_excerpt.show_header = should_show_header(
-                                &last_excerpt.key,
-                                last_header.as_ref(),
-                                snapshot,
-                            );
-                        }
-                    }
-                }
-            }
-        },
-        snapshots,
-    );
-
-    // dbg!(merged_with_previous);
-    if !merged_with_previous {
-        excerpts.push(
-            Excerpt {
-                show_header: should_show_header(&new_key, last_header.as_ref(), snapshot),
-                key: new_key,
-            },
-            snapshots,
-        );
-    }
-
-    /// Show header if new excerpt is non-empty and not touching a previous excerpt showing header.
-    fn should_show_header(
-        key: &ExcerptKey,
-        last_header: Option<&ExcerptKey>,
-        snapshot: &BufferSnapshot,
-    ) -> bool {
-        let offset_range = key.range.to_offset(snapshot);
-        !offset_range.is_empty()
-            && last_header.map_or(true, |last_header| {
-                last_header.buffer_id != key.buffer_id
-                    || last_header.range.end.to_offset(&snapshot) < offset_range.start
-            })
     }
 }
 
@@ -1103,13 +971,11 @@ mod tests {
             let mut excerpts = Vec::new();
 
             for _ in 0..operations {
-                log::info!("=====================================");
                 let buffer_handle = match rng.gen_range(0..3) {
                     0 => fruits.clone(),
                     1 => cars.clone(),
                     _ => animals.clone(),
                 };
-
                 log::info!(
                     "{} ({}):",
                     buffer_handle
