@@ -854,8 +854,10 @@ impl Buffer {
                 ..
             }) = &mut self.diff_base
             {
-                operations_to_ignore.extend(operation);
+                operations_to_ignore.extend(operation.clone());
             }
+
+            cx.emit(BufferEvent::DiffBaseChanged);
         });
     }
 
