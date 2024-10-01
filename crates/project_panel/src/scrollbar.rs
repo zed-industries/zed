@@ -6,7 +6,7 @@ use gpui::{
 };
 use ui::{prelude::*, px, relative, IntoElement};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScrollbarKind {
     Horizontal,
     Vertical,
@@ -51,10 +51,6 @@ impl ProjectPanelScrollbar {
             parent_id,
         }
     }
-
-    fn is_vertical(&self) -> bool {
-        matches!(self.kind, ScrollbarKind::Vertical)
-    }
 }
 
 impl gpui::Element for ProjectPanelScrollbar {
@@ -74,7 +70,7 @@ impl gpui::Element for ProjectPanelScrollbar {
         let mut style = Style::default();
         style.flex_grow = 1.;
         style.flex_shrink = 1.;
-        if self.is_vertical() {
+        if self.kind == ScrollbarKind::Vertical {
             style.size.width = px(12.).into();
             style.size.height = relative(1.).into();
         } else {
@@ -108,7 +104,7 @@ impl gpui::Element for ProjectPanelScrollbar {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let colors = cx.theme().colors();
             let thumb_background = colors.scrollbar_thumb_background;
-            let is_vertical = self.is_vertical();
+            let is_vertical = self.kind == ScrollbarKind::Vertical;
             let extra_padding = px(5.0);
             let padded_bounds = if is_vertical {
                 Bounds::from_corners(
