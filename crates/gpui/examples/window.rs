@@ -61,104 +61,11 @@ impl Render for SubWindow {
 
 struct WindowDemo {}
 
-impl WindowDemo {
-    fn window_bounds(cx: &mut AppContext) -> WindowBounds {
-        WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx))
-    }
-
-    fn new_normal_window(cx: &mut AppContext) {
-        let window_bounds = Self::window_bounds(cx);
-
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(window_bounds),
-                ..Default::default()
-            },
-            |cx| {
-                cx.new_view(|_cx| SubWindow {
-                    custom_titlebar: false,
-                })
-            },
-        )
-        .unwrap();
-    }
-
-    fn new_popup_window(cx: &mut AppContext) {
-        let window_bounds = Self::window_bounds(cx);
-
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(window_bounds),
-                kind: WindowKind::PopUp,
-                ..Default::default()
-            },
-            |cx| {
-                cx.new_view(|_cx| SubWindow {
-                    custom_titlebar: false,
-                })
-            },
-        )
-        .unwrap();
-    }
-
-    fn new_custom_titlebar_window(cx: &mut AppContext) {
-        let window_bounds = Self::window_bounds(cx);
-
-        cx.open_window(
-            WindowOptions {
-                titlebar: None,
-                window_bounds: Some(window_bounds),
-                ..Default::default()
-            },
-            |cx| {
-                cx.new_view(|_cx| SubWindow {
-                    custom_titlebar: true,
-                })
-            },
-        )
-        .unwrap();
-    }
-
-    fn new_hide_window(cx: &mut AppContext) {
-        let window_bounds = Self::window_bounds(cx);
-
-        cx.open_window(
-            WindowOptions {
-                show: false,
-                window_bounds: Some(window_bounds),
-                ..Default::default()
-            },
-            |cx| {
-                cx.new_view(|_cx| SubWindow {
-                    custom_titlebar: false,
-                })
-            },
-        )
-        .unwrap();
-    }
-
-    fn new_unmovable_window(cx: &mut AppContext) {
-        let window_bounds = Self::window_bounds(cx);
-
-        cx.open_window(
-            WindowOptions {
-                is_movable: false,
-                titlebar: None,
-                window_bounds: Some(window_bounds),
-                ..Default::default()
-            },
-            |cx| {
-                cx.new_view(|_cx| SubWindow {
-                    custom_titlebar: false,
-                })
-            },
-        )
-        .unwrap();
-    }
-}
-
 impl Render for WindowDemo {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let window_bounds =
+            WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
+
         div()
             .p_4()
             .flex()
@@ -168,20 +75,80 @@ impl Render for WindowDemo {
             .justify_center()
             .items_center()
             .gap_2()
-            .child(button("Normal", |cx| {
-                Self::new_normal_window(cx);
+            .child(button("Normal", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Popup", |cx| {
-                Self::new_popup_window(cx);
+            .child(button("Popup", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        kind: WindowKind::PopUp,
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Custom Titlebar", |cx| {
-                Self::new_custom_titlebar_window(cx);
+            .child(button("Custom Titlebar", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        titlebar: None,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: true,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Invisable", |cx| {
-                Self::new_hide_window(cx);
+            .child(button("Invisible", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        show: false,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Unmovable", |cx| {
-                Self::new_unmovable_window(cx);
+            .child(button("Unmovable", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        is_movable: false,
+                        titlebar: None,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
             .child(button("Hide Application", |cx| {
                 cx.hide();
