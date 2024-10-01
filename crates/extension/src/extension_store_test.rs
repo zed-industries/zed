@@ -7,6 +7,7 @@ use crate::{
 };
 use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
+use async_ureq::AsyncUreq;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
@@ -575,8 +576,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             std::env::consts::ARCH
         )
     });
-    let builder_client =
-        async_ureq::AsyncUreq::new(None, Some(user_agent), cx.background_executor().clone());
+    let builder_client = Arc::new(AsyncUreq::new(None, user_agent, cx.executor().clone()));
 
     let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(

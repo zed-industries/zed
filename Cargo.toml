@@ -53,7 +53,6 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
-    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -231,7 +230,6 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
-isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
@@ -268,6 +266,7 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
+reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -366,10 +365,7 @@ ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
-# We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "text-decoding",
-] }
+
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
@@ -394,6 +390,7 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
+reqwest  = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29" }
 rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",

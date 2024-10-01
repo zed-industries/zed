@@ -1,7 +1,9 @@
-use std::{io::Read, mem, task::Poll};
+use std::{io::Read, task::Poll};
 
 use anyhow::anyhow;
 use futures::{AsyncRead, TryStreamExt};
+use http_client::{http, ReadTimeout};
+use reqwest::header::{HeaderMap, HeaderValue};
 use smol::future::FutureExt;
 
 pub struct ReqwestClient {
@@ -13,6 +15,20 @@ impl ReqwestClient {
         Self {
             client: reqwest::Client::new(),
         }
+    }
+
+    pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
+        let mut map = HeaderMap::new();
+        map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
+        Ok(Self {
+            client: reqwest::Client::builder().default_headers(map).build()?,
+        })
+    }
+}
+
+impl From<reqwest::Client> for ReqwestClient {
+    fn from(client: reqwest::Client) -> Self {
+        Self { client }
     }
 }
 
@@ -52,39 +68,44 @@ impl futures::stream::Stream for WrappedBody {
 }
 
 impl http_client::HttpClient for ReqwestClient {
-    fn proxy(&self) -> Option<&http_client::http::Uri> {
+    fn proxy(&self) -> Option<&http::Uri> {
         None
     }
 
     fn send(
         &self,
-        req: http_client::http::Request<http_client::AsyncBody>,
+        req: http::Request<http_client::AsyncBody>,
     ) -> futures::future::BoxFuture<
         'static,
         Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
     > {
         let (parts, body) = req.into_parts();
 
+        let mut request = self.client.request(parts.method, parts.uri.to_string());
 
-        let mut request = self.client.request(
-            parts.method,
-            parts.uri.to_string(),
-        );
-
-        request.headers(parts.headers);
-
+        request = request.headers(parts.headers);
 
         if let Some(redirect_policy) = parts.extensions.get::<http_client::RedirectPolicy>() {
-            request.
+            request = request.redirect_policy(match redirect_policy {
+                http_client::RedirectPolicy::NoFollow => reqwest::redirect::Policy::none(),
+                http_client::RedirectPolicy::FollowLimit(limit) => {
+                    reqwest::redirect::Policy::limited(*limit as usize)
+                }
+                http_client::RedirectPolicy::FollowAll => reqwest::redirect::Policy::limited(100),
+            });
         }
 
-        let body = WrappedBody(req.into_body());
+        if let Some(ReadTimeout(timeout)) = parts.extensions.get::<ReadTimeout>() {
+            request = request.timeout(*timeout);
+        }
+
+        let body = WrappedBody(body);
         let request = request.body(reqwest::Body::wrap_stream(body));
 
         async move {
             let response = request.send().await.map_err(|e| anyhow!(e))?;
             let status = response.status();
-            let mut builder = http_client::http::Response::builder().status(status.as_u16());
+            let mut builder = http::Response::builder().status(status.as_u16());
             for (name, value) in response.headers() {
                 builder = builder.header(name, value);
             }
