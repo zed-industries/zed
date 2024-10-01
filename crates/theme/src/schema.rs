@@ -1,7 +1,7 @@
-use anyhow::Result;
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
+use anyhow::{anyhow, Result};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, Rgba, WindowBackgroundAppearance};
 use indexmap::IndexMap;
-use palette::FromColor;
+use regex::Regex;
 use schemars::gen::SchemaGenerator;
 use schemars::schema::{Schema, SchemaObject};
 use schemars::JsonSchema;
@@ -11,19 +11,34 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
+fn parse_hsl(color: &str) -> Result<Hsla> {
+    let re = Regex::new(r"hsla?\((\d+),\s*(\d+)%,\s*(\d+)%(?:,\s*([\d.]+))?\)")?;
+    let caps = re
+        .captures(color)
+        .ok_or_else(|| anyhow!("Invalid HSL(A) format"))?;
+
+    let h = caps.get(1).unwrap().as_str().parse::<f32>()? / 360.0;
+    let s = caps.get(2).unwrap().as_str().parse::<f32>()? / 100.0;
+    let l = caps.get(3).unwrap().as_str().parse::<f32>()? / 100.0;
+    let a = caps.get(4).map_or(Ok(1.0), |m| m.as_str().parse::<f32>())?;
+
+    Ok(Hsla { h, s, l, a })
+}
+
 pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
-    let rgba = gpui::Rgba::try_from(color)?;
-    let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
-    let hsla = palette::Hsla::from_color(rgba);
+    let color = color.trim();
 
-    let hsla = gpui::hsla(
-        hsla.hue.into_positive_degrees() / 360.,
-        hsla.saturation,
-        hsla.lightness,
-        hsla.alpha,
-    );
+    if color.starts_with('#') {
+        let rgba = Rgba::try_from(color)?;
+        return Ok(Hsla::from(rgba));
+    }
 
-    Ok(hsla)
+    if color.starts_with("hsl") {
+        return parse_hsl(color);
+    }
+
+    let rgba = Rgba::try_from(color)?;
+    Ok(Hsla::from(rgba))
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]

@@ -11488,6 +11488,7 @@ dependencies = [
  "palette",
  "parking_lot",
  "refineable",
+ "regex",
  "schemars",
  "serde",
  "serde_derive",

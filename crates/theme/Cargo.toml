@@ -39,6 +39,7 @@ settings.workspace = true
 story = { workspace = true, optional = true }
 util.workspace = true
 uuid.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
