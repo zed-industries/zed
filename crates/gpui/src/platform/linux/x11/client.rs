@@ -1,6 +1,6 @@
 use core::str;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -37,11 +37,15 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
+    Platform, PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta, Size, TouchPhase,
+    WindowParams, X11Window,
 };
 
-use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
+use super::{
+    button_or_scroll_from_event_detail, get_valuator_axis_index, modifiers_from_state,
+    pressed_button_from_mask, ButtonOrScroll, ScrollDirection,
+};
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES};
@@ -50,7 +54,15 @@ use crate::platform::linux::{
     get_xkb_compose_state, is_within_click_distance, open_uri_internal, reveal_path_internal,
 };
 
-pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
+/// Value for DeviceId parameters which selects all devices.
+pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
+
+/// Value for DeviceId parameters which selects all device groups. Events that
+/// occur within the group are emitted by the group itself.
+///
+/// In XInput 2's interface, these are referred to as "master devices", but that
+/// terminology is both archaic and unclear.
+pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -116,11 +128,32 @@ pub struct Xdnd {
     position: Point<Pixels>,
 }
 
+#[derive(Debug)]
+struct PointerDeviceState {
+    horizontal: ScrollAxisState,
+    vertical: ScrollAxisState,
+}
+
+#[derive(Debug, Default)]
+struct ScrollAxisState {
+    /// Valuator number for looking up this axis's scroll value.
+    valuator_number: Option<u16>,
+    /// Conversion factor from scroll units to lines.
+    multiplier: f32,
+    /// Last scroll value for calculating scroll delta.
+    ///
+    /// This gets set to `None` whenever it might be invalid - when devices change or when window focus changes.
+    /// The logic errs on the side of invalidating this, since the consequence is just skipping the delta of one scroll event.
+    /// The consequence of not invalidating it can be large invalid deltas, which are much more user visible.
+    scroll_value: Option<f32>,
+}
+
 pub struct X11ClientState {
     pub(crate) loop_handle: LoopHandle<'static, X11Client>,
     pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
 
     pub(crate) last_click: Instant,
+    pub(crate) last_mouse_button: Option<MouseButton>,
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
@@ -150,9 +183,7 @@ pub struct X11ClientState {
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
 
-    pub(crate) scroll_class_data: Vec<xinput::DeviceClassDataScroll>,
-    pub(crate) scroll_x: Option<f32>,
-    pub(crate) scroll_y: Option<f32>,
+    pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: x11_clipboard::Clipboard,
@@ -188,7 +219,7 @@ impl X11ClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let client = self.get_client();
         let mut state = client.0.borrow_mut();
         if state.composing || state.ximc.is_none() {
@@ -264,31 +295,21 @@ impl X11Client {
             .prefetch_extension_information(xinput::X11_EXTENSION_NAME)
             .unwrap();
 
+        // Announce to X server that XInput up to 2.1 is supported. To increase this to 2.2 and
+        // beyond, support for touch events would need to be added.
         let xinput_version = xcb_connection
-            .xinput_xi_query_version(2, 0)
+            .xinput_xi_query_version(2, 1)
             .unwrap()
             .reply()
             .unwrap();
+        // XInput 1.x is not supported.
         assert!(
             xinput_version.major_version >= 2,
-            "XInput Extension v2 not supported."
+            "XInput version >= 2 required."
         );
 
-        let master_device_query = xcb_connection
-            .xinput_xi_query_device(XINPUT_MASTER_DEVICE)
-            .unwrap()
-            .reply()
-            .unwrap();
-        let scroll_class_data = master_device_query
-            .infos
-            .iter()
-            .find(|info| info.type_ == xinput::DeviceType::MASTER_POINTER)
-            .unwrap()
-            .classes
-            .iter()
-            .filter_map(|class| class.data.as_scroll())
-            .map(|class| *class)
-            .collect::<Vec<_>>();
+        let pointer_device_states =
+            get_new_pointer_device_states(&xcb_connection, &BTreeMap::new());
 
         let atoms = XcbAtoms::new(&xcb_connection).unwrap().reply().unwrap();
 
@@ -403,6 +424,7 @@ impl X11Client {
             loop_handle: handle,
             common,
             last_click: Instant::now(),
+            last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
             scale_factor,
@@ -431,9 +453,7 @@ impl X11Client {
             cursor_styles: HashMap::default(),
             cursor_cache: HashMap::default(),
 
-            scroll_class_data,
-            scroll_x: None,
-            scroll_y: None,
+            pointer_device_states,
 
             clipboard,
             clipboard_item: None,
@@ -947,31 +967,56 @@ impl X11Client {
                     window.handle_ime_commit(text);
                     state = self.0.borrow_mut();
                 }
-                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
-                    let click_elapsed = state.last_click.elapsed();
+                match button_or_scroll_from_event_detail(event.detail) {
+                    Some(ButtonOrScroll::Button(button)) => {
+                        let click_elapsed = state.last_click.elapsed();
+                        if click_elapsed < DOUBLE_CLICK_INTERVAL
+                            && state
+                                .last_mouse_button
+                                .is_some_and(|prev_button| prev_button == button)
+                            && is_within_click_distance(state.last_location, position)
+                        {
+                            state.current_count += 1;
+                        } else {
+                            state.current_count = 1;
+                        }
 
-                    if click_elapsed < DOUBLE_CLICK_INTERVAL
-                        && is_within_click_distance(state.last_location, position)
-                    {
-                        state.current_count += 1;
-                    } else {
-                        state.current_count = 1;
+                        state.last_click = Instant::now();
+                        state.last_mouse_button = Some(button);
+                        state.last_location = position;
+                        let current_count = state.current_count;
+
+                        drop(state);
+                        window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: current_count,
+                            first_mouse: false,
+                        }));
                     }
-
-                    state.last_click = Instant::now();
-                    state.last_location = position;
-                    let current_count = state.current_count;
-
-                    drop(state);
-                    window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
-                        button,
-                        position,
-                        modifiers,
-                        click_count: current_count,
-                        first_mouse: false,
-                    }));
-                } else {
-                    log::warn!("Unknown button press: {event:?}");
+                    Some(ButtonOrScroll::Scroll(direction)) => {
+                        drop(state);
+                        // Emulated scroll button presses are sent simultaneously with smooth scrolling XinputMotion events.
+                        // Since handling those events does the scrolling, they are skipped here.
+                        if !event
+                            .flags
+                            .contains(xinput::PointerEventFlags::POINTER_EMULATED)
+                        {
+                            let scroll_delta = match direction {
+                                ScrollDirection::Up => Point::new(0.0, SCROLL_LINES),
+                                ScrollDirection::Down => Point::new(0.0, -SCROLL_LINES),
+                                ScrollDirection::Left => Point::new(SCROLL_LINES, 0.0),
+                                ScrollDirection::Right => Point::new(-SCROLL_LINES, 0.0),
+                            };
+                            window.handle_input(PlatformInput::ScrollWheel(
+                                make_scroll_wheel_event(position, scroll_delta, modifiers),
+                            ));
+                        }
+                    }
+                    None => {
+                        log::error!("Unknown x11 button: {}", event.detail);
+                    }
                 }
             }
             Event::XinputButtonRelease(event) => {
@@ -984,15 +1029,19 @@ impl X11Client {
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
-                    let click_count = state.current_count;
-                    drop(state);
-                    window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
-                        button,
-                        position,
-                        modifiers,
-                        click_count,
-                    }));
+                match button_or_scroll_from_event_detail(event.detail) {
+                    Some(ButtonOrScroll::Button(button)) => {
+                        let click_count = state.current_count;
+                        drop(state);
+                        window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count,
+                        }));
+                    }
+                    Some(ButtonOrScroll::Scroll(_)) => {}
+                    None => {}
                 }
             }
             Event::XinputMotion(event) => {
@@ -1007,12 +1056,6 @@ impl X11Client {
                 state.modifiers = modifiers;
                 drop(state);
 
-                let axisvalues = event
-                    .axisvalues
-                    .iter()
-                    .map(|axisvalue| fp3232_to_f32(*axisvalue))
-                    .collect::<Vec<_>>();
-
                 if event.valuator_mask[0] & 3 != 0 {
                     window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                         position,
@@ -1021,64 +1064,17 @@ impl X11Client {
                     }));
                 }
 
-                let mut valuator_idx = 0;
-                let scroll_class_data = self.0.borrow().scroll_class_data.clone();
-                for shift in 0..32 {
-                    if (event.valuator_mask[0] >> shift) & 1 == 0 {
-                        continue;
+                state = self.0.borrow_mut();
+                if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
+                    let scroll_delta = get_scroll_delta_and_update_state(&mut pointer, &event);
+                    drop(state);
+                    if let Some(scroll_delta) = scroll_delta {
+                        window.handle_input(PlatformInput::ScrollWheel(make_scroll_wheel_event(
+                            position,
+                            scroll_delta,
+                            modifiers,
+                        )));
                     }
-
-                    for scroll_class in &scroll_class_data {
-                        if scroll_class.scroll_type == xinput::ScrollType::HORIZONTAL
-                            && scroll_class.number == shift
-                        {
-                            let new_scroll = axisvalues[valuator_idx]
-                                / fp3232_to_f32(scroll_class.increment)
-                                * SCROLL_LINES as f32;
-                            let old_scroll = self.0.borrow().scroll_x;
-                            self.0.borrow_mut().scroll_x = Some(new_scroll);
-
-                            if let Some(old_scroll) = old_scroll {
-                                let delta_scroll = old_scroll - new_scroll;
-                                window.handle_input(PlatformInput::ScrollWheel(
-                                    crate::ScrollWheelEvent {
-                                        position,
-                                        delta: ScrollDelta::Lines(Point::new(delta_scroll, 0.0)),
-                                        modifiers,
-                                        touch_phase: TouchPhase::default(),
-                                    },
-                                ));
-                            }
-                        } else if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
-                            && scroll_class.number == shift
-                        {
-                            // the `increment` is the valuator delta equivalent to one positive unit of scrolling. Here that means SCROLL_LINES lines.
-                            let new_scroll = axisvalues[valuator_idx]
-                                / fp3232_to_f32(scroll_class.increment)
-                                * SCROLL_LINES as f32;
-                            let old_scroll = self.0.borrow().scroll_y;
-                            self.0.borrow_mut().scroll_y = Some(new_scroll);
-
-                            if let Some(old_scroll) = old_scroll {
-                                let delta_scroll = old_scroll - new_scroll;
-                                let (x, y) = if !modifiers.shift {
-                                    (0.0, delta_scroll)
-                                } else {
-                                    (delta_scroll, 0.0)
-                                };
-                                window.handle_input(PlatformInput::ScrollWheel(
-                                    crate::ScrollWheelEvent {
-                                        position,
-                                        delta: ScrollDelta::Lines(Point::new(x, y)),
-                                        modifiers,
-                                        touch_phase: TouchPhase::default(),
-                                    },
-                                ));
-                            }
-                        }
-                    }
-
-                    valuator_idx += 1;
                 }
             }
             Event::XinputEnter(event) if event.mode == xinput::NotifyMode::NORMAL => {
@@ -1088,10 +1084,10 @@ impl X11Client {
                 state.mouse_focused_window = Some(event.event);
             }
             Event::XinputLeave(event) if event.mode == xinput::NotifyMode::NORMAL => {
-                self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
-                self.0.borrow_mut().scroll_y = None;
-
                 let mut state = self.0.borrow_mut();
+
+                // Set last scroll values to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
                 state.mouse_focused_window = None;
                 let pressed_button = pressed_button_from_mask(event.buttons[0]);
                 let position = point(
@@ -1109,6 +1105,26 @@ impl X11Client {
                     modifiers,
                 }));
                 window.set_hovered(false);
+            }
+            Event::XinputHierarchy(event) => {
+                let mut state = self.0.borrow_mut();
+                // Temporarily use `state.pointer_device_states` to only store pointers that still have valid scroll values.
+                // Any change to a device invalidates its scroll values.
+                for info in event.infos {
+                    if is_pointer_device(info.type_) {
+                        state.pointer_device_states.remove(&info.deviceid);
+                    }
+                }
+                state.pointer_device_states = get_new_pointer_device_states(
+                    &state.xcb_connection,
+                    &state.pointer_device_states,
+                );
+            }
+            Event::XinputDeviceChanged(event) => {
+                let mut state = self.0.borrow_mut();
+                if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
+                    reset_pointer_device_scroll_positions(&mut pointer);
+                }
             }
             _ => {}
         };
@@ -1734,4 +1750,143 @@ fn xdnd_send_status(
     xcb_connection
         .send_event(false, target, EventMask::default(), message)
         .unwrap();
+}
+
+/// Recomputes `pointer_device_states` by querying all pointer devices.
+/// When a device is present in `scroll_values_to_preserve`, its value for `ScrollAxisState.scroll_value` is used.
+fn get_new_pointer_device_states(
+    xcb_connection: &XCBConnection,
+    scroll_values_to_preserve: &BTreeMap<xinput::DeviceId, PointerDeviceState>,
+) -> BTreeMap<xinput::DeviceId, PointerDeviceState> {
+    let devices_query_result = xcb_connection
+        .xinput_xi_query_device(XINPUT_ALL_DEVICES)
+        .unwrap()
+        .reply()
+        .unwrap();
+
+    let mut pointer_device_states = BTreeMap::new();
+    pointer_device_states.extend(
+        devices_query_result
+            .infos
+            .iter()
+            .filter(|info| is_pointer_device(info.type_))
+            .filter_map(|info| {
+                let scroll_data = info
+                    .classes
+                    .iter()
+                    .filter_map(|class| class.data.as_scroll())
+                    .map(|class| *class)
+                    .rev()
+                    .collect::<Vec<_>>();
+                let old_state = scroll_values_to_preserve.get(&info.deviceid);
+                let old_horizontal = old_state.map(|state| &state.horizontal);
+                let old_vertical = old_state.map(|state| &state.vertical);
+                let horizontal = scroll_data
+                    .iter()
+                    .find(|data| data.scroll_type == xinput::ScrollType::HORIZONTAL)
+                    .map(|data| scroll_data_to_axis_state(data, old_horizontal));
+                let vertical = scroll_data
+                    .iter()
+                    .find(|data| data.scroll_type == xinput::ScrollType::VERTICAL)
+                    .map(|data| scroll_data_to_axis_state(data, old_vertical));
+                if horizontal.is_none() && vertical.is_none() {
+                    None
+                } else {
+                    Some((
+                        info.deviceid,
+                        PointerDeviceState {
+                            horizontal: horizontal.unwrap_or_else(Default::default),
+                            vertical: vertical.unwrap_or_else(Default::default),
+                        },
+                    ))
+                }
+            }),
+    );
+    if pointer_device_states.is_empty() {
+        log::error!("Found no xinput mouse pointers.");
+    }
+    return pointer_device_states;
+}
+
+/// Returns true if the device is a pointer device. Does not include pointer device groups.
+fn is_pointer_device(type_: xinput::DeviceType) -> bool {
+    type_ == xinput::DeviceType::SLAVE_POINTER
+}
+
+fn scroll_data_to_axis_state(
+    data: &xinput::DeviceClassDataScroll,
+    old_axis_state_with_valid_scroll_value: Option<&ScrollAxisState>,
+) -> ScrollAxisState {
+    ScrollAxisState {
+        valuator_number: Some(data.number),
+        multiplier: SCROLL_LINES / fp3232_to_f32(data.increment),
+        scroll_value: old_axis_state_with_valid_scroll_value.and_then(|state| state.scroll_value),
+    }
+}
+
+fn reset_all_pointer_device_scroll_positions(
+    pointer_device_states: &mut BTreeMap<xinput::DeviceId, PointerDeviceState>,
+) {
+    pointer_device_states
+        .iter_mut()
+        .for_each(|(_, device_state)| reset_pointer_device_scroll_positions(device_state));
+}
+
+fn reset_pointer_device_scroll_positions(pointer: &mut PointerDeviceState) {
+    pointer.horizontal.scroll_value = None;
+    pointer.vertical.scroll_value = None;
+}
+
+/// Returns the scroll delta for a smooth scrolling motion event, or `None` if no scroll data is present.
+fn get_scroll_delta_and_update_state(
+    pointer: &mut PointerDeviceState,
+    event: &xinput::MotionEvent,
+) -> Option<Point<f32>> {
+    let delta_x = get_axis_scroll_delta_and_update_state(event, &mut pointer.horizontal);
+    let delta_y = get_axis_scroll_delta_and_update_state(event, &mut pointer.vertical);
+    if delta_x.is_some() || delta_y.is_some() {
+        Some(Point::new(delta_x.unwrap_or(0.0), delta_y.unwrap_or(0.0)))
+    } else {
+        None
+    }
+}
+
+fn get_axis_scroll_delta_and_update_state(
+    event: &xinput::MotionEvent,
+    axis: &mut ScrollAxisState,
+) -> Option<f32> {
+    let axis_index = get_valuator_axis_index(&event.valuator_mask, axis.valuator_number?)?;
+    if let Some(axis_value) = event.axisvalues.get(axis_index) {
+        let new_scroll = fp3232_to_f32(*axis_value);
+        let delta_scroll = axis
+            .scroll_value
+            .map(|old_scroll| (old_scroll - new_scroll) * axis.multiplier);
+        axis.scroll_value = Some(new_scroll);
+        delta_scroll
+    } else {
+        log::error!("Encountered invalid XInput valuator_mask, scrolling may not work properly.");
+        None
+    }
+}
+
+fn make_scroll_wheel_event(
+    position: Point<Pixels>,
+    scroll_delta: Point<f32>,
+    modifiers: Modifiers,
+) -> crate::ScrollWheelEvent {
+    // When shift is held down, vertical scrolling turns into horizontal scrolling.
+    let delta = if modifiers.shift {
+        Point {
+            x: scroll_delta.y,
+            y: 0.0,
+        }
+    } else {
+        scroll_delta
+    };
+    crate::ScrollWheelEvent {
+        position,
+        delta: ScrollDelta::Lines(delta),
+        modifiers,
+        touch_phase: TouchPhase::default(),
+    }
 }

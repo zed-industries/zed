@@ -267,12 +267,14 @@ left and right padding of the central pane from the workspace when the centered 
 
 ## Direnv Integration
 
-- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. `direnv` integration currently only means that the environment variables set by a `direnv` configuration can be used to detect some language servers in `$PATH` instead of installing them.
+- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed.
+  `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
+  It also allows for those environment variables to be used in tasks.
 - Setting: `load_direnv`
 - Default:
 
 ```json
-"load_direnv": "shell_hook"
+"load_direnv": "direct"
 ```
 
 **Options**
@@ -1357,12 +1359,12 @@ Or to set a `socks5` proxy:
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
-- Default: `prefer_line`
+- Default: `none`
 
 **Options**
 
-1. `none` to stop the soft-wrapping
-2. `prefer_line` to avoid wrapping generally, unless the line is too long
+1. `none` to avoid wrapping generally, unless the line is too long
+2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
 4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
 
@@ -1734,7 +1736,7 @@ See Buffer Font Features
 
 ## Terminal: Detect Virtual Environments {#terminal-detect_venv}
 
-- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environemtn
+- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environment.
 - Setting: `detect_venv`
 - Default:
 
@@ -1952,7 +1954,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
-      "show": "always"
+      "show": null
     }
   }
 }
@@ -2072,13 +2074,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ### Scrollbar
 
-- Description: Scrollbar related settings. Possible values: "always", "never".
+- Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
 - Setting: `scrollbar`
 - Default:
 
 ```json
 "scrollbar": {
-    "show": "always"
+    "show": null
 }
 ```
 

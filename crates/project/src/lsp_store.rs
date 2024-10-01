@@ -539,13 +539,19 @@ impl LocalLspStore {
             }
             Formatter::External { command, arguments } => {
                 let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
-                Self::format_via_external_command(buffer, buffer_abs_path, command, arguments, cx)
-                    .await
-                    .context(format!(
-                        "failed to format via external command {:?}",
-                        command
-                    ))?
-                    .map(FormatOperation::External)
+                Self::format_via_external_command(
+                    buffer,
+                    buffer_abs_path,
+                    command,
+                    arguments.as_deref(),
+                    cx,
+                )
+                .await
+                .context(format!(
+                    "failed to format via external command {:?}",
+                    command
+                ))?
+                .map(FormatOperation::External)
             }
             Formatter::CodeActions(code_actions) => {
                 let code_actions = deserialize_code_actions(code_actions);
@@ -571,7 +577,7 @@ impl LocalLspStore {
         buffer: &Model<Buffer>,
         buffer_abs_path: Option<&Path>,
         command: &str,
-        arguments: &[String],
+        arguments: Option<&[String]>,
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Diff>> {
         let working_dir_path = buffer.update(cx, |buffer, cx| {
@@ -595,14 +601,17 @@ impl LocalLspStore {
             child.current_dir(working_dir_path);
         }
 
-        let mut child = child
-            .args(arguments.iter().map(|arg| {
+        if let Some(arguments) = arguments {
+            child.args(arguments.iter().map(|arg| {
                 if let Some(buffer_abs_path) = buffer_abs_path {
                     arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
                 } else {
                     arg.replace("{buffer_path}", "Untitled")
                 }
-            }))
+            }));
+        }
+
+        let mut child = child
             .stdin(smol::process::Stdio::piped())
             .stdout(smol::process::Stdio::piped())
             .stderr(smol::process::Stdio::piped())
@@ -2892,11 +2901,27 @@ impl LspStore {
         let file = File::from_dyn(buffer.read(cx).file())?;
         let worktree_id = file.worktree_id(cx);
         let abs_path = file.as_local()?.abs_path(cx);
+        let worktree_path = file.as_local()?.path();
         let text_document = lsp::TextDocumentIdentifier {
             uri: lsp::Url::from_file_path(abs_path).log_err()?,
         };
 
+        let watched_paths_for_server = &self.as_local()?.language_server_watched_paths;
         for server in self.language_servers_for_worktree(worktree_id) {
+            let should_notify = maybe!({
+                Some(
+                    watched_paths_for_server
+                        .get(&server.server_id())?
+                        .read(cx)
+                        .worktree_paths
+                        .get(&worktree_id)?
+                        .is_match(worktree_path),
+                )
+            })
+            .unwrap_or_default();
+            if !should_notify {
+                continue;
+            }
             if let Some(include_text) = include_text(server.as_ref()) {
                 let text = if include_text {
                     Some(buffer.read(cx).text())

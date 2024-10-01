@@ -4,8 +4,7 @@ use chrono::Utc;
 use client::telemetry;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http_client::Method;
-use isahc::config::Configurable;
+use http_client::{HttpRequestExt, Method};
 
 use http_client::{self, HttpClient, HttpClientWithUrl};
 use paths::{crashes_dir, crashes_retired_dir};
@@ -491,7 +490,7 @@ async fn upload_previous_crashes(
                 .context("error reading crash file")?;
 
             let mut request = http_client::Request::post(&crash_report_url.to_string())
-                .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                .follow_redirects(http_client::RedirectPolicy::FollowAll)
                 .header("Content-Type", "text/plain");
 
             if let Some((panicked_on, payload)) = most_recent_panic.as_ref() {

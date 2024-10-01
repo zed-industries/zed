@@ -6,9 +6,8 @@ use std::{pin::Pin, str::FromStr};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
-use isahc::http::{HeaderMap, HeaderValue};
+use http_client::http::{HeaderMap, HeaderValue};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
@@ -289,7 +288,7 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
     let serialized_request =
         serde_json::to_string(&request).context("failed to serialize request")?;

@@ -41,7 +41,7 @@ jobs:
               exit 1
               ;;
           esac
-          which cargo-set-version > /dev/null || cargo install cargo-edit --features vendored-openssl
+          which cargo-set-version > /dev/null || cargo install cargo-edit
           output=$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')
           git commit -am "Bump to $output for @$GITHUB_ACTOR" --author "Zed Bot <hi@zed.dev>"
           git tag v${output}${tag_suffix}

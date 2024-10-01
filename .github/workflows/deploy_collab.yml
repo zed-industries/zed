@@ -76,7 +76,11 @@ jobs:
           clean: false
 
       - name: Build docker image
-        run: docker build . --build-arg GITHUB_SHA=$GITHUB_SHA --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA
+        run: |
+          docker build -f Dockerfile-collab \
+            --build-arg GITHUB_SHA=$GITHUB_SHA \
+            --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA \
+            .
 
       - name: Publish docker image
         run: docker push registry.digitalocean.com/zed/collab:${GITHUB_SHA}

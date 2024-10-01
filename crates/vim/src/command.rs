@@ -1,4 +1,9 @@
-use std::{iter::Peekable, ops::Range, str::Chars, sync::OnceLock};
+use std::{
+    iter::Peekable,
+    ops::{Deref, Range},
+    str::Chars,
+    sync::OnceLock,
+};
 
 use anyhow::{anyhow, Result};
 use command_palette_hooks::CommandInterceptResult;
@@ -21,7 +26,7 @@ use crate::{
         JoinLines,
     },
     state::Mode,
-    visual::{VisualDeleteLine, VisualYankLine},
+    visual::VisualDeleteLine,
     Vim,
 };
 
@@ -30,38 +35,55 @@ pub struct GoToLine {
     range: CommandRange,
 }
 
-#[derive(Debug)]
-pub struct WithRange {
-    is_count: bool,
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct YankCommand {
     range: CommandRange,
-    action: Box<dyn Action>,
 }
 
-actions!(vim, [VisualCommand, CountCommand]);
-impl_actions!(vim, [GoToLine, WithRange]);
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct WithRange {
+    restore_selection: bool,
+    range: CommandRange,
+    action: WrappedAction,
+}
 
-impl<'de> Deserialize<'de> for WithRange {
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct WithCount {
+    count: u32,
+    action: WrappedAction,
+}
+
+#[derive(Debug)]
+struct WrappedAction(Box<dyn Action>);
+
+actions!(vim, [VisualCommand, CountCommand]);
+impl_actions!(vim, [GoToLine, YankCommand, WithRange, WithCount]);
+
+impl<'de> Deserialize<'de> for WrappedAction {
     fn deserialize<D>(_: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        Err(serde::de::Error::custom("Cannot deserialize WithRange"))
+        Err(serde::de::Error::custom("Cannot deserialize WrappedAction"))
     }
 }
 
-impl PartialEq for WithRange {
+impl PartialEq for WrappedAction {
     fn eq(&self, other: &Self) -> bool {
-        self.range == other.range && self.action.partial_eq(&*other.action)
+        self.0.partial_eq(&*other.0)
     }
 }
 
-impl Clone for WithRange {
+impl Clone for WrappedAction {
     fn clone(&self) -> Self {
-        Self {
-            is_count: self.is_count,
-            range: self.range.clone(),
-            action: self.action.boxed_clone(),
-        }
+        Self(self.0.boxed_clone())
+    }
+}
+
+impl Deref for WrappedAction {
+    type Target = dyn Action;
+    fn deref(&self) -> &dyn Action {
+        &*self.0
     }
 }
 
@@ -110,13 +132,33 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
     });
 
-    Vim::action(editor, cx, |vim, action: &WithRange, cx| {
-        if action.is_count {
-            for _ in 0..action.range.as_count() {
-                cx.dispatch_action(action.action.boxed_clone())
+    Vim::action(editor, cx, |vim, action: &YankCommand, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
+                let end = if range.end < snapshot.max_buffer_row() {
+                    Point::new(range.end.0 + 1, 0)
+                } else {
+                    snapshot.buffer_snapshot.max_point()
+                };
+                vim.copy_ranges(
+                    editor,
+                    true,
+                    true,
+                    vec![Point::new(range.start.0, 0)..end],
+                    cx,
+                )
             }
-            return;
+        });
+    });
+
+    Vim::action(editor, cx, |_, action: &WithCount, cx| {
+        for _ in 0..action.count {
+            cx.dispatch_action(action.action.boxed_clone())
         }
+    });
+
+    Vim::action(editor, cx, |vim, action: &WithRange, cx| {
         let result = vim.update_editor(cx, |vim, editor, cx| {
             action.range.buffer_range(vim, editor, cx)
         });
@@ -134,31 +176,51 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             }
             Some(Ok(result)) => result,
         };
-        vim.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(None, cx, |s| {
-                let end = Point::new(range.end.0, s.buffer().line_len(range.end));
-                s.select_ranges([end..Point::new(range.start.0, 0)]);
+
+        let previous_selections = vim
+            .update_editor(cx, |_, editor, cx| {
+                let selections = action
+                    .restore_selection
+                    .then(|| editor.selections.disjoint_anchor_ranges());
+                editor.change_selections(None, cx, |s| {
+                    let end = Point::new(range.end.0, s.buffer().line_len(range.end));
+                    s.select_ranges([end..Point::new(range.start.0, 0)]);
+                });
+                selections
             })
-        });
+            .flatten();
         cx.dispatch_action(action.action.boxed_clone());
         cx.defer(move |vim, cx| {
             vim.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(None, cx, |s| {
-                    s.select_ranges([Point::new(range.start.0, 0)..Point::new(range.start.0, 0)]);
+                    if let Some(previous_selections) = previous_selections {
+                        s.select_ranges(previous_selections);
+                    } else {
+                        s.select_ranges([
+                            Point::new(range.start.0, 0)..Point::new(range.start.0, 0)
+                        ]);
+                    }
                 })
             });
         });
     });
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct VimCommand {
     prefix: &'static str,
     suffix: &'static str,
     action: Option<Box<dyn Action>>,
     action_name: Option<&'static str>,
     bang_action: Option<Box<dyn Action>>,
-    has_range: bool,
+    range: Option<
+        Box<
+            dyn Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
     has_count: bool,
 }
 
@@ -187,16 +249,25 @@ impl VimCommand {
         self
     }
 
-    fn range(mut self) -> Self {
-        self.has_range = true;
+    fn range(
+        mut self,
+        f: impl Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>> + Send + Sync + 'static,
+    ) -> Self {
+        self.range = Some(Box::new(f));
         self
     }
+
     fn count(mut self) -> Self {
         self.has_count = true;
         self
     }
 
-    fn parse(&self, mut query: &str, cx: &AppContext) -> Option<Box<dyn Action>> {
+    fn parse(
+        &self,
+        mut query: &str,
+        range: &Option<CommandRange>,
+        cx: &AppContext,
+    ) -> Option<Box<dyn Action>> {
         let has_bang = query.ends_with('!');
         if has_bang {
             query = &query[..query.len() - 1];
@@ -207,14 +278,20 @@ impl VimCommand {
             return None;
         }
 
-        if has_bang && self.bang_action.is_some() {
-            Some(self.bang_action.as_ref().unwrap().boxed_clone())
+        let action = if has_bang && self.bang_action.is_some() {
+            self.bang_action.as_ref().unwrap().boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
-            Some(action.boxed_clone())
+            action.boxed_clone()
         } else if let Some(action_name) = self.action_name {
-            cx.build_action(action_name, None).log_err()
+            cx.build_action(action_name, None).log_err()?
         } else {
-            None
+            return None;
+        };
+
+        if let Some(range) = range {
+            self.range.as_ref().and_then(|f| f(action, range))
+        } else {
+            Some(action)
         }
     }
 
@@ -405,26 +482,16 @@ impl CommandRange {
         }
     }
 
-    pub fn as_count(&self) -> u32 {
+    pub fn as_count(&self) -> Option<u32> {
         if let CommandRange {
             start: Position::Line { row, offset: 0 },
             end: None,
         } = &self
         {
-            *row
+            Some(*row)
         } else {
-            0
+            None
         }
-    }
-
-    pub fn is_count(&self) -> bool {
-        matches!(
-            &self,
-            CommandRange {
-                start: Position::Line { row: _, offset: 0 },
-                end: None
-            }
-        )
     }
 }
 
@@ -578,18 +645,32 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::str(("cl", "ist"), "diagnostics::Deploy"),
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
-        VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).count(),
-        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic).count(),
-        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic).count(),
-        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).count(),
-        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).count(),
-        VimCommand::new(("j", "oin"), JoinLines).range(),
-        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(),
-        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(),
-        VimCommand::new(("d", "elete"), VisualDeleteLine).range(),
-        VimCommand::new(("y", "ank"), VisualYankLine).range(),
-        VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(),
-        VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(),
+        VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).range(wrap_count),
+        VimCommand::new(("cp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("cN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).range(wrap_count),
+        VimCommand::new(("j", "oin"), JoinLines).range(select_range),
+        VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
+        VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
+            .bang(editor::actions::UnfoldRecursive)
+            .range(act_on_range),
+        VimCommand::new(("foldc", "lose"), editor::actions::Fold)
+            .bang(editor::actions::FoldRecursive)
+            .range(act_on_range),
+        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(act_on_range),
+        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(act_on_range),
+        VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
+        VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {
+            Some(
+                YankCommand {
+                    range: range.clone(),
+                }
+                .boxed_clone(),
+            )
+        }),
+        VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
+        VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
         VimCommand::str(("H", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("L", "explore"), "project_panel::ToggleFocus"),
@@ -618,6 +699,38 @@ fn commands(cx: &AppContext) -> &Vec<VimCommand> {
     &COMMANDS
         .get_or_init(|| VimCommands(generate_commands(cx)))
         .0
+}
+
+fn act_on_range(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn Action>> {
+    Some(
+        WithRange {
+            restore_selection: true,
+            range: range.clone(),
+            action: WrappedAction(action),
+        }
+        .boxed_clone(),
+    )
+}
+
+fn select_range(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn Action>> {
+    Some(
+        WithRange {
+            restore_selection: false,
+            range: range.clone(),
+            action: WrappedAction(action),
+        }
+        .boxed_clone(),
+    )
+}
+
+fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn Action>> {
+    range.as_count().map(|count| {
+        WithCount {
+            count,
+            action: WrappedAction(action),
+        }
+        .boxed_clone()
+    })
 }
 
 pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandInterceptResult> {
@@ -679,25 +792,12 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
     }
 
     for command in commands(cx).iter() {
-        if let Some(action) = command.parse(query, cx) {
-            let string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
-            let positions = generate_positions(&string, &(range_prefix + query));
-
-            if let Some(range) = &range {
-                if command.has_range || (range.is_count() && command.has_count) {
-                    return Some(CommandInterceptResult {
-                        action: Box::new(WithRange {
-                            is_count: command.has_count,
-                            range: range.clone(),
-                            action,
-                        }),
-                        string,
-                        positions,
-                    });
-                } else {
-                    return None;
-                }
+        if let Some(action) = command.parse(query, &range, cx) {
+            let mut string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
+            if query.ends_with('!') {
+                string.push('!');
             }
+            let positions = generate_positions(&string, &(range_prefix + query));
 
             return Some(CommandInterceptResult {
                 action,

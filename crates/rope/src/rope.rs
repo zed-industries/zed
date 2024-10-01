@@ -1159,7 +1159,7 @@ impl Chunk {
 impl sum_tree::Item for Chunk {
     type Summary = ChunkSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         ChunkSummary::from(self.0.as_str())
     }
 }
