@@ -18,7 +18,9 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
+    vte::ansi::{
+        ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
+    },
     Term,
 };
 use anyhow::{bail, Result};
@@ -40,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
-use terminal_settings::{AlternateScroll, TerminalBlink, TerminalSettings};
+use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
@@ -100,7 +102,7 @@ pub enum Event {
     CloseTerminal,
     Bell,
     Wakeup,
-    BlinkChanged,
+    BlinkChanged(bool),
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
@@ -313,7 +315,7 @@ impl TerminalBuilder {
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
-        blink_settings: Option<TerminalBlink>,
+        cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
@@ -353,6 +355,7 @@ impl TerminalBuilder {
         // Setup Alacritty's env, which modifies the current process's environment
         alacritty_terminal::tty::setup_env();
 
+        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
             // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
@@ -365,6 +368,7 @@ impl TerminalBuilder {
         };
         let config = Config {
             scrolling_history,
+            default_cursor_style,
             ..Config::default()
         };
 
@@ -373,15 +377,10 @@ impl TerminalBuilder {
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
         let mut term = Term::new(
-            config,
+            config.clone(),
             &TerminalSize::default(),
             ZedListener(events_tx.clone()),
         );
-
-        //Start off blinking if we need to
-        if let Some(TerminalBlink::On) = blink_settings {
-            term.set_private_mode(PrivateMode::Named(NamedPrivateMode::BlinkingCursor));
-        }
 
         //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
         if let AlternateScroll::Off = alternate_scroll {
@@ -432,6 +431,7 @@ impl TerminalBuilder {
             pty_tx: Notifier(pty_tx),
             completion_tx,
             term,
+            term_config: config,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
             last_mouse: None,
@@ -583,6 +583,7 @@ pub struct Terminal {
     pty_tx: Notifier,
     completion_tx: Sender<()>,
     term: Arc<FairMutex<Term<ZedListener>>>,
+    term_config: Config,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(AlacPoint, AlacDirection)>,
@@ -667,7 +668,9 @@ impl Terminal {
                 self.write_to_pty(format(self.last_content.size.into()))
             }
             AlacTermEvent::CursorBlinkingChange => {
-                cx.emit(Event::BlinkChanged);
+                let terminal = self.term.lock();
+                let blinking = terminal.cursor_style().blinking;
+                cx.emit(Event::BlinkChanged(blinking));
             }
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
@@ -949,6 +952,11 @@ impl Terminal {
 
     pub fn last_content(&self) -> &TerminalContent {
         &self.last_content
+    }
+
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape) {
+        self.term_config.default_cursor_style = cursor_shape.into();
+        self.term.lock().set_options(self.term_config.clone());
     }
 
     pub fn total_lines(&self) -> usize {

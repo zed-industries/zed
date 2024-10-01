@@ -3610,7 +3610,9 @@ impl<'a> WindowContext<'a> {
         self.on_next_frame(|cx| {
             if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(cx) {
-                    cx.window.platform_window.update_ime_position(bounds);
+                    cx.window
+                        .platform_window
+                        .update_ime_position(bounds.scale(cx.scale_factor()));
                 }
                 cx.window.platform_window.set_input_handler(input_handler);
             }

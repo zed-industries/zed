@@ -9,12 +9,18 @@ SUMMARY
   Each instance of Zed will be signed in as a different user specified in
   either \`.admins.json\` or \`.admins.default.json\`.
 
+  All arguments after the initial options will be passed through to the first
+  instance of Zed. This can be used to test SSH remoting along with collab, like
+  so:
+
+  $ script/zed-local -2 ssh://your-ssh-uri-here
+
 OPTIONS
-  --help           Print this help message
-  --release        Build Zed in release mode
-  -2, -3, -4, ...  Spawn multiple Zed instances, with their windows tiled.
-  --top            Arrange the Zed windows so they take up the top half of the screen.
-  --stable         Use stable Zed release installed on local machine for all instances (except for the first one).
+  --help            Print this help message
+  --release         Build Zed in release mode
+  -2, -3, -4, ...   Spawn multiple Zed instances, with their windows tiled.
+  --top             Arrange the Zed windows so they take up the top half of the screen.
+  --stable          Use stable Zed release installed on local machine for all instances (except for the first one).
 `.trim();
 
 const { spawn, execSync, execFileSync } = require("child_process");

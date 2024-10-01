@@ -128,6 +128,7 @@ pub use executor::*;
 pub use geometry::*;
 pub use global::*;
 pub use gpui_macros::{register_action, test, IntoElement, Render};
+pub use http_client;
 pub use input::*;
 pub use interactive::*;
 use key_dispatch::*;

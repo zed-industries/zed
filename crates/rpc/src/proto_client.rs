@@ -10,10 +10,28 @@ use proto::{
     error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
     RequestMessage, TypedEnvelope,
 };
-use std::{any::TypeId, sync::Arc};
+use std::{
+    any::TypeId,
+    sync::{Arc, Weak},
+};
 
 #[derive(Clone)]
 pub struct AnyProtoClient(Arc<dyn ProtoClient>);
+
+impl AnyProtoClient {
+    pub fn downgrade(&self) -> AnyWeakProtoClient {
+        AnyWeakProtoClient(Arc::downgrade(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct AnyWeakProtoClient(Weak<dyn ProtoClient>);
+
+impl AnyWeakProtoClient {
+    pub fn upgrade(&self) -> Option<AnyProtoClient> {
+        self.0.upgrade().map(AnyProtoClient)
+    }
+}
 
 pub trait ProtoClient: Send + Sync {
     fn request(
@@ -27,6 +45,8 @@ pub trait ProtoClient: Send + Sync {
     fn send_response(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
 
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
+
+    fn is_via_collab(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -137,6 +157,10 @@ where
 impl AnyProtoClient {
     pub fn new<T: ProtoClient + 'static>(client: Arc<T>) -> Self {
         Self(client)
+    }
+
+    pub fn is_via_collab(&self) -> bool {
+        self.0.is_via_collab()
     }
 
     pub fn request<T: RequestMessage>(

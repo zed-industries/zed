@@ -47,6 +47,17 @@ And here's the section to rewrite based on that prompt again for reference:
 <rewrite_this>
 {{{rewrite_section}}}
 </rewrite_this>
+
+{{#if diagnostic_errors}}
+{{#each diagnostic_errors}}
+<diagnostic_error>
+    <line_number>{{line_number}}</line_number>
+    <error_message>{{error_message}}</error_message>
+    <code_content>{{code_content}}</code_content>
+</diagnostic_error>
+{{/each}}
+{{/if}}
+
 {{/if}}
 
 Only make changes that are necessary to fulfill the prompt, leave everything else as-is. All surrounding {{content_type}} will be preserved.

@@ -2,6 +2,7 @@ use client::Client;
 use futures::channel::oneshot;
 use gpui::App;
 use http_client::HttpClientWithUrl;
+use isahc_http_client::IsahcHttpClient;
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticDb};
@@ -26,8 +27,12 @@ fn main() {
         });
 
         let clock = Arc::new(FakeSystemClock::default());
-        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434", None, None));
 
+        let http = Arc::new(HttpClientWithUrl::new(
+            IsahcHttpClient::new(None, None),
+            "http://localhost:11434",
+            None,
+        ));
         let client = client::Client::new(clock, http.clone(), cx);
         Client::set_global(client.clone(), cx);
 
@@ -93,7 +98,7 @@ fn main() {
                 .update(|cx| {
                     let project_index = project_index.read(cx);
                     let query = "converting an anchor to a point";
-                    project_index.search(query.into(), 4, cx)
+                    project_index.search(vec![query.into()], 4, cx)
                 })
                 .unwrap()
                 .await

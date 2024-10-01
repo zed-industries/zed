@@ -4,9 +4,9 @@ use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
-    X11ClientStatePtr,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -1412,7 +1412,7 @@ impl PlatformWindow for X11Window {
         }
     }
 
-    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let mut state = self.0.state.borrow_mut();
         let client = state.client.clone();
         drop(state);

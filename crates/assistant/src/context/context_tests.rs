@@ -1166,9 +1166,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     );
 
                     network.lock().broadcast(replica_id, ops_to_send);
-                    context
-                        .update(cx, |context, cx| context.apply_ops(ops_to_receive, cx))
-                        .unwrap();
+                    context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
                 } else if rng.gen_bool(0.1) && replica_id != 0 {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
@@ -1180,9 +1178,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                         .unwrap();
-                    context
-                        .update(cx, |context, cx| context.apply_ops(ops, cx))
-                        .unwrap();
+                    context.update(cx, |context, cx| context.apply_ops(ops, cx));
                 }
             }
         }

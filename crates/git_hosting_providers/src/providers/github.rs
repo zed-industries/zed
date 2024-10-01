@@ -3,9 +3,7 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
-use http_client::HttpClient;
-use isahc::config::Configurable;
-use isahc::{AsyncBody, Request};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
@@ -56,8 +54,8 @@ impl Github {
         let url = format!("https://api.github.com/repos/{repo_owner}/{repo}/commits/{commit}");
 
         let mut request = Request::get(&url)
-            .redirect_policy(isahc::config::RedirectPolicy::Follow)
-            .header("Content-Type", "application/json");
+            .header("Content-Type", "application/json")
+            .follow_redirects(http_client::RedirectPolicy::FollowAll);
 
         if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
             request = request.header("Authorization", format!("Bearer {}", github_token));
@@ -149,6 +147,9 @@ impl GitHostingProvider for Github {
             .base_url()
             .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
             .unwrap();
+        if path.ends_with(".md") {
+            permalink.set_query(Some("plain=1"));
+        }
         permalink.set_fragment(
             selection
                 .map(|selection| self.line_fragment(&selection))

@@ -16,10 +16,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    h_flex, v_flex, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext, WindowContext,
+    h_flex, v_flex, Color, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext,
+    WindowContext,
 };
-use util::paths::PathWithPosition;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(Deserialize)]
@@ -80,6 +80,7 @@ impl Settings for SshSettings {
 pub struct SshPrompt {
     connection_string: SharedString,
     status_message: Option<SharedString>,
+    error_message: Option<SharedString>,
     prompt: Option<(SharedString, oneshot::Sender<Result<String>>)>,
     editor: View<Editor>,
 }
@@ -93,6 +94,7 @@ impl SshPrompt {
         Self {
             connection_string,
             status_message: None,
+            error_message: None,
             prompt: None,
             editor: cx.new_view(Editor::single_line),
         }
@@ -122,6 +124,11 @@ impl SshPrompt {
         cx.notify();
     }
 
+    pub fn set_error(&mut self, error_message: String, cx: &mut ViewContext<Self>) {
+        self.error_message = Some(error_message.into());
+        cx.notify();
+    }
+
     pub fn confirm(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
             self.editor.update(cx, |editor, cx| {
@@ -141,7 +148,12 @@ impl Render for SshPrompt {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(
+                    .child(if self.error_message.is_some() {
+                        Icon::new(IconName::XCircle)
+                            .size(IconSize::Medium)
+                            .color(Color::Error)
+                            .into_any_element()
+                    } else {
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::Medium)
                             .with_animation(
@@ -150,16 +162,21 @@ impl Render for SshPrompt {
                                 |icon, delta| {
                                     icon.transform(Transformation::rotate(percentage(delta)))
                                 },
-                            ),
-                    )
+                            )
+                            .into_any_element()
+                    })
                     .child(
                         Label::new(format!("ssh {}…", self.connection_string))
                             .size(ui::LabelSize::Large),
                     ),
             )
-            .when_some(self.status_message.as_ref(), |el, status| {
-                el.child(Label::new(status.clone()))
+            .when_some(self.error_message.as_ref(), |el, error| {
+                el.child(Label::new(error.clone()))
             })
+            .when(
+                self.error_message.is_none() && self.status_message.is_some(),
+                |el| el.child(Label::new(self.status_message.clone().unwrap())),
+            )
             .when_some(self.prompt.as_ref(), |el, prompt| {
                 el.child(Label::new(prompt.0.clone()))
                     .child(self.editor.clone())
@@ -239,6 +256,10 @@ impl remote::SshClientDelegate for SshClientDelegate {
         self.update_status(status, cx)
     }
 
+    fn set_error(&self, error: String, cx: &mut AsyncAppContext) {
+        self.update_error(error, cx)
+    }
+
     fn get_server_binary(
         &self,
         platform: SshPlatform,
@@ -266,6 +287,16 @@ impl SshClientDelegate {
             .update(cx, |_, cx| {
                 self.ui.update(cx, |modal, cx| {
                     modal.set_status(status.map(|s| s.to_string()), cx);
+                })
+            })
+            .ok();
+    }
+
+    fn update_error(&self, error: String, cx: &mut AsyncAppContext) {
+        self.window
+            .update(cx, |_, cx| {
+                self.ui.update(cx, |modal, cx| {
+                    modal.set_error(error, cx);
                 })
             })
             .ok();
@@ -328,7 +359,14 @@ impl SshClientDelegate {
             cx,
         )
         .await
-        .map_err(|e| anyhow::anyhow!("failed to download remote server binary: {}", e))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to download remote server binary (os: {}, arch: {}): {}",
+                platform.os,
+                platform.arch,
+                e
+            )
+        })?;
 
         Ok((binary_path, version))
     }
@@ -358,26 +396,31 @@ pub fn connect_over_ssh(
 
 pub async fn open_ssh_project(
     connection_options: SshConnectionOptions,
-    paths: Vec<PathWithPosition>,
+    paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
-    _open_options: workspace::OpenOptions,
+    open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
-    let window = cx.open_window(options, |cx| {
-        let project = project::Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            cx,
-        );
-        cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
-    })?;
 
-    let result = window
+    let window = if let Some(window) = open_options.replace_window {
+        window
+    } else {
+        cx.open_window(options, |cx| {
+            let project = project::Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                cx,
+            );
+            cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
+        })?
+    };
+
+    let session = window
         .update(cx, |workspace, cx| {
             cx.activate_window();
             workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
@@ -387,40 +430,12 @@ pub async fn open_ssh_project(
                 .read(cx)
                 .prompt
                 .clone();
-            connect_over_ssh(connection_options, ui, cx)
+            connect_over_ssh(connection_options.clone(), ui, cx)
         })?
-        .await;
+        .await?;
 
-    if result.is_err() {
-        window.update(cx, |_, cx| cx.remove_window()).ok();
-    }
-
-    let session = result?;
-
-    let project = cx.update(|cx| {
-        project::Project::ssh(
-            session,
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            cx,
-        )
-    })?;
-
-    for path in paths {
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_worktree(&path.path, true, cx)
-            })?
-            .await?;
-    }
-
-    window.update(cx, |_, cx| {
-        cx.replace_root_view(|cx| Workspace::new(None, project, app_state, cx))
-    })?;
-    window.update(cx, |_, cx| cx.activate_window())?;
-
-    Ok(())
+    cx.update(|cx| {
+        workspace::open_ssh_project(window, connection_options, session, app_state, paths, cx)
+    })?
+    .await
 }

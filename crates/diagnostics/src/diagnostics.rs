@@ -156,12 +156,7 @@ impl ProjectDiagnosticsEditor {
         cx.on_focus_out(&focus_handle, |this, _event, cx| this.focus_out(cx))
             .detach();
 
-        let excerpts = cx.new_model(|cx| {
-            MultiBuffer::new(
-                project_handle.read(cx).replica_id(),
-                project_handle.read(cx).capability(),
-            )
-        });
+        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new_view(|cx| {
             let mut editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
