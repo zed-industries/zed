@@ -8,7 +8,7 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
-use workspace::OpenInTerminal;
+use workspace::{Item, OpenInTerminal};
 
 #[derive(Debug)]
 pub enum MenuPosition {
@@ -149,6 +149,7 @@ pub fn deploy_context_menu(
         let display_map = editor.selections.display_map(cx);
         let buffer = &editor.snapshot(cx).buffer_snapshot;
         let anchor = buffer.anchor_before(point.to_point(&display_map));
+        let is_singleton = editor.is_singleton(cx);
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense
             editor.change_selections(None, cx, |s| {
@@ -180,10 +181,10 @@ pub fn deploy_context_menu(
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .when(cfg!(target_os = "macos"), |builder| {
+                .when(cfg!(target_os = "macos") && is_singleton, |builder| {
                     builder.action("Reveal in Finder", Box::new(RevealInFileManager))
                 })
-                .when(cfg!(not(target_os = "macos")), |builder| {
+                .when(cfg!(not(target_os = "macos")) && is_singleton, |builder| {
                     builder.action("Reveal in File Manager", Box::new(RevealInFileManager))
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
