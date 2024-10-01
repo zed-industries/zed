@@ -287,7 +287,7 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+        let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
             (
@@ -295,6 +295,10 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
+        if !params.show {
+            dwstyle |= WS_MINIMIZE;
+        }
+
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
             // if we obtain a display_id, then this ID must be valid.
@@ -357,7 +361,12 @@ impl WindowsWindow {
             drop(lock);
             SetWindowPlacement(raw_hwnd, &placement)?;
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
+
+        if params.show {
+            unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
+        } else {
+            unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? };
+        }
 
         Ok(Self(state_ptr))
     }
