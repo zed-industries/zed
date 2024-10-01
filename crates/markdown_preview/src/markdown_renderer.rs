@@ -391,7 +391,7 @@ fn render_markdown_text(
                     }
                 }
                 let workspace = cx.workspace.clone();
-                let x = div()
+                let element = div()
                     .child(
                         InteractiveText::new(
                             element_id,
@@ -430,7 +430,7 @@ fn render_markdown_text(
                         ),
                     )
                     .into_any();
-                any_element.push(x);
+                any_element.push(element);
             }
             MarkdownParagraph::MarkdownImage(image) => {
                 let (link, source_range, image_source) = match image {
