@@ -615,7 +615,7 @@ impl Window {
             window_bounds,
             titlebar,
             focus,
-            visibility,
+            show,
             kind,
             is_movable,
             display_id,
@@ -636,7 +636,7 @@ impl Window {
                 kind,
                 is_movable,
                 focus,
-                visibility,
+                show,
                 display_id,
                 window_min_size,
             },
@@ -3593,11 +3593,6 @@ impl<'a> WindowContext<'a> {
     /// Focus the current window and bring it to the foreground at the platform level.
     pub fn activate_window(&self) {
         self.window.platform_window.activate();
-    }
-
-    /// TODO:
-    pub fn show_window(&self) {
-        self.window.platform_window.show();
     }
 
     /// Minimize the current window at the platform level.

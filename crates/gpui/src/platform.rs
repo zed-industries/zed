@@ -338,7 +338,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         answers: &[&str],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
-    fn show(&self);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
@@ -700,9 +699,8 @@ pub struct WindowOptions {
     /// Whether the window should be focused when created
     pub focus: bool,
 
-    /// TODO:
     /// Whether the window should be shown when created
-    pub visibility: WindowVisibility,
+    pub show: bool,
 
     /// The kind of window to create
     pub kind: WindowKind,
@@ -748,7 +746,7 @@ pub(crate) struct WindowParams {
     pub focus: bool,
 
     #[cfg_attr(target_os = "linux", allow(dead_code))]
-    pub visibility: WindowVisibility,
+    pub show: bool,
 
     pub display_id: Option<DisplayId>,
 
@@ -795,7 +793,7 @@ impl Default for WindowOptions {
                 traffic_light_position: Default::default(),
             }),
             focus: true,
-            visibility: WindowVisibility::Show,
+            show: true,
             kind: WindowKind::Normal,
             is_movable: true,
             display_id: None,
@@ -884,17 +882,6 @@ pub enum WindowBackgroundAppearance {
     ///
     /// Not always supported.
     Blurred,
-}
-
-/// TODO:
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum WindowVisibility {
-    /// Invisible
-    Invisible,
-    /// Do not show the window when after creation, call show_window latter
-    DeferredShow,
-    /// Show right now.
-    Show,
 }
 
 /// The options that can be configured for a file dialog prompt

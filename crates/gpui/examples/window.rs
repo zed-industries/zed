@@ -122,7 +122,7 @@ impl Render for WindowDemo {
             .child(button("Invisible", move |cx| {
                 cx.open_window(
                     WindowOptions {
-                        visibility: WindowVisibility::Invisible,
+                        show: false,
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
