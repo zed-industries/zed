@@ -305,53 +305,11 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let (text, truncated) = if let Some(truncate_width) = truncate_width {
-                    (
-                        line_wrapper.truncate_line(text.clone(), truncate_width, ellipsis),
-                        true,
-                    )
+                let text = if let Some(truncate_width) = truncate_width {
+                    line_wrapper.truncate_line(text.clone(), truncate_width, ellipsis, &mut runs)
                 } else {
-                    (text.clone(), false)
+                    text.clone()
                 };
-                if truncated {
-                    //----------------------------------------------
-                    // Case 0: Normal
-                    // Text: abcdefghijkl
-                    // Runs: Run0 { len: 12, ... }
-                    //
-                    // Truncate res: abcd… (truncate_at = 4)
-                    // Run res: Run0 { string: abcd…, len: 7, ... }
-                    // ---------------------------------------------
-                    // Case 1: Drop some runs
-                    // Text: abcdefghijkl
-                    // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
-                    //
-                    // Truncate res: abcdef… (truncate_at = 6)
-                    // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
-                    // 5, ... }
-                    // ----------------------------------------------
-                    // Case 2: Truncate at start of some run
-                    // Text: abcdefghijkl
-                    // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
-                    //
-                    // Truncate res: abcdefgh… (truncate_at = 8)
-                    // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
-                    // 4, ... }, Run2 { string: …, len: 3, ... }
-                    let mut truncate_at = text.len() - ELLIPSIS.len();
-                    let mut run_end = None;
-                    for (run_index, run) in runs.iter_mut().enumerate() {
-                        if run.len <= truncate_at {
-                            truncate_at -= run.len;
-                        } else {
-                            run.len = truncate_at + ELLIPSIS.len();
-                            run_end = Some(run_index + 1);
-                            break;
-                        }
-                    }
-                    if let Some(run_end) = run_end {
-                        runs.truncate(run_end);
-                    }
-                }
 
                 let Some(lines) = cx
                     .text_system()
