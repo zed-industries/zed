@@ -271,6 +271,7 @@ fn render_markdown_table_row(
 
         let mut cell = container
             .w_full()
+            .h_full()
             .children(contents)
             .px_2()
             .py_1()
