@@ -6,7 +6,6 @@ use gpui::Context as _;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
-    SshSession,
 };
 use remote_server::HeadlessProject;
 use smol::{io::AsyncWriteExt, stream::StreamExt as _, Async};
@@ -24,6 +23,8 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
+    use remote::ssh_session::ChannelClient;
+
     env_logger::builder()
         .format(|buf, record| {
             serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
@@ -55,7 +56,7 @@ fn main() {
         let mut stdin = Async::new(io::stdin()).unwrap();
         let mut stdout = Async::new(io::stdout()).unwrap();
 
-        let session = SshSession::server(incoming_rx, outgoing_tx, cx);
+        let session = ChannelClient::new(incoming_rx, outgoing_tx, cx);
         let project = cx.new_model(|cx| {
             HeadlessProject::new(
                 session.clone(),
