@@ -521,7 +521,7 @@ pub fn reset_ui_font_size(cx: &mut AppContext) {
 }
 
 fn clamp_font_weight(weight: f32) -> FontWeight {
-    FontWeight(weight.clamp(100., 900.))
+    FontWeight(weight.clamp(100., 950.))
 }
 
 impl settings::Settings for ThemeSettings {
