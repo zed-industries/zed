@@ -452,6 +452,40 @@ mod tests {
     }
 
     #[test]
+    fn test_update_run_after_truncation() {
+        fn perform_test(result: &str, run_lens: &[usize], result_run_lens: &[usize]) {
+            let mut dummy_runs = generate_test_runs(run_lens);
+            update_runs_after_truncation(result, "…", &mut dummy_runs);
+            for (run, result_len) in dummy_runs.iter().zip(result_run_lens) {
+                assert_eq!(run.len, *result_len);
+            }
+        }
+        // Case 0: Normal
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 12, ... }
+        //
+        // Truncate res: abcd… (truncate_at = 4)
+        // Run res: Run0 { string: abcd…, len: 7, ... }
+        perform_test("abcd…", &[12], &[7]);
+        // Case 1: Drop some runs
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdef… (truncate_at = 6)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+        // 5, ... }
+        perform_test("abcdef…", &[4, 4, 4], &[4, 5]);
+        // Case 2: Truncate at start of some run
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdefgh… (truncate_at = 8)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
+        // 4, ... }, Run2 { string: …, len: 3, ... }
+        perform_test("abcdefgh…", &[4, 4, 4], &[4, 4, 3]);
+    }
+
+    #[test]
     fn test_is_word_char() {
         #[track_caller]
         fn assert_word(word: &str) {
