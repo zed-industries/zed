@@ -76,7 +76,7 @@ impl Render for WindowDemo {
             .items_center()
             .gap_2()
             .child(button("Normal", {
-                let window_bounds = window_bounds.clone();
+                let window_bounds = window_bounds;
                 move |cx| {
                     cx.open_window(
                         WindowOptions {
@@ -93,7 +93,7 @@ impl Render for WindowDemo {
                 }
             }))
             .child(button("Popup", {
-                let window_bounds = window_bounds.clone();
+                let window_bounds = window_bounds;
                 move |cx| {
                     cx.open_window(
                         WindowOptions {
@@ -111,7 +111,7 @@ impl Render for WindowDemo {
                 }
             }))
             .child(button("Custom Titlebar", {
-                let window_bounds = window_bounds.clone();
+                let window_bounds = window_bounds;
                 move |cx| {
                     cx.open_window(
                         WindowOptions {
@@ -129,7 +129,7 @@ impl Render for WindowDemo {
                 }
             }))
             .child(button("Invisible", {
-                let window_bounds = window_bounds.clone();
+                let window_bounds = window_bounds;
                 move |cx| {
                     cx.open_window(
                         WindowOptions {
@@ -147,7 +147,7 @@ impl Render for WindowDemo {
                 }
             }))
             .child(button("Unmovable", {
-                let window_bounds = window_bounds.clone();
+                let window_bounds = window_bounds;
                 move |cx| {
                     cx.open_window(
                         WindowOptions {
