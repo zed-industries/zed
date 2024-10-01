@@ -31,7 +31,6 @@ gpui.workspace = true
 node_runtime.workspace = true
 log.workspace = true
 project.workspace = true
-prost.workspace = true
 remote.workspace = true
 rpc.workspace = true
 settings.workspace = true

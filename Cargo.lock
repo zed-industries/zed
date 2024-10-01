@@ -9179,7 +9179,6 @@ dependencies = [
  "lsp",
  "node_runtime",
  "project",
- "prost",
  "remote",
  "rpc",
  "serde",

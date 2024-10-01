@@ -4,10 +4,8 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use fs::RealFs;
 use futures::channel::mpsc;
-use futures::AsyncRead;
+use futures::{AsyncRead, AsyncWrite};
 use gpui::Context as _;
-use prost::Message as _;
-use remote::protocol::{MessageLen, MESSAGE_LEN_SIZE};
 use remote::ssh_session::ChannelClient;
 use remote::{
     json_log::LogRecord,
@@ -95,11 +93,6 @@ fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
         });
 
         env_logger::Builder::from_default_env()
-            .format(|buf, record| {
-                serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
-                buf.write_all(b"\n")?;
-                Ok(())
-            })
             .target(env_logger::Target::Pipe(target))
             .init();
     } else {
@@ -115,7 +108,8 @@ fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
 }
 
 fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf) -> Result<()> {
-    write_pid(&pid_file).with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
+    write_pid_file(&pid_file)
+        .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
     let stdin_listener = UnixListener::bind(stdin_socket).context("failed to bind stdin socket")?;
     let stdout_listener =
@@ -132,14 +126,10 @@ fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf)
             .spawn(async move {
                 'outer: while let Ok((mut stream, _)) = stdin_listener.accept().await {
                     log::debug!("server: got new connection on stdin socket");
-                    // read from stream, and send it to message_tx
                     let mut input_buffer = Vec::new();
                     loop {
                         let message = match read_message(&mut stream, &mut input_buffer).await {
-                            Ok(message) => {
-                                log::debug!("server: got a message on stdin: {:?}", message.id);
-                                message
-                            }
+                            Ok(message) => message,
                             Err(error) => {
                                 log::warn!("server: error reading message: {:?}", error);
                                 log::warn!("server: Waiting for new connection on stdin socket");
@@ -166,11 +156,6 @@ fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf)
 
                     let mut output_buffer = Vec::new();
                     while let Some(message) = outgoing_rx.next().await {
-                        log::debug!(
-                            "server: sending outgoing message to stdout: id={:?}, message.encoded_len={:?}",
-                            message.id,
-                            message.encoded_len() as u32
-                        );
                         write_message(&mut stream, &mut output_buffer, message).await?;
                         stream.flush().await?;
                     }
@@ -193,6 +178,46 @@ fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf)
     Ok(())
 }
 
+fn execute_proxy(unique_project_id: String) -> Result<()> {
+    log::debug!("proxy: starting up. PID: {}", std::process::id());
+
+    let project_dir = ensure_project_dir(&unique_project_id)?;
+
+    let pid_file = project_dir.join("server.pid");
+    let stdin_socket = project_dir.join("stdin.sock");
+    let stdout_socket = project_dir.join("stdout.sock");
+    let log_file = project_dir.join("server.log");
+
+    let server_running = check_pid_file(&pid_file)?;
+    if !server_running {
+        spawn_server(&log_file, &pid_file, &stdin_socket, &stdout_socket)?;
+    };
+
+    let stdin_task = smol::spawn(async move {
+        let stdin = Async::new(std::io::stdin())?;
+        let stream = smol::net::unix::UnixStream::connect(stdin_socket).await?;
+        handle_io(stdin, stream, "stdin").await
+    });
+
+    let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
+        let stdout = Async::new(std::io::stdout())?;
+        let stream = smol::net::unix::UnixStream::connect(stdout_socket).await?;
+        handle_io(stream, stdout, "stdout").await
+    });
+
+    if let Err(forwarding_result) =
+        smol::block_on(async move { smol::future::race(stdin_task, stdout_task).await })
+    {
+        log::error!(
+            "proxy: failed to forward messages: {:?}, terminating...",
+            forwarding_result
+        );
+    }
+
+    Ok(())
+}
+
+// log_file         = ~/.local/zed/server/<unique_project_id>/server.log
 // pid_file_path    = ~/.local/zed/server/<unique_project_id>/server.pid
 // stdout_sock_path = ~/.local/zed/server/<unique_project_id>/stdout.sock
 // stdin_sock_path  = ~/.local/zed/server/<unique_project_id>/stdin.sock
@@ -210,155 +235,73 @@ fn ensure_project_dir(unique_project_id: &str) -> Result<PathBuf> {
     Ok(project_dir)
 }
 
-fn execute_proxy(unique_project_id: String) -> Result<()> {
-    log::debug!("proxy: forward PID: {}", std::process::id());
-
-    let project_dir = ensure_project_dir(&unique_project_id)?;
-
-    let pid_file = project_dir.join("server.pid");
-    let stdin_socket = project_dir.join("stdin.sock");
-    let stdout_socket = project_dir.join("stdout.sock");
-    let log_file = project_dir.join("server.log");
-
-    let mut spawn_server = true;
-    if let Ok(pid_file_contents) = std::fs::read_to_string(&pid_file) {
-        let pid: u32 = pid_file_contents.parse()?;
-        // check if process with this pid exists
-        log::debug!("proxy: Checking if process with PID {} exists...", pid);
-        match std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                log::debug!("proxy: Process with PID {} exists. NOT spawning new server, but attaching to existing one.", pid);
-                spawn_server = false;
-            }
-            _ => {
-                log::debug!(
-                    "proxy: Found PID file, but process with that PID does not exist. Removing PID file."
-                );
-                std::fs::remove_file(&pid_file).context("proxy: Failed to remove PID file")?;
-            }
-        };
-    }
-
-    log::debug!("spawn_server: {}", spawn_server);
-    if spawn_server && stdin_socket.exists() {
+fn spawn_server(
+    log_file: &Path,
+    pid_file: &Path,
+    stdin_socket: &Path,
+    stdout_socket: &Path,
+) -> Result<()> {
+    if stdin_socket.exists() {
         std::fs::remove_file(&stdin_socket)?;
     }
-    if spawn_server && stdout_socket.exists() {
+    if stdout_socket.exists() {
         std::fs::remove_file(&stdout_socket)?;
     }
 
-    let server = if spawn_server {
-        let binary_name = std::env::current_exe()?;
+    let binary_name = std::env::current_exe()?;
+    let server_process = std::process::Command::new(binary_name)
+        .arg("run")
+        .arg("--log-file")
+        .arg(log_file)
+        .arg("--pid-file")
+        .arg(pid_file)
+        .arg("--stdin-socket")
+        .arg(stdin_socket)
+        .arg("--stdout-socket")
+        .arg(stdout_socket)
+        .spawn()?;
 
-        let server = std::process::Command::new(binary_name)
-            .arg("run")
-            .arg("--log-file")
-            .arg(log_file)
-            .arg("--pid-file")
-            .arg(pid_file)
-            .arg("--stdin-socket")
-            .arg(stdin_socket.clone())
-            .arg("--stdout-socket")
-            .arg(stdout_socket.clone())
-            .spawn()?;
+    log::debug!("proxy: server started. PID: {:?}", server_process.id());
 
-        log::debug!("proxy: waiting for server to start...");
-        // TODO: better way to wait for server to start
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        log::debug!("proxy: server process id: {:?}", server.id());
+    let mut total_time_waited = std::time::Duration::from_secs(0);
+    let wait_duration = std::time::Duration::from_millis(20);
+    while !stdout_socket.exists() || !stdin_socket.exists() {
+        log::debug!("proxy: waiting for server to be ready to accept connections...");
+        std::thread::sleep(wait_duration);
+        total_time_waited += wait_duration;
+    }
 
-        Some(server)
-    } else {
-        None
-    };
-
-    let (quit_tx, quit_rx) = smol::channel::unbounded::<()>();
-    let stdin_task = smol::spawn(async move {
-        let mut stdin = Async::new(std::io::stdin())?;
-        let mut stream = smol::net::unix::UnixStream::connect(stdin_socket).await?;
-        log::debug!("proxy: connected to stdin socket");
-
-        let mut read_buffer = Vec::new();
-        let mut write_buffer = Vec::new();
-        loop {
-            match read_message(&mut stdin, &mut read_buffer).await {
-                Ok(message) => {
-                    log::debug!("proxy: got a message on stdin: {:?}", message.id);
-                    if let Err(error) = write_message(&mut stream, &mut write_buffer, message).await
-                    {
-                        log::error!(
-                            "proxy: failed to write message to stdin socket: {:?}, terminating...",
-                            error
-                        );
-                        quit_tx.send(()).await?;
-                        return anyhow::Ok(());
-                    }
-                    stream.flush().await?;
-                }
-                Err(error) => {
-                    log::error!(
-                        "proxy: failed to read message from stdin: {:?}, terminating...",
-                        error
-                    );
-                    // TODO: Under which conditions do we exit?
-                    // std::process::exit(1);
-                    return Err(error.into());
-                }
-            }
-        }
-    });
-    let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
-        let mut stdout = Async::new(std::io::stdout())?;
-        let mut stream = smol::net::unix::UnixStream::connect(stdout_socket).await?;
-        let mut read_buffer = Vec::new();
-        let mut write_buffer = Vec::new();
-        loop {
-            smol::future::or(
-                async {
-                    match read_message(&mut stream, &mut read_buffer).await {
-                        Ok(message) => {
-                            log::debug!("proxy: got a message on stdout: {:?}", message.id);
-                            if let Err(error) = write_message(&mut stdout, &mut write_buffer, message).await {
-                                log::error!("proxy: failed to write message to stdout socket: {:?}, terminating...", error);
-                                return anyhow::Ok(());
-                            }
-                            stdout.flush().await?;
-                        }
-                        Err(error) => {
-                            log::error!(
-                                "proxy: failed to read message from stdout: {:?}, terminating...",
-                                error
-                            );
-                            return Err(error.into());
-                        }
-                    }
-                    anyhow::Ok(())
-                },
-                async {
-                    // TODO: Under which conditions do we exit?
-                    quit_rx.recv().await?;
-                    anyhow::Ok(())
-                },
-            )
-            .await?;
-        }
-    });
-
-    smol::block_on(async move {
-        let (stdin_result, stdout_result) = smol::future::zip(stdin_task, stdout_task).await;
-        stdin_result?;
-        stdout_result?;
-        anyhow::Ok(())
-    })?;
-
+    log::info!(
+        "proxy: server ready to accept connections. total time waited: {:?}",
+        total_time_waited
+    );
     Ok(())
 }
 
-fn write_pid(pid_file: &Path) -> Result<()> {
+fn check_pid_file(pid_file: &Path) -> Result<bool> {
+    let pid = std::fs::read_to_string(&pid_file)
+        .context("Failed to read PID file")
+        .and_then(|contents| contents.parse::<u32>().context("Failed to parse PID file"))?;
+
+    log::debug!("proxy: Checking if process with PID {} exists...", pid);
+    match std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            log::debug!("proxy: Process with PID {} exists. NOT spawning new server, but attaching to existing one.", pid);
+            Ok(true)
+        }
+        _ => {
+            log::debug!("proxy: Found PID file, but process with that PID does not exist. Removing PID file.");
+            std::fs::remove_file(&pid_file).context("proxy: Failed to remove PID file")?;
+            Ok(false)
+        }
+    }
+}
+
+fn write_pid_file(pid_file: &Path) -> Result<()> {
     let pid = std::process::id();
     if pid_file.exists() {
         // remove the pid file
@@ -366,4 +309,36 @@ fn write_pid(pid_file: &Path) -> Result<()> {
     }
     std::fs::write(pid_file, pid.to_string()).context("Failed to write PID file")?;
     Ok(())
+}
+
+async fn handle_io<R, W>(mut reader: R, mut writer: W, socket_name: &str) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut read_buffer = Vec::new();
+    let mut write_buffer = Vec::new();
+    loop {
+        match read_message(&mut reader, &mut read_buffer).await {
+            Ok(message) => {
+                if let Err(error) = write_message(&mut writer, &mut write_buffer, message).await {
+                    log::error!(
+                        "proxy: failed to write message to {} socket: {:?}, terminating...",
+                        socket_name,
+                        error
+                    );
+                    return Ok(());
+                }
+                writer.flush().await?;
+            }
+            Err(error) => {
+                log::error!(
+                    "proxy: failed to read message from {}: {:?}, terminating...",
+                    socket_name,
+                    error
+                );
+                return Err(error.into());
+            }
+        }
+    }
 }
