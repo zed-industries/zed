@@ -3059,7 +3059,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.clear_clicked_diff_hunks(cx) {
+        if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
             return;
         }
