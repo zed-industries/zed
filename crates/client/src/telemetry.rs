@@ -35,13 +35,12 @@ pub struct Telemetry {
     state: Arc<Mutex<TelemetryState>>,
 }
 
-#[cfg(not(debug_assertions))]
+#[allow(dead_code)]
 enum TelemetryFile {
     Permanent(File, PathBuf),
     Temporary(NamedTempFile),
 }
 
-#[cfg(not(debug_assertions))]
 impl TelemetryFile {
     fn as_file_mut(&mut self) -> &mut File {
         match self {
