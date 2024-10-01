@@ -250,7 +250,9 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, TestAppContext, TestDispatcher};
+    use crate::{
+        font, Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, TestDispatcher,
+    };
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
@@ -267,6 +269,26 @@ mod tests {
             .unwrap();
         let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
+    }
+
+    fn generate_test_runs(input_run_len: &[usize]) -> Vec<TextRun> {
+        input_run_len
+            .iter()
+            .map(|run_len| TextRun {
+                len: *run_len,
+                font: Font {
+                    family: "Dummy".into(),
+                    features: FontFeatures::default(),
+                    fallbacks: None,
+                    weight: FontWeight::default(),
+                    style: FontStyle::Normal,
+                },
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            })
+            .collect()
     }
 
     #[test]
@@ -330,26 +352,39 @@ mod tests {
     fn test_truncate_line() {
         let mut wrapper = build_wrapper();
 
-        assert_eq!(
-            wrapper.truncate_line("aa bbb cccc ddddd eeee ffff gggg".into(), px(220.), None),
-            "aa bbb cccc ddddd eeee"
-        );
-        assert_eq!(
-            wrapper.truncate_line(
-                "aa bbb cccc ddddd eeee ffff gggg".into(),
-                px(220.),
-                Some("…")
-            ),
-            "aa bbb cccc ddddd eee…"
-        );
-        assert_eq!(
-            wrapper.truncate_line(
-                "aa bbb cccc ddddd eeee ffff gggg".into(),
-                px(220.),
-                Some("......")
-            ),
-            "aa bbb cccc dddd......"
-        );
+        {
+            let text = "aa bbb cccc ddddd eeee ffff gggg";
+            let result = "aa bbb cccc ddddd eeee";
+            let dummy_run_lens = vec![text.len()];
+            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), px(220.), None, &mut dummy_runs),
+                result
+            );
+            assert_eq!(dummy_runs.first().unwrap().len, result.len());
+        }
+        {
+            let text = "aa bbb cccc ddddd eeee ffff gggg";
+            let result = "aa bbb cccc ddddd eee…";
+            let dummy_run_lens = vec![text.len()];
+            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), px(220.), Some("…"), &mut dummy_runs),
+                result
+            );
+            assert_eq!(dummy_runs.first().unwrap().len, result.len());
+        }
+        {
+            let text = "aa bbb cccc ddddd eeee ffff gggg";
+            let result = "aa bbb cccc dddd......";
+            let dummy_run_lens = vec![text.len()];
+            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), px(220.), Some("......"), &mut dummy_runs),
+                result
+            );
+            assert_eq!(dummy_runs.first().unwrap().len, result.len());
+        }
     }
 
     #[test]
