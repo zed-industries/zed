@@ -235,7 +235,7 @@ pub fn initialize_workspace(
         }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
-                project.task_inventory().update(cx, |inventory, cx| {
+                project.task_inventory(cx).update(cx, |inventory, cx| {
                     let tasks_file_rx =
                         watch_config_file(cx.background_executor(), fs, paths::tasks_file().clone());
                     inventory.add_source(

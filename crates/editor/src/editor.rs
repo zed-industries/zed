@@ -1879,7 +1879,7 @@ impl Editor {
                         }
                     }
                 }));
-                let task_inventory = project.read(cx).task_inventory().clone();
+                let task_inventory = project.read(cx).task_inventory(cx).clone();
                 project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
                     editor.tasks_update_task = Some(editor.refresh_runnables(cx));
                 }));
@@ -9097,7 +9097,7 @@ impl Editor {
                 .map(|file| (file.worktree_id(cx), file.clone()))
                 .unzip();
 
-            (project.task_inventory().clone(), worktree_id, file)
+            (project.task_inventory(cx).clone(), worktree_id, file)
         });
 
         let inventory = inventory.read(cx);

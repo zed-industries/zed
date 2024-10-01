@@ -212,7 +212,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .find(|(source_kind, _)| source_kind == &global_task_source_kind)
         .expect("should have one global task");
     project.update(cx, |project, cx| {
-        project.task_inventory().update(cx, |inventory, _| {
+        project.task_inventory(cx).update(cx, |inventory, _| {
             inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
         });
     });
@@ -235,7 +235,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     let (tx, rx) = futures::channel::mpsc::unbounded();
     cx.update(|cx| {
         project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, cx| {
+            project.task_inventory(cx).update(cx, |inventory, cx| {
                 inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
                 inventory.add_source(
                     global_task_source_kind.clone(),
@@ -5419,7 +5419,7 @@ fn get_all_tasks(
 ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
     let resolved_tasks = project.update(cx, |project, cx| {
         project
-            .task_inventory()
+            .task_inventory(cx)
             .read(cx)
             .used_and_current_resolved_tasks(None, worktree_id, None, task_context, cx)
     });

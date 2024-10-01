@@ -126,7 +126,7 @@ impl TasksModalDelegate {
         // the original list without a removed entry.
         candidates.remove(ix);
         self.project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, _| {
+            project.task_inventory(cx).update(cx, |inventory, _| {
                 inventory.delete_previously_used(&task.id);
             })
         });
@@ -244,7 +244,7 @@ impl PickerDelegate for TasksModalDelegate {
                                             )
                                         });
                                         project
-                                            .task_inventory()
+                                            .task_inventory(cx)
                                             .read(cx)
                                             .used_and_current_resolved_tasks(
                                                 remote_templates,
@@ -497,7 +497,7 @@ impl PickerDelegate for TasksModalDelegate {
         let left_button = if self
             .project
             .read(cx)
-            .task_inventory()
+            .task_inventory(cx)
             .read(cx)
             .last_scheduled_task(None)
             .is_some()
@@ -1038,7 +1038,7 @@ mod tests {
                 .unwrap()
         });
         project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, _| {
+            project.task_inventory(cx).update(cx, |inventory, _| {
                 let (kind, task) = scheduled_task;
                 inventory.task_scheduled(kind, task);
             })

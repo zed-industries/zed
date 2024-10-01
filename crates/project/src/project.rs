@@ -141,6 +141,7 @@ pub struct Project {
     languages: Arc<LanguageRegistry>,
     client: Arc<client::Client>,
     join_project_response_message_id: u32,
+    task_store: Model<TaskStore>,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
     ssh_client: Option<Model<SshRemoteClient>>,
@@ -150,14 +151,12 @@ pub struct Project {
     worktree_store: Model<WorktreeStore>,
     buffer_store: Model<BufferStore>,
     lsp_store: Model<LspStore>,
-    task_store: Model<TaskStore>,
     _subscriptions: Vec<gpui::Subscription>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
     git_diff_debouncer: DebouncedDelay<Self>,
     remotely_created_models: Arc<Mutex<RemotelyCreatedModels>>,
     terminals: Terminals,
     node: Option<NodeRuntime>,
-    tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
@@ -590,7 +589,6 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
-            let tasks = Inventory::new(cx);
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new_model(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -631,6 +629,16 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let task_store = cx.new_model(|cx| {
+                TaskStore::local(
+                    worktree_store.clone(),
+                    buffer_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+            // TODO kb task store event subscription?
+
             Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -645,6 +653,7 @@ impl Project {
                 snippets,
                 languages,
                 client,
+                task_store,
                 user_store,
                 settings_observer,
                 fs,
@@ -655,7 +664,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
-                tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
@@ -664,7 +672,6 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
-                task_store: todo!("TODO kb"),
             }
         })
     }
@@ -682,7 +689,6 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
-            let tasks = Inventory::new(cx);
             let global_snippets_dir = paths::config_dir().join("snippets");
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
@@ -734,6 +740,17 @@ impl Project {
             })
             .detach();
 
+            let task_store = cx.new_model(|cx| {
+                TaskStore::remote(
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    ssh.clone().into(),
+                    SSH_PROJECT_ID,
+                    cx,
+                )
+            });
+            // TODO kb task store event subscription?
+
             let this = Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -748,6 +765,7 @@ impl Project {
                 snippets,
                 languages,
                 client,
+                task_store,
                 user_store,
                 settings_observer,
                 fs,
@@ -758,7 +776,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
-                tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
@@ -767,7 +784,6 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
-                task_store: todo!("TODO kb"),
             };
 
             let ssh = ssh.read(cx);
@@ -886,12 +902,21 @@ impl Project {
             lsp_store
         })?;
 
+        let task_store = cx.new_model(|cx| {
+            TaskStore::remote(
+                buffer_store.clone(),
+                worktree_store.clone(),
+                client.clone().into(),
+                remote_id,
+                cx,
+            )
+        })?;
+
         let settings_observer =
             cx.new_model(|cx| SettingsObserver::new_remote(worktree_store.clone(), cx))?;
 
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
-            let tasks = Inventory::new(cx);
 
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
@@ -925,6 +950,7 @@ impl Project {
                 join_project_response_message_id: response.message_id,
                 languages,
                 user_store: user_store.clone(),
+                task_store,
                 snippets,
                 fs,
                 ssh_client: None,
@@ -945,7 +971,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: None,
-                tasks,
                 hosted_project_id: None,
                 dev_server_project_id: response
                     .payload
@@ -956,7 +981,6 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
                 environment: ProjectEnvironment::new(&worktree_store, None, cx),
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
-                task_store: todo!("TODO kb"),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1267,8 +1291,8 @@ impl Project {
         }
     }
 
-    pub fn task_inventory(&self) -> &Model<Inventory> {
-        &self.tasks
+    pub fn task_inventory(&self, cx: &AppContext) -> Model<Inventory> {
+        self.task_store.read(cx).task_inventory().clone()
     }
 
     pub fn snippets(&self) -> &Model<SnippetProvider> {
@@ -2141,7 +2165,7 @@ impl Project {
             return;
         }
 
-        self.task_inventory().update(cx, |inventory, _| {
+        self.task_inventory(cx).update(cx, |inventory, _| {
             inventory.remove_worktree_sources(id_to_remove);
         });
 
@@ -3145,7 +3169,7 @@ impl Project {
             };
 
             if path.ends_with(local_tasks_file_relative_path()) {
-                self.task_inventory().update(cx, |task_inventory, cx| {
+                self.task_inventory(cx).update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
                     } else {
@@ -3165,7 +3189,7 @@ impl Project {
                     }
                 })
             } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
-                self.task_inventory().update(cx, |task_inventory, cx| {
+                self.task_inventory(cx).update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
                     } else {
@@ -3571,100 +3595,6 @@ impl Project {
         TaskStore::handle_task_context_for_location(task_store, envelope, cx).await
     }
 
-    // TODO kb has to be removed.
-    // The whole flow hast to be inverted, with headless/remote instances syncing, pushing the tasks
-    // and the user-facing Zed accepting those.
-    // This has to happen via settings sync, not a special message.
-    async fn handle_task_templates(
-        project: Model<Self>,
-        envelope: TypedEnvelope<proto::TaskTemplates>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::TaskTemplatesResponse> {
-        dbg!("$$$$$$$$$$$$$$$$$$");
-        let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
-        let buffer_store = project.update(&mut cx, |project, _| project.buffer_store.clone())?;
-        let location = match envelope.payload.location {
-            Some(location) => Some(
-                cx.update(|cx| deserialize_location(&buffer_store, location, cx))?
-                    .await
-                    .context("task templates request location deserializing")?,
-            ),
-            None => None,
-        };
-
-        let templates = project
-            .update(&mut cx, |project, cx| {
-                project.task_templates(worktree, location, cx)
-            })?
-            .await
-            .context("receiving task templates")?
-            .into_iter()
-            .map(|(kind, template)| {
-                let kind = Some(match kind {
-                    TaskSourceKind::UserInput => proto::task_source_kind::Kind::UserInput(
-                        proto::task_source_kind::UserInput {},
-                    ),
-                    TaskSourceKind::Worktree {
-                        id,
-                        abs_path,
-                        id_base,
-                    } => {
-                        proto::task_source_kind::Kind::Worktree(proto::task_source_kind::Worktree {
-                            id: id.to_proto(),
-                            abs_path: abs_path.to_string_lossy().to_string(),
-                            id_base: id_base.to_string(),
-                        })
-                    }
-                    TaskSourceKind::AbsPath { id_base, abs_path } => {
-                        proto::task_source_kind::Kind::AbsPath(proto::task_source_kind::AbsPath {
-                            abs_path: abs_path.to_string_lossy().to_string(),
-                            id_base: id_base.to_string(),
-                        })
-                    }
-                    TaskSourceKind::Language { name } => {
-                        proto::task_source_kind::Kind::Language(proto::task_source_kind::Language {
-                            name: name.to_string(),
-                        })
-                    }
-                });
-                let kind = Some(proto::TaskSourceKind { kind });
-                let template = Some(proto::TaskTemplate {
-                    label: template.label,
-                    command: template.command,
-                    args: template.args,
-                    env: template.env.into_iter().collect(),
-                    cwd: template.cwd,
-                    use_new_terminal: template.use_new_terminal,
-                    allow_concurrent_runs: template.allow_concurrent_runs,
-                    reveal: match template.reveal {
-                        RevealStrategy::Always => proto::RevealStrategy::RevealAlways as i32,
-                        RevealStrategy::Never => proto::RevealStrategy::RevealNever as i32,
-                    },
-                    hide: match template.hide {
-                        HideStrategy::Always => proto::HideStrategy::HideAlways as i32,
-                        HideStrategy::Never => proto::HideStrategy::HideNever as i32,
-                        HideStrategy::OnSuccess => proto::HideStrategy::HideOnSuccess as i32,
-                    },
-                    shell: Some(proto::Shell {
-                        shell_type: Some(match template.shell {
-                            Shell::System => proto::shell::ShellType::System(proto::System {}),
-                            Shell::Program(program) => proto::shell::ShellType::Program(program),
-                            Shell::WithArguments { program, args } => {
-                                proto::shell::ShellType::WithArguments(
-                                    proto::shell::WithArguments { program, args },
-                                )
-                            }
-                        }),
-                    }),
-                    tags: template.tags,
-                });
-                proto::TemplatePair { kind, template }
-            })
-            .collect();
-
-        Ok(proto::TaskTemplatesResponse { templates })
-    }
-
     async fn handle_search_candidate_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
@@ -4053,7 +3983,7 @@ impl Project {
                 })
                 .unwrap_or_default();
             Task::ready(Ok(self
-                .task_inventory()
+                .task_inventory(cx)
                 .read(cx)
                 .list_tasks(file, language, worktree, cx)))
         } else if let Some(project_id) = self
@@ -4159,32 +4089,6 @@ impl Project {
                 })
                 .collect())
         })
-    }
-
-    fn task_worktree(&self, cx: &AppContext) -> Option<Model<Worktree>> {
-        let available_worktrees = self
-            .worktrees(cx)
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                worktree.is_visible()
-                    && worktree.is_local()
-                    && worktree.root_entry().map_or(false, |e| e.is_dir())
-            })
-            .collect::<Vec<_>>();
-
-        match available_worktrees.len() {
-            0 => None,
-            1 => Some(available_worktrees[0].clone()),
-            _ => self.active_entry().and_then(|entry_id| {
-                available_worktrees.into_iter().find_map(|worktree| {
-                    if worktree.read(cx).contains_entry(entry_id) {
-                        Some(worktree)
-                    } else {
-                        None
-                    }
-                })
-            }),
-        }
     }
 }
 

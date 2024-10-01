@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use anyhow::Context;
-use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
+use anyhow::Context as _;
+use gpui::{AsyncAppContext, Context as _, Model, ModelContext, Task, WeakModel};
 use language::{proto::serialize_anchor, Location};
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
@@ -23,13 +23,13 @@ pub struct TaskStore {
     state: Box<dyn TaskStoreImpl>,
     buffer_store: WeakModel<BufferStore>,
     downstream_client: Option<(AnyProtoClient, u64)>,
+    task_inventory: Model<Inventory>,
 }
 
 struct LocalTaskStore {
     buffer_store: WeakModel<BufferStore>,
     worktree_store: Model<WorktreeStore>,
     environment: Model<ProjectEnvironment>,
-    task_inventory: Model<Inventory>,
     // TODO kb needs to track task.json changes (both local and remote) and update the task inventory accordingly
     // _subscription: Subscription,
 }
@@ -58,6 +58,7 @@ impl TaskStore {
             .update(|cx| deserialize_location(&buffer_store, location, cx))?
             .await?;
         let context_task = store.update(&mut cx, |store, cx| {
+            // TODO kb why not send the original task variables from the client?
             let captured_variables = {
                 let mut variables = TaskVariables::default();
                 for range in location
@@ -89,6 +90,48 @@ impl TaskStore {
                 .collect(),
         })
     }
+
+    pub(crate) fn local(
+        worktree_store: Model<WorktreeStore>,
+        buffer_store: Model<BufferStore>,
+        environment: Model<ProjectEnvironment>,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Self {
+        Self {
+            task_inventory: Inventory::new(cx),
+            buffer_store: buffer_store.downgrade(),
+            downstream_client: None,
+            state: Box::new(cx.new_model(|_| LocalTaskStore {
+                buffer_store: buffer_store.downgrade(),
+                worktree_store,
+                environment,
+            })),
+        }
+    }
+
+    pub(crate) fn remote(
+        buffer_store: Model<BufferStore>,
+        worktree_store: Model<WorktreeStore>,
+        upstream_client: AnyProtoClient,
+        project_id: u64,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Self {
+        Self {
+            buffer_store: buffer_store.downgrade(),
+            downstream_client: None,
+            task_inventory: Inventory::new(cx),
+            state: Box::new(cx.new_model(|_| RemoteTaskStore {
+                buffer_store: buffer_store.downgrade(),
+                worktree_store,
+                project_id,
+                upstream_client,
+            })),
+        }
+    }
+
+    pub fn task_inventory(&self) -> &Model<Inventory> {
+        &self.task_inventory
+    }
 }
 
 trait TaskStoreImpl {
@@ -119,7 +162,7 @@ impl TaskStoreImpl for Model<LocalTaskStore> {
         let environment = self.read(cx).environment.clone();
         let worktree_store = self.read(cx).worktree_store.clone();
 
-        cx.spawn(|task_store, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let worktree_abs_path = worktree_abs_path.clone();
             let project_env = environment
                 .update(&mut cx, |environment, cx| {
@@ -156,7 +199,7 @@ impl TaskStoreImpl for Model<LocalTaskStore> {
 impl TaskStoreImpl for Model<RemoteTaskStore> {
     fn task_context_for_location(
         &self,
-        captured_variables: TaskVariables,
+        _: TaskVariables,
         location: Location,
         cx: &mut ModelContext<TaskStore>,
     ) -> Task<Option<TaskContext>> {
