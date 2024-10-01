@@ -295,7 +295,7 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
-        if !params.show {
+        if params.visibility == WindowVisibility::Invisible {
             dwstyle |= WS_MINIMIZE;
         }
 
@@ -362,9 +362,7 @@ impl WindowsWindow {
             SetWindowPlacement(raw_hwnd, &placement)?;
         }
 
-        if params.show {
-            unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
-        } else {
+        if params.visibility == WindowVisibility::Invisible {
             unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? };
         }
 
@@ -553,7 +551,7 @@ impl PlatformWindow for WindowsWindow {
         println!("-> SHOW");
         let hwnd = self.0.hwnd;
         unsafe {
-            ShowWindow(hwnd, SW_SHOWNORMAL).ok().log_err();
+            ShowWindow(hwnd, SW_SHOW).ok().log_err();
         }
     }
 

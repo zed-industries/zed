@@ -36,7 +36,7 @@ use gpui::{
     EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
     ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
     ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
-    WindowHandle, WindowId, WindowOptions,
+    WindowHandle, WindowId, WindowOptions, WindowVisibility,
 };
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -1155,6 +1155,7 @@ impl Workspace {
                 DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
 
+            let mut show = false;
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |_, cx| {
                     cx.replace_root_view(|cx| {
@@ -1191,6 +1192,9 @@ impl Workspace {
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
                 println!("-> new_local: {:#?}", options);
+                if options.visibility == WindowVisibility::DeferredShow {
+                    show = true;
+                }
                 options.window_bounds = window_bounds;
                 let centered_layout = serialized_workspace
                     .as_ref()
@@ -1221,7 +1225,9 @@ impl Workspace {
             println!("-> WORKSPACE acti");
             window
                 .update(&mut cx, |_, cx| {
-                    cx.show_window();
+                    if show {
+                        cx.show_window();
+                    }
                     cx.activate_window();
                 })
                 .log_err();
