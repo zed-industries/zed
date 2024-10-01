@@ -551,7 +551,6 @@ impl settings::Settings for ThemeSettings {
                     .ui_font_fallbacks
                     .as_ref()
                     .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
-                // weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 weight: defaults.ui_font_weight.map(clmap_font_weight).unwrap(),
                 style: Default::default(),
             },
@@ -562,7 +561,6 @@ impl settings::Settings for ThemeSettings {
                     .buffer_font_fallbacks
                     .as_ref()
                     .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
-                // weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 weight: defaults.buffer_font_weight.map(clmap_font_weight).unwrap(),
                 style: FontStyle::default(),
             },
