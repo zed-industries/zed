@@ -70,7 +70,7 @@ jobs:
         with:
           version: 1.35.0
           input: "crates/proto/proto/"
-          breaking_against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
+          breaking_against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${GITHUB_BASE_REF},subdir=crates/proto/proto/"
           lint: false
 
   macos_tests:
