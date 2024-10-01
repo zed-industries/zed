@@ -245,6 +245,7 @@ message Envelope {
 
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
+        // TODO kb remove?
         TaskTemplatesResponse task_templates_response = 205;
         TaskTemplates task_templates = 206;
 

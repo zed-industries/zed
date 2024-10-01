@@ -21,7 +21,7 @@ use task::{
     TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix, ResultExt};
+use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
@@ -194,7 +194,6 @@ impl Inventory {
     /// Deduplicates the tasks by their labels and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
-        remote_templates_task: Option<Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>>>,
         worktree: Option<WorktreeId>,
         location: Option<Location>,
         task_context: &TaskContext,
@@ -242,7 +241,7 @@ impl Inventory {
                 },
             );
         let not_used_score = post_inc(&mut lru_score);
-        let mut currently_resolved_tasks = self
+        let currently_resolved_tasks = self
             .sources
             .iter()
             .filter(|source| {
@@ -257,7 +256,7 @@ impl Inventory {
                     .into_iter()
                     .map(|task| (&source.kind, task))
             })
-            .chain(language_tasks.filter(|_| remote_templates_task.is_none()))
+            .chain(language_tasks)
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
                 Some((kind, task.resolve_task(&id_base, task_context)?))
@@ -275,25 +274,7 @@ impl Inventory {
             .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score))
             .collect::<Vec<_>>();
 
-        let task_context = task_context.clone();
         cx.spawn(move |_| async move {
-            let remote_templates = match remote_templates_task {
-                Some(task) => match task.await.log_err() {
-                    Some(remote_templates) => remote_templates,
-                    None => return (Vec::new(), Vec::new()),
-                },
-                None => Vec::new(),
-            };
-            let remote_tasks = remote_templates.into_iter().filter_map(|(kind, task)| {
-                let id_base = kind.to_id_base();
-                Some((
-                    kind,
-                    task.resolve_task(&id_base, &task_context)?,
-                    not_used_score,
-                ))
-            });
-            currently_resolved_tasks.extend(remote_tasks);
-
             let mut tasks_by_label = BTreeMap::default();
             tasks_by_label = previously_spawned_tasks.into_iter().fold(
                 tasks_by_label,
@@ -511,7 +492,6 @@ mod test_inventory {
         let (used, current) = inventory
             .update(cx, |inventory, cx| {
                 inventory.used_and_current_resolved_tasks(
-                    None,
                     worktree,
                     None,
                     &TaskContext::default(),
@@ -1003,7 +983,6 @@ mod tests {
         let (used, current) = inventory
             .update(cx, |inventory, cx| {
                 inventory.used_and_current_resolved_tasks(
-                    None,
                     worktree,
                     None,
                     &TaskContext::default(),
