@@ -153,7 +153,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .text_color(color)
         .pt(rems(0.15))
         .pb_1()
-        .child(div().children(render_markdown_text(&parsed.contents, cx)))
+        .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()
 }
