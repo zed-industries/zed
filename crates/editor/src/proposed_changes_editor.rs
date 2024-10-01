@@ -99,19 +99,8 @@ impl ProposedChangesEditor {
         event: &BufferEvent,
         _cx: &mut ViewContext<Self>,
     ) {
-        if let BufferEvent::Edited = event {
+        if let BufferEvent::Operation { .. } = event {
             self.recalculate_diffs_tx.unbounded_send(buffer).ok();
-        }
-    }
-
-    fn apply_all_changes(&self, cx: &mut ViewContext<Self>) {
-        let buffers = self.editor.read(cx).buffer.read(cx).all_buffers();
-        for branch_buffer in buffers {
-            if let Some(base_buffer) = branch_buffer.read(cx).diff_base_buffer() {
-                base_buffer.update(cx, |base_buffer, cx| {
-                    base_buffer.merge(&branch_buffer, None, cx)
-                });
-            }
         }
     }
 }
@@ -183,7 +172,9 @@ impl Render for ProposedChangesEditorToolbar {
         Button::new("apply-changes", "Apply All").on_click(move |_, cx| {
             if let Some(editor) = &editor {
                 editor.update(cx, |editor, cx| {
-                    editor.apply_all_changes(cx);
+                    editor.editor.update(cx, |editor, cx| {
+                        editor.apply_all_changes(cx);
+                    })
                 });
             }
         })

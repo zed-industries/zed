@@ -832,6 +832,9 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         let edits = branch.read_with(cx, |branch, _| {
+            let offset = range
+                .as_ref()
+                .map_or(0, |range| range.start.to_offset(branch));
             branch
                 .edits_since_in_range::<usize>(
                     &self.version,
@@ -839,8 +842,10 @@ impl Buffer {
                 )
                 .map(|edit| {
                     (
-                        edit.old,
-                        branch.text_for_range(edit.new).collect::<String>(),
+                        edit.old.start + offset..edit.old.end + offset,
+                        branch
+                            .text_for_range(edit.new.start + offset..edit.new.end + offset)
+                            .collect::<String>(),
                     )
                 })
                 .collect::<Vec<_>>()
