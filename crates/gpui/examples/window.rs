@@ -75,95 +75,80 @@ impl Render for WindowDemo {
             .justify_center()
             .items_center()
             .gap_2()
-            .child(button("Normal", {
-                let window_bounds = window_bounds;
-                move |cx| {
-                    cx.open_window(
-                        WindowOptions {
-                            window_bounds: Some(window_bounds),
-                            ..Default::default()
-                        },
-                        |cx| {
-                            cx.new_view(|_cx| SubWindow {
-                                custom_titlebar: false,
-                            })
-                        },
-                    )
-                    .unwrap();
-                }
+            .child(button("Normal", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Popup", {
-                let window_bounds = window_bounds;
-                move |cx| {
-                    cx.open_window(
-                        WindowOptions {
-                            window_bounds: Some(window_bounds),
-                            kind: WindowKind::PopUp,
-                            ..Default::default()
-                        },
-                        |cx| {
-                            cx.new_view(|_cx| SubWindow {
-                                custom_titlebar: false,
-                            })
-                        },
-                    )
-                    .unwrap();
-                }
+            .child(button("Popup", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        kind: WindowKind::PopUp,
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Custom Titlebar", {
-                let window_bounds = window_bounds;
-                move |cx| {
-                    cx.open_window(
-                        WindowOptions {
-                            titlebar: None,
-                            window_bounds: Some(window_bounds),
-                            ..Default::default()
-                        },
-                        |cx| {
-                            cx.new_view(|_cx| SubWindow {
-                                custom_titlebar: true,
-                            })
-                        },
-                    )
-                    .unwrap();
-                }
+            .child(button("Custom Titlebar", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        titlebar: None,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: true,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Invisible", {
-                let window_bounds = window_bounds;
-                move |cx| {
-                    cx.open_window(
-                        WindowOptions {
-                            show: false,
-                            window_bounds: Some(window_bounds),
-                            ..Default::default()
-                        },
-                        |cx| {
-                            cx.new_view(|_cx| SubWindow {
-                                custom_titlebar: false,
-                            })
-                        },
-                    )
-                    .unwrap();
-                }
+            .child(button("Invisible", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        show: false,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
-            .child(button("Unmovable", {
-                let window_bounds = window_bounds;
-                move |cx| {
-                    cx.open_window(
-                        WindowOptions {
-                            is_movable: false,
-                            titlebar: None,
-                            window_bounds: Some(window_bounds),
-                            ..Default::default()
-                        },
-                        |cx| {
-                            cx.new_view(|_cx| SubWindow {
-                                custom_titlebar: false,
-                            })
-                        },
-                    )
-                    .unwrap();
-                }
+            .child(button("Unmovable", move |cx| {
+                cx.open_window(
+                    WindowOptions {
+                        is_movable: false,
+                        titlebar: None,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |cx| {
+                        cx.new_view(|_cx| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
             }))
     }
 }
