@@ -931,19 +931,13 @@ name = "async_ureq"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "derive_more",
  "futures 0.3.30",
  "gpui",
  "http_client",
- "log",
  "parking_lot",
- "rustls 0.21.12",
- "rustls-native-certs 0.8.0",
  "serde",
- "serde_json",
  "smol",
  "ureq",
- "url",
  "util",
 ]
 
@@ -2434,8 +2428,6 @@ dependencies = [
  "rand 0.8.5",
  "release_channel",
  "rpc",
- "rustls 0.21.12",
- "rustls-native-certs 0.8.0",
  "schemars",
  "serde",
  "serde_json",
@@ -9365,23 +9357,13 @@ name = "reqwest_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compat",
  "bytes 1.7.1",
- "derive_more",
  "futures 0.3.30",
- "gpui",
  "http_client",
- "log",
- "parking_lot",
  "reqwest 0.12.8",
- "rustls 0.21.12",
- "rustls-native-certs 0.8.0",
  "serde",
- "serde_json",
  "smol",
  "tokio",
- "url",
- "util",
 ]
 
 [[package]]

@@ -20,16 +20,10 @@ name = "client"
 path = "examples/client.rs"
 
 [dependencies]
-rustls.workspace = true
-rustls-native-certs.workspace = true
 anyhow.workspace = true
-derive_more.workspace = true
 futures.workspace = true
-log.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 smol.workspace = true
-url.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 util.workspace = true
