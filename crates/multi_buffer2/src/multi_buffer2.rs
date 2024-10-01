@@ -930,7 +930,7 @@ mod tests {
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.edit([(1..3, "ABCD")], None, cx);
             });
-            assert_eq!(multibuffer.snapshot(cx).text(), "\naABCDe\nklmno");
+            assert_eq!(multibuffer.snapshot(cx).text(), "\naABCDde\nklmno");
             assert_eq!(
                 subscription.consume().into_inner(),
                 &[Edit {
