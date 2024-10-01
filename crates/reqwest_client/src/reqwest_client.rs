@@ -1,13 +1,10 @@
-use std::{
-    borrow::Cow,
-    io::Read,
-    pin::{self, Pin},
-    task::Poll,
-};
+use std::{io::Read, mem, task::Poll};
 
-use futures::AsyncRead;
+use anyhow::anyhow;
+use futures::{AsyncRead, TryStreamExt};
+use smol::future::FutureExt;
 
-struct ReqwestClient {
+pub struct ReqwestClient {
     client: reqwest::Client,
 }
 
@@ -54,27 +51,6 @@ impl futures::stream::Stream for WrappedBody {
     }
 }
 
-struct WrappedResponse {
-    inner: reqwest::Response,
-    buffer: Vec<u8>,
-}
-
-impl AsyncRead for WrappedResponse {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        let chunk = this.inner.chunk();
-        match chunk {};
-        let pin = std::pin::Pin::new(&mut this.inner);
-        let poll_next = futures::Stream::poll_next(pin, cx);
-        // TODO: WRONG
-        poll_next.map(|_| Ok(0))
-    }
-}
-
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&http_client::http::Uri> {
         None
@@ -87,31 +63,37 @@ impl http_client::HttpClient for ReqwestClient {
         'static,
         Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
     > {
+        let (parts, body) = req.into_parts();
+
+
         let mut request = self.client.request(
-            reqwest::Method::from_bytes(req.method().as_str().as_bytes()).unwrap(),
-            req.uri().to_string(),
+            parts.method,
+            parts.uri.to_string(),
         );
 
-        for (key, value) in req.headers().iter() {
-            request = request.header(key, value);
+        request.headers(parts.headers);
+
+
+        if let Some(redirect_policy) = parts.extensions.get::<http_client::RedirectPolicy>() {
+            request.
         }
 
         let body = WrappedBody(req.into_body());
         let request = request.body(reqwest::Body::wrap_stream(body));
 
         async move {
-            let response = request.send().await?;
+            let response = request.send().await.map_err(|e| anyhow!(e))?;
             let status = response.status();
             let mut builder = http_client::http::Response::builder().status(status.as_u16());
             for (name, value) in response.headers() {
                 builder = builder.header(name, value);
             }
-
-            let body = http_client::AsyncBody::from_reader(WrappedResponse {
-                inner: response,
-                buffer: Vec::new(),
-            });
-            builder.body(body)
+            let bytes = response.bytes_stream();
+            let bytes = bytes
+                .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+                .into_async_read();
+            let body = http_client::AsyncBody::from_reader(bytes);
+            builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
     }

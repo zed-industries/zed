@@ -1023,7 +1023,7 @@ impl Client {
         &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> impl Future<Output = Result<Url>> {
+    ) -> impl Future<Output = Result<url::Url>> {
         #[cfg(any(test, feature = "test-support"))]
         let url_override = self.rpc_url.read().clone();
 
@@ -1117,7 +1117,7 @@ impl Client {
             // for us from the RPC URL.
             //
             // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
-            let mut request = rpc_url.into_client_request()?;
+            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
 
             // We then modify the request to add our desired headers.
             let request_headers = request.headers_mut();
@@ -1141,7 +1141,9 @@ impl Client {
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some((*http_client::TLS_CONFIG).into()),
+                            Some(async_tls::TlsConnector::from(
+                                http_client::TLS_CONFIG.clone(),
+                            )),
                         )
                         .await?;
                     Ok(Connection::new(

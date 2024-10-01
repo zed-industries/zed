@@ -23,6 +23,7 @@ path = "examples/client.rs"
 rustls.workspace = true
 rustls-native-certs.workspace = true
 anyhow.workspace = true
+async-compat.workspace = true
 derive_more.workspace = true
 futures.workspace = true
 log.workspace = true

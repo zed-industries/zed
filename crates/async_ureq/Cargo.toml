@@ -35,4 +35,4 @@ http_client.workspace = true
 util.workspace = true
 parking_lot.workspace = true
 
-ureq = "2.10.1"
+ureq = "=2.9.1"

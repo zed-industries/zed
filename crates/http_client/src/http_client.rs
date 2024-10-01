@@ -41,10 +41,11 @@ pub static TLS_CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
     for error in root_certs.errors {
         log::warn!("error loading native certs: {:?}", error);
     }
-    root_store.add_parsable_certificates(root_certs.certs);
+    root_store.add_parsable_certificates(&root_certs.certs);
 
     Arc::new(
         rustls::ClientConfig::builder()
+            .with_safe_defaults()
             .with_root_certificates(root_store)
             .with_no_client_auth(),
     )
