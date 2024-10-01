@@ -1,0 +1,43 @@
+name: Build Windows Application
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - "windows"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-wasi
+          profile: minimal
+          override: true
+
+      - name: Install Visual Studio Build Tools and Windows SDK using Installer
+        run: |
+          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vs_buildtools.exe -OutFile vs_buildtools.exe
+          Start-Process -Wait -FilePath .\vs_buildtools.exe -ArgumentList '--quiet', '--wait', '--add Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended', '--includeOptional'
+          Remove-Item -Force vs_buildtools.exe
+      - name: Update Rust toolchain
+        run: rustup update
+
+      - name: Add wasm target
+        run: rustup target add wasm32-wasi
+
+      - name: Build the application
+        run: cargo build --release --target=x86_64-pc-windows-msvc
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: application
+          path: target/x86_64-pc-windows-msvc/release/
