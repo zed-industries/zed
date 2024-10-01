@@ -113,7 +113,7 @@ fn bit_is_set(bits: u32, bit_index: u16) -> bool {
 
 /// Sets every bit with `i >= bit_index` to 0.
 fn keep_bits_upto(bits: u32, bit_index: u16) -> u32 {
-    if bit_index <= 0 {
+    if bit_index == 0 {
         0
     } else if bit_index >= 32 {
         u32::MAX
