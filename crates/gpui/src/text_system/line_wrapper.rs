@@ -352,61 +352,69 @@ mod tests {
     fn test_truncate_line() {
         let mut wrapper = build_wrapper();
 
-        {
-            let text = "aa bbb cccc ddddd eeee ffff gggg";
-            let result = "aa bbb cccc ddddd eeee";
+        fn perform_test(
+            wrapper: &mut LineWrapper,
+            text: &'static str,
+            result: &'static str,
+            ellipsis: Option<&str>,
+        ) {
             let dummy_run_lens = vec![text.len()];
             let mut dummy_runs = generate_test_runs(&dummy_run_lens);
             assert_eq!(
-                wrapper.truncate_line(text.into(), px(220.), None, &mut dummy_runs),
+                wrapper.truncate_line(text.into(), px(220.), ellipsis, &mut dummy_runs),
                 result
             );
             assert_eq!(dummy_runs.first().unwrap().len, result.len());
         }
-        {
-            let text = "aa bbb cccc ddddd eeee ffff gggg";
-            let result = "aa bbb cccc ddddd eee…";
-            let dummy_run_lens = vec![text.len()];
-            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), px(220.), Some("…"), &mut dummy_runs),
-                result
-            );
-            assert_eq!(dummy_runs.first().unwrap().len, result.len());
-        }
-        {
-            let text = "aa bbb cccc ddddd eeee ffff gggg";
-            let result = "aa bbb cccc dddd......";
-            let dummy_run_lens = vec![text.len()];
-            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), px(220.), Some("......"), &mut dummy_runs),
-                result
-            );
-            assert_eq!(dummy_runs.first().unwrap().len, result.len());
-        }
+
+        perform_test(
+            &mut wrapper,
+            "aa bbb cccc ddddd eeee ffff gggg",
+            "aa bbb cccc ddddd eeee",
+            None,
+        );
+        perform_test(
+            &mut wrapper,
+            "aa bbb cccc ddddd eeee ffff gggg",
+            "aa bbb cccc ddddd eee…",
+            Some("…"),
+        );
+        perform_test(
+            &mut wrapper,
+            "aa bbb cccc ddddd eeee ffff gggg",
+            "aa bbb cccc dddd......",
+            Some("......"),
+        );
     }
 
     #[test]
     fn test_truncate_multiple_runs() {
         let mut wrapper = build_wrapper();
+
+        fn perform_test(
+            wrapper: &mut LineWrapper,
+            text: &'static str,
+            result: &str,
+            run_lens: &[usize],
+            result_run_len: &[usize],
+            line_width: Pixels,
+        ) {
+            let mut dummy_runs = generate_test_runs(run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), line_width, Some("…"), &mut dummy_runs),
+                result
+            );
+            for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
+                assert_eq!(run.len, *result_len);
+            }
+        }
         // Case 0: Normal
         // Text: abcdefghijkl
         // Runs: Run0 { len: 12, ... }
         //
         // Truncate res: abcd… (truncate_at = 4)
         // Run res: Run0 { string: abcd…, len: 7, ... }
-        {
-            let text = "abcdefghijkl";
-            let result = "abcd…";
-            let dummy_run_lens = [text.len()];
-            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), px(50.), Some("…"), &mut dummy_runs),
-                result
-            );
-            assert_eq!(dummy_runs.first().unwrap().len, result.len());
-        }
+        perform_test(&mut wrapper, "abcdefghijkl", "abcd…", &[12], &[7], px(50.));
         // Case 1: Drop some runs
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
@@ -414,20 +422,14 @@ mod tests {
         // Truncate res: abcdef… (truncate_at = 6)
         // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
         // 5, ... }
-        {
-            let text = "abcdefghijkl";
-            let result = "abcdef…";
-            let dummy_run_lens = [4, 4, 4];
-            let result_text_len = [4, 5];
-            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), px(70.), Some("…"), &mut dummy_runs),
-                result
-            );
-            for (run, result_len) in dummy_runs.iter().zip(result_text_len) {
-                assert_eq!(run.len, result_len);
-            }
-        }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "abcdef…",
+            &[4, 4, 4],
+            &[4, 5],
+            px(70.),
+        );
         // Case 2: Truncate at start of some run
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
@@ -435,20 +437,14 @@ mod tests {
         // Truncate res: abcdefgh… (truncate_at = 8)
         // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
         // 4, ... }, Run2 { string: …, len: 3, ... }
-        {
-            let text = "abcdefghijkl";
-            let result = "abcdefgh…";
-            let dummy_run_lens = [4, 4, 4];
-            let result_text_len = [4, 4, 3];
-            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
-            assert_eq!(
-                wrapper.truncate_line(text.into(), px(90.), Some("…"), &mut dummy_runs),
-                result
-            );
-            for (run, result_len) in dummy_runs.iter().zip(result_text_len) {
-                assert_eq!(run.len, result_len);
-            }
-        }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "abcdefgh…",
+            &[4, 4, 4],
+            &[4, 4, 3],
+            px(90.),
+        );
     }
 
     #[test]
