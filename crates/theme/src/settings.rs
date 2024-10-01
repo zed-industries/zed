@@ -521,7 +521,15 @@ pub fn reset_ui_font_size(cx: &mut AppContext) {
 }
 
 fn clmap_font_weight(weight: f32) -> FontWeight {
-    FontWeight(weight)
+    let new_weight = weight.clamp(1.0, 999.9);
+    if new_weight != weight {
+        log::error!(
+            "Invalid setting for font weight: {}, changed to {}",
+            weight,
+            new_weight
+        );
+    }
+    FontWeight(new_weight)
 }
 
 impl settings::Settings for ThemeSettings {
