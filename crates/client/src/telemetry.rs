@@ -257,7 +257,7 @@ impl Telemetry {
                                 .log_err()
                         } else {
                             NamedTempFile::new_in(paths::logs_dir().as_path())
-                                .map(|temp_file| TelemetryFile::Temporary(temp_file))
+                                .map(TelemetryFile::Temporary)
                                 .log_err()
                         };
 
