@@ -520,6 +520,10 @@ pub fn reset_ui_font_size(cx: &mut AppContext) {
     }
 }
 
+fn clamp_font_weight(weight: f32) -> FontWeight {
+    FontWeight(weight.clamp(100., 950.))
+}
+
 impl settings::Settings for ThemeSettings {
     const KEY: Option<&'static str> = None;
 
@@ -579,7 +583,7 @@ impl settings::Settings for ThemeSettings {
                 this.buffer_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.buffer_font_weight {
-                this.buffer_font.weight = FontWeight(value);
+                this.buffer_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
@@ -592,7 +596,7 @@ impl settings::Settings for ThemeSettings {
                 this.ui_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.ui_font_weight {
-                this.ui_font.weight = FontWeight(value);
+                this.ui_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = &value.theme {
