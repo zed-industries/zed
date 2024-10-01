@@ -520,16 +520,8 @@ pub fn reset_ui_font_size(cx: &mut AppContext) {
     }
 }
 
-fn clmap_font_weight(weight: f32) -> FontWeight {
-    let new_weight = weight.clamp(1.0, 999.9);
-    if new_weight != weight {
-        log::error!(
-            "Invalid setting for font weight: {}, changed to {}",
-            weight,
-            new_weight
-        );
-    }
-    FontWeight(new_weight)
+fn clamp_font_weight(weight: f32) -> FontWeight {
+    FontWeight(weight.clamp(100., 900.))
 }
 
 impl settings::Settings for ThemeSettings {
@@ -551,7 +543,7 @@ impl settings::Settings for ThemeSettings {
                     .ui_font_fallbacks
                     .as_ref()
                     .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
-                weight: defaults.ui_font_weight.map(clmap_font_weight).unwrap(),
+                weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -561,7 +553,7 @@ impl settings::Settings for ThemeSettings {
                     .buffer_font_fallbacks
                     .as_ref()
                     .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
-                weight: defaults.buffer_font_weight.map(clmap_font_weight).unwrap(),
+                weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
@@ -591,7 +583,7 @@ impl settings::Settings for ThemeSettings {
                 this.buffer_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.buffer_font_weight {
-                this.buffer_font.weight = clmap_font_weight(value);
+                this.buffer_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
@@ -604,7 +596,7 @@ impl settings::Settings for ThemeSettings {
                 this.ui_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.ui_font_weight {
-                this.ui_font.weight = clmap_font_weight(value);
+                this.ui_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = &value.theme {
