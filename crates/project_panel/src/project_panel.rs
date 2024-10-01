@@ -8,7 +8,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::entry_git_aware_label_color,
     scroll::{Autoscroll, ScrollbarAutoHide},
-    Editor, EditorEvent,
+    Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
 
@@ -31,7 +31,7 @@ use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Cell, OnceCell},
@@ -2618,8 +2618,7 @@ impl ProjectPanel {
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        let settings = ProjectPanelSettings::get_global(cx);
-        if settings.scrollbar.show == ShowScrollbar::Never {
+        if !Self::should_show_scrollbar(cx) {
             return None;
         }
         let scroll_handle = self.scroll_handle.0.borrow();
@@ -2697,8 +2696,7 @@ impl ProjectPanel {
     }
 
     fn render_horizontal_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        let settings = ProjectPanelSettings::get_global(cx);
-        if settings.scrollbar.show == ShowScrollbar::Never {
+        if !Self::should_show_scrollbar(cx) {
             return None;
         }
         let scroll_handle = self.scroll_handle.0.borrow();
@@ -2793,9 +2791,32 @@ impl ProjectPanel {
         dispatch_context
     }
 
+    fn should_show_scrollbar(cx: &AppContext) -> bool {
+        let show = ProjectPanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => true,
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        }
+    }
+
     fn should_autohide_scrollbar(cx: &AppContext) -> bool {
-        cx.try_global::<ScrollbarAutoHide>()
-            .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0)
+        let show = ProjectPanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => cx
+                .try_global::<ScrollbarAutoHide>()
+                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
+            ShowScrollbar::Always => false,
+            ShowScrollbar::Never => true,
+        }
     }
 
     fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
