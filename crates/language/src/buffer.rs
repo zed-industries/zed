@@ -62,7 +62,7 @@ pub use text::{
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::RangeExt;
+use util::{debug_panic, RangeExt};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -823,40 +823,41 @@ impl Buffer {
         })
     }
 
-    /// Applies all of the changes in `branch` buffer that intersect the given `range`
-    /// to this buffer.
-    pub fn merge(
-        &mut self,
-        branch: &Model<Self>,
-        range: Option<Range<Anchor>>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let edits = branch.read_with(cx, |branch, _| {
-            branch
-                .edits_since_in_range::<usize>(
-                    &self.version,
-                    range.unwrap_or(Anchor::MIN..Anchor::MAX),
-                )
-                .map(|edit| {
-                    (
-                        edit.old,
-                        branch.text_for_range(edit.new).collect::<String>(),
-                    )
-                })
-                .collect::<Vec<_>>()
-        });
-        let operation = self.edit(edits, None, cx);
+    /// Applies all of the changes in this buffer that intersect the given `range`
+    /// to its base buffer. This buffer must be a branch buffer to call this method.
+    pub fn merge_into_base(&mut self, range: Option<Range<usize>>, cx: &mut ModelContext<Self>) {
+        let Some(base_buffer) = self.diff_base_buffer() else {
+            debug_panic!("not a branch buffer");
+            return;
+        };
 
-        // Prevent this operation from being reapplied to the branch.
-        branch.update(cx, |branch, cx| {
+        base_buffer.update(cx, |base_buffer, cx| {
+            let edits = self
+                .edits_since::<usize>(&base_buffer.version)
+                .filter_map(|edit| {
+                    if range
+                        .as_ref()
+                        .map_or(true, |range| range.overlaps(&edit.new))
+                    {
+                        Some((edit.old, self.text_for_range(edit.new).collect::<String>()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let operation = base_buffer.edit(edits, None, cx);
+
+            // Prevent this operation from being reapplied to the branch.
             if let Some(BufferDiffBase::PastBufferVersion {
                 operations_to_ignore,
                 ..
-            }) = &mut branch.diff_base
+            }) = &mut self.diff_base
             {
                 operations_to_ignore.extend(operation);
             }
-            cx.emit(BufferEvent::Edited)
+
+            cx.emit(BufferEvent::DiffBaseChanged);
         });
     }
 

@@ -18,7 +18,7 @@ pub struct ProposedChangesEditor {
     editor: View<Editor>,
     _subscriptions: Vec<Subscription>,
     _recalculate_diffs_task: Task<Option<()>>,
-    recalculate_diffs_tx: mpsc::UnboundedSender<Model<Buffer>>,
+    recalculate_diffs_tx: mpsc::UnboundedSender<RecalculateDiff>,
 }
 
 pub struct ProposedChangesBuffer<T> {
@@ -28,6 +28,11 @@ pub struct ProposedChangesBuffer<T> {
 
 pub struct ProposedChangesEditorToolbar {
     current_editor: Option<View<ProposedChangesEditor>>,
+}
+
+struct RecalculateDiff {
+    buffer: Model<Buffer>,
+    debounce: bool,
 }
 
 impl ProposedChangesEditor {
@@ -63,16 +68,18 @@ impl ProposedChangesEditor {
             recalculate_diffs_tx,
             _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
                 let mut buffers_to_diff = HashSet::default();
-                while let Some(buffer) = recalculate_diffs_rx.next().await {
-                    buffers_to_diff.insert(buffer);
+                while let Some(mut recalculate_diff) = recalculate_diffs_rx.next().await {
+                    buffers_to_diff.insert(recalculate_diff.buffer);
 
-                    loop {
+                    while recalculate_diff.debounce {
                         cx.background_executor()
                             .timer(Duration::from_millis(250))
                             .await;
                         let mut had_further_changes = false;
-                        while let Ok(next_buffer) = recalculate_diffs_rx.try_next() {
-                            buffers_to_diff.insert(next_buffer?);
+                        while let Ok(next_recalculate_diff) = recalculate_diffs_rx.try_next() {
+                            let next_recalculate_diff = next_recalculate_diff?;
+                            recalculate_diff.debounce &= next_recalculate_diff.debounce;
+                            buffers_to_diff.insert(next_recalculate_diff.buffer);
                             had_further_changes = true;
                         }
                         if !had_further_changes {
@@ -99,19 +106,24 @@ impl ProposedChangesEditor {
         event: &BufferEvent,
         _cx: &mut ViewContext<Self>,
     ) {
-        if let BufferEvent::Edited = event {
-            self.recalculate_diffs_tx.unbounded_send(buffer).ok();
-        }
-    }
-
-    fn apply_all_changes(&self, cx: &mut ViewContext<Self>) {
-        let buffers = self.editor.read(cx).buffer.read(cx).all_buffers();
-        for branch_buffer in buffers {
-            if let Some(base_buffer) = branch_buffer.read(cx).diff_base_buffer() {
-                base_buffer.update(cx, |base_buffer, cx| {
-                    base_buffer.merge(&branch_buffer, None, cx)
-                });
+        match event {
+            BufferEvent::Operation { .. } => {
+                self.recalculate_diffs_tx
+                    .unbounded_send(RecalculateDiff {
+                        buffer,
+                        debounce: true,
+                    })
+                    .ok();
             }
+            BufferEvent::DiffBaseChanged => {
+                self.recalculate_diffs_tx
+                    .unbounded_send(RecalculateDiff {
+                        buffer,
+                        debounce: false,
+                    })
+                    .ok();
+            }
+            _ => (),
         }
     }
 }
@@ -208,7 +220,9 @@ impl Render for ProposedChangesEditorToolbar {
         Button::new("apply-changes", "Apply All").on_click(move |_, cx| {
             if let Some(editor) = &editor {
                 editor.update(cx, |editor, cx| {
-                    editor.apply_all_changes(cx);
+                    editor.editor.update(cx, |editor, cx| {
+                        editor.apply_all_changes(cx);
+                    })
                 });
             }
         })
