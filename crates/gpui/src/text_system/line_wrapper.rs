@@ -127,43 +127,7 @@ impl LineWrapper {
             if width.floor() > truncate_width {
                 let ellipsis = ellipsis.unwrap_or("");
                 let result = SharedString::from(format!("{}{}", &line[..truncate_ix], ellipsis));
-                //----------------------------------------------
-                // Case 0: Normal
-                // Text: abcdefghijkl
-                // Runs: Run0 { len: 12, ... }
-                //
-                // Truncate res: abcd… (truncate_at = 4)
-                // Run res: Run0 { string: abcd…, len: 7, ... }
-                // ---------------------------------------------
-                // Case 1: Drop some runs
-                // Text: abcdefghijkl
-                // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
-                //
-                // Truncate res: abcdef… (truncate_at = 6)
-                // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
-                // 5, ... }
-                // ----------------------------------------------
-                // Case 2: Truncate at start of some run
-                // Text: abcdefghijkl
-                // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
-                //
-                // Truncate res: abcdefgh… (truncate_at = 8)
-                // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
-                // 4, ... }, Run2 { string: …, len: 3, ... }
-                let mut truncate_at = result.len() - ellipsis.len();
-                let mut run_end = None;
-                for (run_index, run) in runs.iter_mut().enumerate() {
-                    if run.len <= truncate_at {
-                        truncate_at -= run.len;
-                    } else {
-                        run.len = truncate_at + ellipsis.len();
-                        run_end = Some(run_index + 1);
-                        break;
-                    }
-                }
-                if let Some(run_end) = run_end {
-                    runs.truncate(run_end);
-                }
+                update_runs_after_truncation(&result, ellipsis, runs);
 
                 return result;
             }
@@ -229,6 +193,46 @@ impl LineWrapper {
                 }],
             )
             .width
+    }
+}
+
+//----------------------------------------------
+// Case 0: Normal
+// Text: abcdefghijkl
+// Runs: Run0 { len: 12, ... }
+//
+// Truncate res: abcd… (truncate_at = 4)
+// Run res: Run0 { string: abcd…, len: 7, ... }
+// ---------------------------------------------
+// Case 1: Drop some runs
+// Text: abcdefghijkl
+// Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+//
+// Truncate res: abcdef… (truncate_at = 6)
+// Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+// 5, ... }
+// ----------------------------------------------
+// Case 2: Truncate at start of some run
+// Text: abcdefghijkl
+// Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+//
+// Truncate res: abcdefgh… (truncate_at = 8)
+// Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
+// 4, ... }, Run2 { string: …, len: 3, ... }
+fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<TextRun>) {
+    let mut truncate_at = result.len() - ellipsis.len();
+    let mut run_end = None;
+    for (run_index, run) in runs.iter_mut().enumerate() {
+        if run.len <= truncate_at {
+            truncate_at -= run.len;
+        } else {
+            run.len = truncate_at + ellipsis.len();
+            run_end = Some(run_index + 1);
+            break;
+        }
+    }
+    if let Some(run_end) = run_end {
+        runs.truncate(run_end);
     }
 }
 
