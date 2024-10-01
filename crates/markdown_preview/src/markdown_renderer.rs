@@ -271,7 +271,7 @@ fn render_markdown_table_row(
 
         let mut cell = container
             .w_full()
-            .child(div().children(contents))
+            .children(contents)
             .px_2()
             .py_1()
             .border_color(cx.border_color);
