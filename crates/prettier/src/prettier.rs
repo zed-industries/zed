@@ -138,7 +138,7 @@ impl Prettier {
     pub async fn start(
         _: LanguageServerId,
         prettier_dir: PathBuf,
-        _: Arc<dyn NodeRuntime>,
+        _: NodeRuntime,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
@@ -151,7 +151,7 @@ impl Prettier {
     pub async fn start(
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         use lsp::LanguageServerBinary;

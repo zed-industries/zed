@@ -52,13 +52,15 @@ impl ParentElement for List {
 }
 
 impl RenderOnce for List {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        v_flex().w_full().py_1().children(self.header).map(|this| {
-            match (self.children.is_empty(), self.toggle) {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .py(Spacing::Small.rems(cx))
+            .children(self.header)
+            .map(|this| match (self.children.is_empty(), self.toggle) {
                 (false, _) => this.children(self.children),
                 (true, Some(false)) => this,
                 (true, _) => this.child(Label::new(self.empty_message.clone()).color(Color::Muted)),
-            }
-        })
+            })
     }
 }

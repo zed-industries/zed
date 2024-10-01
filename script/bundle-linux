@@ -43,13 +43,20 @@ script/generate-licenses
 
 # Build binary in release mode
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
-cargo build --release --target "${target_triple}" --package zed --package cli --package remote_server
+cargo build --release --target "${target_triple}" --package zed --package cli
+# Build remote_server in separate invocation to prevent feature unification from other crates
+# from influencing dynamic libraries required by it.
+cargo build --release --target "${target_triple}" --package remote_server
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
 strip --strip-debug "${target_dir}/${target_triple}/release/zed"
 strip --strip-debug "${target_dir}/${target_triple}/release/cli"
 strip --strip-debug "${target_dir}/${target_triple}/release/remote_server"
+
+
+# Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
+! ldd "${target_dir}/${target_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'
 
 suffix=""
 if [ "$channel" != "stable" ]; then

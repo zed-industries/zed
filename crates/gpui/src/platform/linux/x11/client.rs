@@ -37,8 +37,9 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
+    Platform, PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta, Size, TouchPhase,
+    WindowParams, X11Window,
 };
 
 use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
@@ -121,6 +122,7 @@ pub struct X11ClientState {
     pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
 
     pub(crate) last_click: Instant,
+    pub(crate) last_mouse_button: Option<MouseButton>,
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
@@ -188,7 +190,7 @@ impl X11ClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let client = self.get_client();
         let mut state = client.0.borrow_mut();
         if state.composing || state.ximc.is_none() {
@@ -403,6 +405,7 @@ impl X11Client {
             loop_handle: handle,
             common,
             last_click: Instant::now(),
+            last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
             scale_factor,
@@ -951,6 +954,9 @@ impl X11Client {
                     let click_elapsed = state.last_click.elapsed();
 
                     if click_elapsed < DOUBLE_CLICK_INTERVAL
+                        && state
+                            .last_mouse_button
+                            .is_some_and(|prev_button| prev_button == button)
                         && is_within_click_distance(state.last_location, position)
                     {
                         state.current_count += 1;
@@ -959,6 +965,7 @@ impl X11Client {
                     }
 
                     state.last_click = Instant::now();
+                    state.last_mouse_button = Some(button);
                     state.last_location = position;
                     let current_count = state.current_count;
 

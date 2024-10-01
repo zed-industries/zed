@@ -111,7 +111,7 @@
   --icons-hover: hsl(220, 14%, 90%);
   --icon-btn-bg-hover: hsl(220, 93%, 42%, 0.4);
 
-  --links: hsl(220, 93%, 70%);
+  --links: hsl(220, 93%, 75%);
   --link-line-decoration: hsl(220, 92%, 80%, 0.4);
   --link-line-decoration-hover: hsl(220, 92%, 80%, 0.8);
   --full-contrast: #fff;
@@ -135,6 +135,10 @@
   --table-border-color: hsl(220, 13%, 30%, 0.5);
   --table-header-bg: hsl(220, 13%, 25%, 0.5);
   --table-alternate-bg: hsl(220, 13%, 20%, 0.4);
+
+  --warning-border: hsl(25, 100%, 85%, 0.2);
+  --warning-bg: hsl(42, 100%, 40%, 0.1);
+  --warning-icon: hsl(42, 100%, 80%);
 
   --searchbar-border-color: hsl(220, 13%, 30%);
   --searchbar-bg: hsl(220, 13%, 22%, 0.5);

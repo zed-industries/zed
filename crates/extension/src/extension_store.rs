@@ -177,7 +177,7 @@ actions!(zed, [ReloadExtensions]);
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -189,6 +189,7 @@ pub fn init(
             paths::extensions_dir().clone(),
             None,
             fs,
+            client.http_client().clone(),
             client.http_client().clone(),
             Some(client.telemetry().clone()),
             node_runtime,
@@ -225,8 +226,9 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
@@ -244,12 +246,7 @@ impl ExtensionStore {
             extension_index: Default::default(),
             installed_dir,
             index_path,
-            builder: Arc::new(ExtensionBuilder::new(
-                // Construct a real HTTP client for the extension builder, as we
-                // don't want to use a fake one in the tests.
-                ::http_client::client(None, http_client.proxy().cloned()),
-                build_dir,
-            )),
+            builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
@@ -667,7 +664,7 @@ impl ExtensionStore {
 
             let content_length = response
                 .headers()
-                .get(isahc::http::header::CONTENT_LENGTH)
+                .get(http_client::http::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
             let mut body = BufReader::new(response.body_mut());
