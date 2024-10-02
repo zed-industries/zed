@@ -144,3 +144,20 @@ If you are seeing "too many open files" then first try `sysctl fs.inotify`.
 - You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
 
 It is also possible that you are running out of file descriptors. You can check the limits with `ulimit` and update them by editing `/etc/security/limits.conf`.
+
+### FIPS Mode OpenSSL internal error {#fips}
+
+If your machine is running in FIPS mode (`cat /proc/sys/crypto/fips_enabled` is set to `1`) Zed may fail to start and output the following when launched with `zed --foreground`:
+
+```
+crypto/fips/fips.c:154: OpenSSL internal error: FATAL FIPS SELFTEST FAILURE
+```
+
+As a workaround, remove the bundled `libssl` and `libcrypto` libraries from the `zed.app/lib` directory:
+
+```
+rm ~/.local/zed.app/lib/libssl.so.1.1
+rm ~/.local/zed.app/lib/libcrypto.so.1.1
+```
+
+This will force zed to fallback to the system `libssl` and `libcrypto` libraries.
