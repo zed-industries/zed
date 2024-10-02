@@ -295,7 +295,7 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
-        if !params.show {
+        if params.display_state == WindowDisplayState::Hidden {
             dwstyle |= WS_MINIMIZE;
         }
 
@@ -362,10 +362,10 @@ impl WindowsWindow {
             SetWindowPlacement(raw_hwnd, &placement)?;
         }
 
-        if params.show {
-            unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
-        } else {
-            unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? };
+        match params.display_state {
+            WindowDisplayState::Hidden => unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? },
+            WindowDisplayState::Visible => unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? },
+            WindowDisplayState::DeferredVisible => {}
         }
 
         Ok(Self(state_ptr))
@@ -541,6 +541,7 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
+        unsafe { ShowWindow(hwnd, SW_SHOW).ok().log_err() };
         unsafe { SetActiveWindow(hwnd).log_err() };
         unsafe { SetFocus(hwnd).log_err() };
         // todo(windows)

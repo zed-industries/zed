@@ -59,7 +59,7 @@ fn notification_window_options(
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
         focus: false,
-        show: true,
+        display_state: gpui::WindowDisplayState::Visible,
         kind: WindowKind::PopUp,
         is_movable: false,
         display_id: Some(screen.id()),

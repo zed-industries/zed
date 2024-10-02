@@ -699,8 +699,8 @@ pub struct WindowOptions {
     /// Whether the window should be focused when created
     pub focus: bool,
 
-    /// Whether the window should be shown when created
-    pub show: bool,
+    /// The visibility state of the window when created
+    pub display_state: WindowDisplayState,
 
     /// The kind of window to create
     pub kind: WindowKind,
@@ -746,7 +746,7 @@ pub(crate) struct WindowParams {
     pub focus: bool,
 
     #[cfg_attr(target_os = "linux", allow(dead_code))]
-    pub show: bool,
+    pub display_state: WindowDisplayState,
 
     pub display_id: Option<DisplayId>,
 
@@ -793,7 +793,7 @@ impl Default for WindowOptions {
                 traffic_light_position: Default::default(),
             }),
             focus: true,
-            show: true,
+            display_state: WindowDisplayState::Visible,
             kind: WindowKind::Normal,
             is_movable: true,
             display_id: None,
@@ -882,6 +882,17 @@ pub enum WindowBackgroundAppearance {
     ///
     /// Not always supported.
     Blurred,
+}
+
+/// Specifies the visibility state of the window when created
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WindowDisplayState {
+    /// The window is created hidden and will remain hidden
+    Hidden,
+    /// The window is created and immediately shown
+    Visible,
+    /// The window is created but will not be shown until `activate_window` is called
+    DeferredVisible,
 }
 
 /// The options that can be configured for a file dialog prompt
