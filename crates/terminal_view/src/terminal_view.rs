@@ -613,8 +613,9 @@ fn subscribe_for_terminal_events(
     cx: &mut ViewContext<'_, TerminalView>,
 ) -> Vec<Subscription> {
     let terminal_subscription = cx.observe(terminal, |_, _, cx| cx.notify());
-    let terminal_events_subscription =
-        cx.subscribe(terminal, move |this, _, event, cx| match event {
+    let terminal_events_subscription = cx.subscribe(terminal, move |this, _, event, cx| {
+        println!("=> {:#?}", event);
+        match event {
             Event::Wakeup => {
                 cx.notify();
                 cx.emit(Event::Wakeup);
@@ -755,7 +756,8 @@ fn subscribe_for_terminal_events(
                 cx.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
-        });
+        }
+    });
     vec![terminal_subscription, terminal_events_subscription]
 }
 
@@ -768,19 +770,18 @@ fn possible_open_paths_metadata(
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
-
+        // \\?\D:\projects\windows-test\main.rs
+        // D:\projects\windows-test\main.rs
         let mut fetch_metadata_tasks = potential_paths
-            .into_iter()
+            .iter()
             .map(|potential_path| async {
-                let metadata = fs.metadata(&potential_path).await.ok().flatten();
-                (
-                    PathWithPosition {
-                        path: potential_path,
-                        row,
-                        column,
-                    },
-                    metadata,
-                )
+                let metadata = fs.metadata(potential_path).await.ok().flatten();
+                let path = PathBuf::from(
+                    potential_path
+                        .to_string_lossy()
+                        .trim_start_matches("\\\\?\\"),
+                );
+                (PathWithPosition { path, row, column }, metadata)
             })
             .collect::<FuturesUnordered<_>>();
 
