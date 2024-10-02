@@ -116,12 +116,14 @@ impl GoToLine {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                let anchor = snapshot.buffer_snapshot.anchor_before(point);
+                let start = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                let end = start + Point::new(1, 0);
+                let start = snapshot.buffer_snapshot.anchor_before(start);
+                let end = snapshot.buffer_snapshot.anchor_after(end);
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
-                    anchor..=anchor,
-                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    start..end,
+                    cx.theme().colors().editor_highlighted_line_background,
                     true,
                     cx,
                 );
@@ -244,13 +246,13 @@ mod tests {
                         field_1: i32,  // display line 3
                         field_2: i32,  // display line 4
                     }                  // display line 5
-                                       // display line 7
-                    struct Another {   // display line 8
-                        field_1: i32,  // display line 9
-                        field_2: i32,  // display line 10
-                        field_3: i32,  // display line 11
-                        field_4: i32,  // display line 12
-                    }                  // display line 13
+                                       // display line 6
+                    struct Another {   // display line 7
+                        field_1: i32,  // display line 8
+                        field_2: i32,  // display line 9
+                        field_3: i32,  // display line 10
+                        field_4: i32,  // display line 11
+                    }                  // display line 12
                 "}
             }),
         )

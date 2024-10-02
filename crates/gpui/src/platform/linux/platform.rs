@@ -45,7 +45,7 @@ use crate::{
 
 use super::x11::X11Client;
 
-pub(crate) const SCROLL_LINES: f64 = 3.0;
+pub(crate) const SCROLL_LINES: f32 = 3.0;
 
 // Values match the defaults on GTK.
 // Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
@@ -603,17 +603,11 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     state
 }
 
-pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {
+pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<Vec<u8>> {
     let mut file = File::from_raw_fd(fd.as_raw_fd());
-
-    let mut buffer = String::new();
-    file.read_to_string(&mut buffer)?;
-
-    // Normalize the text to unix line endings, otherwise
-    // copying from eg: firefox inserts a lot of blank
-    // lines, and that is super annoying.
-    let result = buffer.replace("\r\n", "\n");
-    Ok(result)
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    Ok(buffer)
 }
 
 impl CursorStyle {

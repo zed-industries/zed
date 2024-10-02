@@ -186,13 +186,6 @@ impl LspAdapter for JsonLspAdapter {
         get_cached_server_binary(container_dir, &self.node).await
     }
 
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
-    }
-
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
@@ -373,18 +366,6 @@ impl LspAdapter for NodeVersionAdapter {
         _delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_version_server_binary(container_dir).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_version_server_binary(container_dir)
-            .await
-            .map(|mut binary| {
-                binary.arguments = vec!["--version".into()];
-                binary
-            })
     }
 }
 

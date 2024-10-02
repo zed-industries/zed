@@ -36,6 +36,7 @@ pub struct ListItem {
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    overflow_x: bool,
 }
 
 impl ListItem {
@@ -58,6 +59,7 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            overflow_x: false,
         }
     }
 
@@ -129,6 +131,11 @@ impl ListItem {
 
     pub fn end_hover_slot<E: IntoElement>(mut self, end_hover_slot: impl Into<Option<E>>) -> Self {
         self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
+        self
+    }
+
+    pub fn overflow_x(mut self) -> Self {
+        self.overflow_x = true;
         self
     }
 }
@@ -239,7 +246,13 @@ impl RenderOnce for ListItem {
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
                             .gap(Spacing::Small.rems(cx))
-                            .overflow_hidden()
+                            .map(|list_content| {
+                                if self.overflow_x {
+                                    list_content
+                                } else {
+                                    list_content.overflow_hidden()
+                                }
+                            })
                             .children(self.start_slot)
                             .children(self.children),
                     )

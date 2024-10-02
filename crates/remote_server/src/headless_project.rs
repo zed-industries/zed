@@ -10,7 +10,7 @@ use project::{
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
-use remote::SshSession;
+use remote::ssh_session::ChannelClient;
 use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
@@ -41,8 +41,12 @@ impl HeadlessProject {
         project::Project::init_settings(cx);
     }
 
-    pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(session: Arc<ChannelClient>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+
+        let node_runtime = NodeRuntime::unavailable();
+
+        languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new_model(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
@@ -50,14 +54,13 @@ impl HeadlessProject {
             store
         });
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store =
-                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                NodeRuntime::unavailable(),
+                node_runtime,
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
@@ -116,12 +119,6 @@ impl HeadlessProject {
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
-
-        client.add_model_request_handler(LspStore::handle_create_language_server);
-        client.add_model_request_handler(LspStore::handle_which_command);
-        client.add_model_request_handler(LspStore::handle_shell_env);
-        client.add_model_request_handler(LspStore::handle_try_exec);
-        client.add_model_request_handler(LspStore::handle_read_text_file);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
@@ -190,11 +187,34 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::AddWorktreeResponse> {
+        use client::ErrorCodeExt;
         let path = shellexpand::tilde(&message.payload.path).to_string();
+
+        let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
+        let path = PathBuf::from(path);
+
+        let canonicalized = match fs.canonicalize(&path).await {
+            Ok(path) => path,
+            Err(e) => {
+                let mut parent = path
+                    .parent()
+                    .ok_or(e)
+                    .map_err(|_| anyhow!("{:?} does not exist", path))?;
+                if parent == Path::new("") {
+                    parent = util::paths::home_dir();
+                }
+                let parent = fs.canonicalize(parent).await.map_err(|_| {
+                    anyhow!(proto::ErrorCode::DevServerProjectPathDoesNotExist
+                        .with_tag("path", &path.to_string_lossy().as_ref()))
+                })?;
+                parent.join(path.file_name().unwrap())
+            }
+        };
+
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Path::new(&path),
+                    Arc::from(canonicalized),
                     true,
                     this.fs.clone(),
                     this.next_entry_id.clone(),

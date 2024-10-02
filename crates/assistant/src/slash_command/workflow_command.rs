@@ -29,11 +29,11 @@ impl SlashCommand for WorkflowSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert a prompt that opts into the edit workflow".into()
+        "Insert prompt to opt into the edit workflow".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Workflow Prompt".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

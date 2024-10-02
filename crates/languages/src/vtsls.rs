@@ -5,7 +5,7 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
+use project::lsp_store::language_server_settings;
 use serde_json::Value;
 use std::{
     any::Any,
@@ -71,40 +71,15 @@ impl LspAdapter for VtslsLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, &SERVER_NAME, cx).and_then(|s| s.binary.clone())
-        });
-
-        match configured_binary {
-            Ok(Some(BinarySettings {
-                path: Some(path),
-                arguments,
-                ..
-            })) => Some(LanguageServerBinary {
-                path: path.into(),
-                arguments: arguments
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|arg| arg.into())
-                    .collect(),
-                env: None,
-            }),
-            Ok(Some(BinarySettings {
-                path_lookup: Some(false),
-                ..
-            })) => None,
-            _ => {
-                let env = delegate.shell_env().await;
-                let path = delegate.which(SERVER_NAME.as_ref()).await?;
-                Some(LanguageServerBinary {
-                    path: path.clone(),
-                    arguments: typescript_server_binary_arguments(&path),
-                    env: Some(env),
-                })
-            }
-        }
+        let env = delegate.shell_env().await;
+        let path = delegate.which(SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path: path.clone(),
+            arguments: typescript_server_binary_arguments(&path),
+            env: Some(env),
+        })
     }
 
     async fn fetch_server_binary(
@@ -153,13 +128,6 @@ impl LspAdapter for VtslsLspAdapter {
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         get_cached_ts_server_binary(container_dir, &self.node).await
     }

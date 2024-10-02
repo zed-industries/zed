@@ -61,7 +61,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
-use remote::{SshConnectionOptions, SshSession};
+use remote::{SshConnectionOptions, SshRemoteClient};
 use serde::Deserialize;
 use session::AppSession;
 use settings::{InvalidSettingsError, Settings};
@@ -1891,7 +1891,11 @@ impl Workspace {
                 directories: true,
                 multiple: true,
             },
-            DirectoryLister::Local(self.app_state.fs.clone()),
+            if self.project.read(cx).is_via_ssh() {
+                DirectoryLister::Project(self.project.clone())
+            } else {
+                DirectoryLister::Local(self.app_state.fs.clone())
+            },
             cx,
         );
 
@@ -2115,7 +2119,7 @@ impl Workspace {
     pub fn items<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
+    ) -> impl 'a + Iterator<Item = &'a Box<dyn ItemHandle>> {
         self.panes.iter().flat_map(|pane| pane.read(cx).items())
     }
 
@@ -3956,7 +3960,7 @@ impl Workspace {
     fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
-        if project.is_local_or_ssh() {
+        if project.is_local() {
             Some(
                 project
                     .visible_worktrees(cx)
@@ -5160,7 +5164,7 @@ async fn join_channel_internal(
                         return None;
                     }
 
-                    if (project.is_local_or_ssh() || is_dev_server)
+                    if (project.is_local() || project.is_via_ssh() || is_dev_server)
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -5314,7 +5318,7 @@ pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> 
         .filter(|workspace| {
             workspace
                 .read(cx)
-                .is_ok_and(|workspace| workspace.project.read(cx).is_local_or_ssh())
+                .is_ok_and(|workspace| workspace.project.read(cx).is_local())
         })
         .collect()
 }
@@ -5510,20 +5514,20 @@ pub fn join_hosted_project(
 pub fn open_ssh_project(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
-    session: Arc<SshSession>,
+    session: Arc<SshRemoteClient>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
-        // TODO: Handle multiple paths
-        let path = paths.iter().next().cloned().unwrap_or_default();
-
         let serialized_ssh_project = persistence::DB
             .get_or_create_ssh_project(
                 connection_options.host.clone(),
                 connection_options.port,
-                path.to_string_lossy().to_string(),
+                paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>(),
                 connection_options.username.clone(),
             )
             .await?;
@@ -5540,12 +5544,21 @@ pub fn open_ssh_project(
             )
         })?;
 
+        let mut project_paths_to_open = vec![];
+        let mut project_path_errors = vec![];
+
         for path in paths {
-            project
-                .update(&mut cx, |project, cx| {
-                    project.find_or_create_worktree(&path, true, cx)
-                })?
-                .await?;
+            let result = cx
+                .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
+                .await;
+            match result {
+                Ok((_, project_path)) => {
+                    project_paths_to_open.push((path.clone(), Some(project_path)));
+                }
+                Err(error) => {
+                    project_path_errors.push(error);
+                }
+            };
         }
 
         let serialized_workspace =
@@ -5572,11 +5585,21 @@ pub fn open_ssh_project(
             .update(&mut cx, |_, cx| {
                 cx.activate_window();
 
-                open_items(serialized_workspace, vec![], app_state, cx)
+                open_items(serialized_workspace, project_paths_to_open, app_state, cx)
             })?
             .await?;
 
-        Ok(())
+        window.update(&mut cx, |workspace, cx| {
+            for error in project_path_errors {
+                if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
+                    if let Some(path) = error.error_tag("path") {
+                        workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                    }
+                } else {
+                    workspace.show_error(&error, cx)
+                }
+            }
+        })
     })
 }
 
@@ -5603,6 +5626,9 @@ pub fn join_dev_server_project(
             })
         });
 
+        let serialized_workspace: Option<SerializedWorkspace> =
+            persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
+
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace
         } else {
@@ -5616,10 +5642,7 @@ pub fn join_dev_server_project(
             )
             .await?;
 
-            let serialized_workspace: Option<SerializedWorkspace> =
-                persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
-
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
+            let workspace_id = if let Some(ref serialized_workspace) = serialized_workspace {
                 serialized_workspace.id
             } else {
                 persistence::DB.next_id().await?
@@ -5646,10 +5669,13 @@ pub fn join_dev_server_project(
             }
         };
 
-        workspace.update(&mut cx, |_, cx| {
-            cx.activate(true);
-            cx.activate_window();
-        })?;
+        workspace
+            .update(&mut cx, |_, cx| {
+                cx.activate(true);
+                cx.activate_window();
+                open_items(serialized_workspace, vec![], app_state, cx)
+            })?
+            .await?;
 
         anyhow::Ok(workspace)
     })

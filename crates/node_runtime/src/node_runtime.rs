@@ -177,6 +177,7 @@ impl NodeRuntime {
             "5000",
         ]);
 
+        // This is also wrong because the directory is wrong.
         self.run_npm_subcommand(directory, "install", &arguments)
             .await?;
         Ok(())
@@ -538,11 +539,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let mut command = Command::new(self.node.clone());
+        let mut command = Command::new(self.npm.clone());
         command
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .arg(self.npm.clone())
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
             .args([
@@ -577,7 +577,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     }
 }
 
-async fn read_package_installed_version(
+pub async fn read_package_installed_version(
     node_module_directory: PathBuf,
     name: &str,
 ) -> Result<Option<String>> {

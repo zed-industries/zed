@@ -20,7 +20,6 @@ anyhow.workspace = true
 chrono.workspace = true
 futures.workspace = true
 http_client.workspace = true
-isahc.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

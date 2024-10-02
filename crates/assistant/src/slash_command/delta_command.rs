@@ -19,11 +19,11 @@ impl SlashCommand for DeltaSlashCommand {
     }
 
     fn description(&self) -> String {
-        "re-insert changed files".into()
+        "Re-insert changed files".into()
     }
 
     fn menu_text(&self) -> String {
-        "Re-insert Changed Files".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
