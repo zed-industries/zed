@@ -28,10 +28,9 @@ itertools.workspace = true
 language.workspace = true
 log.workspace = true
 multi_buffer.workspace = true
-nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = [
-    "use_tokio",
-], optional = true }
+nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
 regex.workspace = true
+schemars.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -39,21 +38,20 @@ serde_json.workspace = true
 settings.workspace = true
 tokio = { version = "1.15", "optional" = true }
 ui.workspace = true
+util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-schemars.workspace = true
-util.workspace = true
 
 [dev-dependencies]
 command_palette.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
+release_channel.workspace = true
 settings.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
