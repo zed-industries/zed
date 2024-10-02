@@ -31,7 +31,6 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 use std::{
     cell::{Cell, OnceCell},
     collections::HashSet,
@@ -2784,7 +2783,7 @@ impl Render for ProjectPanel {
                     })
                     .when(indent_guides, |this| {
                         let line_color = cx.theme().colors().editor_indent_guide;
-                        let active_line_color = cx.theme().colors().editor_active_indent_guide;
+                        let active_line_color = cx.theme().colors().editor_indent_guide_active;
                         this.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
@@ -2813,27 +2812,34 @@ impl Render for ProjectPanel {
                                     indent_guides
                                         .into_iter()
                                         .enumerate()
-                                        .map(|(idx, layout)| ui::RenderedIndentGuide {
-                                            bounds: Bounds::new(
-                                                point(
-                                                    px(layout.offset.x as f32) * indent_size
-                                                        + px(LEFT_OFFSET),
-                                                    px(layout.offset.y as f32) * item_height
-                                                        + px(PADDING_Y),
+                                        .map(|(idx, layout)| {
+                                            let offset = if layout.overflows {
+                                                px(0.)
+                                            } else {
+                                                px(PADDING_Y)
+                                            };
+                                            ui::RenderedIndentGuide {
+                                                bounds: Bounds::new(
+                                                    point(
+                                                        px(layout.offset.x as f32) * indent_size
+                                                            + px(LEFT_OFFSET),
+                                                        px(layout.offset.y as f32) * item_height
+                                                            + offset,
+                                                    ),
+                                                    size(
+                                                        px(1.),
+                                                        px(layout.length as f32) * item_height
+                                                            - px(offset.0 * 2.),
+                                                    ),
                                                 ),
-                                                size(
-                                                    px(1.),
-                                                    px(layout.length as f32) * item_height
-                                                        - px(PADDING_Y * 2.),
+                                                color: Color::Custom(
+                                                    if Some(idx) == active_indent_guide_index {
+                                                        active_line_color
+                                                    } else {
+                                                        line_color
+                                                    },
                                                 ),
-                                            ),
-                                            color: Color::Custom(
-                                                if Some(idx) == active_indent_guide_index {
-                                                    active_line_color
-                                                } else {
-                                                    line_color
-                                                },
-                                            ),
+                                            }
                                         })
                                         .collect()
                                 },

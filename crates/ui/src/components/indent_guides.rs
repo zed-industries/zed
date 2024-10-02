@@ -123,15 +123,20 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
 pub struct IndentGuideLayout {
     pub offset: Point<usize>,
     pub length: usize,
+    pub overflows: bool,
 }
 
 fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGuideLayout; 16]> {
     let mut indent_guides = SmallVec::<[IndentGuideLayout; 16]>::new();
     let mut indent_stack = SmallVec::<[IndentGuideLayout; 8]>::new();
 
+    let mut min_depth = usize::MAX;
     for (row, &depth) in indents.iter().enumerate() {
         let current_row = row + offset;
         let current_depth = indent_stack.len();
+        if depth < min_depth {
+            min_depth = depth;
+        }
 
         match depth.cmp(&current_depth) {
             Ordering::Less => {
@@ -146,6 +151,7 @@ fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGu
                     indent_stack.push(IndentGuideLayout {
                         offset: Point::new(new_depth, current_row),
                         length: current_row,
+                        overflows: false,
                     });
                 }
             }
@@ -158,6 +164,11 @@ fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGu
     }
 
     indent_guides.extend(indent_stack);
+
+    for guide in indent_guides.iter_mut() {
+        guide.overflows = guide.offset.x < min_depth;
+    }
+
     indent_guides
 }
 
