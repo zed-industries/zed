@@ -95,7 +95,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
     }
 
     fn menu_text(&self) -> String {
-        "Insert Diagnostics".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

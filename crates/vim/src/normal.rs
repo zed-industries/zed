@@ -395,9 +395,9 @@ impl Vim {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let mut original_positions = vim.save_selection_starts(editor, cx);
+                let original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), cx);
-                vim.restore_selection_cursors(editor, cx, &mut original_positions);
+                vim.restore_selection_cursors(editor, cx, original_positions);
             });
         });
         if self.mode.is_visual() {
@@ -467,7 +467,7 @@ impl Vim {
         &self,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
-        positions: &mut HashMap<usize, Anchor>,
+        mut positions: HashMap<usize, Anchor>,
     ) {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_with(|map, selection| {

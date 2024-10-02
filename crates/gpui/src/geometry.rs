@@ -2612,6 +2612,12 @@ impl From<ScaledPixels> for f64 {
     }
 }
 
+impl From<ScaledPixels> for u32 {
+    fn from(pixels: ScaledPixels) -> Self {
+        pixels.0 as u32
+    }
+}
+
 /// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`WindowContext::set_rem_size`][set_rem_size].
 ///
 /// Rems are used for defining lengths that are scalable and consistent across different UI elements.

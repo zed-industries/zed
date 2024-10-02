@@ -33,7 +33,7 @@ pub(crate) struct WasmHost {
     engine: Engine,
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     pub(crate) language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     pub(crate) work_dir: PathBuf,
@@ -80,7 +80,7 @@ impl WasmHost {
     pub fn new(
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
         work_dir: PathBuf,
         cx: &mut AppContext,
