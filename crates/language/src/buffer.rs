@@ -819,6 +819,9 @@ impl Buffer {
                 branch.set_language_registry(language_registry);
             }
 
+            // Reparse the branch buffer so that we get syntax highlighting immediately.
+            branch.reparse(cx);
+
             branch
         })
     }
