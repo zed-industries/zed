@@ -7,6 +7,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
     search::SearchQuery,
+    task_store::TaskStore,
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
@@ -29,6 +30,7 @@ pub struct HeadlessProject {
     pub worktree_store: Model<WorktreeStore>,
     pub buffer_store: Model<BufferStore>,
     pub lsp_store: Model<LspStore>,
+    pub task_store: Model<TaskStore>,
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
@@ -79,7 +81,7 @@ impl HeadlessProject {
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
-                environment,
+                environment.clone(),
                 languages.clone(),
                 None,
                 fs.clone(),
@@ -90,6 +92,18 @@ impl HeadlessProject {
         });
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+        let task_store = cx.new_model(|cx| {
+            let mut task_store = TaskStore::local(
+                buffer_store.downgrade(),
+                worktree_store.clone(),
+                environment,
+                cx,
+            );
+            task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            task_store
+        });
+        // TODO kb task store event subscription?
 
         cx.subscribe(
             &buffer_store,
@@ -108,6 +122,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
@@ -121,6 +136,8 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
+        // TODO kb subscribe for task store?
+
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
@@ -133,6 +150,7 @@ impl HeadlessProject {
             worktree_store,
             buffer_store,
             lsp_store,
+            task_store,
             next_entry_id: Default::default(),
             languages,
         }

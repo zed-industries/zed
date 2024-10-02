@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{proto::serialize_anchor, Location};
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
 use task::{TaskContext, TaskVariables, VariableName};
-use util::ResultExt;
+use util::{debug_panic, ResultExt};
 
 use crate::{
     buffer_store::BufferStore, combine_task_variables, worktree_store::WorktreeStore,
@@ -94,7 +94,7 @@ impl TaskStore {
         })
     }
 
-    pub(crate) fn local(
+    pub fn local(
         buffer_store: WeakModel<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         environment: Model<ProjectEnvironment>,
@@ -109,7 +109,7 @@ impl TaskStore {
         }
     }
 
-    pub(crate) fn remote(
+    pub fn remote(
         buffer_store: WeakModel<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         upstream_client: AnyProtoClient,
@@ -155,6 +155,33 @@ impl TaskStore {
             TaskStore::Local { task_inventory, .. } => Some(task_inventory),
             TaskStore::Remote { task_inventory, .. } => Some(task_inventory),
             TaskStore::Empty => None,
+        }
+    }
+
+    pub fn shared(
+        &mut self,
+        remote_id: u64,
+        new_downstream_client: AnyProtoClient,
+        _cx: &mut AppContext,
+    ) {
+        if let Self::Local {
+            downstream_client, ..
+        } = self
+        {
+            *downstream_client = Some((new_downstream_client, remote_id));
+        } else {
+            debug_panic!("called shared on a non-local task store");
+        }
+    }
+
+    pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
+        if let Self::Local {
+            downstream_client, ..
+        } = self
+        {
+            *downstream_client = None;
+        } else {
+            debug_panic!("called unshared on a non-local task store");
         }
     }
 }
