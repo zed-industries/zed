@@ -11257,12 +11257,19 @@ impl Editor {
         None
     }
 
+    fn reveal_target<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn language::LocalFile> {
+        let latest_selection = self.selections.newest_anchor().head();
+        self.buffer()
+            .read(cx)
+            .text_anchor_for_position(latest_selection, cx)?
+            .0
+            .read(cx)
+            .file()
+            .and_then(|f| f.as_local())
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                cx.reveal_path(&file.abs_path(cx));
-            }
-        }
+        maybe!({ Some(cx.reveal_path(&self.reveal_target(cx)?.abs_path(cx))) });
     }
 
     pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
