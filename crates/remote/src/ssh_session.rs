@@ -49,7 +49,7 @@ pub struct SshSocket {
     socket_path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SshConnectionOptions {
     pub host: String,
     pub username: Option<String>,
@@ -528,6 +528,7 @@ impl SshRemoteClient {
                 Arc::new(Self {
                     client,
                     inner_state: Mutex::new(None),
+                    connection_options: SshConnectionOptions::default(),
                 })
             }),
             server_cx.update(|cx| ChannelClient::new(client_to_server_rx, server_to_client_tx, cx)),
