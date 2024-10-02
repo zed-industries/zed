@@ -541,7 +541,7 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { ShowWindow(hwnd, SW_SHOW).ok().log_err() };
+        unsafe { ShowWindow(hwnd, SW_SHOWNA).ok().log_err() };
         unsafe { SetActiveWindow(hwnd).log_err() };
         unsafe { SetFocus(hwnd).log_err() };
         // todo(windows)
