@@ -27,7 +27,6 @@ use smol::{
 };
 use std::{
     any::TypeId,
-    cell::RefCell,
     ffi::OsStr,
     mem,
     path::{Path, PathBuf},
@@ -254,7 +253,7 @@ pub struct SshRemoteClient {
     client: Arc<ChannelClient>,
     inner_state: Mutex<Option<SshRemoteClientState>>,
     connection_options: SshConnectionOptions,
-    _subscriptions: RefCell<Vec<Subscription>>,
+    _subscriptions: Mutex<Vec<Subscription>>,
 }
 
 impl Drop for SshRemoteClient {
@@ -277,12 +276,12 @@ impl SshRemoteClient {
             client,
             inner_state: Mutex::new(None),
             connection_options: connection_options.clone(),
-            _subscriptions: RefCell::new(Vec::new()),
+            _subscriptions: Mutex::new(Vec::new()),
         });
 
         let weak = Arc::downgrade(&this);
         this._subscriptions
-            .borrow_mut()
+            .lock()
             .push(cx.update(move |cx| cx.on_app_quit(move |_| Self::on_app_quit(weak.clone())))?);
 
         let inner_state = {
@@ -325,7 +324,8 @@ impl SshRemoteClient {
         let mut state = self.inner_state.lock().take().unwrap();
         // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
         // child of master_process.
-        let _ = mem::replace(&mut state.multiplex_task, Task::ready(Ok(())));
+        let task = mem::replace(&mut state.multiplex_task, Task::ready(Ok(())));
+        drop(task);
         // Now drop the rest of state, which kills master process.
         drop(state);
     }
@@ -565,7 +565,7 @@ impl SshRemoteClient {
                     client,
                     inner_state: Mutex::new(None),
                     connection_options: SshConnectionOptions::default(),
-                    _subscriptions: RefCell::new(Vec::new()),
+                    _subscriptions: Mutex::new(Vec::new()),
                 })
             }),
             server_cx.update(|cx| ChannelClient::new(client_to_server_rx, server_to_client_tx, cx)),
