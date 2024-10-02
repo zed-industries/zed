@@ -22,7 +22,6 @@ use gpui::{actions, AppContext, AsyncAppContext, Global, Model, Task, WeakModel}
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
-use proto::{AnyProtoClient, EntityMessageSubscriber, ProtoClient, ProtoMessageHandlerSet};
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
@@ -117,7 +116,7 @@ impl Settings for ClientSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
         if let Some(server_url) = &*ZED_SERVER_URL {
-            result.server_url.clone_from(&server_url)
+            result.server_url.clone_from(server_url)
         }
         Ok(result)
     }
@@ -240,8 +239,6 @@ pub enum EstablishConnectionError {
     Unauthorized,
     #[error("{0}")]
     Other(#[from] anyhow::Error),
-    #[error("{0}")]
-    Http(#[from] http_client::Error),
     #[error("{0}")]
     InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
@@ -530,19 +527,13 @@ impl Client {
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
-        let user_agent = format!(
-            "Zed/{} ({}; {})",
-            AppVersion::global(cx),
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
         let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new(
+        let http = Arc::new(HttpClientWithUrl::new_uri(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
-            Some(user_agent),
-            ProxySettings::get_global(cx).proxy.clone(),
+            cx.http_client().proxy().cloned(),
         ));
-        Self::new(clock, http.clone(), cx)
+        Self::new(clock, http, cx)
     }
 
     pub fn id(&self) -> u64 {
@@ -1141,13 +1132,37 @@ impl Client {
             request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
             request_headers.insert(
                 "x-zed-release-channel",
-                HeaderValue::from_str(&release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
+                HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
             );
 
             match url_scheme {
                 Https => {
+                    let client_config = {
+                        let mut root_store = rustls::RootCertStore::empty();
+
+                        let root_certs = rustls_native_certs::load_native_certs();
+                        for error in root_certs.errors {
+                            log::warn!("error loading native certs: {:?}", error);
+                        }
+                        root_store.add_parsable_certificates(
+                            &root_certs
+                                .certs
+                                .into_iter()
+                                .map(|cert| cert.as_ref().to_owned())
+                                .collect::<Vec<_>>(),
+                        );
+                        rustls::ClientConfig::builder()
+                            .with_safe_defaults()
+                            .with_root_certificates(root_store)
+                            .with_no_client_auth()
+                    };
                     let (stream, _) =
-                        async_tungstenite::async_std::client_async_tls(request, stream).await?;
+                        async_tungstenite::async_tls::client_async_tls_with_connector(
+                            request,
+                            stream,
+                            Some(client_config.into()),
+                        )
+                        .await?;
                     Ok(Connection::new(
                         stream
                             .map_err(|error| anyhow!(error))
@@ -1344,16 +1359,14 @@ impl Client {
                 );
             }
 
-            let user = serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
+            serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
                 log::error!("Error deserializing: {:?}", err);
                 log::error!(
                     "GitHub API response text: {:?}",
                     String::from_utf8_lossy(body.as_slice())
                 );
                 anyhow!("error deserializing GitHub user")
-            })?;
-
-            user
+            })?
         };
 
         let query_params = [
@@ -1408,7 +1421,7 @@ impl Client {
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncAppContext) {
         self.state.write().credentials = None;
-        self.disconnect(&cx);
+        self.disconnect(cx);
 
         if self.has_credentials(cx).await {
             self.credentials_provider
@@ -1608,6 +1621,10 @@ impl ProtoClient for Client {
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
         &self.handler_set
     }
+
+    fn is_via_collab(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1735,7 +1752,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 }
 
 /// prefix for the zed:// url scheme
-pub static ZED_URL_SCHEME: &str = "zed";
+pub const ZED_URL_SCHEME: &str = "zed";
 
 /// Parses the given link into a Zed link.
 ///

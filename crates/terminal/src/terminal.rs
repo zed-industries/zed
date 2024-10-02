@@ -18,7 +18,9 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
+    vte::ansi::{
+        ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
+    },
     Term,
 };
 use anyhow::{bail, Result};
@@ -40,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
-use terminal_settings::{AlternateScroll, TerminalBlink, TerminalSettings};
+use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
@@ -100,7 +102,7 @@ pub enum Event {
     CloseTerminal,
     Bell,
     Wakeup,
-    BlinkChanged,
+    BlinkChanged(bool),
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
@@ -313,7 +315,7 @@ impl TerminalBuilder {
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
-        blink_settings: Option<TerminalBlink>,
+        cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
@@ -353,6 +355,7 @@ impl TerminalBuilder {
         // Setup Alacritty's env, which modifies the current process's environment
         alacritty_terminal::tty::setup_env();
 
+        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
             // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
@@ -365,6 +368,7 @@ impl TerminalBuilder {
         };
         let config = Config {
             scrolling_history,
+            default_cursor_style,
             ..Config::default()
         };
 
@@ -373,15 +377,10 @@ impl TerminalBuilder {
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
         let mut term = Term::new(
-            config,
+            config.clone(),
             &TerminalSize::default(),
             ZedListener(events_tx.clone()),
         );
-
-        //Start off blinking if we need to
-        if let Some(TerminalBlink::On) = blink_settings {
-            term.set_private_mode(PrivateMode::Named(NamedPrivateMode::BlinkingCursor));
-        }
 
         //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
         if let AlternateScroll::Off = alternate_scroll {
@@ -425,13 +424,14 @@ impl TerminalBuilder {
         // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
         // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
         let word_regex =
-            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
+            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
 
         let terminal = Terminal {
             task,
             pty_tx: Notifier(pty_tx),
             completion_tx,
             term,
+            term_config: config,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
             last_mouse: None,
@@ -583,6 +583,7 @@ pub struct Terminal {
     pty_tx: Notifier,
     completion_tx: Sender<()>,
     term: Arc<FairMutex<Term<ZedListener>>>,
+    term_config: Config,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(AlacPoint, AlacDirection)>,
@@ -667,7 +668,9 @@ impl Terminal {
                 self.write_to_pty(format(self.last_content.size.into()))
             }
             AlacTermEvent::CursorBlinkingChange => {
-                cx.emit(Event::BlinkChanged);
+                let terminal = self.term.lock();
+                let blinking = terminal.cursor_style().blinking;
+                cx.emit(Event::BlinkChanged(blinking));
             }
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
@@ -823,9 +826,9 @@ impl Terminal {
                     let mut min_index = point;
                     loop {
                         let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
-                        if new_min_index == min_index {
-                            break;
-                        } else if term.grid().index(new_min_index).hyperlink() != link {
+                        if new_min_index == min_index
+                            || term.grid().index(new_min_index).hyperlink() != link
+                        {
                             break;
                         } else {
                             min_index = new_min_index
@@ -835,9 +838,9 @@ impl Terminal {
                     let mut max_index = point;
                     loop {
                         let new_max_index = max_index.add(term, Boundary::Cursor, 1);
-                        if new_max_index == max_index {
-                            break;
-                        } else if term.grid().index(new_max_index).hyperlink() != link {
+                        if new_max_index == max_index
+                            || term.grid().index(new_max_index).hyperlink() != link
+                        {
                             break;
                         } else {
                             max_index = new_max_index
@@ -949,6 +952,11 @@ impl Terminal {
 
     pub fn last_content(&self) -> &TerminalContent {
         &self.last_content
+    }
+
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape) {
+        self.term_config.default_cursor_style = cursor_shape.into();
+        self.term.lock().set_options(self.term_config.clone());
     }
 
     pub fn total_lines(&self) -> usize {
@@ -1410,12 +1418,10 @@ impl Terminal {
                 && !e.shift
             {
                 self.pty_tx.notify(alt_scroll(scroll_lines))
-            } else {
-                if scroll_lines != 0 {
-                    let scroll = AlacScroll::Delta(scroll_lines);
+            } else if scroll_lines != 0 {
+                let scroll = AlacScroll::Delta(scroll_lines);
 
-                    self.events.push_back(InternalEvent::Scroll(scroll));
-                }
+                self.events.push_back(InternalEvent::Scroll(scroll));
             }
         }
     }
@@ -1496,7 +1502,7 @@ impl Terminal {
                     let process_name = format!(
                         "{}{}",
                         fpi.name,
-                        if argv.len() >= 1 {
+                        if !argv.is_empty() {
                             format!(" {}", (argv[1..]).join(" "))
                         } else {
                             "".to_string()
@@ -1598,7 +1604,7 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         }
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
-    let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
+    let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");
     (success, task_line, command_line)
 }
 
@@ -1612,16 +1618,16 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
 /// The library
 ///
 /// * does not increment inner grid cursor's _lines_ on `input` calls
-/// (but displaying the lines correctly and incrementing cursor's columns)
+///   (but displaying the lines correctly and incrementing cursor's columns)
 ///
 /// * ignores `\n` and \r` character input, requiring the `newline` call instead
 ///
 /// * does not alter grid state after `newline` call
-/// so its `bottommost_line` is always the same additions, and
-/// the cursor's `point` is not updated to the new line and column values
+///   so its `bottommost_line` is always the same additions, and
+///   the cursor's `point` is not updated to the new line and column values
 ///
 /// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.
-/// Still, concequent `append_text_to_term` invocations are possible and display the contents correctly.
+///   Still, subsequent `append_text_to_term` invocations are possible and display the contents correctly.
 ///
 /// Despite the quirks, this is the simplest approach to appending text to the terminal: its alternative, `grid_mut` manipulations,
 /// do not properly set the scrolling state and display odd text after appending; also those manipulations are more tedious and error-prone.
@@ -1891,16 +1897,15 @@ mod tests {
         cells
     }
 
-    fn convert_cells_to_content(size: TerminalSize, cells: &Vec<Vec<char>>) -> TerminalContent {
+    fn convert_cells_to_content(size: TerminalSize, cells: &[Vec<char>]) -> TerminalContent {
         let mut ic = Vec::new();
 
-        for row in 0..cells.len() {
-            for col in 0..cells[row].len() {
-                let cell_char = cells[row][col];
+        for (index, row) in cells.iter().enumerate() {
+            for (cell_index, cell_char) in row.iter().enumerate() {
                 ic.push(IndexedCell {
-                    point: AlacPoint::new(Line(row as i32), Column(col)),
+                    point: AlacPoint::new(Line(index as i32), Column(cell_index)),
                     cell: Cell {
-                        c: cell_char,
+                        c: *cell_char,
                         ..Default::default()
                     },
                 });

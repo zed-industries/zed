@@ -255,7 +255,7 @@ mod test {
     async fn test_replace_mode_undo(cx: &mut gpui::TestAppContext) {
         let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
 
-        const UNDO_REPLACE_EXAMPLES: &[&'static str] = &[
+        const UNDO_REPLACE_EXAMPLES: &[&str] = &[
             // replace undo with single line
             "ˇThe quick brown fox jumps over the lazy dog.",
             // replace undo with ending line

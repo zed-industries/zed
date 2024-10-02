@@ -6,60 +6,73 @@ use crate::{
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command::codeblock_fence_for_path,
+        file_command::{self, codeblock_fence_for_path},
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
-    ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
-    InlineAssistant, InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus,
-    ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepResolution,
+    Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
+    ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory, DeployPromptLibrary,
+    InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
+    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_tool::ToolRegistry;
 use client::{proto, Client, Status};
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, FoldId,
-        RenderBlock, ToDisplayPoint,
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseMetadata,
+        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, RenderImage,
-    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Context as _, Empty, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
+    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
+    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
+    language_settings::SoftWrap, BufferSnapshot, Capability, LanguageRegistry, LspAdapterDelegate,
+    ToOffset,
 };
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
 };
+use language_model::{LanguageModelImage, LanguageModelToolUse};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectLspAdapterDelegate};
+use project::lsp_store::LocalLspAdapterDelegate;
+use project::{Project, Worktree};
+use rope::Point;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
+use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
-    borrow::Cow, cmp, collections::hash_map, fmt::Write, ops::Range, path::PathBuf, sync::Arc,
+    borrow::Cow,
+    cmp,
+    collections::hash_map,
+    ops::{ControlFlow, Range},
+    path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
+use text::SelectionGoal;
 use ui::TintColor;
 use ui::{
     prelude::*,
@@ -67,16 +80,17 @@ use ui::{
     Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
-use util::ResultExt;
-use workspace::searchable::SearchableItemHandle;
+use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
+    notifications::NotificationId,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
-    Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    DraggedSelection, Pane, Save, ShowConfiguration, Toast, ToggleZoom, ToolbarItemEvent,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
 };
+use workspace::{searchable::SearchableItemHandle, DraggedTab};
 use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
@@ -95,6 +109,8 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
+                .register_action(ContextEditor::copy_code)
+                .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context);
         },
@@ -321,7 +337,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
-        let model_summary_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let model_summary_editor = cx.new_view(Editor::single_line);
         let context_editor_toolbar = cx.new_view(|_| {
             ContextEditorToolbarItem::new(
                 workspace,
@@ -339,6 +355,62 @@ impl AssistantPanel {
                 NewContext.boxed_clone(),
                 cx,
             );
+
+            let project = workspace.project().clone();
+            pane.set_custom_drop_handle(cx, move |_, dropped_item, cx| {
+                let action = maybe!({
+                    if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                        return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                    }
+
+                    let project_paths = if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>()
+                    {
+                        if &tab.pane == cx.view() {
+                            return None;
+                        }
+                        let item = tab.pane.read(cx).item_for_index(tab.ix);
+                        Some(
+                            item.and_then(|item| item.project_path(cx))
+                                .into_iter()
+                                .collect::<Vec<_>>(),
+                        )
+                    } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>()
+                    {
+                        Some(
+                            selection
+                                .items()
+                                .filter_map(|item| {
+                                    project.read(cx).path_for_entry(item.entry_id, cx)
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    }?;
+
+                    let paths = project_paths
+                        .into_iter()
+                        .filter_map(|project_path| {
+                            let worktree = project
+                                .read(cx)
+                                .worktree_for_id(project_path.worktree_id, cx)?;
+
+                            let mut full_path = PathBuf::from(worktree.read(cx).root_name());
+                            full_path.push(&project_path.path);
+                            Some(full_path)
+                        })
+                        .collect::<Vec<_>>();
+
+                    Some(InsertDraggedFiles::ProjectPaths(paths))
+                });
+
+                if let Some(action) = action {
+                    cx.dispatch_action(action.boxed_clone());
+                }
+
+                ControlFlow::Break(())
+            });
+
             pane.set_can_split(false, cx);
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
@@ -354,8 +426,16 @@ impl AssistantPanel {
                             cx.dispatch_action(DeployHistory.boxed_clone())
                         }
                     }))
-                    .tooltip(move |cx| {
-                        Tooltip::for_action_in("Open History", &DeployHistory, &focus_handle, cx)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Open History",
+                                &DeployHistory,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
                     })
                     .selected(
                         pane.active_item()
@@ -371,7 +451,14 @@ impl AssistantPanel {
                                     cx.dispatch_action(NewContext.boxed_clone())
                                 }),
                             )
-                            .tooltip(|cx| Tooltip::for_action("New Context", &NewContext, cx)),
+                            .tooltip(move |cx| {
+                                Tooltip::for_action_in(
+                                    "New Context",
+                                    &NewContext,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }),
                     )
                     .child(
                         PopoverMenu::new("assistant-panel-popover-menu")
@@ -860,14 +947,22 @@ impl AssistantPanel {
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-            panel.update(cx, |panel, cx| {
-                panel.new_context(cx);
-            });
+            let did_create_context = panel
+                .update(cx, |panel, cx| {
+                    panel.new_context(cx)?;
+
+                    Some(())
+                })
+                .is_some();
+            if did_create_context {
+                ContextEditor::quote_selection(workspace, &Default::default(), cx);
+            }
         }
     }
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
-        if self.project.read(cx).is_via_collab() {
+        let project = self.project.read(cx);
+        if project.is_via_collab() && project.dev_server_project_id().is_none() {
             let task = self
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));
@@ -1018,7 +1113,7 @@ impl AssistantPanel {
                 pane.activate_item(configuration_item_ix, true, true, cx);
             });
         } else {
-            let configuration = cx.new_view(|cx| ConfigurationView::new(cx));
+            let configuration = cx.new_view(ConfigurationView::new);
             self.configuration_subscription = Some(cx.subscribe(
                 &configuration,
                 |this, _, event: &ConfigurationViewEvent, cx| match event {
@@ -1416,6 +1511,7 @@ pub struct ContextEditor {
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
+    pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     workflow_steps: HashMap<Range<language::Anchor>, WorkflowStepViewState>,
     active_workflow_step: Option<ActiveWorkflowStep>,
@@ -1424,6 +1520,12 @@ pub struct ContextEditor {
     show_accept_terms: bool,
     pub(crate) slash_menu_handle:
         PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
+    // dragged_file_worktrees is used to keep references to worktrees that were added
+    // when the user drag/dropped an external file onto the context editor. Since
+    // the worktree is not part of the project panel, it would be dropped as soon as
+    // the file is opened. In order to keep the worktree alive for the duration of the
+    // context editor, we keep a reference here.
+    dragged_file_worktrees: Vec<Model<Worktree>>,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";
@@ -1480,6 +1582,7 @@ impl ContextEditor {
             project,
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
+            pending_tool_use_creases: HashMap::default(),
             _subscriptions,
             workflow_steps: HashMap::default(),
             active_workflow_step: None,
@@ -1487,6 +1590,7 @@ impl ContextEditor {
             error_message: None,
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
+            dragged_file_worktrees: Vec::new(),
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -1808,7 +1912,22 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
-            let output = command.run(arguments, workspace, self.lsp_adapter_delegate.clone(), cx);
+            let context = self.context.read(cx);
+            let sections = context
+                .slash_command_output_sections()
+                .into_iter()
+                .filter(|section| section.is_valid(context.buffer().read(cx)))
+                .cloned()
+                .collect::<Vec<_>>();
+            let snapshot = context.buffer().read(cx).snapshot();
+            let output = command.run(
+                arguments,
+                &sections,
+                snapshot,
+                workspace,
+                self.lsp_adapter_delegate.clone(),
+                cx,
+            );
             self.context.update(cx, |context, cx| {
                 context.insert_command_output(
                     command_range,
@@ -1855,6 +1974,86 @@ impl ContextEditor {
                             cx,
                         );
                     }
+
+                    let new_tool_uses = self
+                        .context
+                        .read(cx)
+                        .pending_tool_uses()
+                        .into_iter()
+                        .filter(|tool_use| {
+                            !self
+                                .pending_tool_use_creases
+                                .contains_key(&tool_use.source_range)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
+
+                    let mut buffer_rows_to_fold = BTreeSet::new();
+
+                    let creases = new_tool_uses
+                        .iter()
+                        .map(|tool_use| {
+                            let placeholder = FoldPlaceholder {
+                                render: render_fold_icon_button(
+                                    cx.view().downgrade(),
+                                    IconName::PocketKnife,
+                                    tool_use.name.clone().into(),
+                                ),
+                                constrain_width: false,
+                                merge_adjacent: false,
+                            };
+                            let render_trailer =
+                                move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+
+                            let start = buffer
+                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.start)
+                                .unwrap();
+                            let end = buffer
+                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.end)
+                                .unwrap();
+
+                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                            buffer_rows_to_fold.insert(buffer_row);
+
+                            self.context.update(cx, |context, cx| {
+                                context.insert_content(
+                                    Content::ToolUse {
+                                        range: tool_use.source_range.clone(),
+                                        tool_use: LanguageModelToolUse {
+                                            id: tool_use.id.to_string(),
+                                            name: tool_use.name.clone(),
+                                            input: tool_use.input.clone(),
+                                        },
+                                    },
+                                    cx,
+                                );
+                            });
+
+                            Crease::new(
+                                start..end,
+                                placeholder,
+                                fold_toggle("tool-use"),
+                                render_trailer,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                    let crease_ids = editor.insert_creases(creases, cx);
+
+                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                    }
+
+                    self.pending_tool_use_creases.extend(
+                        new_tool_uses
+                            .iter()
+                            .map(|tool_use| tool_use.source_range.clone())
+                            .zip(crease_ids),
+                    );
                 });
             }
             ContextEvent::WorkflowStepsUpdated { removed, updated } => {
@@ -2022,6 +2221,68 @@ impl ContextEditor {
                         );
                     }
                 }
+            }
+            ContextEvent::UsePendingTools => {
+                let pending_tool_uses = self
+                    .context
+                    .read(cx)
+                    .pending_tool_uses()
+                    .into_iter()
+                    .filter(|tool_use| tool_use.status.is_idle())
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                for tool_use in pending_tool_uses {
+                    let tool_registry = ToolRegistry::global(cx);
+                    if let Some(tool) = tool_registry.tool(&tool_use.name) {
+                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+
+                        self.context.update(cx, |context, cx| {
+                            context.insert_tool_output(tool_use.id.clone(), task, cx);
+                        });
+                    }
+                }
+            }
+            ContextEvent::ToolFinished {
+                tool_use_id,
+                output_range,
+            } => {
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
+
+                    let placeholder = FoldPlaceholder {
+                        render: render_fold_icon_button(
+                            cx.view().downgrade(),
+                            IconName::PocketKnife,
+                            format!("Tool Result: {tool_use_id}").into(),
+                        ),
+                        constrain_width: false,
+                        merge_adjacent: false,
+                    };
+                    let render_trailer =
+                        move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+
+                    let start = buffer
+                        .anchor_in_excerpt(excerpt_id, output_range.start)
+                        .unwrap();
+                    let end = buffer
+                        .anchor_in_excerpt(excerpt_id, output_range.end)
+                        .unwrap();
+
+                    let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+
+                    let crease = Crease::new(
+                        start..end,
+                        placeholder,
+                        fold_toggle("tool-use"),
+                        render_trailer,
+                    );
+
+                    editor.insert_creases([crease], cx);
+                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                });
             }
             ContextEvent::Operation(_) => {}
             ContextEvent::ShowAssistError(error_message) => {
@@ -2275,20 +2536,26 @@ impl ContextEditor {
                     .unwrap();
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
-                creases.push(Crease::new(
-                    start..end,
-                    FoldPlaceholder {
-                        render: render_fold_icon_button(
-                            cx.view().downgrade(),
-                            section.icon,
-                            section.label.clone(),
-                        ),
-                        constrain_width: false,
-                        merge_adjacent: false,
-                    },
-                    render_slash_command_output_toggle,
-                    |_, _, _| Empty.into_any_element(),
-                ));
+                creases.push(
+                    Crease::new(
+                        start..end,
+                        FoldPlaceholder {
+                            render: render_fold_icon_button(
+                                cx.view().downgrade(),
+                                section.icon,
+                                section.label.clone(),
+                            ),
+                            constrain_width: false,
+                            merge_adjacent: false,
+                        },
+                        render_slash_command_output_toggle,
+                        |_, _, _| Empty.into_any_element(),
+                    )
+                    .with_metadata(CreaseMetadata {
+                        icon: section.icon,
+                        label: section.label,
+                    }),
+                );
             }
 
             editor.insert_creases(creases, cx);
@@ -2549,9 +2816,8 @@ impl ContextEditor {
         } else {
             // If there are multiple buffers or suggestion groups, create a multibuffer
             let multibuffer = cx.new_model(|cx| {
-                let replica_id = project.read(cx).replica_id();
-                let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
-                    .with_title(resolved_step.title.clone());
+                let mut multibuffer =
+                    MultiBuffer::new(Capability::ReadWrite).with_title(resolved_step.title.clone());
                 for (buffer, groups) in &resolved_step.suggestion_groups {
                     let excerpt_ids = multibuffer.push_excerpts(
                         buffer.clone(),
@@ -2839,6 +3105,49 @@ impl ContextEditor {
         });
     }
 
+    /// Returns either the selected text, or the content of the Markdown code
+    /// block surrounding the cursor.
+    fn get_selection_or_code_block(
+        context_editor_view: &View<ContextEditor>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<(String, bool)> {
+        const CODE_FENCE_DELIMITER: &'static str = "```";
+
+        let context_editor = context_editor_view.read(cx).editor.read(cx);
+
+        if context_editor.selections.newest::<Point>(cx).is_empty() {
+            let snapshot = context_editor.buffer().read(cx).snapshot(cx);
+            let (_, _, snapshot) = snapshot.as_singleton()?;
+
+            let head = context_editor.selections.newest::<Point>(cx).head();
+            let offset = snapshot.point_to_offset(head);
+
+            let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
+            let mut text = snapshot
+                .text_for_range(surrounding_code_block_range)
+                .collect::<String>();
+
+            // If there is no newline trailing the closing three-backticks, then
+            // tree-sitter-md extends the range of the content node to include
+            // the backticks.
+            if text.ends_with(CODE_FENCE_DELIMITER) {
+                text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+            }
+
+            (!text.is_empty()).then_some((text, true))
+        } else {
+            let anchor = context_editor.selections.newest_anchor();
+            let text = context_editor
+                .buffer()
+                .read(cx)
+                .read(cx)
+                .text_for_range(anchor.range())
+                .collect::<String>();
+
+            (!text.is_empty()).then_some((text, false))
+        }
+    }
+
     fn insert_selection(
         workspace: &mut Workspace,
         _: &InsertIntoEditor,
@@ -2857,22 +3166,116 @@ impl ContextEditor {
             return;
         };
 
-        let context_editor = context_editor_view.read(cx).editor.read(cx);
-        let anchor = context_editor.selections.newest_anchor();
-        let text = context_editor
-            .buffer()
-            .read(cx)
-            .read(cx)
-            .text_for_range(anchor.range())
-            .collect::<String>();
-
-        // If nothing is selected, don't delete the current selection; instead, be a no-op.
-        if !text.is_empty() {
+        if let Some((text, _)) = Self::get_selection_or_code_block(&context_editor_view, cx) {
             active_editor_view.update(cx, |editor, cx| {
                 editor.insert(&text, cx);
                 editor.focus(cx);
             })
         }
+    }
+
+    fn copy_code(workspace: &mut Workspace, _: &CopyCode, cx: &mut ViewContext<Workspace>) {
+        let result = maybe!({
+            let panel = workspace.panel::<AssistantPanel>(cx)?;
+            let context_editor_view = panel.read(cx).active_context_editor(cx)?;
+            Self::get_selection_or_code_block(&context_editor_view, cx)
+        });
+        let Some((text, is_code_block)) = result else {
+            return;
+        };
+
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+
+        struct CopyToClipboardToast;
+        workspace.show_toast(
+            Toast::new(
+                NotificationId::unique::<CopyToClipboardToast>(),
+                format!(
+                    "{} copied to clipboard.",
+                    if is_code_block {
+                        "Code block"
+                    } else {
+                        "Selection"
+                    }
+                ),
+            )
+            .autohide(),
+            cx,
+        );
+    }
+
+    fn insert_dragged_files(
+        workspace: &mut Workspace,
+        action: &InsertDraggedFiles,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let Some(context_editor_view) = panel.read(cx).active_context_editor(cx) else {
+            return;
+        };
+
+        let project = workspace.project().clone();
+
+        let paths = match action {
+            InsertDraggedFiles::ProjectPaths(paths) => Task::ready((paths.clone(), vec![])),
+            InsertDraggedFiles::ExternalFiles(paths) => {
+                let tasks = paths
+                    .clone()
+                    .into_iter()
+                    .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
+                    .collect::<Vec<_>>();
+
+                cx.spawn(move |_, cx| async move {
+                    let mut paths = vec![];
+                    let mut worktrees = vec![];
+
+                    let opened_paths = futures::future::join_all(tasks).await;
+                    for (worktree, project_path) in opened_paths.into_iter().flatten() {
+                        let Ok(worktree_root_name) =
+                            worktree.read_with(&cx, |worktree, _| worktree.root_name().to_string())
+                        else {
+                            continue;
+                        };
+
+                        let mut full_path = PathBuf::from(worktree_root_name.clone());
+                        full_path.push(&project_path.path);
+                        paths.push(full_path);
+                        worktrees.push(worktree);
+                    }
+
+                    (paths, worktrees)
+                })
+            }
+        };
+
+        cx.spawn(|_, mut cx| async move {
+            let (paths, dragged_file_worktrees) = paths.await;
+            let cmd_name = file_command::FileSlashCommand.name();
+
+            context_editor_view
+                .update(&mut cx, |context_editor, cx| {
+                    let file_argument = paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+
+                    context_editor.editor.update(cx, |editor, cx| {
+                        editor.insert("\n", cx);
+                        editor.insert(&format!("/{} {}", cmd_name, file_argument), cx);
+                    });
+
+                    context_editor.confirm_command(&ConfirmCommand, cx);
+
+                    context_editor
+                        .dragged_file_worktrees
+                        .extend(dragged_file_worktrees);
+                })
+                .log_err();
+        })
+        .detach();
     }
 
     fn quote_selection(
@@ -2890,87 +3293,93 @@ impl ContextEditor {
             return;
         };
 
-        let selection = editor.update(cx, |editor, cx| editor.selections.newest_adjusted(cx));
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        let range = editor::ToOffset::to_offset(&selection.start, &buffer)
-            ..editor::ToOffset::to_offset(&selection.end, &buffer);
-        let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
-        if selected_text.is_empty() {
-            return;
-        }
-
-        let start_language = buffer.language_at(range.start);
-        let end_language = buffer.language_at(range.end);
-        let language_name = if start_language == end_language {
-            start_language.map(|language| language.code_fence_block_name())
-        } else {
-            None
-        };
-        let language_name = language_name.as_deref().unwrap_or("");
-
-        let filename = buffer
-            .file_at(selection.start)
-            .map(|file| file.full_path(cx));
-
-        let text = if language_name == "markdown" {
-            selected_text
-                .lines()
-                .map(|line| format!("> {}", line))
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            let start_symbols = buffer
-                .symbols_containing(selection.start, None)
-                .map(|(_, symbols)| symbols);
-            let end_symbols = buffer
-                .symbols_containing(selection.end, None)
-                .map(|(_, symbols)| symbols);
-
-            let outline_text =
-                if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
-                    Some(
-                        start_symbols
-                            .into_iter()
-                            .zip(end_symbols)
-                            .take_while(|(a, b)| a == b)
-                            .map(|(a, _)| a.text)
-                            .collect::<Vec<_>>()
-                            .join(" > "),
-                    )
+        let mut creases = vec![];
+        editor.update(cx, |editor, cx| {
+            let selections = editor.selections.all_adjusted(cx);
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            for selection in selections {
+                let range = editor::ToOffset::to_offset(&selection.start, &buffer)
+                    ..editor::ToOffset::to_offset(&selection.end, &buffer);
+                let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
+                if selected_text.is_empty() {
+                    continue;
+                }
+                let start_language = buffer.language_at(range.start);
+                let end_language = buffer.language_at(range.end);
+                let language_name = if start_language == end_language {
+                    start_language.map(|language| language.code_fence_block_name())
                 } else {
                     None
                 };
+                let language_name = language_name.as_deref().unwrap_or("");
+                let filename = buffer
+                    .file_at(selection.start)
+                    .map(|file| file.full_path(cx));
+                let text = if language_name == "markdown" {
+                    selected_text
+                        .lines()
+                        .map(|line| format!("> {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    let start_symbols = buffer
+                        .symbols_containing(selection.start, None)
+                        .map(|(_, symbols)| symbols);
+                    let end_symbols = buffer
+                        .symbols_containing(selection.end, None)
+                        .map(|(_, symbols)| symbols);
 
-            let line_comment_prefix = start_language
-                .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
+                    let outline_text = if let Some((start_symbols, end_symbols)) =
+                        start_symbols.zip(end_symbols)
+                    {
+                        Some(
+                            start_symbols
+                                .into_iter()
+                                .zip(end_symbols)
+                                .take_while(|(a, b)| a == b)
+                                .map(|(a, _)| a.text)
+                                .collect::<Vec<_>>()
+                                .join(" > "),
+                        )
+                    } else {
+                        None
+                    };
 
-            let fence = codeblock_fence_for_path(
-                filename.as_deref(),
-                Some(selection.start.row..selection.end.row),
-            );
+                    let line_comment_prefix = start_language
+                        .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
 
-            if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text)
-            {
-                let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
-                format!("{fence}{breadcrumb}{selected_text}\n```")
-            } else {
-                format!("{fence}{selected_text}\n```")
+                    let fence = codeblock_fence_for_path(
+                        filename.as_deref(),
+                        Some(selection.start.row..=selection.end.row),
+                    );
+
+                    if let Some((line_comment_prefix, outline_text)) =
+                        line_comment_prefix.zip(outline_text)
+                    {
+                        let breadcrumb =
+                            format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
+                        format!("{fence}{breadcrumb}{selected_text}\n```")
+                    } else {
+                        format!("{fence}{selected_text}\n```")
+                    }
+                };
+                let crease_title = if let Some(path) = filename {
+                    let start_line = selection.start.row + 1;
+                    let end_line = selection.end.row + 1;
+                    if start_line == end_line {
+                        format!("{}, Line {}", path.display(), start_line)
+                    } else {
+                        format!("{}, Lines {} to {}", path.display(), start_line, end_line)
+                    }
+                } else {
+                    "Quoted selection".to_string()
+                };
+                creases.push((text, crease_title));
             }
-        };
-
-        let crease_title = if let Some(path) = filename {
-            let start_line = selection.start.row + 1;
-            let end_line = selection.end.row + 1;
-            if start_line == end_line {
-                format!("{}, Line {}", path.display(), start_line)
-            } else {
-                format!("{}, Lines {} to {}", path.display(), start_line, end_line)
-            }
-        } else {
-            "Quoted selection".to_string()
-        };
-
+        });
+        if creases.is_empty() {
+            return;
+        }
         // Activate the panel
         if !panel.focus_handle(cx).contains_focused(cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
@@ -2987,39 +3396,40 @@ impl ContextEditor {
                     context.update(cx, |context, cx| {
                         context.editor.update(cx, |editor, cx| {
                             editor.insert("\n", cx);
+                            for (text, crease_title) in creases {
+                                let point = editor.selections.newest::<Point>(cx).head();
+                                let start_row = MultiBufferRow(point.row);
 
-                            let point = editor.selections.newest::<Point>(cx).head();
-                            let start_row = MultiBufferRow(point.row);
+                                editor.insert(&text, cx);
 
-                            editor.insert(&text, cx);
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let anchor_before = snapshot.anchor_after(point);
+                                let anchor_after = editor
+                                    .selections
+                                    .newest_anchor()
+                                    .head()
+                                    .bias_left(&snapshot);
 
-                            let snapshot = editor.buffer().read(cx).snapshot(cx);
-                            let anchor_before = snapshot.anchor_after(point);
-                            let anchor_after = editor
-                                .selections
-                                .newest_anchor()
-                                .head()
-                                .bias_left(&snapshot);
+                                editor.insert("\n", cx);
 
-                            editor.insert("\n", cx);
-
-                            let fold_placeholder = quote_selection_fold_placeholder(
-                                crease_title,
-                                cx.view().downgrade(),
-                            );
-                            let crease = Crease::new(
-                                anchor_before..anchor_after,
-                                fold_placeholder,
-                                render_quote_selection_output_toggle,
-                                |_, _, _| Empty.into_any(),
-                            );
-                            editor.insert_creases(vec![crease], cx);
-                            editor.fold_at(
-                                &FoldAt {
-                                    buffer_row: start_row,
-                                },
-                                cx,
-                            );
+                                let fold_placeholder = quote_selection_fold_placeholder(
+                                    crease_title,
+                                    cx.view().downgrade(),
+                                );
+                                let crease = Crease::new(
+                                    anchor_before..anchor_after,
+                                    fold_placeholder,
+                                    render_quote_selection_output_toggle,
+                                    |_, _, _| Empty.into_any(),
+                                );
+                                editor.insert_creases(vec![crease], cx);
+                                editor.fold_at(
+                                    &FoldAt {
+                                        buffer_row: start_row,
+                                    },
+                                    cx,
+                                );
+                            }
                         })
                     });
                 };
@@ -3028,39 +3438,132 @@ impl ContextEditor {
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
-        let editor = self.editor.read(cx);
-        let context = self.context.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let mut copied_text = String::new();
-            let mut spanned_messages = 0;
-            for message in context.messages(cx) {
-                if message.offset_range.start >= selection.range().end {
-                    break;
-                } else if message.offset_range.end >= selection.range().start {
-                    let range = cmp::max(message.offset_range.start, selection.range().start)
-                        ..cmp::min(message.offset_range.end, selection.range().end);
-                    if !range.is_empty() {
-                        spanned_messages += 1;
-                        write!(&mut copied_text, "## {}\n\n", message.role).unwrap();
-                        for chunk in context.buffer().read(cx).text_for_range(range) {
-                            copied_text.push_str(chunk);
-                        }
-                        copied_text.push('\n');
-                    }
-                }
-            }
-
-            if spanned_messages > 1 {
-                cx.write_to_clipboard(ClipboardItem::new_string(copied_text));
-                return;
-            }
+        if self.editor.read(cx).selections.count() == 1 {
+            let (copied_text, metadata, _) = self.get_clipboard_contents(cx);
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                copied_text,
+                metadata,
+            ));
+            cx.stop_propagation();
+            return;
         }
 
         cx.propagate();
     }
 
-    fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+    fn cut(&mut self, _: &editor::actions::Cut, cx: &mut ViewContext<Self>) {
+        if self.editor.read(cx).selections.count() == 1 {
+            let (copied_text, metadata, selections) = self.get_clipboard_contents(cx);
+
+            self.editor.update(cx, |editor, cx| {
+                editor.transact(cx, |this, cx| {
+                    this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select(selections);
+                    });
+                    this.insert("", cx);
+                    cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                        copied_text,
+                        metadata,
+                    ));
+                });
+            });
+
+            cx.stop_propagation();
+            return;
+        }
+
+        cx.propagate();
+    }
+
+    fn get_clipboard_contents(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
+        let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
+            let mut selection = editor.selections.newest::<Point>(cx);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+            let is_entire_line = selection.is_empty() || editor.selections.line_mode;
+            if is_entire_line {
+                selection.start = Point::new(selection.start.row, 0);
+                selection.end =
+                    cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
+                selection.goal = SelectionGoal::None;
+            }
+
+            let selection_start = snapshot.point_to_offset(selection.start);
+
+            (
+                snapshot.clone(),
+                selection.clone(),
+                editor.display_map.update(cx, |display_map, cx| {
+                    display_map
+                        .snapshot(cx)
+                        .crease_snapshot
+                        .creases_in_range(
+                            MultiBufferRow(selection.start.row)
+                                ..MultiBufferRow(selection.end.row + 1),
+                            &snapshot,
+                        )
+                        .filter_map(|crease| {
+                            if let Some(metadata) = &crease.metadata {
+                                let start = crease
+                                    .range
+                                    .start
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
+                                let end = crease
+                                    .range
+                                    .end
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
+
+                                let range_relative_to_selection = start..end;
+
+                                if range_relative_to_selection.is_empty() {
+                                    None
+                                } else {
+                                    Some(SelectedCreaseMetadata {
+                                        range_relative_to_selection,
+                                        crease: metadata.clone(),
+                                    })
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
+        });
+
+        let selection = selection.map(|point| snapshot.point_to_offset(point));
+        let context = self.context.read(cx);
+
+        let mut text = String::new();
+        for message in context.messages(cx) {
+            if message.offset_range.start >= selection.range().end {
+                break;
+            } else if message.offset_range.end >= selection.range().start {
+                let range = cmp::max(message.offset_range.start, selection.range().start)
+                    ..cmp::min(message.offset_range.end, selection.range().end);
+                if !range.is_empty() {
+                    for chunk in context.buffer().read(cx).text_for_range(range) {
+                        text.push_str(chunk);
+                    }
+                    if message.offset_range.end < selection.range().end {
+                        text.push('\n');
+                    }
+                }
+            }
+        }
+
+        (text, CopyMetadata { creases }, vec![selection])
+    }
+
+    fn paste(&mut self, action: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+        cx.stop_propagation();
+
         let images = if let Some(item) = cx.read_from_clipboard() {
             item.into_entries()
                 .filter_map(|entry| {
@@ -3075,9 +3578,62 @@ impl ContextEditor {
             Vec::new()
         };
 
+        let metadata = if let Some(item) = cx.read_from_clipboard() {
+            item.entries().first().and_then(|entry| {
+                if let ClipboardEntry::String(text) = entry {
+                    text.metadata_json::<CopyMetadata>()
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
         if images.is_empty() {
-            // If we didn't find any valid image data to paste, propagate to let normal pasting happen.
-            cx.propagate();
+            self.editor.update(cx, |editor, cx| {
+                let paste_position = editor.selections.newest::<usize>(cx).head();
+                editor.paste(action, cx);
+
+                if let Some(metadata) = metadata {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+
+                    let mut buffer_rows_to_fold = BTreeSet::new();
+                    let weak_editor = cx.view().downgrade();
+                    editor.insert_creases(
+                        metadata.creases.into_iter().map(|metadata| {
+                            let start = buffer.anchor_after(
+                                paste_position + metadata.range_relative_to_selection.start,
+                            );
+                            let end = buffer.anchor_before(
+                                paste_position + metadata.range_relative_to_selection.end,
+                            );
+
+                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                            buffer_rows_to_fold.insert(buffer_row);
+                            Crease::new(
+                                start..end,
+                                FoldPlaceholder {
+                                    constrain_width: false,
+                                    render: render_fold_icon_button(
+                                        weak_editor.clone(),
+                                        metadata.crease.icon,
+                                        metadata.crease.label.clone(),
+                                    ),
+                                    merge_adjacent: false,
+                                },
+                                render_slash_command_output_toggle,
+                                |_, _, _| Empty.into_any(),
+                            )
+                            .with_metadata(metadata.crease.clone())
+                        }),
+                        cx,
+                    );
+                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                    }
+                }
+            });
         } else {
             let mut image_positions = Vec::new();
             self.editor.update(cx, |editor, cx| {
@@ -3098,10 +3654,22 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
+                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                        continue;
+                    };
                     let image_id = image.id();
-                    context.insert_image(image, cx);
+                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+
                     for image_position in image_positions.iter() {
-                        context.insert_image_anchor(image_id, image_position.text_anchor, cx);
+                        context.insert_content(
+                            Content::Image {
+                                anchor: image_position.text_anchor,
+                                image_id,
+                                image: image_task.clone(),
+                                render_image: render_image.clone(),
+                            },
+                            cx,
+                        );
                     }
                 }
             });
@@ -3116,11 +3684,23 @@ impl ContextEditor {
             let new_blocks = self
                 .context
                 .read(cx)
-                .images(cx)
-                .filter_map(|image| {
+                .contents(cx)
+                .filter_map(|content| {
+                    if let Content::Image {
+                        anchor,
+                        render_image,
+                        ..
+                    } = content
+                    {
+                        Some((anchor, render_image))
+                    } else {
+                        None
+                    }
+                })
+                .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
-                    let image = image.render_image.clone();
+                    let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
+                    let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,
@@ -3632,16 +4212,18 @@ impl ContextEditor {
                         h_flex()
                             .gap_3()
                             .child(
-                                Icon::new(IconName::ExclamationTriangle)
+                                Icon::new(IconName::Warning)
                                     .size(IconSize::Small)
                                     .color(Color::Warning),
                             )
                             .child(Label::new(label)),
                     )
                     .child(
-                        Button::new("open-configuration", "Open configuration")
+                        Button::new("open-configuration", "Configure Providers")
                             .size(ButtonSize::Compact)
+                            .icon(Some(IconName::SlidersVertical))
                             .icon_size(IconSize::Small)
+                            .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
@@ -3720,6 +4302,48 @@ impl ContextEditor {
     }
 }
 
+/// Returns the contents of the *outermost* fenced code block that contains the given offset.
+fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Option<Range<usize>> {
+    const CODE_BLOCK_NODE: &'static str = "fenced_code_block";
+    const CODE_BLOCK_CONTENT: &'static str = "code_fence_content";
+
+    let layer = snapshot.syntax_layers().next()?;
+
+    let root_node = layer.node();
+    let mut cursor = root_node.walk();
+
+    // Go to the first child for the given offset
+    while cursor.goto_first_child_for_byte(offset).is_some() {
+        // If we're at the end of the node, go to the next one.
+        // Example: if you have a fenced-code-block, and you're on the start of the line
+        // right after the closing ```, you want to skip the fenced-code-block and
+        // go to the next sibling.
+        if cursor.node().end_byte() == offset {
+            cursor.goto_next_sibling();
+        }
+
+        if cursor.node().start_byte() > offset {
+            break;
+        }
+
+        // We found the fenced code block.
+        if cursor.node().kind() == CODE_BLOCK_NODE {
+            // Now we need to find the child node that contains the code.
+            cursor.goto_first_child();
+            loop {
+                if cursor.node().kind() == CODE_BLOCK_CONTENT {
+                    return Some(cursor.node().byte_range());
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn render_fold_icon_button(
     editor: WeakView<Editor>,
     icon: IconName,
@@ -3747,6 +4371,17 @@ fn render_fold_icon_button(
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CopyMetadata {
+    creases: Vec<SelectedCreaseMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SelectedCreaseMetadata {
+    range_relative_to_selection: Range<usize>,
+    crease: CreaseMetadata,
+}
+
 impl EventEmitter<EditorEvent> for ContextEditor {}
 impl EventEmitter<SearchEvent> for ContextEditor {}
 
@@ -3772,6 +4407,7 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::cancel))
             .capture_action(cx.listener(ContextEditor::save))
             .capture_action(cx.listener(ContextEditor::copy))
+            .capture_action(cx.listener(ContextEditor::cut))
             .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
@@ -3932,8 +4568,7 @@ impl Item for ContextEditor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| Item::deactivated(editor, cx))
+        self.editor.update(cx, Item::deactivated)
     }
 }
 
@@ -4234,6 +4869,20 @@ impl Render for ContextEditorToolbarItem {
         let weak_self = cx.view().downgrade();
         let right_side = h_flex()
             .gap_2()
+            // TODO display this in a nicer way, once we have a design for it.
+            // .children({
+            //     let project = self
+            //         .workspace
+            //         .upgrade()
+            //         .map(|workspace| workspace.read(cx).project().downgrade());
+            //
+            //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
+            //         project.and_then(|project| db.remaining_summaries(&project, cx))
+            //     });
+
+            //     scan_items_remaining
+            //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
+            // })
             .child(
                 ModelSelector::new(
                     self.fs.clone(),
@@ -4732,7 +5381,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
                     .layer(ElevationIndex::ElevatedSurface)
-                    .child(Icon::new(IconName::TextSelect))
+                    .child(Icon::new(IconName::TextSnippet))
                     .child(Label::new(title.clone()).single_line())
                     .on_click(move |_, cx| {
                         editor
@@ -4836,7 +5485,7 @@ fn render_docs_slash_command_trailer(
             div()
                 .id(("latest-error", row.0))
                 .child(
-                    Icon::new(IconName::ExclamationTriangle)
+                    Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
@@ -4864,10 +5513,16 @@ fn make_lsp_adapter_delegate(
         let worktree = project
             .worktrees(cx)
             .next()
-            .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
+            .ok_or_else(|| anyhow!("no worktrees when constructing LocalLspAdapterDelegate"))?;
+        let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
-            Ok(ProjectLspAdapterDelegate::new(lsp_store, &worktree, cx)
-                as Arc<dyn LspAdapterDelegate>)
+            Ok(LocalLspAdapterDelegate::new(
+                lsp_store,
+                &worktree,
+                http_client,
+                project.fs().clone(),
+                cx,
+            ) as Arc<dyn LspAdapterDelegate>)
         })
     })
 }
@@ -4970,4 +5625,86 @@ fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, Context};
+    use language::Buffer;
+    use unindent::Unindent;
+
+    #[gpui::test]
+    fn test_find_code_blocks(cx: &mut AppContext) {
+        let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+
+        let buffer = cx.new_model(|cx| {
+            let text = r#"
+                line 0
+                line 1
+                ```rust
+                fn main() {}
+                ```
+                line 5
+                line 6
+                line 7
+                ```go
+                func main() {}
+                ```
+                line 11
+                ```
+                this is plain text code block
+                ```
+
+                ```go
+                func another() {}
+                ```
+                line 19
+            "#
+            .unindent();
+            let mut buffer = Buffer::local(text, cx);
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let code_blocks = vec![
+            Point::new(3, 0)..Point::new(4, 0),
+            Point::new(9, 0)..Point::new(10, 0),
+            Point::new(13, 0)..Point::new(14, 0),
+            Point::new(17, 0)..Point::new(18, 0),
+        ]
+        .into_iter()
+        .map(|range| snapshot.point_to_offset(range.start)..snapshot.point_to_offset(range.end))
+        .collect::<Vec<_>>();
+
+        let expected_results = vec![
+            (0, None),
+            (1, None),
+            (2, Some(code_blocks[0].clone())),
+            (3, Some(code_blocks[0].clone())),
+            (4, Some(code_blocks[0].clone())),
+            (5, None),
+            (6, None),
+            (7, None),
+            (8, Some(code_blocks[1].clone())),
+            (9, Some(code_blocks[1].clone())),
+            (10, Some(code_blocks[1].clone())),
+            (11, None),
+            (12, Some(code_blocks[2].clone())),
+            (13, Some(code_blocks[2].clone())),
+            (14, Some(code_blocks[2].clone())),
+            (15, None),
+            (16, Some(code_blocks[3].clone())),
+            (17, Some(code_blocks[3].clone())),
+            (18, Some(code_blocks[3].clone())),
+            (19, None),
+        ];
+
+        for (row, expected) in expected_results {
+            let offset = snapshot.point_to_offset(Point::new(row, 0));
+            let range = find_surrounding_code_block(&snapshot, offset);
+            assert_eq!(range, expected, "unexpected result on row {:?}", row);
+        }
+    }
 }

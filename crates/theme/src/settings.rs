@@ -70,9 +70,9 @@ impl From<String> for UiDensity {
     }
 }
 
-impl Into<String> for UiDensity {
-    fn into(self) -> String {
-        match self {
+impl From<UiDensity> for String {
+    fn from(val: UiDensity) -> Self {
+        match val {
             UiDensity::Compact => "compact".to_string(),
             UiDensity::Default => "default".to_string(),
             UiDensity::Comfortable => "comfortable".to_string(),
@@ -491,13 +491,13 @@ pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
     ui_font
 }
 
-pub fn get_ui_font_size(cx: &WindowContext) -> Pixels {
+pub fn get_ui_font_size(cx: &AppContext) -> Pixels {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
     cx.try_global::<AdjustedUiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
 }
 
-pub fn adjust_ui_font_size(cx: &mut WindowContext, f: fn(&mut Pixels)) {
+pub fn adjust_ui_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
     let mut adjusted_size = cx
         .try_global::<AdjustedUiFontSize>()
@@ -513,11 +513,15 @@ pub fn has_adjusted_ui_font_size(cx: &mut AppContext) -> bool {
     cx.has_global::<AdjustedUiFontSize>()
 }
 
-pub fn reset_ui_font_size(cx: &mut WindowContext) {
+pub fn reset_ui_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedUiFontSize>() {
         cx.remove_global::<AdjustedUiFontSize>();
         cx.refresh();
     }
+}
+
+fn clamp_font_weight(weight: f32) -> FontWeight {
+    FontWeight(weight.clamp(100., 950.))
 }
 
 impl settings::Settings for ThemeSettings {
@@ -579,7 +583,7 @@ impl settings::Settings for ThemeSettings {
                 this.buffer_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.buffer_font_weight {
-                this.buffer_font.weight = FontWeight(value);
+                this.buffer_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
@@ -592,7 +596,7 @@ impl settings::Settings for ThemeSettings {
                 this.ui_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.ui_font_weight {
-                this.ui_font.weight = FontWeight(value);
+                this.ui_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = &value.theme {
@@ -609,10 +613,14 @@ impl settings::Settings for ThemeSettings {
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
+            this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
+
             merge(
                 &mut this.buffer_font_size,
                 value.buffer_font_size.map(Into::into),
             );
+            this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
+
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 
             // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.

@@ -8,6 +8,7 @@ mod components;
 mod disableable;
 mod fixed;
 mod key_bindings;
+mod path_str;
 pub mod prelude;
 mod selectable;
 mod styled_ext;

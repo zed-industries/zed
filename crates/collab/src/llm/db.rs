@@ -67,6 +67,14 @@ impl LlmDatabase {
         Ok(())
     }
 
+    /// Returns the list of all known models, with their [`LanguageModelProvider`].
+    pub fn all_models(&self) -> Vec<(LanguageModelProvider, model::Model)> {
+        self.models
+            .iter()
+            .map(|((model_provider, _model_name), model)| (*model_provider, model.clone()))
+            .collect::<Vec<_>>()
+    }
+
     /// Returns the names of the known models for the given [`LanguageModelProvider`].
     pub fn model_names_for_provider(&self, provider: LanguageModelProvider) -> Vec<String> {
         self.models
@@ -102,14 +110,12 @@ impl LlmDatabase {
             let (tx, result) = self.with_transaction(&f).await?;
             match result {
                 Ok(result) => match tx.commit().await.map_err(Into::into) {
-                    Ok(()) => return Ok(result),
-                    Err(error) => {
-                        return Err(error);
-                    }
+                    Ok(()) => Ok(result),
+                    Err(error) => Err(error),
                 },
                 Err(error) => {
                     tx.rollback().await?;
-                    return Err(error);
+                    Err(error)
                 }
             }
         };

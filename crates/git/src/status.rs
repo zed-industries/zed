@@ -57,7 +57,6 @@ impl GitStatus {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow!("git status process failed: {}", stderr));
         }
-
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut entries = stdout
             .split('\0')

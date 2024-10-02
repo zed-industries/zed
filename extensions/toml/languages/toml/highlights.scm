@@ -9,9 +9,10 @@
 
 (boolean) @constant
 (comment) @comment
-(string) @string
 (integer) @number
 (float) @number
+(string) @string
+(escape_sequence) @string.escape
 (offset_date_time) @string.special
 (local_date_time) @string.special
 (local_date) @string.special

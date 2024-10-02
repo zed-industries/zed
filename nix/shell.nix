@@ -20,12 +20,14 @@ in
       wayland
       xorg.libxcb
       vulkan-loader
+      rustToolchain
     ];
   in
     pkgs.mkShell.override {inherit stdenv;} {
       nativeBuildInputs = with pkgs; [
         clang
         curl
+        cmake
         perl
         pkg-config
         protobuf
@@ -35,10 +37,7 @@ in
       inherit buildInputs;
 
       shellHook = ''
-        export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ([
-            pkgs.vulkan-loader
-          ]
-          ++ buildInputs)}:$LD_LIBRARY_PATH"
+        export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
         export PROTOC="${pkgs.protobuf}/bin/protoc"
       '';
 

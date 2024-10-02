@@ -121,12 +121,8 @@ impl ThemeStyleContent {
                             .background_color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
-                        font_style: style
-                            .font_style
-                            .map(|font_style| FontStyle::from(font_style)),
-                        font_weight: style
-                            .font_weight
-                            .map(|font_weight| FontWeight::from(font_weight)),
+                        font_style: style.font_style.map(FontStyle::from),
+                        font_weight: style.font_weight.map(FontWeight::from),
                         ..Default::default()
                     },
                 )
@@ -417,6 +413,12 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.document_highlight.write_background")]
     pub editor_document_highlight_write_background: Option<String>,
 
+    /// Highlighted brackets background color.
+    ///
+    /// Matching brackets in the cursor scope are highlighted with this background color.
+    #[serde(rename = "editor.document_highlight.bracket_background")]
+    pub editor_document_highlight_bracket_background: Option<String>,
+
     /// Terminal background color.
     #[serde(rename = "terminal.background")]
     pub terminal_background: Option<String>,
@@ -424,6 +426,10 @@ pub struct ThemeColorsContent {
     /// Terminal foreground color.
     #[serde(rename = "terminal.foreground")]
     pub terminal_foreground: Option<String>,
+
+    /// Terminal ANSI background color.
+    #[serde(rename = "terminal.ansi.background")]
+    pub terminal_ansi_background: Option<String>,
 
     /// Bright terminal foreground color.
     #[serde(rename = "terminal.bright_foreground")]
@@ -538,6 +544,10 @@ impl ThemeColorsContent {
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
         let border = self
             .border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
+        let editor_document_highlight_read_background = self
+            .editor_document_highlight_read_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
@@ -784,16 +794,23 @@ impl ThemeColorsContent {
                 .editor_indent_guide_active
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            editor_document_highlight_read_background: self
-                .editor_document_highlight_read_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            editor_document_highlight_read_background,
             editor_document_highlight_write_background: self
                 .editor_document_highlight_write_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            editor_document_highlight_bracket_background: self
+                .editor_document_highlight_bracket_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `editor.document_highlight.read_background`, for backwards compatibility.
+                .or(editor_document_highlight_read_background),
             terminal_background: self
                 .terminal_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            terminal_ansi_background: self
+                .terminal_ansi_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             terminal_foreground: self

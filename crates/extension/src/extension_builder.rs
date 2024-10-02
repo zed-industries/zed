@@ -18,13 +18,13 @@ use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 use wit_component::ComponentEncoder;
 
-/// Currently, we compile with Rust's `wasm32-wasi` target, which works with WASI `preview1`.
+/// Currently, we compile with Rust's `wasm32-wasip1` target, which works with WASI `preview1`.
 /// But the WASM component model is based on WASI `preview2`. So we need an 'adapter' WASM
 /// module, which implements the `preview1` interface in terms of `preview2`.
 ///
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
-const RUST_TARGET: &str = "wasm32-wasi";
+const RUST_TARGET: &str = "wasm32-wasip1";
 const WASI_ADAPTER_URL: &str =
     "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
@@ -77,7 +77,7 @@ impl ExtensionBuilder {
         extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<()> {
-        populate_defaults(extension_manifest, &extension_dir)?;
+        populate_defaults(extension_manifest, extension_dir)?;
 
         if extension_dir.is_relative() {
             bail!(
@@ -123,7 +123,7 @@ impl ExtensionBuilder {
         self.install_rust_wasm_target_if_needed()?;
         let adapter_bytes = self.install_wasi_preview1_adapter_if_needed().await?;
 
-        let cargo_toml_content = fs::read_to_string(&extension_dir.join("Cargo.toml"))?;
+        let cargo_toml_content = fs::read_to_string(extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
         log::info!(
@@ -135,7 +135,7 @@ impl ExtensionBuilder {
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
             .arg(extension_dir.join("target"))
-            .current_dir(&extension_dir)
+            .current_dir(extension_dir)
             .output()
             .context("failed to run `cargo`")?;
         if !output.status.success() {
@@ -158,7 +158,7 @@ impl ExtensionBuilder {
             &cargo_toml
                 .package
                 .name
-                // The wasm32-wasi target normalizes `-` in package names to `_` in the resulting `.wasm` file.
+                // The wasm32-wasip1 target normalizes `-` in package names to `_` in the resulting `.wasm` file.
                 .replace('-', "_"),
         ]);
         wasm_path.set_extension("wasm");
@@ -246,6 +246,7 @@ impl ExtensionBuilder {
             .args(scanner_path.exists().then_some(scanner_path))
             .output()
             .context("failed to run clang")?;
+
         if !clang_output.status.success() {
             bail!(
                 "failed to compile {} parser with clang: {}",
@@ -281,12 +282,12 @@ impl ExtensionBuilder {
                 );
             }
         } else {
-            fs::create_dir_all(&directory).with_context(|| {
+            fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
             let init_output = Command::new("git")
                 .arg("init")
-                .current_dir(&directory)
+                .current_dir(directory)
                 .output()?;
             if !init_output.status.success() {
                 bail!(
@@ -312,15 +313,15 @@ impl ExtensionBuilder {
         let fetch_output = Command::new("git")
             .arg("--git-dir")
             .arg(&git_dir)
-            .args(["fetch", "--depth", "1", "origin", &rev])
+            .args(["fetch", "--depth", "1", "origin", rev])
             .output()
             .context("failed to execute `git fetch`")?;
 
         let checkout_output = Command::new("git")
             .arg("--git-dir")
             .arg(&git_dir)
-            .args(["checkout", &rev])
-            .current_dir(&directory)
+            .args(["checkout", rev])
+            .current_dir(directory)
             .output()
             .context("failed to execute `git checkout`")?;
         if !checkout_output.status.success() {
@@ -431,6 +432,7 @@ impl ExtensionBuilder {
         let body = BufReader::new(response.body_mut());
         let body = GzipDecoder::new(body);
         let tar = Archive::new(body);
+
         tar.unpack(&tar_out_dir)
             .await
             .context("failed to unpack wasi-sdk archive")?;
@@ -447,7 +449,7 @@ impl ExtensionBuilder {
     }
 
     // This was adapted from:
-    // https://github.com/bytecodealliance/wasm-tools/1791a8f139722e9f8679a2bd3d8e423e55132b22/src/bin/wasm-tools/strip.rs
+    // https://github.com/bytecodealliance/wasm-tools/blob/1791a8f139722e9f8679a2bd3d8e423e55132b22/src/bin/wasm-tools/strip.rs
     fn strip_custom_sections(&self, input: &Vec<u8>) -> Result<Vec<u8>> {
         use wasmparser::Payload::*;
 
@@ -458,13 +460,15 @@ impl ExtensionBuilder {
 
         for payload in Parser::new(0).parse_all(input) {
             let payload = payload?;
+            let component_header = wasm_encoder::Component::HEADER;
+            let module_header = wasm_encoder::Module::HEADER;
 
             // Track nesting depth, so that we don't mess with inner producer sections:
             match payload {
                 Version { encoding, .. } => {
                     output.extend_from_slice(match encoding {
-                        wasmparser::Encoding::Component => &wasm_encoder::Component::HEADER,
-                        wasmparser::Encoding::Module => &wasm_encoder::Module::HEADER,
+                        wasmparser::Encoding::Component => &component_header,
+                        wasmparser::Encoding::Module => &module_header,
                     });
                 }
                 ModuleSection { .. } | ComponentSection { .. } => {
@@ -476,7 +480,7 @@ impl ExtensionBuilder {
                         Some(c) => c,
                         None => break,
                     };
-                    if output.starts_with(&wasm_encoder::Component::HEADER) {
+                    if output.starts_with(&component_header) {
                         parent.push(ComponentSectionId::Component as u8);
                         output.encode(&mut parent);
                     } else {
@@ -488,14 +492,10 @@ impl ExtensionBuilder {
                 _ => {}
             }
 
-            match &payload {
-                CustomSection(c) => {
-                    if strip_custom_section(c.name()) {
-                        continue;
-                    }
+            if let CustomSection(c) = &payload {
+                if strip_custom_section(c.name()) {
+                    continue;
                 }
-
-                _ => {}
             }
 
             if let Some((id, range)) = payload.as_section() {

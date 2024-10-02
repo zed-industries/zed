@@ -12,6 +12,7 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
+use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle as rwh;
@@ -63,6 +64,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) executor: ForegroundExecutor,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
+    pub(crate) main_receiver: flume::Receiver<Runnable>,
 }
 
 impl WindowsWindowState {
@@ -226,6 +228,7 @@ impl WindowsWindowStatePtr {
             executor: context.executor.clone(),
             windows_version: context.windows_version,
             validation_number: context.validation_number,
+            main_receiver: context.main_receiver.clone(),
         }))
     }
 }
@@ -253,18 +256,23 @@ struct WindowCreateContext {
     current_cursor: HCURSOR,
     windows_version: WindowsVersion,
     validation_number: usize,
+    main_receiver: flume::Receiver<Runnable>,
 }
 
 impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
-        icon: HICON,
-        executor: ForegroundExecutor,
-        current_cursor: HCURSOR,
-        windows_version: WindowsVersion,
-        validation_number: usize,
+        creation_info: WindowCreationInfo,
     ) -> Result<Self> {
+        let WindowCreationInfo {
+            icon,
+            executor,
+            current_cursor,
+            windows_version,
+            validation_number,
+            main_receiver,
+        } = creation_info;
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
             .titlebar
@@ -279,7 +287,7 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+        let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
             (
@@ -287,6 +295,10 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
+        if !params.show {
+            dwstyle |= WS_MINIMIZE;
+        }
+
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
             // if we obtain a display_id, then this ID must be valid.
@@ -305,6 +317,7 @@ impl WindowsWindow {
             current_cursor,
             windows_version,
             validation_number,
+            main_receiver,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -348,7 +361,12 @@ impl WindowsWindow {
             drop(lock);
             SetWindowPlacement(raw_hwnd, &placement)?;
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
+
+        if params.show {
+            unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
+        } else {
+            unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? };
+        }
 
         Ok(Self(state_ptr))
     }
@@ -660,8 +678,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
-        self.0.state.borrow_mut().renderer.draw(scene, on_complete)
+    fn draw(&self, scene: &Scene) {
+        self.0.state.borrow_mut().renderer.draw(scene)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -676,12 +694,8 @@ impl PlatformWindow for WindowsWindow {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
         // todo(windows)
-    }
-
-    fn fps(&self) -> Option<f32> {
-        None
     }
 }
 
@@ -730,23 +744,11 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 }
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
                 let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
-                for file_index in 0..file_count {
-                    let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
-                    let mut buffer = vec![0u16; filename_length + 1];
-                    let ret = DragQueryFileW(*hdrop, file_index, Some(buffer.as_mut_slice()));
-                    if ret == 0 {
-                        log::error!("unable to read file name");
-                        continue;
+                with_file_names(*hdrop, |file_name| {
+                    if let Some(path) = PathBuf::from_str(&file_name).log_err() {
+                        paths.push(path);
                     }
-                    if let Some(file_name) =
-                        String::from_utf16(&buffer[0..filename_length]).log_err()
-                    {
-                        if let Some(path) = PathBuf::from_str(&file_name).log_err() {
-                            paths.push(path);
-                        }
-                    }
-                }
+                });
                 ReleaseStgMedium(&mut idata);
                 let mut cursor_position = POINT { x: pt.x, y: pt.y };
                 ScreenToClient(self.0.hwnd, &mut cursor_position)
@@ -1063,9 +1065,6 @@ fn calculate_client_rect(
         size: physical_size.to_pixels(scale_factor),
     }
 }
-
-// https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
-const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 
 mod windows_renderer {
     use std::{num::NonZeroIsize, sync::Arc};

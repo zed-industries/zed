@@ -1,0 +1,13 @@
+interface nodejs {
+    /// Returns the path to the Node binary used by Zed.
+    node-binary-path: func() -> result<string, string>;
+
+    /// Returns the latest version of the given NPM package.
+    npm-package-latest-version: func(package-name: string) -> result<string, string>;
+
+    /// Returns the installed version of the given NPM package, if it exists.
+    npm-package-installed-version: func(package-name: string) -> result<option<string>, string>;
+
+    /// Installs the specified NPM package.
+    npm-install-package: func(package-name: string, version: string) -> result<_, string>;
+}

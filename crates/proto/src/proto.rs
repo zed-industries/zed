@@ -2,11 +2,9 @@
 
 pub mod error;
 mod macros;
-mod proto_client;
 mod typed_envelope;
 
 pub use error::*;
-pub use proto_client::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;
@@ -281,8 +279,6 @@ messages!(
     (SaveBuffer, Foreground),
     (SetChannelMemberRole, Foreground),
     (SetChannelVisibility, Foreground),
-    (SearchProject, Background),
-    (SearchProjectResponse, Background),
     (SendChannelMessage, Background),
     (SendChannelMessageResponse, Background),
     (ShareProject, Foreground),
@@ -365,7 +361,10 @@ messages!(
     (AddWorktreeResponse, Foreground),
     (FindSearchCandidates, Background),
     (FindSearchCandidatesResponse, Background),
-    (CloseBuffer, Foreground)
+    (CloseBuffer, Foreground),
+    (UpdateUserSettings, Foreground),
+    (CheckFileExists, Background),
+    (CheckFileExistsResponse, Background)
 );
 
 request_messages!(
@@ -453,7 +452,6 @@ request_messages!(
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
-    (SearchProject, SearchProjectResponse),
     (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
@@ -489,6 +487,7 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
+    (CheckFileExists, CheckFileExistsResponse)
 );
 
 entity_messages!(
@@ -539,7 +538,6 @@ entity_messages!(
     ResolveCompletionDocumentation,
     ResolveInlayHint,
     SaveBuffer,
-    SearchProject,
     StartLanguageServer,
     SynchronizeBuffers,
     TaskContextForLocation,
@@ -560,7 +558,9 @@ entity_messages!(
     CreateContext,
     UpdateContext,
     SynchronizeContexts,
-    LspExtSwitchSourceHeader
+    LspExtSwitchSourceHeader,
+    UpdateUserSettings,
+    CheckFileExists,
 );
 
 entity_messages!(

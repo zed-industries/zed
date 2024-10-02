@@ -666,7 +666,7 @@ impl LeakDetector {
         let handles = self.entity_handles.entry(entity_id).or_default();
         handles.insert(
             handle_id,
-            LEAK_BACKTRACE.then(|| backtrace::Backtrace::new_unresolved()),
+            LEAK_BACKTRACE.then(backtrace::Backtrace::new_unresolved),
         );
         handle_id
     }
@@ -679,7 +679,7 @@ impl LeakDetector {
     pub fn assert_released(&mut self, entity_id: EntityId) {
         let handles = self.entity_handles.entry(entity_id).or_default();
         if !handles.is_empty() {
-            for (_, backtrace) in handles {
+            for backtrace in handles.values_mut() {
                 if let Some(mut backtrace) = backtrace.take() {
                     backtrace.resolve();
                     eprintln!("Leaked handle: {:#?}", backtrace);

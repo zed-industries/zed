@@ -235,7 +235,7 @@ async fn index_rustdoc(
     while let Some(item_with_history) = items_to_visit.pop_front() {
         let item = &item_with_history.item;
 
-        let Some(result) = fetch_page(&package, Some(&item)).await.with_context(|| {
+        let Some(result) = fetch_page(&package, Some(item)).await.with_context(|| {
             #[cfg(debug_assertions)]
             {
                 format!(
@@ -268,11 +268,8 @@ async fn index_rustdoc(
             seen_items.insert(item.clone());
 
             item.path.extend(parent_item.path.clone());
-            match parent_item.kind {
-                RustdocItemKind::Mod => {
-                    item.path.push(parent_item.name.clone());
-                }
-                _ => {}
+            if parent_item.kind == RustdocItemKind::Mod {
+                item.path.push(parent_item.name.clone());
             }
 
             items_to_visit.push_back(RustdocItemWithHistory {

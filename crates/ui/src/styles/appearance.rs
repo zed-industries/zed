@@ -18,9 +18,8 @@ pub fn window_appearance(cx: &WindowContext) -> WindowBackgroundAppearance {
 /// Helps determine if you need to take extra steps to prevent
 /// transparent backgrounds.
 pub fn window_is_transparent(cx: &WindowContext) -> bool {
-    match window_appearance(cx) {
-        WindowBackgroundAppearance::Transparent => true,
-        WindowBackgroundAppearance::Blurred => true,
-        _ => false,
-    }
+    matches!(
+        window_appearance(cx),
+        WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred
+    )
 }

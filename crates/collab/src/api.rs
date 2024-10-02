@@ -137,7 +137,7 @@ async fn get_authenticated_user(
         )
         .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
-    return Ok(Json(AuthenticatedUserResponse { user, metrics_id }));
+    Ok(Json(AuthenticatedUserResponse { user, metrics_id }))
 }
 
 #[derive(Deserialize, Debug)]

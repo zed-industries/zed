@@ -24,7 +24,8 @@ test-support = [
     "workspace/test-support",
     "tree-sitter-rust",
     "tree-sitter-typescript",
-    "tree-sitter-html"
+    "tree-sitter-html",
+    "unindent",
 ]
 
 [dependencies]
@@ -35,7 +36,7 @@ chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
-convert_case = "0.6.0"
+convert_case.workspace = true
 db.workspace = true
 emojis.workspace = true
 file_icons.workspace = true
@@ -54,6 +55,7 @@ markdown.workspace = true
 multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
+pretty_assertions.workspace = true
 project.workspace = true
 rand.workspace = true
 rpc.workspace = true
@@ -61,6 +63,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+similar.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 snippet.workspace = true
@@ -73,6 +76,7 @@ theme.workspace = true
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
+unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
 util.workspace = true

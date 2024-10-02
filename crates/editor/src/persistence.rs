@@ -220,7 +220,6 @@ impl EditorDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui;
 
     #[gpui::test]
     async fn test_save_and_get_serialized_editor() {

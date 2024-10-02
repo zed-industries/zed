@@ -62,7 +62,7 @@ impl QuickActionBar {
                 return self.render_repl_launch_menu(spec, cx);
             }
             SessionSupport::RequiresSetup(language) => {
-                return self.render_repl_setup(&language, cx);
+                return self.render_repl_setup(&language.0, cx);
             }
             SessionSupport::Unsupported => return None,
         };
@@ -316,7 +316,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         }
     };
 
-    let menu_state = match &session.kernel {
+    match &session.kernel {
         Kernel::Restarting => ReplMenuState {
             tooltip: format!("Restarting {}", kernel_name).into(),
             icon_is_animating: true,
@@ -376,7 +376,5 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             status: KernelStatus::Shutdown,
             ..fill_fields()
         },
-    };
-
-    menu_state
+    }
 }

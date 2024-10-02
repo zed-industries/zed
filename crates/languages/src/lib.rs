@@ -30,31 +30,28 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(
-    languages: Arc<LanguageRegistry>,
-    node_runtime: Arc<dyn NodeRuntime>,
-    cx: &mut AppContext,
-) {
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut AppContext) {
+    #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
-        ("bash", tree_sitter_bash::language()),
-        ("c", tree_sitter_c::language()),
-        ("cpp", tree_sitter_cpp::language()),
-        ("css", tree_sitter_css::language()),
-        ("go", tree_sitter_go::language()),
-        ("gomod", tree_sitter_go_mod::language()),
-        ("gowork", tree_sitter_gowork::language()),
-        ("jsdoc", tree_sitter_jsdoc::language()),
-        ("json", tree_sitter_json::language()),
-        ("jsonc", tree_sitter_json::language()),
-        ("markdown", tree_sitter_md::language()),
-        ("markdown-inline", tree_sitter_md::inline_language()),
-        ("proto", protols_tree_sitter_proto::language()),
-        ("python", tree_sitter_python::language()),
-        ("regex", tree_sitter_regex::language()),
-        ("rust", tree_sitter_rust::language()),
-        ("tsx", tree_sitter_typescript::language_tsx()),
-        ("typescript", tree_sitter_typescript::language_typescript()),
-        ("yaml", tree_sitter_yaml::language()),
+        ("bash", tree_sitter_bash::LANGUAGE),
+        ("c", tree_sitter_c::LANGUAGE),
+        ("cpp", tree_sitter_cpp::LANGUAGE),
+        ("css", tree_sitter_css::LANGUAGE),
+        ("go", tree_sitter_go::LANGUAGE),
+        ("gomod", tree_sitter_go_mod::LANGUAGE),
+        ("gowork", tree_sitter_gowork::LANGUAGE),
+        ("jsdoc", tree_sitter_jsdoc::LANGUAGE),
+        ("json", tree_sitter_json::LANGUAGE),
+        ("jsonc", tree_sitter_json::LANGUAGE),
+        ("markdown", tree_sitter_md::LANGUAGE),
+        ("markdown-inline", tree_sitter_md::INLINE_LANGUAGE),
+        ("proto", protols_tree_sitter_proto::LANGUAGE),
+        ("python", tree_sitter_python::LANGUAGE),
+        ("regex", tree_sitter_regex::LANGUAGE),
+        ("rust", tree_sitter_rust::LANGUAGE),
+        ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
+        ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+        ("yaml", tree_sitter_yaml::LANGUAGE),
     ]);
 
     macro_rules! language {
@@ -286,9 +283,21 @@ fn load_config(name: &str) -> LanguageConfig {
     )
     .unwrap();
 
-    ::toml::from_str(&config_toml)
+    #[allow(unused_mut)]
+    let mut config: LanguageConfig = ::toml::from_str(&config_toml)
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
-        .unwrap()
+        .unwrap();
+
+    #[cfg(not(feature = "load-grammars"))]
+    {
+        config = LanguageConfig {
+            name: config.name,
+            matcher: config.matcher,
+            ..Default::default()
+        }
+    }
+
+    config
 }
 
 fn load_queries(name: &str) -> LanguageQueries {

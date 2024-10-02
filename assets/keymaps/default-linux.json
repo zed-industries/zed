@@ -56,6 +56,7 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       // "ctrl-t": "editor::Transpose",
+      "alt-q": "editor::Rewrap",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
       "shift-delete": "editor::Cut",
@@ -165,11 +166,13 @@
   {
     "context": "AssistantPanel",
     "bindings": {
+      "ctrl-k c": "assistant::CopyCode",
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::DeployPromptLibrary"
+      "ctrl-k l": "assistant::DeployPromptLibrary",
+      "ctrl-n": "assistant::NewContext"
     }
   },
   {
@@ -193,7 +196,7 @@
     }
   },
   {
-    "context": "BufferSearchBar && in_replace",
+    "context": "BufferSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "ctrl-enter": "search::ReplaceAll"
@@ -244,6 +247,8 @@
     "bindings": {
       "ctrl-pageup": "pane::ActivatePrevItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-shift-pageup": "pane::SwapItemLeft",
+      "ctrl-shift-pagedown": "pane::SwapItemRight",
       "ctrl-w": "pane::CloseActiveItem",
       "ctrl-f4": "pane::CloseActiveItem",
       "alt-ctrl-t": "pane::CloseInactiveItems",
@@ -261,7 +266,8 @@
       "alt-r": "search::ToggleRegex",
       "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
-      "ctrl-alt-shift-x": "search::ToggleRegex"
+      "ctrl-alt-shift-x": "search::ToggleRegex",
+      "ctrl-k shift-enter": "pane::TogglePinTab"
     }
   },
   // Bindings from VS Code
@@ -304,6 +310,11 @@
       "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
       "ctrl-shift-[": "editor::Fold",
       "ctrl-shift-]": "editor::UnfoldLines",
+      "ctrl-k ctrl-l": "editor::ToggleFold",
+      "ctrl-k ctrl-[": "editor::FoldRecursive",
+      "ctrl-k ctrl-]": "editor::UnfoldRecursive",
+      "ctrl-k ctrl-0": "editor::FoldAll",
+      "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
       "alt-ctrl-r": "editor::RevealInFileManager",
@@ -515,13 +526,20 @@
     }
   },
   {
+    "context": "PromptEditor",
+    "bindings": {
+      "ctrl-[": "assistant::CyclePreviousInlineAssist",
+      "ctrl-]": "assistant::CycleNextInlineAssist"
+    }
+  },
+  {
     "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "ctrl-enter": "project_search::SearchInNew"
     }
   },
   {
-    "context": "OutlinePanel",
+    "context": "OutlinePanel && not_editing",
     "bindings": {
       "escape": "menu::Cancel",
       "left": "outline_panel::CollapseSelectedEntry",
@@ -551,6 +569,7 @@
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFileManager",
+      "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",

@@ -170,6 +170,11 @@ impl LabelCommon for Label {
         self.base = self.base.alpha(alpha);
         self
     }
+
+    fn underline(mut self, underline: bool) -> Self {
+        self.base = self.base.underline(underline);
+        self
+    }
 }
 
 impl RenderOnce for Label {

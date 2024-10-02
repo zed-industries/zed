@@ -12,7 +12,7 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
         return Ok(HashMap::default());
     }
 
-    const MARKER: &'static str = "<MARKER>";
+    const MARKER: &str = "<MARKER>";
 
     let mut command = Command::new("git");
 

@@ -117,7 +117,7 @@ impl Vim {
                             to_insert = "\n".to_owned() + &to_insert;
                         }
                     } else if !line_mode && vim.mode == Mode::VisualLine {
-                        to_insert = to_insert + "\n";
+                        to_insert += "\n";
                     }
 
                     let display_range = if !selection.is_empty() {
@@ -432,7 +432,7 @@ mod test {
                 the laˇzy dog"});
         // paste in visual mode
         cx.simulate_shared_keystrokes("v i w p").await;
-        cx.shared_state().await.assert_eq(&indoc! {"
+        cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
                 the•
                 ˇfox jumps over
@@ -672,6 +672,9 @@ mod test {
         cx.shared_register('-').await.assert_eq("jumps");
         cx.simulate_shared_keystrokes("\" _ d d").await;
         cx.shared_register('_').await.assert_eq("");
+
+        cx.simulate_shared_keystrokes("shift-v \" _ y w").await;
+        cx.shared_register('"').await.assert_eq("jumps");
 
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown

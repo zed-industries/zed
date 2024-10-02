@@ -461,6 +461,16 @@ impl Hsla {
     pub fn fade_out(&mut self, factor: f32) {
         self.a *= 1.0 - factor.clamp(0., 1.);
     }
+
+    /// Returns a new HSLA color with the same hue, saturation, and lightness, but with a modified alpha value.
+    pub fn opacity(&self, factor: f32) -> Self {
+        Hsla {
+            h: self.h,
+            s: self.s,
+            l: self.l,
+            a: self.a * factor.clamp(0., 1.),
+        }
+    }
 }
 
 impl From<Rgba> for Hsla {

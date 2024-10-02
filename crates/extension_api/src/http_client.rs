@@ -17,7 +17,7 @@ impl HttpRequest {
 
     /// Executes the [`HttpRequest`] with [`fetch_stream`].
     pub fn fetch_stream(&self) -> Result<HttpResponseStream, String> {
-        fetch_stream(&self)
+        fetch_stream(self)
     }
 }
 
@@ -29,6 +29,12 @@ pub struct HttpRequestBuilder {
     headers: Vec<(String, String)>,
     body: Option<Vec<u8>>,
     redirect_policy: RedirectPolicy,
+}
+
+impl Default for HttpRequestBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HttpRequestBuilder {

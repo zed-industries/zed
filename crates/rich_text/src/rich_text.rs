@@ -195,7 +195,9 @@ pub fn render_markdown_mut(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    let options = Options::all();
+    let mut options = Options::all();
+    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
+
     for (event, source_range) in Parser::new_ext(block, options).into_offset_iter() {
         let prev_len = text.len();
         match event {

@@ -14,6 +14,7 @@ path = "src/rpc.rs"
 doctest = false
 
 [features]
+gpui = ["dep:gpui"]
 test-support = ["collections/test-support", "gpui/test-support", "proto/test-support"]
 
 [dependencies]
@@ -38,7 +39,6 @@ zstd = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zstd = { version = "0.11", features = [ "pkg-config" ] }
-
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

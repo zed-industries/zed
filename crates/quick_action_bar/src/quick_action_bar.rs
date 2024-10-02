@@ -8,8 +8,8 @@ use editor::actions::{
 use editor::{Editor, EditorSettings};
 
 use gpui::{
-    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement,
-    Render, Styled, Subscription, View, ViewContext, WeakView,
+    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
@@ -110,12 +110,15 @@ impl Render for QuickActionBar {
             )
         };
 
+        let focus_handle = editor.read(cx).focus_handle(cx);
+
         let search_button = editor.is_singleton(cx).then(|| {
             QuickActionBarButton::new(
                 "toggle buffer search",
                 IconName::MagnifyingGlass,
                 !self.buffer_search_bar.read(cx).is_dismissed(),
                 Box::new(buffer_search::Deploy::find()),
+                focus_handle.clone(),
                 "Buffer Search",
                 {
                     let buffer_search_bar = self.buffer_search_bar.clone();
@@ -133,6 +136,7 @@ impl Render for QuickActionBar {
             IconName::ZedAssistant,
             false,
             Box::new(InlineAssist::default()),
+            focus_handle.clone(),
             "Inline Assist",
             {
                 let workspace = self.workspace.clone();
@@ -150,7 +154,7 @@ impl Render for QuickActionBar {
             let focus = editor.focus_handle(cx);
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger(
-                    IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
+                    IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
@@ -321,6 +325,7 @@ struct QuickActionBarButton {
     icon: IconName,
     toggled: bool,
     action: Box<dyn Action>,
+    focus_handle: FocusHandle,
     tooltip: SharedString,
     on_click: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
 }
@@ -331,6 +336,7 @@ impl QuickActionBarButton {
         icon: IconName,
         toggled: bool,
         action: Box<dyn Action>,
+        focus_handle: FocusHandle,
         tooltip: impl Into<SharedString>,
         on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
@@ -339,6 +345,7 @@ impl QuickActionBarButton {
             icon,
             toggled,
             action,
+            focus_handle,
             tooltip: tooltip.into(),
             on_click: Box::new(on_click),
         }
@@ -355,7 +362,9 @@ impl RenderOnce for QuickActionBarButton {
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .selected(self.toggled)
-            .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+            .tooltip(move |cx| {
+                Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, cx)
+            })
             .on_click(move |event, cx| (self.on_click)(event, cx))
     }
 }

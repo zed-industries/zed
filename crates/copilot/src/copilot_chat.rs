@@ -7,17 +7,15 @@ use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_file;
 use strum::EnumIter;
 use ui::Context;
 
-pub const COPILOT_CHAT_COMPLETION_URL: &'static str =
-    "https://api.githubcopilot.com/chat/completions";
-pub const COPILOT_CHAT_AUTH_URL: &'static str = "https://api.github.com/copilot_internal/v2/token";
+pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
+pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -276,7 +274,7 @@ async fn request_api_token(
         .header("Accept", "application/json");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
 
     let request = request_builder.body(AsyncBody::empty())?;
@@ -333,7 +331,7 @@ async fn stream_completion(
         .header("Copilot-Integration-Id", "vscode-chat");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

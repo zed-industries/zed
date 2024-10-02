@@ -100,6 +100,11 @@ The Pyright language server does not provide code formatting or linting. If you 
 
 A common tool for formatting Python code is [Ruff](https://docs.astral.sh/ruff/). It is another tool written in Rust, an extremely fast Python linter and code formatter. It is available through the [Ruff extension](https://github.com/zed-industries/zed/tree/main/extensions/ruff/). To configure the Ruff extension to work within Zed, see the setup documentation [here](https://docs.astral.sh/ruff/editors/setup/#zed).
 
+## Virtual Environments in the Terminal {#terminal-detect_venv}
+
+Zed will also detect virtual environments and automatically activate them in terminal if available.
+See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for more.
+
 <!--
 TBD: Expand Python Ruff docs.
 TBD: Ruff pyproject.toml, ruff.toml docs. `ruff.configuration`.

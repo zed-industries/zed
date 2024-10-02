@@ -39,9 +39,7 @@ use ui::{
     RadioWithLabel, Tooltip,
 };
 use ui_input::{FieldLabelLayout, TextField};
-use util::paths::PathWithPosition;
 use util::ResultExt;
-use workspace::notifications::NotifyResultExt;
 use workspace::OpenOptions;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
@@ -174,7 +172,7 @@ impl DevServerProjects {
     ) {
         let mut path = self.project_path_input.read(cx).text(cx).trim().to_string();
 
-        if path == "" {
+        if path.is_empty() {
             return;
         }
 
@@ -598,7 +596,7 @@ impl DevServerProjects {
                             })
                             .log_err();
 
-                            return Err(e);
+                            Err(e)
                         }
                     }
                 }
@@ -735,7 +733,6 @@ impl DevServerProjects {
                     ..Default::default()
                 });
                 cx.notify();
-                return;
             }
             _ => {
                 self.mode = Mode::Default(None);
@@ -930,7 +927,7 @@ impl DevServerProjects {
                                 .on_click(
                                     cx.listener(move |this, _, cx| this.delete_ssh_server(ix, cx)),
                                 )
-                                .tooltip(|cx| Tooltip::text("Remove dev server", cx))
+                                .tooltip(|cx| Tooltip::text("Remove Dev Server", cx))
                         })),
                 ),
             )
@@ -988,11 +985,7 @@ impl DevServerProjects {
                 cx.spawn(|_, mut cx| async move {
                     let result = open_ssh_project(
                         server.into(),
-                        project
-                            .paths
-                            .into_iter()
-                            .map(|path| PathWithPosition::from_path(PathBuf::from(path)))
-                            .collect(),
+                        project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions::default(),
                         &mut cx,
@@ -1139,7 +1132,8 @@ impl DevServerProjects {
         let dev_server_id = state.dev_server_id;
         let access_token = state.access_token.clone();
         let ssh_prompt = state.ssh_prompt.clone();
-        let use_direct_ssh = SshSettings::get_global(cx).use_direct_ssh();
+        let use_direct_ssh = SshSettings::get_global(cx).use_direct_ssh()
+            || Client::global(cx).status().borrow().is_signed_out();
 
         let mut kind = state.kind;
         if use_direct_ssh && kind == NewServerKind::LegacySSH {
@@ -1163,9 +1157,10 @@ impl DevServerProjects {
             })
         });
 
-        const MANUAL_SETUP_MESSAGE: &str = "Click create to generate a token for this server. The next step will provide instructions for setting zed up on that machine.";
+        const MANUAL_SETUP_MESSAGE: &str =
+            "Generate a token for this server and follow the steps to set Zed up on that machine.";
         const SSH_SETUP_MESSAGE: &str =
-            "Enter the command you use to ssh into this server.\nFor example: `ssh me@my.server` or `ssh me@secret-box:2222`.";
+            "Enter the command you use to SSH into this server.\nFor example: `ssh me@my.server` or `ssh me@secret-box:2222`.";
 
         Modal::new("create-dev-server", Some(self.scroll_handle.clone()))
             .header(
@@ -1192,6 +1187,7 @@ impl DevServerProjects {
                     .child(
                         v_flex()
                             .w_full()
+                            .px_2()
                             .gap_y(Spacing::Large.rems(cx))
                             .when(ssh_prompt.is_none(), |el| {
                                 el.child(
@@ -1308,12 +1304,10 @@ impl DevServerProjects {
                             } else {
                                 "Create"
                             }
+                        } else if dev_server_id.is_some() {
+                            "Reconnect"
                         } else {
-                            if dev_server_id.is_some() {
-                                "Reconnect"
-                            } else {
-                                "Connect"
-                            }
+                            "Connect"
                         },
                     )
                     .style(ButtonStyle::Filled)
@@ -1349,9 +1343,9 @@ impl DevServerProjects {
     ) -> Div {
         self.markdown.update(cx, |markdown, cx| {
             if kind == NewServerKind::Manual {
-                markdown.reset(format!("Please log into '{}'. If you don't yet have zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen to start zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
+                markdown.reset(format!("Please log into '{}'. If you don't yet have Zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen, to start Zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
             } else {
-                markdown.reset("Please wait while we connect over SSH.\n\nIf you run into problems, please [file a bug](https://github.com/zed-industries/zed), and in the meantime try using manual setup.".to_string(), cx);
+                markdown.reset("Please wait while we connect over SSH.\n\nIf you run into problems, please [file a bug](https://github.com/zed-industries/zed), and in the meantime try using the manual setup.".to_string(), cx);
             }
         });
 
@@ -1413,7 +1407,6 @@ impl DevServerProjects {
             is_creating = Some(*creating);
             creating_dev_server = Some(*dev_server_id);
         };
-        let is_signed_out = Client::global(cx).status().borrow().is_signed_out();
 
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
@@ -1421,85 +1414,58 @@ impl DevServerProjects {
                     .show_dismiss_button(true)
                     .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::Small)),
             )
-            .when(is_signed_out, |modal| {
-                modal
-                    .section(Section::new().child(v_flex().mb_4().child(Label::new(
-                        "You are not currently signed in to Zed. Currently the remote development features are only available to signed in users. Please sign in to continue.",
-                    ))))
-                    .footer(
-                        ModalFooter::new().end_slot(
-                            Button::new("sign_in", "Sign in")
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .style(ButtonStyle::Filled)
-                                .full_width()
-                                .on_click(cx.listener(|_, _, cx| {
-                                    let client = Client::global(cx).clone();
-                                    cx.spawn(|_, mut cx| async move {
-                                        client
-                                            .authenticate_and_connect(true, &cx)
-                                            .await
-                                            .notify_async_err(&mut cx);
-                                    })
-                                    .detach();
-                                    cx.emit(gpui::DismissEvent);
-                                })),
-                        ),
-                    )
-            })
-            .when(!is_signed_out, |modal| {
-                modal.section(
-                    Section::new().child(
-                        div().mb_4().child(
-                            List::new()
-                                .empty_message("No dev servers registered.")
-                                .header(Some(
-                                    ListHeader::new("Connections").end_slot(
-                                        Button::new("register-dev-server-button", "Connect")
-                                            .icon(IconName::Plus)
-                                            .icon_position(IconPosition::Start)
-                                            .tooltip(|cx| {
-                                                Tooltip::text("Connect to a new server", cx)
-                                            })
-                                            .on_click(cx.listener(|this, _, cx| {
-                                                this.mode = Mode::CreateDevServer(
-                                                    CreateDevServer {
-                                                        kind: if SshSettings::get_global(cx).use_direct_ssh() { NewServerKind::DirectSSH } else { NewServerKind::LegacySSH },
-                                                        ..Default::default()
-                                                    }
-                                                );
-                                                this.dev_server_name_input.update(
-                                                    cx,
-                                                    |text_field, cx| {
-                                                        text_field.editor().update(
-                                                            cx,
-                                                            |editor, cx| {
-                                                                editor.set_text("", cx);
-                                                            },
-                                                        );
-                                                    },
-                                                );
-                                                cx.notify();
-                                            })),
-                                    ),
-                                ))
-                                .children(ssh_connections.iter().cloned().enumerate().map(|(ix, connection)| {
+            .section(
+                Section::new().child(
+                    div().child(
+                        List::new()
+                            .empty_message("No dev servers registered yet.")
+                            .header(Some(
+                                ListHeader::new("Connections").end_slot(
+                                    Button::new("register-dev-server-button", "Connect New Server")
+                                        .icon(IconName::Plus)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_color(Color::Muted)
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.mode = Mode::CreateDevServer(CreateDevServer {
+                                                kind: if SshSettings::get_global(cx)
+                                                    .use_direct_ssh()
+                                                {
+                                                    NewServerKind::DirectSSH
+                                                } else {
+                                                    NewServerKind::LegacySSH
+                                                },
+                                                ..Default::default()
+                                            });
+                                            this.dev_server_name_input.update(
+                                                cx,
+                                                |text_field, cx| {
+                                                    text_field.editor().update(cx, |editor, cx| {
+                                                        editor.set_text("", cx);
+                                                    });
+                                                },
+                                            );
+                                            cx.notify();
+                                        })),
+                                ),
+                            ))
+                            .children(ssh_connections.iter().cloned().enumerate().map(
+                                |(ix, connection)| {
                                     self.render_ssh_connection(ix, connection, cx)
                                         .into_any_element()
-                                }))
-                                .children(dev_servers.iter().map(|dev_server| {
-                                    let creating = if creating_dev_server == Some(dev_server.id) {
-                                        is_creating
-                                    } else {
-                                        None
-                                    };
-                                    self.render_dev_server(dev_server, creating, cx)
-                                        .into_any_element()
-                                })),
-                        ),
+                                },
+                            ))
+                            .children(dev_servers.iter().map(|dev_server| {
+                                let creating = if creating_dev_server == Some(dev_server.id) {
+                                    is_creating
+                                } else {
+                                    None
+                                };
+                                self.render_dev_server(dev_server, creating, cx)
+                                    .into_any_element()
+                            })),
                     ),
-                )
-            })
+                ),
+            )
     }
 }
 
@@ -1527,6 +1493,7 @@ impl Render for DevServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .track_focus(&self.focus_handle)
+            .p_2()
             .elevation_3(cx)
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
@@ -1593,7 +1560,7 @@ pub fn reconnect_to_dev_server(
     cx: &mut WindowContext,
 ) -> Task<Result<()>> {
     let Some(ssh_connection_string) = dev_server.ssh_connection_string else {
-        return Task::ready(Err(anyhow!("can't reconnect, no ssh_connection_string")));
+        return Task::ready(Err(anyhow!("Can't reconnect, no ssh_connection_string")));
     };
     let dev_server_store = dev_server_projects::Store::global(cx);
     let get_access_token = dev_server_store.update(cx, |store, cx| {

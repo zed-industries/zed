@@ -282,7 +282,7 @@ impl MarkdownPreviewView {
         let buffer = editor.read(cx).buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton() {
             if let Some(language) = buffer.read(cx).language() {
-                return language.name().as_ref() == "Markdown";
+                return language.name() == "Markdown".into();
             }
         }
         false

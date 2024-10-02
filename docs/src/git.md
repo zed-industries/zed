@@ -24,12 +24,12 @@ TBD: Explain Git Hunks
 
 Zed integrates with popular Git hosting services to ensure that git commit hashes
 and references to Issues / Pull Requests / Merge Requests become clickable links.
-Zed currently support links to
-[GitHub.com](https://github.com),
-[GitLab.com](https://gitlab.com),
-[Bitbucket.org](https://bitbucket.org),
-[SourceHut.org](https://sr.ht) and
-[Codeberg.org](https://codeberg.org).
+Zed currently support links to the hosted versions of
+[GitHub](https://github.com),
+[GitLab](https://gitlab.com),
+[Bitbucket](https://bitbucket.org),
+[SourceHut](https://sr.ht) and
+[Codeberg](https://codeberg.org).
 
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.

@@ -7,14 +7,11 @@ use crate::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
         ShowScrollbar,
     },
-    git::{
-        blame::{CommitDetails, GitBlame},
-        diff_hunk_to_display, DisplayDiffHunk,
-    },
+    git::blame::{CommitDetails, GitBlame},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
-    hunk_diff::ExpandedHunk,
+    hunk_diff::{diff_hunk_to_display, DisplayDiffHunk},
     hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
@@ -23,8 +20,8 @@ use crate::{
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, RangeToAnchorExt, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -216,6 +213,7 @@ impl EditorElement {
         register_action(view, cx, Editor::move_line_up);
         register_action(view, cx, Editor::move_line_down);
         register_action(view, cx, Editor::transpose);
+        register_action(view, cx, Editor::rewrap);
         register_action(view, cx, Editor::cut);
         register_action(view, cx, Editor::copy);
         register_action(view, cx, Editor::paste);
@@ -241,7 +239,7 @@ impl EditorElement {
             if text.is_empty() {
                 return;
             }
-            editor.handle_input(&text, cx);
+            editor.handle_input(text, cx);
         });
         register_action(view, cx, |editor, _: &HalfPageUp, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
@@ -304,7 +302,7 @@ impl EditorElement {
         }
         register_action(view, cx, Editor::go_to_diagnostic);
         register_action(view, cx, Editor::go_to_prev_diagnostic);
-        register_action(view, cx, Editor::go_to_hunk);
+        register_action(view, cx, Editor::go_to_next_hunk);
         register_action(view, cx, Editor::go_to_prev_hunk);
         register_action(view, cx, |editor, a, cx| {
             editor.go_to_definition(a, cx).detach_and_log_err(cx);
@@ -337,14 +335,21 @@ impl EditorElement {
         register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
+        register_action(view, cx, Editor::fold_all);
         register_action(view, cx, Editor::fold_at);
+        register_action(view, cx, Editor::fold_recursive);
+        register_action(view, cx, Editor::toggle_fold);
+        register_action(view, cx, Editor::toggle_fold_recursive);
         register_action(view, cx, Editor::unfold_lines);
+        register_action(view, cx, Editor::unfold_recursive);
+        register_action(view, cx, Editor::unfold_all);
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
         register_action(view, cx, Editor::open_excerpts_in_split);
+        register_action(view, cx, Editor::open_proposed_changes_editor);
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_tab_bar);
         register_action(view, cx, Editor::toggle_line_numbers);
@@ -431,6 +436,7 @@ impl EditorElement {
         register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
+        register_action(view, cx, Editor::apply_selected_diff_hunks);
         register_action(view, cx, Editor::open_active_item_in_terminal)
     }
 
@@ -490,28 +496,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            if modifiers.control || modifiers.platform {
-                editor.toggle_hovered_hunk(&hovered_hunk, cx);
-            } else {
-                let display_range = hovered_hunk
-                    .multi_buffer_range
-                    .clone()
-                    .to_display_points(&position_map.snapshot);
-                let hunk_bounds = Self::diff_hunk_bounds(
-                    &position_map.snapshot,
-                    position_map.line_height,
-                    gutter_hitbox.bounds,
-                    &DisplayDiffHunk::Unfolded {
-                        diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
-                        display_row_range: display_range.start.row()..display_range.end.row(),
-                        multi_buffer_range: hovered_hunk.multi_buffer_range.clone(),
-                        status: hovered_hunk.status,
-                    },
-                );
-                if hunk_bounds.contains(&event.position) {
-                    editor.open_hunk_context_menu(hovered_hunk, event.position, cx);
-                }
-            }
+            editor.toggle_hovered_hunk(&hovered_hunk, cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
@@ -1286,6 +1271,7 @@ impl EditorElement {
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
         display_rows: Range<DisplayRow>,
+        anchor_range: Range<Anchor>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
@@ -1306,30 +1292,84 @@ impl EditorElement {
             .git
             .git_gutter
             .unwrap_or_default();
-        let display_hunks = buffer_snapshot
-            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
-            .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
-            .dedup()
-            .map(|hunk| match git_gutter_setting {
-                GitGutterSetting::TrackedFiles => {
-                    let hitbox = match hunk {
-                        DisplayDiffHunk::Unfolded { .. } => {
-                            let hunk_bounds = Self::diff_hunk_bounds(
-                                &snapshot,
-                                line_height,
-                                gutter_hitbox.bounds,
-                                &hunk,
-                            );
-                            Some(cx.insert_hitbox(hunk_bounds, true))
+
+        self.editor.update(cx, |editor, cx| {
+            let expanded_hunks = &editor.expanded_hunks.hunks;
+            let expanded_hunks_start_ix = expanded_hunks
+                .binary_search_by(|hunk| {
+                    hunk.hunk_range
+                        .end
+                        .cmp(&anchor_range.start, &buffer_snapshot)
+                        .then(Ordering::Less)
+                })
+                .unwrap_err();
+            let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
+
+            let display_hunks = buffer_snapshot
+                .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
+                .filter_map(|hunk| {
+                    let display_hunk = diff_hunk_to_display(&hunk, snapshot);
+
+                    if let DisplayDiffHunk::Unfolded {
+                        multi_buffer_range,
+                        status,
+                        ..
+                    } = &display_hunk
+                    {
+                        let mut is_expanded = false;
+                        while let Some(expanded_hunk) = expanded_hunks.peek() {
+                            match expanded_hunk
+                                .hunk_range
+                                .start
+                                .cmp(&multi_buffer_range.start, &buffer_snapshot)
+                            {
+                                Ordering::Less => {
+                                    expanded_hunks.next();
+                                }
+                                Ordering::Equal => {
+                                    is_expanded = true;
+                                    break;
+                                }
+                                Ordering::Greater => {
+                                    break;
+                                }
+                            }
                         }
-                        DisplayDiffHunk::Folded { .. } => None,
-                    };
-                    (hunk, hitbox)
-                }
-                GitGutterSetting::Hide => (hunk, None),
-            })
-            .collect();
-        display_hunks
+                        match status {
+                            DiffHunkStatus::Added => {}
+                            DiffHunkStatus::Modified => {}
+                            DiffHunkStatus::Removed => {
+                                if is_expanded {
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+
+                    Some(display_hunk)
+                })
+                .dedup()
+                .map(|hunk| match git_gutter_setting {
+                    GitGutterSetting::TrackedFiles => {
+                        let hitbox = match hunk {
+                            DisplayDiffHunk::Unfolded { .. } => {
+                                let hunk_bounds = Self::diff_hunk_bounds(
+                                    snapshot,
+                                    line_height,
+                                    gutter_hitbox.bounds,
+                                    &hunk,
+                                );
+                                Some(cx.insert_hitbox(hunk_bounds, true))
+                            }
+                            DisplayDiffHunk::Folded { .. } => None,
+                        };
+                        (hunk, hitbox)
+                    }
+                    GitGutterSetting::Hide => (hunk, None),
+                })
+                .collect();
+            display_hunks
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1431,7 +1471,7 @@ impl EditorElement {
             AvailableSpace::MaxContent
         };
         let scroll_top = scroll_position.y * line_height;
-        let start_x = em_width * 1;
+        let start_x = em_width;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
 
@@ -1610,7 +1650,7 @@ impl EditorElement {
                         .tasks
                         .as_ref()
                         .map(|tasks| tasks.position.to_display_point(snapshot).row())
-                        .or_else(|| *deployed_from_indicator)
+                        .or(*deployed_from_indicator)
                 } else {
                     None
                 };
@@ -1626,7 +1666,16 @@ impl EditorElement {
                         return None;
                     }
                     if snapshot.is_line_folded(multibuffer_row) {
-                        return None;
+                        // Skip folded indicators, unless it's the starting line of a fold.
+                        if multibuffer_row
+                            .0
+                            .checked_sub(1)
+                            .map_or(false, |previous_row| {
+                                snapshot.is_line_folded(MultiBufferRow(previous_row))
+                            })
+                        {
+                            return None;
+                        }
                     }
                     let button = editor.render_run_indicator(
                         &self.style,
@@ -2097,13 +2146,13 @@ impl EditorElement {
                         .id(("path excerpt header", EntityId::from(block_id)))
                         .w_full()
                         .px(header_padding)
+                        .pt(header_padding)
                         .child(
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                                 .id("path header block")
                                 .h(2. * cx.line_height())
-                                .pl(gpui::px(12.))
-                                .pr(gpui::px(8.))
+                                .px(gpui::px(12.))
                                 .rounded_md()
                                 .shadow_md()
                                 .border_1()
@@ -2751,7 +2800,7 @@ impl EditorElement {
                         .position(position)
                         .child(context_menu)
                         .anchor(AnchorCorner::TopLeft)
-                        .snap_to_window(),
+                        .snap_to_window_with_margin(px(8.)),
                 )
                 .with_priority(1)
                 .into_any(),
@@ -2794,7 +2843,7 @@ impl EditorElement {
         let hover_popovers = self.editor.update(cx, |editor, cx| {
             editor
                 .hover_state
-                .render(&snapshot, visible_display_row_range.clone(), max_size, cx)
+                .render(snapshot, visible_display_row_range.clone(), max_size, cx)
         });
         let Some((position, hover_popovers)) = hover_popovers else {
             return;
@@ -3199,12 +3248,12 @@ impl EditorElement {
                             &layout.position_map.snapshot,
                             line_height,
                             layout.gutter_hitbox.bounds,
-                            &hunk,
+                            hunk,
                         );
                         Some((
                             hunk_bounds,
                             cx.theme().status().modified,
-                            Corners::all(1. * line_height),
+                            Corners::all(px(0.)),
                         ))
                     }
                     DisplayDiffHunk::Unfolded { status, .. } => {
@@ -3212,12 +3261,12 @@ impl EditorElement {
                             DiffHunkStatus::Added => (
                                 hunk_hitbox.bounds,
                                 cx.theme().status().created,
-                                Corners::all(0.05 * line_height),
+                                Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Modified => (
                                 hunk_hitbox.bounds,
                                 cx.theme().status().modified,
-                                Corners::all(0.05 * line_height),
+                                Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Removed => (
                                 Bounds::new(
@@ -3261,7 +3310,7 @@ impl EditorElement {
                 let start_y = display_row.as_f32() * line_height - scroll_top;
                 let end_y = start_y + line_height;
 
-                let width = 0.275 * line_height;
+                let width = Self::diff_hunk_strip_width(line_height);
                 let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                 let highlight_size = size(width, end_y - start_y);
                 Bounds::new(highlight_origin, highlight_size)
@@ -3294,7 +3343,7 @@ impl EditorElement {
                     let start_y = start_row.as_f32() * line_height - scroll_top;
                     let end_y = end_row_in_current_excerpt.as_f32() * line_height - scroll_top;
 
-                    let width = 0.275 * line_height;
+                    let width = Self::diff_hunk_strip_width(line_height);
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
@@ -3306,13 +3355,19 @@ impl EditorElement {
                     let start_y = row.as_f32() * line_height - offset - scroll_top;
                     let end_y = start_y + line_height;
 
-                    let width = 0.35 * line_height;
+                    let width = (0.35 * line_height).floor();
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
             },
         }
+    }
+
+    /// Returns the width of the diff strip that will be displayed in the gutter.
+    pub(super) fn diff_hunk_strip_width(line_height: Pixels) -> Pixels {
+        // We floor the value to prevent pixel rounding.
+        (0.275 * line_height).floor()
     }
 
     fn paint_gutter_indicators(&self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -3325,9 +3380,6 @@ impl EditorElement {
 
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(cx);
-            }
-            for close_indicator in layout.close_indicators.iter_mut() {
-                close_indicator.paint(cx);
             }
 
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
@@ -3454,7 +3506,7 @@ impl EditorElement {
             let corner_radius = 0.15 * layout.position_map.line_height;
 
             for (player_color, selections) in &layout.selections {
-                for selection in selections.into_iter() {
+                for selection in selections.iter() {
                     self.paint_highlighted_range(
                         selection.range.clone(),
                         player_color.selection,
@@ -3728,11 +3780,11 @@ impl EditorElement {
                                     )
                                     .map(|hunk| {
                                         let start_display_row =
-                                            MultiBufferPoint::new(hunk.associated_range.start.0, 0)
+                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         let mut end_display_row =
-                                            MultiBufferPoint::new(hunk.associated_range.end.0, 0)
+                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         if end_display_row != start_display_row {
@@ -3772,20 +3824,18 @@ impl EditorElement {
                                     if is_symbol_occurrences {
                                         color.fade_out(0.5);
                                     }
-                                    let marker_row_ranges =
-                                        background_ranges.into_iter().map(|range| {
-                                            let display_start = range
-                                                .start
-                                                .to_display_point(&snapshot.display_snapshot);
-                                            let display_end = range
-                                                .end
-                                                .to_display_point(&snapshot.display_snapshot);
-                                            ColoredRange {
-                                                start: display_start.row(),
-                                                end: display_end.row(),
-                                                color,
-                                            }
-                                        });
+                                    let marker_row_ranges = background_ranges.iter().map(|range| {
+                                        let display_start = range
+                                            .start
+                                            .to_display_point(&snapshot.display_snapshot);
+                                        let display_end =
+                                            range.end.to_display_point(&snapshot.display_snapshot);
+                                        ColoredRange {
+                                            start: display_start.row(),
+                                            end: display_end.row(),
+                                            color,
+                                        }
+                                    });
                                     marker_quads.extend(
                                         scrollbar_layout
                                             .marker_quads_for_ranges(marker_row_ranges, Some(1)),
@@ -4116,46 +4166,6 @@ impl EditorElement {
             + 1;
         self.column_pixels(digit_count, cx)
     }
-
-    #[allow(clippy::too_many_arguments)]
-    fn layout_hunk_diff_close_indicators(
-        &self,
-        line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
-        expanded_hunks_by_rows: HashMap<DisplayRow, ExpandedHunk>,
-        cx: &mut WindowContext,
-    ) -> Vec<AnyElement> {
-        self.editor.update(cx, |editor, cx| {
-            expanded_hunks_by_rows
-                .into_iter()
-                .map(|(display_row, hunk)| {
-                    let button = editor.close_hunk_diff_button(
-                        HoveredHunk {
-                            multi_buffer_range: hunk.hunk_range,
-                            status: hunk.status,
-                            diff_base_byte_range: hunk.diff_base_byte_range,
-                        },
-                        display_row,
-                        cx,
-                    );
-
-                    prepaint_gutter_button(
-                        button,
-                        display_row,
-                        line_height,
-                        gutter_dimensions,
-                        scroll_pixel_position,
-                        gutter_hitbox,
-                        rows_with_hunk_bounds,
-                        cx,
-                    )
-                })
-                .collect()
-        })
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4253,7 +4263,7 @@ fn render_blame_entry(
     let short_commit_id = blame_entry.sha.display_short();
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
-    let name = util::truncate_and_trailoff(author_name, 20);
+    let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
@@ -4265,22 +4275,21 @@ fn render_blame_entry(
 
     h_flex()
         .w_full()
+        .justify_between()
         .font_family(style.text.font().family)
         .line_height(style.text.line_height)
         .id(("blame", ix))
-        .children([
-            div()
-                .text_color(sha_color.cursor)
-                .child(short_commit_id)
-                .mr_2(),
-            div()
-                .w_full()
-                .h_flex()
-                .justify_between()
-                .text_color(cx.theme().status().hint)
-                .child(name)
-                .child(relative_timestamp),
-        ])
+        .text_color(cx.theme().status().hint)
+        .pr_2()
+        .gap_2()
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(div().text_color(sha_color.cursor).child(short_commit_id))
+                .child(name),
+        )
+        .child(relative_timestamp)
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
             let details = details.clone();
@@ -4608,7 +4617,7 @@ impl LineWithInvisibles {
         }
 
         self.draw_invisibles(
-            &selection_ranges,
+            selection_ranges,
             layout,
             content_origin,
             line_y,
@@ -4661,7 +4670,7 @@ impl LineWithInvisibles {
 
         let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
         match whitespace_setting {
-            ShowWhitespaceSetting::None => return,
+            ShowWhitespaceSetting::None => (),
             ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(cx)),
             ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
                 let invisible_point = DisplayPoint::new(row, start as u32);
@@ -4717,7 +4726,7 @@ impl LineWithInvisibles {
                     last_seen = Some((should_render, end, paint));
                 }
             }
-        };
+        }
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
@@ -4995,6 +5004,7 @@ impl Element for EditorElement {
                         font_id,
                         font_size,
                         em_width,
+                        em_advance,
                         self.max_line_number_width(&snapshot, cx),
                         cx,
                     );
@@ -5019,10 +5029,8 @@ impl Element for EditorElement {
                             snapshot
                         } else {
                             let wrap_width = match editor.soft_wrap_mode(cx) {
-                                SoftWrap::None => None,
-                                SoftWrap::PreferLine => {
-                                    Some((MAX_LINE_LEN / 2) as f32 * em_advance)
-                                }
+                                SoftWrap::GitDiff => None,
+                                SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                                 SoftWrap::EditorWidth => Some(editor_width),
                                 SoftWrap::Column(column) => Some(column as f32 * em_advance),
                                 SoftWrap::Bounded(column) => {
@@ -5177,6 +5185,7 @@ impl Element for EditorElement {
                         line_height,
                         &gutter_hitbox,
                         start_row..end_row,
+                        start_anchor..end_anchor,
                         &snapshot,
                         cx,
                     );
@@ -5452,7 +5461,7 @@ impl Element for EditorElement {
 
                             let show_code_actions = snapshot
                                 .show_code_actions
-                                .unwrap_or_else(|| gutter_settings.code_actions);
+                                .unwrap_or(gutter_settings.code_actions);
                             if show_code_actions {
                                 let newest_selection_point =
                                     newest_selection_head.to_point(&snapshot.display_snapshot);
@@ -5505,15 +5514,6 @@ impl Element for EditorElement {
                     } else {
                         Vec::new()
                     };
-                    let close_indicators = self.layout_hunk_diff_close_indicators(
-                        line_height,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &rows_with_hunk_bounds,
-                        expanded_add_hunks_by_rows,
-                        cx,
-                    );
 
                     self.layout_signature_help(
                         &hitbox,
@@ -5626,7 +5626,6 @@ impl Element for EditorElement {
                         selections,
                         mouse_context_menu,
                         test_indicators,
-                        close_indicators,
                         code_actions_indicator,
                         gutter_fold_toggles,
                         crease_trailers,
@@ -5768,7 +5767,6 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
-    close_indicators: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,
@@ -6273,6 +6271,84 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
     (delta.pow(1.2) / 300.0).into()
 }
 
+pub fn register_action<T: Action>(
+    view: &View<Editor>,
+    cx: &mut WindowContext,
+    listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
+) {
+    let view = view.clone();
+    cx.on_action(TypeId::of::<T>(), move |action, phase, cx| {
+        let action = action.downcast_ref().unwrap();
+        if phase == DispatchPhase::Bubble {
+            view.update(cx, |editor, cx| {
+                listener(editor, action, cx);
+            })
+        }
+    })
+}
+
+fn compute_auto_height_layout(
+    editor: &mut Editor,
+    max_lines: usize,
+    max_line_number_width: Pixels,
+    known_dimensions: Size<Option<Pixels>>,
+    available_width: AvailableSpace,
+    cx: &mut ViewContext<Editor>,
+) -> Option<Size<Pixels>> {
+    let width = known_dimensions.width.or({
+        if let AvailableSpace::Definite(available_width) = available_width {
+            Some(available_width)
+        } else {
+            None
+        }
+    })?;
+    if let Some(height) = known_dimensions.height {
+        return Some(size(width, height));
+    }
+
+    let style = editor.style.as_ref().unwrap();
+    let font_id = cx.text_system().resolve_font(&style.text.font());
+    let font_size = style.text.font_size.to_pixels(cx.rem_size());
+    let line_height = style.text.line_height_in_pixels(cx.rem_size());
+    let em_width = cx
+        .text_system()
+        .typographic_bounds(font_id, font_size, 'm')
+        .unwrap()
+        .size
+        .width;
+    let em_advance = cx
+        .text_system()
+        .advance(font_id, font_size, 'm')
+        .unwrap()
+        .width;
+
+    let mut snapshot = editor.snapshot(cx);
+    let gutter_dimensions = snapshot.gutter_dimensions(
+        font_id,
+        font_size,
+        em_width,
+        em_advance,
+        max_line_number_width,
+        cx,
+    );
+
+    editor.gutter_dimensions = gutter_dimensions;
+    let text_width = width - gutter_dimensions.width;
+    let overscroll = size(em_width, px(0.));
+
+    let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
+    if editor.set_wrap_width(Some(editor_width), cx) {
+        snapshot = editor.snapshot(cx);
+    }
+
+    let scroll_height = Pixels::from(snapshot.max_point().row().next_row().0) * line_height;
+    let height = scroll_height
+        .max(line_height)
+        .min(line_height * max_lines as f32);
+
+    Some(size(width, height))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6605,7 +6681,7 @@ mod tests {
         });
 
         let actual_invisibles =
-            collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, px(500.0));
+            collect_invisibles_from_new_editor(cx, EditorMode::Full, input_text, px(500.0));
 
         assert_eq!(expected_invisibles, actual_invisibles);
     }
@@ -6730,7 +6806,7 @@ mod tests {
             editor_width.0
         );
         let window = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_simple(&input_text, cx);
+            let buffer = MultiBuffer::build_simple(input_text, cx);
             Editor::new(editor_mode, buffer, None, true, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
@@ -6753,71 +6829,4 @@ mod tests {
             .cloned()
             .collect()
     }
-}
-
-pub fn register_action<T: Action>(
-    view: &View<Editor>,
-    cx: &mut WindowContext,
-    listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
-) {
-    let view = view.clone();
-    cx.on_action(TypeId::of::<T>(), move |action, phase, cx| {
-        let action = action.downcast_ref().unwrap();
-        if phase == DispatchPhase::Bubble {
-            view.update(cx, |editor, cx| {
-                listener(editor, action, cx);
-            })
-        }
-    })
-}
-
-fn compute_auto_height_layout(
-    editor: &mut Editor,
-    max_lines: usize,
-    max_line_number_width: Pixels,
-    known_dimensions: Size<Option<Pixels>>,
-    available_width: AvailableSpace,
-    cx: &mut ViewContext<Editor>,
-) -> Option<Size<Pixels>> {
-    let width = known_dimensions.width.or_else(|| {
-        if let AvailableSpace::Definite(available_width) = available_width {
-            Some(available_width)
-        } else {
-            None
-        }
-    })?;
-    if let Some(height) = known_dimensions.height {
-        return Some(size(width, height));
-    }
-
-    let style = editor.style.as_ref().unwrap();
-    let font_id = cx.text_system().resolve_font(&style.text.font());
-    let font_size = style.text.font_size.to_pixels(cx.rem_size());
-    let line_height = style.text.line_height_in_pixels(cx.rem_size());
-    let em_width = cx
-        .text_system()
-        .typographic_bounds(font_id, font_size, 'm')
-        .unwrap()
-        .size
-        .width;
-
-    let mut snapshot = editor.snapshot(cx);
-    let gutter_dimensions =
-        snapshot.gutter_dimensions(font_id, font_size, em_width, max_line_number_width, cx);
-
-    editor.gutter_dimensions = gutter_dimensions;
-    let text_width = width - gutter_dimensions.width;
-    let overscroll = size(em_width, px(0.));
-
-    let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if editor.set_wrap_width(Some(editor_width), cx) {
-        snapshot = editor.snapshot(cx);
-    }
-
-    let scroll_height = Pixels::from(snapshot.max_point().row().next_row().0) * line_height;
-    let height = scroll_height
-        .max(line_height)
-        .min(line_height * max_lines as f32);
-
-    Some(size(width, height))
 }

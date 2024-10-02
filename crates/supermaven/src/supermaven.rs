@@ -307,7 +307,7 @@ impl SupermavenAgent {
                         break;
                     }
                 }
-                return anyhow::Ok(());
+                anyhow::Ok(())
             }
         })
         .detach();
@@ -355,7 +355,7 @@ impl SupermavenAgent {
             let Some(line) = line.strip_prefix(MESSAGE_PREFIX) else {
                 continue;
             };
-            let Some(message) = serde_json::from_str::<SupermavenMessage>(&line)
+            let Some(message) = serde_json::from_str::<SupermavenMessage>(line)
                 .with_context(|| format!("failed to deserialize line from stdout: {:?}", line))
                 .log_err()
             else {

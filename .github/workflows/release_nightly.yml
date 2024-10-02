@@ -70,7 +70,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4
         with:
           node-version: "18"
 
@@ -100,8 +100,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2004
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -116,6 +115,12 @@ jobs:
 
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install Linux dependencies
+        run: ./script/linux && ./script/install-mold 2.34.0
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
 
       - name: Set release channel to nightly
         run: |
@@ -148,23 +153,8 @@ jobs:
         with:
           clean: false
 
-      - name: "Setup jq"
-        uses: dcarbone/install-jq-action@8867ddb4788346d7c22b72ea2e2ffe4d514c7bcb # v2
-
-      - name: Set up Clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
-          echo "/usr/lib/llvm-10/bin" >> $GITHUB_PATH
-
-      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
-        with:
-          mold-version: 2.32.0
-
-      - name: rustup
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install Linux dependencies
+        run: ./script/linux
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -181,3 +171,28 @@ jobs:
 
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
+
+  update-nightly-tag:
+    name: Update nightly tag
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    needs:
+      - bundle-mac
+      - bundle-linux-x86
+      - bundle-linux-arm
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Update nightly tag
+        run: |
+          if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
+            echo "Nightly tag already points to current commit. Skipping tagging."
+            exit 0
+          fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -f nightly
+          git push origin nightly --force

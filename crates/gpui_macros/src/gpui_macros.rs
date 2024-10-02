@@ -1,4 +1,5 @@
 mod derive_into_element;
+mod derive_path_static_str;
 mod derive_render;
 mod register_action;
 mod styles;
@@ -25,6 +26,12 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
+}
+
+#[proc_macro_derive(PathStaticStr)]
+#[doc(hidden)]
+pub fn derive_path_static_str(input: TokenStream) -> TokenStream {
+    derive_path_static_str::derive_path_static_str(input)
 }
 
 /// Used by GPUI to generate the style helpers.

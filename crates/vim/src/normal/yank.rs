@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{ops::Range, time::Duration};
 
 use crate::{
     motion::Motion,
@@ -73,7 +73,18 @@ impl Vim {
         linewise: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.copy_selections_content_internal(editor, linewise, true, cx);
+        self.copy_ranges(
+            editor,
+            linewise,
+            true,
+            editor
+                .selections
+                .all_adjusted(cx)
+                .iter()
+                .map(|s| s.range())
+                .collect(),
+            cx,
+        )
     }
 
     pub fn copy_selections_content(
@@ -82,17 +93,28 @@ impl Vim {
         linewise: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.copy_selections_content_internal(editor, linewise, false, cx);
+        self.copy_ranges(
+            editor,
+            linewise,
+            false,
+            editor
+                .selections
+                .all_adjusted(cx)
+                .iter()
+                .map(|s| s.range())
+                .collect(),
+            cx,
+        )
     }
 
-    fn copy_selections_content_internal(
+    pub(crate) fn copy_ranges(
         &mut self,
         editor: &mut Editor,
         linewise: bool,
         is_yank: bool,
+        selections: Vec<Range<Point>>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let selections = editor.selections.all_adjusted(cx);
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let mut text = String::new();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
@@ -121,7 +143,7 @@ impl Vim {
                 if is_first {
                     is_first = false;
                 } else {
-                    text.push_str("\n");
+                    text.push('\n');
                 }
                 let initial_len = text.len();
 
@@ -147,7 +169,7 @@ impl Vim {
                     text.push_str(chunk);
                 }
                 if is_last_line {
-                    text.push_str("\n");
+                    text.push('\n');
                 }
                 clipboard_selections.push(ClipboardSelection {
                     len: text.len() - initial_len,

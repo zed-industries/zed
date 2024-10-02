@@ -10,16 +10,11 @@ use gpui::AsyncAppContext;
 use language::{
     CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
-use lsp::{CodeActionKind, LanguageServerBinary};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
 use serde::Serialize;
 use serde_json::Value;
 use std::ops::Range;
-use std::{
-    any::Any,
-    path::{Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
-};
+use std::{any::Any, path::PathBuf, pin::Pin, sync::Arc};
 use util::{maybe, ResultExt};
 use wasmtime_wasi::WasiView as _;
 
@@ -38,9 +33,8 @@ impl LspAdapter for ExtensionLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Arc<Language>,
-        _: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
@@ -123,10 +117,6 @@ impl LspAdapter for ExtensionLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         unreachable!("get_language_server_command is overridden")
-    }
-
-    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
-        None
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -243,7 +233,7 @@ impl LspAdapter for ExtensionLspAdapter {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let completions = completions
-            .into_iter()
+            .iter()
             .map(|completion| wit::Completion::from(completion.clone()))
             .collect::<Vec<_>>();
 
@@ -276,7 +266,7 @@ impl LspAdapter for ExtensionLspAdapter {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let symbols = symbols
-            .into_iter()
+            .iter()
             .cloned()
             .map(|(name, kind)| wit::Symbol {
                 name,
@@ -317,7 +307,7 @@ fn labels_from_wit(
             } else {
                 language.highlight_text(&label.code.as_str().into(), 0..label.code.len())
             };
-            build_code_label(&label, &runs, &language)
+            build_code_label(&label, &runs, language)
         })
         .collect()
 }
@@ -364,7 +354,7 @@ fn build_code_label(
                     .grammar()
                     .zip(span.highlight_name.as_ref())
                     .and_then(|(grammar, highlight_name)| {
-                        grammar.highlight_id_for_name(&highlight_name)
+                        grammar.highlight_id_for_name(highlight_name)
                     })
                     .unwrap_or_default();
                 let ix = text.len();

@@ -8,7 +8,6 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
 jobs:
   style:
@@ -61,11 +60,12 @@ jobs:
       - style
       - tests
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2204
     steps:
-      - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
       - name: Sign into DigitalOcean docker registry
         run: doctl registry login
@@ -75,11 +75,12 @@ jobs:
         with:
           clean: false
 
-      - name: Set up default .cargo/config.toml
-        run: cp ./.cargo/collab-config.toml ./.cargo/config.toml
-
       - name: Build docker image
-        run: docker build . --build-arg GITHUB_SHA=$GITHUB_SHA --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA
+        run: |
+          docker build -f Dockerfile-collab \
+            --build-arg GITHUB_SHA=$GITHUB_SHA \
+            --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA \
+            .
 
       - name: Publish docker image
         run: docker push registry.digitalocean.com/zed/collab:${GITHUB_SHA}
@@ -92,10 +93,19 @@ jobs:
     needs:
       - publish
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2204
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          clean: false
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
       - name: Sign into Kubernetes
         run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
 

@@ -108,8 +108,6 @@ message Envelope {
         PrepareRenameResponse prepare_rename_response = 84;
         PerformRename perform_rename = 85;
         PerformRenameResponse perform_rename_response = 86;
-        SearchProject search_project = 87;
-        SearchProjectResponse search_project_response = 88;
 
         UpdateContacts update_contacts = 89;
         UpdateInviteInfo update_invite_info = 90;
@@ -280,12 +278,18 @@ message Envelope {
         FindSearchCandidates find_search_candidates = 243;
         FindSearchCandidatesResponse find_search_candidates_response = 244;
 
-        CloseBuffer close_buffer = 245; // current max
+        CloseBuffer close_buffer = 245;
+        UpdateUserSettings update_user_settings = 246;
+
+        CheckFileExists check_file_exists = 255;
+        CheckFileExistsResponse check_file_exists_response = 256; // current max
     }
 
+    reserved 87 to 88;
     reserved 158 to 161;
     reserved 166 to 169;
     reserved 224 to 229;
+    reserved 247 to 254;
 }
 
 // Messages
@@ -488,6 +492,7 @@ message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     optional uint64 dev_server_project_id = 3;
+    bool is_ssh_project = 4;
 }
 
 message ShareProjectResponse {
@@ -1205,6 +1210,7 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    bytes lsp_completion = 6;
 }
 
 message ResolveInlayHint {
@@ -1229,22 +1235,6 @@ message MarkupContent {
 
 message PerformRenameResponse {
     ProjectTransaction transaction = 2;
-}
-
-message SearchProject {
-    uint64 project_id = 1;
-    string query = 2;
-    bool regex = 3;
-    bool whole_word = 4;
-    bool case_sensitive = 5;
-    string files_to_include = 6;
-    string files_to_exclude = 7;
-    bool include_ignored = 8;
-}
-
-message SearchProjectResponse {
-    repeated Location locations = 1;
-    bool limit_reached = 2;
 }
 
 message SearchQuery {
@@ -1846,6 +1836,7 @@ message Entry {
     bool is_external = 8;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
+    optional uint64 size = 11;
 }
 
 message RepositoryEntry {
@@ -2379,6 +2370,7 @@ message SlashCommandOutputSection {
     AnchorRange range = 1;
     string icon_name = 2;
     string label = 3;
+    optional string metadata = 4;
 }
 
 message ContextOperation {
@@ -2490,4 +2482,19 @@ message AddWorktree {
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
+}
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string content = 2;
+}
+
+message CheckFileExists {
+    uint64 project_id = 1;
+    string path = 2;
+}
+
+message CheckFileExistsResponse {
+    bool exists = 1;
+    string path = 2;
 }

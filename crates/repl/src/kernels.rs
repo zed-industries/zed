@@ -145,20 +145,14 @@ impl Kernel {
     }
 
     pub fn set_execution_state(&mut self, status: &ExecutionState) {
-        match self {
-            Kernel::RunningKernel(running_kernel) => {
-                running_kernel.execution_state = status.clone();
-            }
-            _ => {}
+        if let Kernel::RunningKernel(running_kernel) = self {
+            running_kernel.execution_state = status.clone();
         }
     }
 
     pub fn set_kernel_info(&mut self, kernel_info: &KernelInfoReply) {
-        match self {
-            Kernel::RunningKernel(running_kernel) => {
-                running_kernel.kernel_info = Some(kernel_info.clone());
-            }
-            _ => {}
+        if let Kernel::RunningKernel(running_kernel) = self {
+            running_kernel.kernel_info = Some(kernel_info.clone());
         }
     }
 

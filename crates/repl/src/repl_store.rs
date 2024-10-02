@@ -129,7 +129,7 @@ impl ReplStore {
                     // Top priority is the selected kernel
                     return runtime_specification.name.to_lowercase() == selected.to_lowercase();
                 }
-                return false;
+                false
             })
             .cloned();
 

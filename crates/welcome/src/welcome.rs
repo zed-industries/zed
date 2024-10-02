@@ -25,6 +25,7 @@ pub use multibuffer_hint::*;
 actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
+pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
@@ -74,27 +75,22 @@ impl Render for WelcomePage {
             .track_focus(&self.focus_handle)
             .child(
                 v_flex()
-                    .w_96()
-                    .gap_4()
+                    .w_80()
+                    .gap_6()
                     .mx_auto()
                     .child(
                         svg()
                             .path("icons/logo_96.svg")
-                            .text_color(gpui::white())
-                            .w(px(96.))
-                            .h(px(96.))
+                            .text_color(cx.theme().colors().icon_disabled)
+                            .w(px(80.))
+                            .h(px(80.))
                             .mx_auto(),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_center()
-                            .child(Label::new("Code at the speed of thought")),
                     )
                     .child(
                         v_flex()
                             .gap_2()
                             .child(
-                                Button::new("choose-theme", "Choose a theme")
+                                Button::new("choose-theme", "Choose Theme")
                                     .full_width()
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.telemetry.report_app_event(
@@ -112,7 +108,7 @@ impl Render for WelcomePage {
                                     })),
                             )
                             .child(
-                                Button::new("choose-keymap", "Choose a keymap")
+                                Button::new("choose-keymap", "Choose Keymap")
                                     .full_width()
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.telemetry.report_app_event(
@@ -129,6 +125,27 @@ impl Render for WelcomePage {
                                             .ok();
                                     })),
                             )
+                            .child(
+                                Button::new("edit settings", "Edit Settings")
+                                    .full_width()
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.telemetry.report_app_event(
+                                            "welcome page: edit settings".to_string(),
+                                        );
+                                        cx.dispatch_action(Box::new(zed_actions::OpenSettings));
+                                    })),
+                            )
+                            .child(Button::new("view docs", "View Docs").full_width().on_click(
+                                cx.listener(|this, _, cx| {
+                                    this.telemetry
+                                        .report_app_event("welcome page: view docs".to_string());
+                                    cx.open_url(DOCS_URL);
+                                }),
+                            )),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
                             .when(cfg!(target_os = "macos"), |el| {
                                 el.child(
                                     Button::new("install-cli", "Install the CLI")
@@ -304,7 +321,7 @@ impl Item for WelcomePage {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some("Welcome to Zed!".into())
+        Some("Welcome".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

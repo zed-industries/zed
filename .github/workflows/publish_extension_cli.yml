@@ -24,6 +24,7 @@ jobs:
         uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-provider: "github"
 
       - name: Configure linux
         shell: bash -euxo pipefail {0}

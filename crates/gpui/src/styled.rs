@@ -547,6 +547,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Set opacity on this element and its children.
+    fn opacity(mut self, opacity: f32) -> Self {
+        self.style().opacity = Some(opacity);
+        self
+    }
+
     /// Draw a debug border around this element.
     #[cfg(debug_assertions)]
     fn debug(mut self) -> Self {

@@ -6,7 +6,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use gpui::{AppContext, Task, View, WeakView};
-use language::{CodeLabel, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
 use workspace::{dock::Panel, Workspace};
@@ -29,11 +29,11 @@ impl SlashCommand for TerminalSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert terminal output".into()
+        "Insert terminal output".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Terminal Output".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -57,6 +57,8 @@ impl SlashCommand for TerminalSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -91,6 +93,7 @@ impl SlashCommand for TerminalSlashCommand {
                 range,
                 icon: IconName::Terminal,
                 label: "Terminal".into(),
+                metadata: None,
             }],
             run_commands_in_text: false,
         }))

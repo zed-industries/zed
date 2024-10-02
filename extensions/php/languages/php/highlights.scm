@@ -75,8 +75,10 @@
 ; Keywords
 
 "abstract" @keyword
+"and" @keyword
 "as" @keyword
 "break" @keyword
+"callable" @keyword
 "case" @keyword
 "catch" @keyword
 "class" @keyword
@@ -91,6 +93,7 @@
 "elseif" @keyword
 "enum" @keyword
 "enddeclare" @keyword
+"endfor" @keyword
 "endforeach" @keyword
 "endif" @keyword
 "endswitch" @keyword
@@ -99,22 +102,28 @@
 "final" @keyword
 "readonly" @keyword
 "finally" @keyword
+"for" @keyword
 "foreach" @keyword
 "fn" @keyword
 "function" @keyword
 "global" @keyword
+"goto" @keyword
 "if" @keyword
 "implements" @keyword
 "include_once" @keyword
 "include" @keyword
+"instanceof" @keyword
 "insteadof" @keyword
 "interface" @keyword
 "match" @keyword
 "namespace" @keyword
 "new" @keyword
+"or" @keyword
+"print" @keyword
 "private" @keyword
 "protected" @keyword
 "public" @keyword
+"readonly" @keyword
 "require_once" @keyword
 "require" @keyword
 "return" @keyword
@@ -125,5 +134,4 @@
 "try" @keyword
 "use" @keyword
 "while" @keyword
-"yield" @keyword
-"yield from" @keyword
+"xor" @keyword

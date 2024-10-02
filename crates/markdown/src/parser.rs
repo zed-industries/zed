@@ -5,10 +5,13 @@ use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Optio
 use std::ops::Range;
 
 pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+    let mut options = Options::all();
+    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
+
     let mut events = Vec::new();
     let mut within_link = false;
     let mut within_metadata = false;
-    for (pulldown_event, mut range) in Parser::new_ext(text, Options::all()).into_offset_iter() {
+    for (pulldown_event, mut range) in Parser::new_ext(text, options).into_offset_iter() {
         if within_metadata {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
                 pulldown_event
@@ -83,6 +86,7 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 events.push((range, MarkdownEvent::TaskListMarker(checked)))
             }
+            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
     events
@@ -96,7 +100,7 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         start: 0,
         end: text.len(),
     };
-    for link in finder.links(&text) {
+    for link in finder.links(text) {
         let link_range = link.start()..link.end();
 
         if link_range.start > text_range.start {
@@ -231,6 +235,10 @@ pub enum MarkdownTag {
 
     /// A metadata block.
     MetadataBlock(MetadataBlockKind),
+
+    DefinitionList,
+    DefinitionListTitle,
+    DefinitionListDefinition,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -271,7 +279,7 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
                     attrs,
                 }
             }
-            pulldown_cmark::Tag::BlockQuote => MarkdownTag::BlockQuote,
+            pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
             pulldown_cmark::Tag::CodeBlock(kind) => match kind {
                 pulldown_cmark::CodeBlockKind::Indented => {
                     MarkdownTag::CodeBlock(CodeBlockKind::Indented)
@@ -316,6 +324,9 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
             },
             pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
             pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
+            pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
+            pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
+            pulldown_cmark::Tag::DefinitionListDefinition => MarkdownTag::DefinitionListDefinition,
         }
     }
 }

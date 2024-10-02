@@ -1,7 +1,7 @@
 use crate::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest,
 };
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, Task};
@@ -170,10 +170,15 @@ impl LanguageModel for FakeLanguageModel {
         &self,
         request: LanguageModelRequest,
         _: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs.lock().push((request, tx));
-        async move { Ok(rx.map(Ok).boxed()) }.boxed()
+        async move {
+            Ok(rx
+                .map(|text| Ok(LanguageModelCompletionEvent::Text(text)))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(

@@ -35,7 +35,7 @@
     //     "shell": {
     //         "with_arguments": {
     //           "program": "/bin/bash",
-    //           "arguments": ["--login"]
+    //           "args": ["--login"]
     //         }
     //     }
     "shell": "system"

@@ -600,7 +600,7 @@ async fn find_or_create_billing_customer(
     // there's nothing more we need to do.
     if let Some(billing_customer) = app
         .db
-        .get_billing_customer_by_stripe_customer_id(&customer_id)
+        .get_billing_customer_by_stripe_customer_id(customer_id)
         .await?
     {
         return Ok(Some(billing_customer));
@@ -609,7 +609,7 @@ async fn find_or_create_billing_customer(
     // If all we have is a customer ID, resolve it to a full customer record by
     // hitting the Stripe API.
     let customer = match customer_or_id {
-        Expandable::Id(id) => Customer::retrieve(&stripe_client, &id, &[]).await?,
+        Expandable::Id(id) => Customer::retrieve(stripe_client, &id, &[]).await?,
         Expandable::Object(customer) => *customer,
     };
 

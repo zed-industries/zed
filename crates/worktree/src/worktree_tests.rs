@@ -725,7 +725,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     });
 
     fs.set_status_for_repo_via_working_copy_change(
-        &Path::new("/root/tree/.git"),
+        Path::new("/root/tree/.git"),
         &[(Path::new("tracked-dir/tracked-file2"), GitFileStatus::Added)],
     );
 
@@ -809,7 +809,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
         .unwrap();
 
     fs.set_status_for_repo_via_working_copy_change(
-        &Path::new("/root/.git"),
+        Path::new("/root/.git"),
         &[(Path::new("b.txt"), GitFileStatus::Added)],
     );
 
@@ -1266,7 +1266,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     // Regression test: changes to the git repository should still be
     // detected.
     fs.set_status_for_repo_via_git_operation(
-        &Path::new("/root/.git"),
+        Path::new("/root/.git"),
         &[(Path::new("b/c.txt"), GitFileStatus::Modified)],
     );
     cx.executor().run_until_parked();
@@ -1646,7 +1646,7 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
     cx.subscribe(&cx.handle(), move |tree, _, event, _| {
         if let Event::UpdatedEntries(changes) = event {
             for (path, _, change_type) in changes.iter() {
-                let entry = tree.entry_for_path(&path).cloned();
+                let entry = tree.entry_for_path(path).cloned();
                 let ix = match entries.binary_search_by_key(&path, |e| &e.path) {
                     Ok(ix) | Err(ix) => ix,
                 };
@@ -1781,16 +1781,16 @@ async fn randomly_mutate_fs(
         }
     } else if rng.gen_bool(0.05) {
         let ignore_dir_path = dirs.choose(rng).unwrap();
-        let ignore_path = ignore_dir_path.join(&*GITIGNORE);
+        let ignore_path = ignore_dir_path.join(*GITIGNORE);
 
         let subdirs = dirs
             .iter()
-            .filter(|d| d.starts_with(&ignore_dir_path))
+            .filter(|d| d.starts_with(ignore_dir_path))
             .cloned()
             .collect::<Vec<_>>();
         let subfiles = files
             .iter()
-            .filter(|d| d.starts_with(&ignore_dir_path))
+            .filter(|d| d.starts_with(ignore_dir_path))
             .cloned()
             .collect::<Vec<_>>();
         let files_to_ignore = {
@@ -1808,7 +1808,7 @@ async fn randomly_mutate_fs(
                 ignore_contents,
                 "{}",
                 path_to_ignore
-                    .strip_prefix(&ignore_dir_path)
+                    .strip_prefix(ignore_dir_path)
                     .unwrap()
                     .to_str()
                     .unwrap()
@@ -1817,7 +1817,7 @@ async fn randomly_mutate_fs(
         }
         log::info!(
             "creating gitignore {:?} with contents:\n{}",
-            ignore_path.strip_prefix(&root_path).unwrap(),
+            ignore_path.strip_prefix(root_path).unwrap(),
             ignore_contents
         );
         fs.save(
@@ -1843,10 +1843,10 @@ async fn randomly_mutate_fs(
                 .unwrap();
 
             let overwrite_existing_dir =
-                !old_path.starts_with(&new_path_parent) && rng.gen_bool(0.3);
+                !old_path.starts_with(new_path_parent) && rng.gen_bool(0.3);
             let new_path = if overwrite_existing_dir {
                 fs.remove_dir(
-                    &new_path_parent,
+                    new_path_parent,
                     RemoveOptions {
                         recursive: true,
                         ignore_if_not_exists: true,
@@ -1861,16 +1861,16 @@ async fn randomly_mutate_fs(
 
             log::info!(
                 "renaming {:?} to {}{:?}",
-                old_path.strip_prefix(&root_path).unwrap(),
+                old_path.strip_prefix(root_path).unwrap(),
                 if overwrite_existing_dir {
                     "overwrite "
                 } else {
                     ""
                 },
-                new_path.strip_prefix(&root_path).unwrap()
+                new_path.strip_prefix(root_path).unwrap()
             );
             fs.rename(
-                &old_path,
+                old_path,
                 &new_path,
                 fs::RenameOptions {
                     overwrite: true,
@@ -1879,19 +1879,19 @@ async fn randomly_mutate_fs(
             )
             .await
             .unwrap();
-        } else if fs.is_file(&old_path).await {
+        } else if fs.is_file(old_path).await {
             log::info!(
                 "deleting file {:?}",
-                old_path.strip_prefix(&root_path).unwrap()
+                old_path.strip_prefix(root_path).unwrap()
             );
             fs.remove_file(old_path, Default::default()).await.unwrap();
         } else {
             log::info!(
                 "deleting dir {:?}",
-                old_path.strip_prefix(&root_path).unwrap()
+                old_path.strip_prefix(root_path).unwrap()
             );
             fs.remove_dir(
-                &old_path,
+                old_path,
                 RemoveOptions {
                     recursive: true,
                     ignore_if_not_exists: true,
@@ -2048,7 +2048,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
                 (
                     entry.path.as_ref(),
                     repo.and_then(|repo| {
-                        repo.work_directory(&tree)
+                        repo.work_directory(tree)
                             .map(|work_directory| work_directory.0.to_path_buf())
                     }),
                 )
@@ -2262,7 +2262,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
         assert_eq!(
-            snapshot.status_for_file(&project_path.join(renamed_dir_name).join(RENAMED_FILE)),
+            snapshot.status_for_file(project_path.join(renamed_dir_name).join(RENAMED_FILE)),
             Some(GitFileStatus::Added)
         );
     });
@@ -2413,7 +2413,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     .await;
 
     fs.set_status_for_repo_via_git_operation(
-        &Path::new("/root/.git"),
+        Path::new("/root/.git"),
         &[
             (Path::new("a/b/c1.txt"), GitFileStatus::Added),
             (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
@@ -2527,7 +2527,7 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
     let signature = Signature::now("test", "test@zed.dev").unwrap();
     let oid = repo.index().unwrap().write_tree().unwrap();
     let tree = repo.find_tree(oid).unwrap();
-    if let Some(head) = repo.head().ok() {
+    if let Ok(head) = repo.head() {
         let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
 
         let parent_commit = parent_obj.as_commit().unwrap();
@@ -2566,10 +2566,9 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
         .inspect(|parnet| {
             parnet.message();
         })
-        .skip(offset)
-        .next()
+        .nth(offset)
         .expect("Not enough history");
-    repo.reset(&new_head.as_object(), git2::ResetType::Soft, None)
+    repo.reset(new_head.as_object(), git2::ResetType::Soft, None)
         .expect("Could not reset");
 }
 

@@ -139,14 +139,12 @@ impl Database {
             let (tx, result) = self.with_weak_transaction(&f).await?;
             match result {
                 Ok(result) => match tx.commit().await.map_err(Into::into) {
-                    Ok(()) => return Ok(result),
-                    Err(error) => {
-                        return Err(error);
-                    }
+                    Ok(()) => Ok(result),
+                    Err(error) => Err(error),
                 },
                 Err(error) => {
                     tx.rollback().await?;
-                    return Err(error);
+                    Err(error)
                 }
             }
         };
@@ -217,7 +215,7 @@ impl Database {
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
     {
-        let room_id = Database::room_id_for_project(&self, project_id).await?;
+        let room_id = Database::room_id_for_project(self, project_id).await?;
         let body = async {
             let mut i = 0;
             loop {

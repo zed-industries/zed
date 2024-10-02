@@ -36,13 +36,13 @@ impl Vim {
                             if selection.is_empty()
                                 && map
                                     .buffer_snapshot
-                                    .line_len(MultiBufferRow(selection.start.to_point(&map).row))
+                                    .line_len(MultiBufferRow(selection.start.to_point(map).row))
                                     == 0
                             {
                                 selection.end = map
                                     .buffer_snapshot
                                     .clip_point(
-                                        Point::new(selection.start.to_point(&map).row + 1, 0),
+                                        Point::new(selection.start.to_point(map).row + 1, 0),
                                         Bias::Left,
                                     )
                                     .to_display_point(map)

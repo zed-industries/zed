@@ -8,7 +8,8 @@ pub mod settings;
 
 use anyhow::Result;
 use client::{Client, UserStore};
-use futures::{future::BoxFuture, stream::BoxStream, TryStreamExt as _};
+use futures::FutureExt;
+use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext,
 };
@@ -51,6 +52,29 @@ pub struct LanguageModelCacheConfiguration {
     pub min_total_token: usize,
 }
 
+/// A completion event from a language model.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum LanguageModelCompletionEvent {
+    Stop(StopReason),
+    Text(String),
+    ToolUse(LanguageModelToolUse),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    EndTurn,
+    MaxTokens,
+    ToolUse,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub struct LanguageModelToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -82,7 +106,30 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
+
+    fn stream_completion_text(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let events = self.stream_completion(request, cx);
+
+        async move {
+            Ok(events
+                .await?
+                .filter_map(|result| async move {
+                    match result {
+                        Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
+                        Ok(LanguageModelCompletionEvent::Stop(_)) => None,
+                        Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
+                        Err(err) => Some(Err(err)),
+                    }
+                })
+                .boxed())
+        }
+        .boxed()
+    }
 
     fn use_any_tool(
         &self,

@@ -1841,11 +1841,18 @@ impl Edges<Pixels> {
 
 impl From<f32> for Edges<Pixels> {
     fn from(val: f32) -> Self {
+        let val: Pixels = val.into();
+        val.into()
+    }
+}
+
+impl From<Pixels> for Edges<Pixels> {
+    fn from(val: Pixels) -> Self {
         Edges {
-            top: val.into(),
-            right: val.into(),
-            bottom: val.into(),
-            left: val.into(),
+            top: val,
+            right: val,
+            bottom: val,
+            left: val,
         }
     }
 }
@@ -2151,7 +2158,7 @@ pub struct Percentage(pub f32);
 /// Generate a `Radian` from a percentage of a full circle.
 pub fn percentage(value: f32) -> Percentage {
     debug_assert!(
-        value >= 0.0 && value <= 1.0,
+        (0.0..=1.0).contains(&value),
         "Percentage must be between 0 and 1"
     );
     Percentage(value)
@@ -2607,6 +2614,12 @@ impl From<DevicePixels> for ScaledPixels {
 impl From<ScaledPixels> for f64 {
     fn from(scaled_pixels: ScaledPixels) -> Self {
         scaled_pixels.0 as f64
+    }
+}
+
+impl From<ScaledPixels> for u32 {
+    fn from(pixels: ScaledPixels) -> Self {
+        pixels.0 as u32
     }
 }
 
@@ -3138,12 +3151,12 @@ mod tests {
         };
 
         // Test Case 1: Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds2), true);
+        assert!(bounds1.intersects(&bounds2));
 
         // Test Case 2: Non-Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds3), false);
+        assert!(!bounds1.intersects(&bounds3));
 
         // Test Case 3: Bounds intersecting with themselves
-        assert_eq!(bounds1.intersects(&bounds1), true);
+        assert!(bounds1.intersects(&bounds1));
     }
 }

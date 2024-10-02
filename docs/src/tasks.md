@@ -37,7 +37,7 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     //     "shell": {
     //         "with_arguments": {
     //           "program": "/bin/bash",
-    //           "arguments": ["--login"]
+    //           "args": ["--login"]
     //         }
     //     }
     "shell": "system"

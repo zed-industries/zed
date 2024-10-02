@@ -210,10 +210,10 @@ impl BackgroundExecutor {
                 Poll::Pending => {
                     let timeout =
                         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout) {
-                        if deadline.is_some_and(|deadline| deadline < Instant::now()) {
-                            return Err(future);
-                        }
+                    if !self.dispatcher.park(timeout)
+                        && deadline.is_some_and(|deadline| deadline < Instant::now())
+                    {
+                        return Err(future);
                     }
                 }
             }
@@ -407,7 +407,11 @@ impl BackgroundExecutor {
 
     /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
-        num_cpus::get()
+        #[cfg(any(test, feature = "test-support"))]
+        return 4;
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        return num_cpus::get();
     }
 
     /// Whether we're on the main thread.

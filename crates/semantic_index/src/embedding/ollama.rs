@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use futures::{future::BoxFuture, AsyncReadExt, FutureExt};
+use futures::{future::BoxFuture, AsyncReadExt as _, FutureExt};
 use http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -41,7 +41,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
             OllamaEmbeddingModel::MxbaiEmbedLarge => "mxbai-embed-large",
         };
 
-        futures::future::try_join_all(texts.into_iter().map(|to_embed| {
+        futures::future::try_join_all(texts.iter().map(|to_embed| {
             let request = OllamaEmbeddingRequest {
                 model: model.to_string(),
                 prompt: to_embed.text.to_string(),

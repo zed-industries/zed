@@ -27,7 +27,6 @@ collections.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 futures.workspace = true
-git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true

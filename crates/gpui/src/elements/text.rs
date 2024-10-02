@@ -604,7 +604,7 @@ impl Element for InteractiveText {
                 let mut interactive_state = interactive_state.unwrap_or_default();
                 if let Some(click_listener) = self.click_listener.take() {
                     let mouse_position = cx.mouse_position();
-                    if let Some(ix) = text_layout.index_for_position(mouse_position).ok() {
+                    if let Ok(ix) = text_layout.index_for_position(mouse_position) {
                         if self
                             .clickable_ranges
                             .iter()
@@ -621,8 +621,8 @@ impl Element for InteractiveText {
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
                         cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
                             if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
-                                if let Some(mouse_up_index) =
-                                    text_layout.index_for_position(event.position).ok()
+                                if let Ok(mouse_up_index) =
+                                    text_layout.index_for_position(event.position)
                                 {
                                     click_listener(
                                         &clickable_ranges,
@@ -642,8 +642,8 @@ impl Element for InteractiveText {
                         let hitbox = hitbox.clone();
                         cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
                             if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
-                                if let Some(mouse_down_index) =
-                                    text_layout.index_for_position(event.position).ok()
+                                if let Ok(mouse_down_index) =
+                                    text_layout.index_for_position(event.position)
                                 {
                                     mouse_down.set(Some(mouse_down_index));
                                     cx.refresh();

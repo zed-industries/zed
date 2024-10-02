@@ -137,13 +137,12 @@ impl NotificationStore {
             return None;
         }
         let ix = count - 1 - ix;
-        let mut cursor = self.notifications.cursor::<Count>();
+        let mut cursor = self.notifications.cursor::<Count>(&());
         cursor.seek(&Count(ix), Bias::Right, &());
         cursor.item()
     }
-
     pub fn notification_for_id(&self, id: u64) -> Option<&NotificationEntry> {
-        let mut cursor = self.notifications.cursor::<NotificationId>();
+        let mut cursor = self.notifications.cursor::<NotificationId>(&());
         cursor.seek(&NotificationId(id), Bias::Left, &());
         if let Some(item) = cursor.item() {
             if item.id == id {
@@ -372,8 +371,8 @@ impl NotificationStore {
         is_new: bool,
         cx: &mut ModelContext<'_, NotificationStore>,
     ) {
-        let mut cursor = self.notifications.cursor::<(NotificationId, Count)>();
-        let mut new_notifications = SumTree::new();
+        let mut cursor = self.notifications.cursor::<(NotificationId, Count)>(&());
+        let mut new_notifications = SumTree::default();
         let mut old_range = 0..0;
 
         for (i, (id, new_notification)) in notifications.into_iter().enumerate() {
@@ -456,7 +455,7 @@ impl EventEmitter<NotificationEvent> for NotificationStore {}
 impl sum_tree::Item for NotificationEntry {
     type Summary = NotificationSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         NotificationSummary {
             max_id: self.id,
             count: 1,
@@ -468,6 +467,10 @@ impl sum_tree::Item for NotificationEntry {
 impl sum_tree::Summary for NotificationSummary {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.max_id = self.max_id.max(summary.max_id);
         self.count += summary.count;
@@ -476,6 +479,10 @@ impl sum_tree::Summary for NotificationSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, NotificationSummary> for NotificationId {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &NotificationSummary, _: &()) {
         debug_assert!(summary.max_id > self.0);
         self.0 = summary.max_id;
@@ -483,6 +490,10 @@ impl<'a> sum_tree::Dimension<'a, NotificationSummary> for NotificationId {
 }
 
 impl<'a> sum_tree::Dimension<'a, NotificationSummary> for Count {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &NotificationSummary, _: &()) {
         self.0 += summary.count;
     }

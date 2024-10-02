@@ -33,7 +33,7 @@ Here's an example of language-specific settings:
   "Python": {
     "tab_size": 4,
     "formatter": "language_server",
-    "format_on_save": true
+    "format_on_save": "on"
   },
   "JavaScript": {
     "tab_size": 2,
@@ -209,11 +209,11 @@ Zed supports both built-in and external formatters. Configure formatters globall
         "arguments": ["--stdin-filepath", "{buffer_path}"]
       }
     },
-    "format_on_save": true
+    "format_on_save": "on"
   },
   "Rust": {
     "formatter": "language_server",
-    "format_on_save": true
+    "format_on_save": "on"
   }
 }
 ```
@@ -225,7 +225,7 @@ To disable formatting for a specific language:
 ```json
 "languages": {
   "Markdown": {
-    "format_on_save": false
+    "format_on_save": "off"
   }
 }
 ```
@@ -276,7 +276,7 @@ Zed allows you to run both formatting and linting on save. Here's an example tha
     "code_actions_on_format": {
       "source.fixAll.eslint": true
     },
-    "format_on_save": true
+    "format_on_save": "on"
   }
 }
 ```
@@ -295,7 +295,9 @@ Zed offers customization options for syntax highlighting and themes, allowing yo
 
 ### Customizing Syntax Highlighting
 
-Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting:
+Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
+
+This example makes comments italic and changes the color of strings:
 
 ```json
 "experimental.theme_overrides": {
@@ -309,28 +311,6 @@ Zed uses Tree-sitter grammars for syntax highlighting. Override the default high
   }
 }
 ```
-
-This example makes comments italic and changes the color of strings.
-
-### Language-Specific Theme Overrides
-
-Apply theme overrides for specific languages:
-
-```json
-"languages": {
-  "Python": {
-    "theme_overrides": {
-      "syntax": {
-        "function": {
-          "color": "#0000FF"
-        }
-      }
-    }
-  }
-}
-```
-
-This configuration changes the color of function names in Python files.
 
 ### Selecting and Customizing Themes
 

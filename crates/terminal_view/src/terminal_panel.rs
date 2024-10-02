@@ -144,7 +144,7 @@ impl TerminalPanel {
             cx.subscribe(&pane, Self::handle_pane_event),
         ];
         let project = workspace.project().read(cx);
-        let enabled = project.is_local_or_ssh() || project.supports_remote_terminal(cx);
+        let enabled = project.supports_terminal(cx);
         let this = Self {
             pane,
             fs: workspace.app_state().fs.clone(),
@@ -166,7 +166,16 @@ impl TerminalPanel {
     pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
         self.assistant_enabled = enabled;
         if enabled {
-            self.assistant_tab_bar_button = Some(cx.new_view(|_| InlineAssistTabBarButton).into());
+            let focus_handle = self
+                .pane
+                .read(cx)
+                .active_item()
+                .map(|item| item.focus_handle(cx))
+                .unwrap_or(self.focus_handle(cx));
+            self.assistant_tab_bar_button = Some(
+                cx.new_view(move |_| InlineAssistTabBarButton { focus_handle })
+                    .into(),
+            );
         } else {
             self.assistant_tab_bar_button = None;
         }
@@ -397,7 +406,7 @@ impl TerminalPanel {
 
         #[cfg(not(target_os = "windows"))]
         {
-            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+            spawn_task.command_label = format!("{shell} -i -c '{}'", spawn_task.command_label);
         }
         #[cfg(target_os = "windows")]
         {
@@ -405,14 +414,14 @@ impl TerminalPanel {
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
-                    spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} -C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Cmd => {
-                    spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} /C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Other => {
                     spawn_task.command_label =
-                        format!("{shell} -i -c `{}`", spawn_task.command_label)
+                        format!("{shell} -i -c '{}'", spawn_task.command_label)
                 }
             }
         }
@@ -786,9 +795,9 @@ impl Panel for TerminalPanel {
         let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or_else(|| settings.default_width)
+                self.width.unwrap_or(settings.default_width)
             }
-            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
+            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
         }
     }
 
@@ -859,16 +868,21 @@ impl Panel for TerminalPanel {
     }
 }
 
-struct InlineAssistTabBarButton;
+struct InlineAssistTabBarButton {
+    focus_handle: FocusHandle,
+}
 
 impl Render for InlineAssistTabBarButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
         IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
             .icon_size(IconSize::Small)
             .on_click(cx.listener(|_, _, cx| {
                 cx.dispatch_action(InlineAssist::default().boxed_clone());
             }))
-            .tooltip(move |cx| Tooltip::for_action("Inline Assist", &InlineAssist::default(), cx))
+            .tooltip(move |cx| {
+                Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
+            })
     }
 }
 
@@ -886,9 +900,9 @@ fn retrieve_system_shell() -> Option<String> {
         use anyhow::Context;
         use util::ResultExt;
 
-        return std::env::var("SHELL")
+        std::env::var("SHELL")
             .context("Error finding SHELL in env.")
-            .log_err();
+            .log_err()
     }
     // `alacritty_terminal` uses this as default on Windows. See:
     // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130

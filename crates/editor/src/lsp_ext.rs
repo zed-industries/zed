@@ -23,7 +23,7 @@ where
     editor
         .selections
         .disjoint_anchors()
-        .into_iter()
+        .iter()
         .filter(|selection| selection.start == selection.end)
         .filter_map(|selection| Some((selection.start.buffer_id?, selection.start)))
         .filter_map(|(buffer_id, trigger_anchor)| {

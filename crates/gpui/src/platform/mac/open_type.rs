@@ -76,7 +76,7 @@ fn generate_feature_array(features: &FontFeatures) -> CFMutableArrayRef {
         for (tag, value) in features.tag_value_list() {
             let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
             let values = [
-                CFString::new(&tag).as_CFTypeRef(),
+                CFString::new(tag).as_CFTypeRef(),
                 CFNumber::from(*value as i32).as_CFTypeRef(),
             ];
             let dict = CFDictionaryCreate(

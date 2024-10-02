@@ -120,11 +120,7 @@ impl RenderOnce for Tab {
         let (start_slot, end_slot) = {
             let start_slot = h_flex().size_3().justify_center().children(self.start_slot);
 
-            let end_slot = h_flex()
-                .size_3()
-                .justify_center()
-                .visible_on_hover("")
-                .children(self.end_slot);
+            let end_slot = h_flex().size_3().justify_center().children(self.end_slot);
 
             match self.close_side {
                 TabCloseSide::End => (start_slot, end_slot),
