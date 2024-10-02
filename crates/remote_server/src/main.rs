@@ -14,6 +14,7 @@ use remote::{
 use remote_server::HeadlessProject;
 use rpc::proto::Envelope;
 use smol::Async;
+#[cfg(not(windows))]
 use smol::{io::AsyncWriteExt, net::unix::UnixListener, stream::StreamExt as _};
 use std::{
     env,
@@ -81,6 +82,7 @@ fn main() -> Result<()> {
     }
 }
 
+#[cfg(not(windows))]
 fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
     if let Some(log_file) = log_file {
         let target = Box::new(if log_file.exists() {
@@ -107,6 +109,7 @@ fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf) -> Result<()> {
     write_pid_file(&pid_file)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
@@ -211,6 +214,7 @@ fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf)
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn execute_proxy(unique_project_id: String) -> Result<()> {
     log::debug!("proxy: starting up. PID: {}", std::process::id());
 
@@ -251,11 +255,7 @@ fn execute_proxy(unique_project_id: String) -> Result<()> {
     Ok(())
 }
 
-// log_file         = ~/.local/zed/server/<unique_project_id>/server.log
-// pid_file_path    = ~/.local/zed/server/<unique_project_id>/server.pid
-// stdout_sock_path = ~/.local/zed/server/<unique_project_id>/stdout.sock
-// stdin_sock_path  = ~/.local/zed/server/<unique_project_id>/stdin.sock
-
+#[cfg(not(windows))]
 fn ensure_project_dir(unique_project_id: &str) -> Result<PathBuf> {
     let project_dir = env::var("HOME").unwrap_or_else(|_| ".".to_string());
     let project_dir = PathBuf::from(project_dir)
@@ -269,6 +269,7 @@ fn ensure_project_dir(unique_project_id: &str) -> Result<PathBuf> {
     Ok(project_dir)
 }
 
+#[cfg(not(windows))]
 fn spawn_server(
     log_file: &Path,
     pid_file: &Path,
@@ -312,6 +313,7 @@ fn spawn_server(
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn check_pid_file(pid_file: &Path) -> Result<bool> {
     let pid = std::fs::read_to_string(&pid_file)
         .context("Failed to read PID file")
@@ -335,6 +337,7 @@ fn check_pid_file(pid_file: &Path) -> Result<bool> {
     }
 }
 
+#[cfg(not(windows))]
 fn write_pid_file(pid_file: &Path) -> Result<()> {
     let pid = std::process::id();
     if pid_file.exists() {
@@ -345,6 +348,7 @@ fn write_pid_file(pid_file: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 async fn handle_io<R, W>(mut reader: R, mut writer: W, socket_name: &str) -> Result<()>
 where
     R: AsyncRead + Unpin,
