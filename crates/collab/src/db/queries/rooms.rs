@@ -735,6 +735,7 @@ impl Database {
                     worktree.settings_files.push(WorktreeSettingsFile {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
+                        kind: db_settings_file.kind,
                     });
                 }
             }
