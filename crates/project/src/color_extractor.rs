@@ -44,24 +44,22 @@ impl ColorExtractor {
         // Try to extract from entire `label` field
         Self::parse(&item.label, &hex, &rgb)
             // Try to extract from entire `detail` field
-            .or_else(|| {
-                item.detail
-                    .as_ref()
-                    .and_then(|detail| Self::parse(detail, &hex, &rgb))
+            .or_else(|| match item.detail {
+                Some(ref detail) => Self::parse(detail, &hex, &rgb),
+                None => None,
             })
             // Try extract from beginning or end of `documentation` field
             .or_else(|| {
                 let hex = &RELAXED_HEX_REGEX;
                 let rgb = &RELAXED_RGB_OR_HSL_REGEX;
 
-                item.documentation
-                    .as_ref()
-                    .and_then(|documentation| match documentation {
-                        Documentation::String(str) => Self::parse(str, &hex, &rgb),
-                        Documentation::MarkupContent(markup) => {
-                            Self::parse(&markup.value, &hex, &rgb)
-                        }
-                    })
+                match item.documentation {
+                    Some(Documentation::String(ref str)) => Self::parse(str, &hex, &rgb),
+                    Some(Documentation::MarkupContent(ref markup)) => {
+                        Self::parse(&markup.value, &hex, &rgb)
+                    }
+                    None => None,
+                }
             })
     }
 
