@@ -930,6 +930,7 @@ impl Element for TerminalElement {
                                 line_height: layout.dimensions.line_height,
                                 lines: highlighted_range_lines,
                                 color: *color,
+                                border_color: Hsla::transparent_black(),
                                 corner_radius: 0.15 * layout.dimensions.line_height,
                             };
                             hr.paint(bounds, cx);

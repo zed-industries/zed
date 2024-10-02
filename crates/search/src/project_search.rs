@@ -1131,7 +1131,7 @@ impl ProjectSearchView {
                 }
                 editor.highlight_background::<Self>(
                     &match_ranges,
-                    |theme| theme.search_match_background,
+                    |theme| (theme.search_match_background, theme.search_match_border),
                     cx,
                 );
             });
@@ -2053,6 +2053,7 @@ pub mod tests {
                 "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n"
             );
             let match_background_color = cx.theme().colors().search_match_background;
+            let match_border_color = cx.theme().colors().search_match_border;
             assert_eq!(
                 search_view
                     .results_editor
@@ -2060,15 +2061,18 @@ pub mod tests {
                 &[
                     (
                         DisplayPoint::new(DisplayRow(3), 32)..DisplayPoint::new(DisplayRow(3), 35),
-                        match_background_color
+                        match_background_color,
+                        match_border_color
                     ),
                     (
                         DisplayPoint::new(DisplayRow(3), 37)..DisplayPoint::new(DisplayRow(3), 40),
-                        match_background_color
+                        match_background_color,
+                        match_border_color
                     ),
                     (
                         DisplayPoint::new(DisplayRow(8), 6)..DisplayPoint::new(DisplayRow(8), 9),
-                        match_background_color
+                        match_background_color,
+                        match_border_color
                     )
                 ]
             );

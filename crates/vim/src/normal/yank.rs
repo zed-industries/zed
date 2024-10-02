@@ -199,7 +199,12 @@ impl Vim {
 
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
-            |colors| colors.editor_document_highlight_read_background,
+            |colors| {
+                (
+                    colors.editor_document_highlight_read_background,
+                    gpui::transparent_black(),
+                )
+            },
             cx,
         );
         cx.spawn(|this, mut cx| async move {

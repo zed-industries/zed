@@ -714,6 +714,7 @@ pub struct Path<P: Clone + Default + Debug> {
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
     pub(crate) color: Hsla,
+    pub(crate) border_color: Hsla,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
@@ -734,6 +735,7 @@ impl Path<Pixels> {
             },
             content_mask: Default::default(),
             color: Default::default(),
+            border_color: Default::default(),
             contour_count: 0,
         }
     }
@@ -754,6 +756,7 @@ impl Path<Pixels> {
             current: self.current.scale(factor),
             contour_count: self.contour_count,
             color: self.color,
+            border_color: self.border_color,
         }
     }
 

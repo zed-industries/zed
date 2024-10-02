@@ -84,7 +84,7 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
                 bounds.upper_right() + point(px(0.0), vertical_offset),
             );
             path.line_to(bounds.lower_left());
-            cx.paint_path(path, color);
+            cx.paint_path(path, color, Hsla::transparent_black());
         },
     )
     .h_1()

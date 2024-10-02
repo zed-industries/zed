@@ -21,6 +21,7 @@ float2 erf(float2 x);
 float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
+float sample_mask(texture2d<float> atlas_texture, sampler atlas_texture_sampler, float2 position);
 
 struct QuadVertexOutput {
   float4 position [[position]];
@@ -438,6 +439,8 @@ struct PathSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
+  float4 border_color [[flat]];
+  uint sprite_id [[flat]];
 };
 
 vertex PathSpriteVertexOutput path_sprite_vertex(
@@ -457,7 +460,15 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
       to_device_position(unit_vertex, sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
-  return PathSpriteVertexOutput{device_position, tile_position, color};
+  float4 border_color = hsla_to_rgba(sprite.border_color);
+
+  return PathSpriteVertexOutput{
+      device_position,
+      tile_position,
+      color,
+      border_color,
+      sprite_id,
+  };
 }
 
 fragment float4 path_sprite_fragment(
@@ -466,12 +477,66 @@ fragment float4 path_sprite_fragment(
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
-  float4 sample =
-      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float mask = 1. - abs(1. - fmod(sample.r, 2.));
+  float mask = sample_mask(atlas_texture, atlas_texture_sampler, input.tile_position);
   float4 color = input.color;
+  // no border or outside, we're done
+  if (input.border_color.a == 0. || mask == 0.) {
+    color.a *= mask;
+    return color;
+  }
+
+  float2 atlas_size = float2(atlas_texture.get_width(), atlas_texture.get_height());
+  float2 px_size = 1.0 / atlas_size;
+  AtlasTile tile = sprites[input.sprite_id].tile;
+  float2 origin = float2(tile.bounds.origin.x, tile.bounds.origin.y);
+  float2 size = float2(tile.bounds.size.width, tile.bounds.size.height);
+  float4 bounds = float4(
+      origin / atlas_size,
+      (origin + size) / atlas_size
+  );
+
+  bool is_border = false;
+  float border_intensity;
+
+  // TODO: Use a better technique for detecting borders?
+  for (float i = 1.0; i <= 2.0; i += 1.0) {
+    float2 offset = px_size * i;
+
+    // Check the edge cases, literally
+    float2 min_bound = bounds.xy + offset;
+    float2 max_bound = bounds.zw - offset;
+    if (any(input.tile_position < min_bound) || any(input.tile_position > max_bound)) {
+      is_border = true;
+    } else {
+        // Sample in all four directions
+      float2 offsets[] = {
+          float2(-offset.x, 0), float2(offset.x, 0),
+          float2(0, -offset.y), float2(0, offset.y)
+      };
+      for (int j = 0; j < 4; j++) {
+        if (mask != sample_mask(atlas_texture,
+                                atlas_texture_sampler,
+                                input.tile_position + offsets[j])) {
+          is_border = true;
+          break;
+        }
+      }
+    }
+
+    if (is_border) {
+      border_intensity = 1.0 - (i - 1.0) * 0.1;
+      break;
+    }
+  }
+
+  if (is_border) {
+    color = input.border_color;
+    color.a *= border_intensity;
+  }
+
   color.a *= mask;
   return color;
+
 }
 
 struct SurfaceVertexOutput {
@@ -690,4 +755,9 @@ float4 over(float4 below, float4 above) {
       (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
   result.a = alpha;
   return result;
+}
+
+float sample_mask(texture2d<float> atlas_texture, sampler atlas_texture_sampler, float2 position) {
+  float sample = atlas_texture.sample(atlas_texture_sampler, position).r;
+  return 1.0 - abs(1.0 - fmod(sample, 2.0));
 }
