@@ -352,19 +352,30 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut read_buffer = Vec::new();
-    let mut write_buffer = Vec::new();
+    use remote::protocol::read_message_raw;
+
+    let mut buffer = Vec::new();
     loop {
-        // TODO: We needlessly decode/encode the message here. Instead we should
-        // just read the len and then read/send.
-        let message = read_message(&mut reader, &mut read_buffer)
+        read_message_raw(&mut reader, &mut buffer)
             .await
             .with_context(|| format!("proxy: failed to read message from {}", socket_name))?;
 
-        write_message(&mut writer, &mut write_buffer, message)
+        write_size_prefixed_buffer(&mut writer, &mut buffer)
             .await
             .with_context(|| format!("proxy: failed to write message to {}", socket_name))?;
 
         writer.flush().await?;
+
+        buffer.clear();
     }
+}
+
+async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    buffer: &mut Vec<u8>,
+) -> Result<()> {
+    let len = buffer.len() as u32;
+    stream.write_all(len.to_le_bytes().as_slice()).await?;
+    stream.write_all(buffer).await?;
+    Ok(())
 }
