@@ -27,7 +27,14 @@ pub struct IndentGuides {
     indent_size: Pixels,
     compute_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
     render_fn: Option<
-        Box<dyn Fn(IndentGuideLayout, Pixels, Pixels, &mut WindowContext) -> RenderedIndentGuide>,
+        Box<
+            dyn Fn(
+                SmallVec<[IndentGuideLayout; 16]>,
+                Pixels,
+                Pixels,
+                &mut WindowContext,
+            ) -> SmallVec<[RenderedIndentGuide; 16]>,
+        >,
     >,
 }
 
@@ -40,7 +47,13 @@ impl IndentGuides {
     pub fn with_render_fn<V: Render>(
         mut self,
         view: View<V>,
-        render_fn: impl Fn(&mut V, IndentGuideLayout, Pixels, Pixels, &mut WindowContext) -> RenderedIndentGuide
+        render_fn: impl Fn(
+                &mut V,
+                SmallVec<[IndentGuideLayout; 16]>,
+                Pixels,
+                Pixels,
+                &mut WindowContext,
+            ) -> SmallVec<[RenderedIndentGuide; 16]>
             + 'static,
     ) -> Self {
         let render_fn = move |layout, indent_size, item_height, cx: &mut WindowContext| {
@@ -59,7 +72,7 @@ pub struct RenderedIndentGuide {
 }
 
 pub struct IndentGuidesLayoutState {
-    guides: SmallVec<[RenderedIndentGuide; 16]>,
+    indent_guides: SmallVec<[RenderedIndentGuide; 16]>,
 }
 
 impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
@@ -74,32 +87,31 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
                 let visible_entries = &(compute_fn)(visible_range.clone(), cx);
                 let indent_guides = compute_indent_guides(&visible_entries, visible_range.start);
 
-                let guides: SmallVec<[RenderedIndentGuide; 16]> = indent_guides
-                    .into_iter()
-                    .map(|layout| {
-                        let mut indent_guide = if let Some(ref custom_render) = render_fn {
-                            custom_render(layout, indent_size, item_height, cx)
-                        } else {
-                            RenderedIndentGuide {
-                                bounds: Bounds::new(
-                                    point(
-                                        px(layout.offset.x as f32) * indent_size,
-                                        px(layout.offset.y as f32) * item_height,
-                                    ),
-                                    size(px(1.), px(layout.length as f32) * item_height),
+                let mut indent_guides = if let Some(ref custom_render) = render_fn {
+                    custom_render(indent_guides, indent_size, item_height, cx)
+                } else {
+                    indent_guides
+                        .into_iter()
+                        .map(|layout| RenderedIndentGuide {
+                            bounds: Bounds::new(
+                                point(
+                                    px(layout.offset.x as f32) * indent_size,
+                                    px(layout.offset.y as f32) * item_height,
                                 ),
-                                color: line_color,
-                            }
-                        };
-                        indent_guide.bounds.origin += bounds.origin;
-                        indent_guide
-                    })
-                    .collect();
+                                size(px(1.), px(layout.length as f32) * item_height),
+                            ),
+                            color: line_color,
+                        })
+                        .collect()
+                };
 
-                IndentGuidesLayoutState { guides }
+                for guide in &mut indent_guides {
+                    guide.bounds.origin += bounds.origin;
+                }
+                IndentGuidesLayoutState { indent_guides }
             }),
             paint_fn: Box::new(|state, cx| {
-                for guide in &state.guides {
+                for guide in &state.indent_guides {
                     cx.paint_quad(fill(guide.bounds, guide.color.color(cx)));
                 }
             }),

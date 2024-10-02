@@ -31,6 +31,7 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::{
     cell::{Cell, OnceCell},
     collections::HashSet,
@@ -42,7 +43,9 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
+use ui::{
+    prelude::*, v_flex, ContextMenu, Icon, IndentGuideLayout, KeyBinding, Label, ListItem, Tooltip,
+};
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -2006,16 +2009,18 @@ impl ProjectPanel {
         }
     }
 
-    fn entry_for_index(&self, idx: usize) -> Option<(WorktreeId, Entry)> {
+    fn index_for_entry(&self, entry_id: ProjectEntryId, worktree_id: WorktreeId) -> Option<usize> {
         let mut offset = 0;
-        for (id, visible_worktree_entries, _) in &self.visible_entries {
-            if offset + visible_worktree_entries.len() < idx {
+        for (current_worktree_id, visible_worktree_entries, _) in &self.visible_entries {
+            if worktree_id != *current_worktree_id {
                 offset += visible_worktree_entries.len();
-                continue;
             }
+
             return visible_worktree_entries
-                .get(idx - offset)
-                .map(|entry| (*id, entry.clone()));
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| entry.id == entry_id)
+                .map(|(ix, _)| ix + offset);
         }
         None
     }
@@ -2654,6 +2659,22 @@ impl ProjectPanel {
             cx.notify();
         }
     }
+
+    fn find_active_indent_guide(&self, indent_guides: &[IndentGuideLayout]) -> Option<usize> {
+        let active_entry_idx = self.selection.and_then(|selection| {
+            self.index_for_entry(selection.entry_id, selection.worktree_id)
+        })?;
+
+        indent_guides
+            .iter()
+            .enumerate()
+            .filter(|(_, layout)| {
+                let start = layout.offset.y.saturating_sub(1);
+                start <= active_entry_idx && active_entry_idx <= start + layout.length
+            })
+            .max_by_key(|(_, layout)| layout.offset.x)
+            .map(|(idx, _)| idx)
+    }
 }
 
 impl Render for ProjectPanel {
@@ -2762,18 +2783,8 @@ impl Render for ProjectPanel {
                         }
                     })
                     .when(indent_guides, |this| {
-                        let active_parent_path = self.selection.and_then(|selection| {
-                            let worktree = self
-                                .project
-                                .read(cx)
-                                .worktree_for_id(selection.worktree_id, cx)?;
-                            let entry = worktree.read(cx).entry_for_id(selection.entry_id)?;
-                            let parent_path = entry.path.parent()?.to_path_buf();
-                            Some(parent_path)
-                        });
-
                         let line_color = cx.theme().colors().editor_indent_guide;
-                        let active_line_color = cx.theme().colors().editor_indent_guide_active;
+                        let active_line_color = cx.theme().colors().editor_active_indent_guide;
                         this.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
@@ -2792,38 +2803,39 @@ impl Render for ProjectPanel {
                             )
                             .with_render_fn(
                                 cx.view().clone(),
-                                move |this, layout, indent_size, item_height, cx| {
+                                move |this, indent_guides, indent_size, item_height, _| {
                                     const LEFT_OFFSET: f32 = 14.;
                                     const PADDING_Y: f32 = 4.;
 
-                                    let is_active = if let Some(entry) =
-                                        this.entry_for_index(layout.offset.y)
-                                    {
-                                        active_parent_path == entry.1.path.parent().as_ref()
-                                    } else {
-                                        false
-                                    };
+                                    let active_indent_guide_index =
+                                        this.find_active_indent_guide(&indent_guides);
 
-                                    ui::RenderedIndentGuide {
-                                        bounds: Bounds::new(
-                                            point(
-                                                px(layout.offset.x as f32) * indent_size
-                                                    + px(LEFT_OFFSET),
-                                                px(layout.offset.y as f32) * item_height
-                                                    + px(PADDING_Y),
+                                    indent_guides
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(idx, layout)| ui::RenderedIndentGuide {
+                                            bounds: Bounds::new(
+                                                point(
+                                                    px(layout.offset.x as f32) * indent_size
+                                                        + px(LEFT_OFFSET),
+                                                    px(layout.offset.y as f32) * item_height
+                                                        + px(PADDING_Y),
+                                                ),
+                                                size(
+                                                    px(1.),
+                                                    px(layout.length as f32) * item_height
+                                                        - px(PADDING_Y * 2.),
+                                                ),
                                             ),
-                                            size(
-                                                px(1.),
-                                                px(layout.length as f32) * item_height
-                                                    - px(PADDING_Y * 2.),
+                                            color: Color::Custom(
+                                                if Some(idx) == active_indent_guide_index {
+                                                    active_line_color
+                                                } else {
+                                                    line_color
+                                                },
                                             ),
-                                        ),
-                                        color: Color::Custom(if is_active {
-                                            active_line_color
-                                        } else {
-                                            line_color
-                                        }),
-                                    }
+                                        })
+                                        .collect()
                                 },
                             ),
                         )
