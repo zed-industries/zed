@@ -158,6 +158,12 @@ pub fn deploy_context_menu(
         }
 
         let focus = cx.focused();
+        let has_reveal_target = editor.target_file(cx).is_some();
+        let reveal_in_finder_label = if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else {
+            "Reveal in File Manager"
+        };
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
@@ -180,11 +186,13 @@ pub fn deploy_context_menu(
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .when(cfg!(target_os = "macos"), |builder| {
-                    builder.action("Reveal in Finder", Box::new(RevealInFileManager))
-                })
-                .when(cfg!(not(target_os = "macos")), |builder| {
-                    builder.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                .map(|builder| {
+                    if has_reveal_target {
+                        builder.action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    } else {
+                        builder
+                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    }
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine));
