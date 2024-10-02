@@ -1,13 +1,13 @@
-use std::{path::Path, process::ExitStatus};
-
-use collections::HashMap;
-use util::ResultExt;
+use std::process::ExitStatus;
+#[cfg(not(any(test, feature = "test-support")))]
+use {collections::HashMap, std::path::Path, util::ResultExt};
 
 pub struct DirenvError {
     pub status: ExitStatus,
     pub stderr: Vec<u8>,
 }
 
+#[cfg(not(any(test, feature = "test-support")))]
 pub async fn load_direnv_environment(
     dir: &Path,
 ) -> (Option<HashMap<String, String>>, Option<DirenvError>) {
