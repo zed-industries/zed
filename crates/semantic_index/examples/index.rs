@@ -28,7 +28,7 @@ fn main() {
         let clock = Arc::new(FakeSystemClock::default());
 
         let http = Arc::new(HttpClientWithUrl::new(
-            Arc::new(ureq_client::AsyncUreq::new(
+            Arc::new(ureq_client::UreqClient::new(
                 None,
                 "Zed semantic index example".to_string(),
                 cx.background_executor().clone(),

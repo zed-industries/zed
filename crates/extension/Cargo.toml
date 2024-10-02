@@ -60,6 +60,8 @@ ureq_client.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 parking_lot.workspace = true
+reqwest_client.workspace = true
+tokio.workspace = true
 
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }

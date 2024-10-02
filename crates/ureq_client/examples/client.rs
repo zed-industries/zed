@@ -1,12 +1,12 @@
 use futures::AsyncReadExt;
 use http_client::{AsyncBody, HttpClient};
-use ureq_client::AsyncUreq;
+use ureq_client::UreqClient;
 
 fn main() {
     gpui::App::headless().run(|cx| {
         println!("{:?}", std::thread::current().id());
         cx.spawn(|cx| async move {
-            let resp = AsyncUreq::new(
+            let resp = UreqClient::new(
                 None,
                 "Conrad's bot".to_string(),
                 cx.background_executor().clone(),

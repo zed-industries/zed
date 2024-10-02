@@ -7,12 +7,12 @@ use std::{pin::Pin, task::Poll};
 use anyhow::Error;
 use futures::channel::mpsc;
 use futures::future::BoxFuture;
-use futures::{AsyncRead, StreamExt};
+use futures::{AsyncRead, SinkExt, StreamExt};
 use http_client::{http, AsyncBody, HttpClient, RedirectPolicy, Uri};
 use smol::future::FutureExt;
 use util::ResultExt;
 
-pub struct AsyncUreq {
+pub struct UreqClient {
     // Note in ureq 2.x the options are stored on the Agent.
     // In ureq 3.x we'll be able to set these on the request.
     // In practice it's probably "fine" to have many clients, the number of distinct options
@@ -25,7 +25,7 @@ pub struct AsyncUreq {
     background_executor: gpui::BackgroundExecutor,
 }
 
-impl AsyncUreq {
+impl UreqClient {
     pub fn new(
         proxy_url: Option<Uri>,
         user_agent: String,
@@ -69,7 +69,7 @@ impl AsyncUreq {
             .clone()
     }
 }
-impl HttpClient for AsyncUreq {
+impl HttpClient for UreqClient {
     fn proxy(&self) -> Option<&Uri> {
         self.proxy_url.as_ref()
     }
@@ -132,17 +132,17 @@ impl UreqResponseReader {
         let (mut sender, receiver) = mpsc::channel(1);
         let mut reader = response.into_reader();
         let task = background_executor.spawn(async move {
-            let mut buffer = vec![0; 16384];
+            let mut buffer = vec![0; 8192];
             loop {
                 let n = match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(n) => n,
                     Err(e) => {
-                        let _ = sender.try_send(Err(e));
+                        let _ = sender.send(Err(e)).await;
                         break;
                     }
                 };
-                let _ = sender.try_send(Ok(buffer[..n].to_vec()));
+                let _ = sender.send(Ok(buffer[..n].to_vec())).await;
             }
         });
 
@@ -164,8 +164,12 @@ impl AsyncRead for UreqResponseReader {
         if self.buffer.is_empty() {
             match self.receiver.poll_next_unpin(cx) {
                 Poll::Ready(Some(Ok(data))) => self.buffer = data,
-                Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e)),
-                Poll::Ready(None) => return Poll::Ready(Ok(0)),
+                Poll::Ready(Some(Err(e))) => {
+                    return Poll::Ready(Err(e));
+                }
+                Poll::Ready(None) => {
+                    return Poll::Ready(Ok(0));
+                }
                 Poll::Pending => {
                     return Poll::Pending;
                 }
@@ -178,7 +182,6 @@ impl AsyncRead for UreqResponseReader {
             self.buffer.clear();
             self.idx = 0;
         }
-
         Poll::Ready(Ok(n))
     }
 }
