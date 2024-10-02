@@ -11412,6 +11412,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "settings",
  "theme",
  "ui",
  "util",
