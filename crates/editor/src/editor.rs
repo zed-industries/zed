@@ -11258,11 +11258,8 @@ impl Editor {
     }
 
     fn reveal_target<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn language::LocalFile> {
-        let latest_selection = self.selections.newest_anchor().head();
-        self.buffer()
-            .read(cx)
-            .text_anchor_for_position(latest_selection, cx)?
-            .0
+        self.active_excerpt(cx)?
+            .1
             .read(cx)
             .file()
             .and_then(|f| f.as_local())
