@@ -11269,7 +11269,10 @@ impl Editor {
     }
 
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
-        maybe!({ Some(cx.reveal_path(&self.reveal_target(cx)?.abs_path(cx))) });
+        maybe!({
+            cx.reveal_path(&self.reveal_target(cx)?.abs_path(cx));
+            Some(())
+        });
     }
 
     pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
