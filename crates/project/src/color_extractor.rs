@@ -37,6 +37,10 @@ pub static STRICT_RGB_OR_HSL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
 pub struct ColorExtractor {}
 
 impl ColorExtractor {
+    /// Extracts a color from a LSP completion item
+    ///
+    /// It's a Rust port of the `ColorExtractor` class from the `vscode` repository:
+    /// https://github.com/microsoft/vscode/blob/a6870fcb6d79093738c17e8319b760cf1c41764a/src/vs/editor/contrib/suggest/browser/suggestWidgetRenderer.ts#L34-L61
     pub fn extract(item: &CompletionItem) -> Option<Hsla> {
         let hex = &STRICT_HEX_REGEX;
         let rgb = &STRICT_RGB_OR_HSL_REGEX;
