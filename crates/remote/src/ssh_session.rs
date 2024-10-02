@@ -15,7 +15,7 @@ use futures::{
     select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, SinkExt,
     StreamExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, Task};
+use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, Subscription, Task};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
@@ -27,7 +27,9 @@ use smol::{
 };
 use std::{
     any::TypeId,
+    cell::RefCell,
     ffi::OsStr,
+    mem,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering::SeqCst},
@@ -252,6 +254,13 @@ pub struct SshRemoteClient {
     client: Arc<ChannelClient>,
     inner_state: Mutex<Option<SshRemoteClientState>>,
     connection_options: SshConnectionOptions,
+    _subscriptions: RefCell<Vec<Subscription>>,
+}
+
+impl Drop for SshRemoteClient {
+    fn drop(&mut self) {
+        self.shutdown_processes();
+    }
 }
 
 impl SshRemoteClient {
@@ -268,18 +277,24 @@ impl SshRemoteClient {
             client,
             inner_state: Mutex::new(None),
             connection_options: connection_options.clone(),
+            _subscriptions: RefCell::new(Vec::new()),
         });
+
+        let weak = Arc::downgrade(&this);
+        this._subscriptions
+            .borrow_mut()
+            .push(cx.update(move |cx| cx.on_app_quit(move |_| Self::on_app_quit(weak.clone())))?);
 
         let inner_state = {
             let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, cx);
 
-            let (ssh_connection, ssh_process) =
+            let (ssh_connection, ssh_proxy_process) =
                 Self::establish_connection(connection_options, delegate.clone(), cx).await?;
 
             let multiplex_task = Self::multiplex(
                 Arc::downgrade(&this),
-                ssh_process,
+                ssh_proxy_process,
                 proxy_incoming_tx,
                 proxy_outgoing_rx,
                 cx,
@@ -296,6 +311,23 @@ impl SshRemoteClient {
         this.inner_state.lock().replace(inner_state);
 
         Ok(this)
+    }
+
+    async fn on_app_quit(this: Weak<Self>) {
+        let Some(this) = this.upgrade() else {
+            return;
+        };
+        log::info!("ssh client is shutting down");
+        this.shutdown_processes();
+    }
+
+    fn shutdown_processes(&self) {
+        let mut state = self.inner_state.lock().take().unwrap();
+        // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
+        // child of master_process.
+        let _ = mem::replace(&mut state.multiplex_task, Task::ready(Ok(())));
+        // Now drop the rest of state, which kills master process.
+        drop(state);
     }
 
     fn reconnect(this: Arc<Self>, cx: &mut AsyncAppContext) -> Result<()> {
@@ -352,14 +384,14 @@ impl SshRemoteClient {
 
     fn multiplex(
         this: Weak<Self>,
-        mut ssh_process: Child,
+        mut ssh_proxy_process: Child,
         incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
         cx: &mut AsyncAppContext,
     ) -> Task<Result<()>> {
-        let mut child_stderr = ssh_process.stderr.take().unwrap();
-        let mut child_stdout = ssh_process.stdout.take().unwrap();
-        let mut child_stdin = ssh_process.stdin.take().unwrap();
+        let mut child_stderr = ssh_proxy_process.stderr.take().unwrap();
+        let mut child_stdout = ssh_proxy_process.stdout.take().unwrap();
+        let mut child_stdin = ssh_proxy_process.stdin.take().unwrap();
 
         let io_task = cx.background_executor().spawn(async move {
             let mut stdin_buffer = Vec::new();
@@ -385,7 +417,7 @@ impl SshRemoteClient {
                             Ok(0) => {
                                 child_stdin.close().await?;
                                 outgoing_rx.close();
-                                let status = ssh_process.status().await?;
+                                let status = ssh_proxy_process.status().await?;
                                 if !status.success() {
                                     log::error!("ssh process exited with status: {status:?}");
                                     return Err(anyhow!("ssh process exited with non-zero status code: {:?}", status.code()));
@@ -481,17 +513,19 @@ impl SshRemoteClient {
 
         delegate.set_status(Some("Starting proxy"), cx);
 
-        let ssh_process = socket
+        let ssh_proxy_process = socket
             .ssh_command(format!(
                 "RUST_LOG={} RUST_BACKTRACE={} {:?} proxy",
                 std::env::var("RUST_LOG").unwrap_or_default(),
                 std::env::var("RUST_BACKTRACE").unwrap_or_default(),
                 remote_binary_path,
             ))
+            // IMPORTANT: we kill this process when we drop the task that uses it.
+            .kill_on_drop(true)
             .spawn()
             .context("failed to spawn remote server")?;
 
-        Ok((ssh_connection, ssh_process))
+        Ok((ssh_connection, ssh_proxy_process))
     }
 
     pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {
@@ -531,6 +565,7 @@ impl SshRemoteClient {
                     client,
                     inner_state: Mutex::new(None),
                     connection_options: SshConnectionOptions::default(),
+                    _subscriptions: RefCell::new(Vec::new()),
                 })
             }),
             server_cx.update(|cx| ChannelClient::new(client_to_server_rx, server_to_client_tx, cx)),
