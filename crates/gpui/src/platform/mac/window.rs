@@ -502,7 +502,7 @@ impl MacWindow {
             kind,
             is_movable,
             focus,
-            show,
+            display_state,
             display_id,
             window_min_size,
         }: WindowParams,
@@ -707,10 +707,15 @@ impl MacWindow {
                 }
             }
 
-            if focus && show {
-                native_window.makeKeyAndOrderFront_(nil);
-            } else if show {
-                native_window.orderFront_(nil);
+            match display_state {
+                crate::WindowDisplayState::Hidden | crate::WindowDisplayState::DeferredVisible => {}
+                crate::WindowDisplayState::Visible => {
+                    if focus {
+                        native_window.makeKeyAndOrderFront_(nil);
+                    } else {
+                        native_window.orderFront_(nil);
+                    }
+                }
             }
 
             // Set the initial position of the window to the specified origin.
