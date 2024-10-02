@@ -460,9 +460,6 @@ impl Server {
                 forward_project_request_for_owner::<proto::TaskContextForLocation>,
             ))
             .add_request_handler(user_handler(
-                forward_project_request_for_owner::<proto::TaskTemplates>,
-            ))
-            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
             ))
             .add_request_handler(user_handler(

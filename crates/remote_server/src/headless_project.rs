@@ -103,7 +103,6 @@ impl HeadlessProject {
             task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             task_store
         });
-        // TODO kb task store event subscription?
 
         cx.subscribe(
             &buffer_store,
@@ -135,8 +134,6 @@ impl HeadlessProject {
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
-
-        // TODO kb subscribe for task store?
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);

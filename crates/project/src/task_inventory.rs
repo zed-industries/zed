@@ -57,6 +57,7 @@ pub enum TaskSourceKind {
     },
     /// Languages-specific tasks coming from extensions.
     Language { name: Arc<str> },
+    // TODO kb remote kind, which we'll re-set, needs project_id and more
 }
 
 impl TaskSourceKind {

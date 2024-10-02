@@ -162,6 +162,8 @@ pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
+    raw_user_tasks: serde_json::Value,
+    raw_remote_user_tasks: Option<serde_json::Value>,
     raw_extension_settings: serde_json::Value,
     raw_local_settings:
         BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
@@ -219,6 +221,8 @@ impl SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
+            raw_user_tasks: serde_json::json!({}),
+            raw_remote_user_tasks: None,
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
@@ -321,6 +325,11 @@ impl SettingsStore {
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &serde_json::Value {
         &self.raw_user_settings
+    }
+
+    /// Get the user's tasks as a raw JSON value.
+    pub fn raw_user_tasks(&self) -> &serde_json::Value {
+        &self.raw_user_tasks
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -515,13 +524,34 @@ impl SettingsStore {
         } else {
             parse_json_with_comments(user_settings_content)?
         };
-        if settings.is_object() {
-            self.raw_user_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
+
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_user_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
+    }
+
+    /// Sets the user tasks via a JSON string.
+    pub fn set_user_tasks(
+        &mut self,
+        user_tasks_content: &str,
+        remote: bool,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        let tasks: serde_json::Value = if user_tasks_content.is_empty() {
+            parse_json_with_comments("{}")?
         } else {
-            Err(anyhow!("settings must be an object"))
+            parse_json_with_comments(user_tasks_content)?
+        };
+
+        anyhow::ensure!(tasks.is_object(), "tasks must be an object");
+        if remote {
+            self.raw_remote_user_tasks = Some(tasks);
+        } else {
+            self.raw_user_tasks = tasks;
         }
+        self.recompute_tasks(None, cx)?;
+        Ok(())
     }
 
     /// Add or remove a set of local settings via a JSON string.
@@ -542,7 +572,14 @@ impl SettingsStore {
         } else {
             raw_local_settings.remove(&kind);
         }
-        self.recompute_values(Some((root_id, &directory_path)), cx)?;
+        match kind {
+            LocalSettingsKind::Settings | LocalSettingsKind::Editorconfig => {
+                self.recompute_values(Some((root_id, &directory_path)), cx)?;
+            }
+            LocalSettingsKind::Tasks => {
+                self.recompute_tasks(Some((root_id, &directory_path)), cx)?;
+            }
+        }
         Ok(())
     }
 
@@ -817,6 +854,14 @@ impl SettingsStore {
             }
         }
         Ok(())
+    }
+
+    fn recompute_tasks(
+        &mut self,
+        changed_local_path: Option<(WorktreeId, &Path)>,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        todo!("TODO kb merge the tasks and set them into the global")
     }
 }
 

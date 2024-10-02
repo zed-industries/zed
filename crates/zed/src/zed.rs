@@ -19,7 +19,8 @@ use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
-    ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
+    ReadGlobal, TitlebarOptions, UpdateGlobal as _, View, ViewContext, VisualContext, WindowKind,
+    WindowOptions,
 };
 pub use open_listener::*;
 
@@ -27,19 +28,17 @@ use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
-use project::TaskSourceKind;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
-    SettingsStore, DEFAULT_KEYMAP_PATH,
+    initial_local_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 use workspace::CloseIntent;
@@ -227,26 +226,6 @@ pub fn initialize_workspace(
                     false
                 })
                 .unwrap_or(true)
-        });
-
-        workspace.project().update(cx, |project, cx| {
-            let fs = app_state.fs.clone();
-            // TODO kb is this correct for all remotes? Move watch elsewherre?
-            if let Some(task_inventory) = project.task_inventory(cx) {
-                let tasks_file_rx =
-                    watch_config_file(cx.background_executor(), fs, paths::tasks_file().clone());
-                task_inventory.update(cx, |inventory, cx| {
-                    inventory.add_source(
-                        TaskSourceKind::AbsPath {
-                            id_base: "global_tasks".into(),
-                            abs_path: paths::tasks_file().clone(),
-                        },
-                        |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
-                        cx,
-                    );
-                });
-
-            }
         });
 
         let prompt_builder = prompt_builder.clone();
@@ -759,6 +738,38 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             .detach();
         })
         .detach();
+}
+
+pub fn handle_tasks_file_changes(
+    mut user_tasks_file_rx: mpsc::UnboundedReceiver<String>,
+    cx: &mut AppContext,
+    tasks_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
+) {
+    let user_tasks_content = cx
+        .background_executor()
+        .block(user_tasks_file_rx.next())
+        .unwrap();
+    SettingsStore::update_global(cx, |store, cx| {
+        store
+            .set_user_tasks(&user_tasks_content, false, cx)
+            .log_err();
+    });
+    cx.spawn(move |mut cx| async move {
+        while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
+            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+                let result = store.set_user_tasks(&user_tasks_content, false, cx);
+                if let Err(err) = &result {
+                    log::error!("Failed to load user tasks: {err}");
+                }
+                tasks_changed(result.err(), cx);
+                cx.refresh();
+            });
+            if result.is_err() {
+                break; // App dropped
+            }
+        }
+    })
+    .detach();
 }
 
 pub fn handle_keymap_file_changes(

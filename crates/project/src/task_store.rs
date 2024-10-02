@@ -26,8 +26,6 @@ pub enum TaskStore {
         buffer_store: WeakModel<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         environment: Model<ProjectEnvironment>,
-        // TODO kb needs to track task.json changes (both local and remote) and update the task inventory accordingly
-        // _subscription: Subscription,
     },
     Remote {
         task_inventory: Model<Inventory>,

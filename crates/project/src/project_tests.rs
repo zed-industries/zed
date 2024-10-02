@@ -16,7 +16,10 @@ use serde_json::json;
 use std::os;
 
 use std::{mem, ops::Range, task::Poll};
-use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
+use task::{
+    static_source::{StaticSource, TrackedFile},
+    ResolvedTask, TaskContext, TaskTemplate, TaskTemplates,
+};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
 

@@ -3,7 +3,10 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
 use language::LanguageServerName;
-use paths::local_settings_file_relative_path;
+use paths::{
+    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_vscode_tasks_file_relative_path,
+};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,6 +16,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use task::{TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -324,19 +328,37 @@ impl SettingsObserver {
         cx: AsyncAppContext,
     ) -> anyhow::Result<()> {
         cx.update_global(move |settings_store: &mut SettingsStore, cx| {
-            settings_store.set_user_settings(&envelope.payload.content, cx)
+            match envelope.payload.kind() {
+                proto::update_user_settings::Kind::Settings => {
+                    settings_store.set_user_settings(&envelope.payload.content, cx)
+                }
+                proto::update_user_settings::Kind::Tasks => {
+                    settings_store.set_user_tasks(&envelope.payload.content, true, cx)
+                }
+            }
         })??;
-
         Ok(())
     }
 
     pub fn maintain_ssh_settings(&self, ssh: AnyProtoClient, cx: &mut ModelContext<Self>) {
-        let mut settings = cx.global::<SettingsStore>().raw_user_settings().clone();
+        let settings_store = cx.global::<SettingsStore>();
+
+        let mut settings = settings_store.raw_user_settings().clone();
         if let Some(content) = serde_json::to_string(&settings).log_err() {
             ssh.send(proto::UpdateUserSettings {
                 project_id: 0,
                 content,
                 kind: Some(proto::LocalSettingsKind::Settings.into()),
+            })
+            .log_err();
+        }
+
+        let mut tasks = settings_store.raw_user_tasks().clone();
+        if let Some(content) = serde_json::to_string(&tasks).log_err() {
+            ssh.send(proto::UpdateUserSettings {
+                project_id: 0,
+                content,
+                kind: Some(proto::LocalSettingsKind::Tasks.into()),
             })
             .log_err();
         }
@@ -353,6 +375,21 @@ impl SettingsObserver {
                         project_id: 0,
                         content,
                         kind: Some(proto::LocalSettingsKind::Settings.into()),
+                    })
+                    .log_err();
+                }
+            }
+
+            let new_tasks = cx.global::<SettingsStore>().raw_user_tasks();
+            if &tasks != new_tasks {
+                tasks = new_tasks.clone();
+            }
+            if let Some(content) = serde_json::to_string(&new_tasks).log_err() {
+                if let Some(ssh) = weak_client.upgrade() {
+                    ssh.send(proto::UpdateUserSettings {
+                        project_id: 0,
+                        content,
+                        kind: Some(proto::LocalSettingsKind::Tasks.into()),
                     })
                     .log_err();
                 }
@@ -389,7 +426,33 @@ impl SettingsObserver {
 
         let mut settings_contents = Vec::new();
         for (path, _, change) in changes.iter() {
+            let (settings_dir, kind) = if path.ends_with(local_settings_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(local_settings_file_relative_path().components().count())
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Settings)
+            } else if path.ends_with(local_tasks_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(local_tasks_file_relative_path().components().count())
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Tasks)
+            } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(local_vscode_tasks_file_relative_path().components().count())
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Tasks)
+            } else {
+                continue;
+            };
+
             let removed = change == &PathChange::Removed;
+            let fs = fs.clone();
             let abs_path = match worktree.read(cx).absolutize(path) {
                 Ok(abs_path) => abs_path,
                 Err(e) => {
@@ -397,26 +460,42 @@ impl SettingsObserver {
                     continue;
                 }
             };
-
-            if path.ends_with(local_settings_file_relative_path()) {
-                let settings_dir = Arc::from(
-                    path.ancestors()
-                        .nth(local_settings_file_relative_path().components().count())
-                        .unwrap(),
-                );
-                let fs = fs.clone();
-                settings_contents.push(async move {
-                    (
-                        settings_dir,
-                        LocalSettingsKind::Settings,
-                        if removed {
-                            None
-                        } else {
-                            Some(async move { fs.load(&abs_path).await }.await)
-                        },
-                    )
-                });
-            }
+            settings_contents.push(async move {
+                (
+                    settings_dir,
+                    kind,
+                    if removed {
+                        None
+                    } else {
+                        Some(
+                            async move {
+                                let content = fs.load(&abs_path).await?;
+                                if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
+                                    let vscode_tasks =
+                                        serde_json::from_str::<VsCodeTaskFile>(&content)
+                                            .with_context(|| {
+                                                format!("parsing VSCode tasks, file {abs_path:?}")
+                                            })?;
+                                    let zed_tasks = TaskTemplates::try_from(vscode_tasks)
+                                        .with_context(|| {
+                                            format!(
+                                        "converting VSCode tasks into Zed ones, file {abs_path:?}"
+                                    )
+                                        })?;
+                                    serde_json::to_string(&zed_tasks).with_context(|| {
+                                        format!(
+                                            "serializing Zed tasks into JSON, file {abs_path:?}"
+                                        )
+                                    })
+                                } else {
+                                    Ok(content)
+                                }
+                            }
+                            .await,
+                        )
+                    },
+                )
+            });
         }
 
         if settings_contents.is_empty() {
