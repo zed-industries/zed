@@ -36,6 +36,7 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
+use util::maybe;
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -48,7 +49,7 @@ pub struct SshSocket {
     socket_path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SshConnectionOptions {
     pub host: String,
     pub username: Option<String>,
@@ -250,6 +251,7 @@ struct SshRemoteClientState {
 pub struct SshRemoteClient {
     client: Arc<ChannelClient>,
     inner_state: Mutex<Option<SshRemoteClientState>>,
+    connection_options: SshConnectionOptions,
 }
 
 impl SshRemoteClient {
@@ -265,6 +267,7 @@ impl SshRemoteClient {
         let this = Arc::new(Self {
             client,
             inner_state: Mutex::new(None),
+            connection_options: connection_options.clone(),
         });
 
         let inner_state = {
@@ -272,8 +275,7 @@ impl SshRemoteClient {
                 ChannelForwarder::new(incoming_tx, outgoing_rx, cx);
 
             let (ssh_connection, ssh_process) =
-                Self::establish_connection(connection_options.clone(), delegate.clone(), cx)
-                    .await?;
+                Self::establish_connection(connection_options, delegate.clone(), cx).await?;
 
             let multiplex_task = Self::multiplex(
                 Arc::downgrade(&this),
@@ -505,6 +507,13 @@ impl SshRemoteClient {
         self.client.clone().into()
     }
 
+    pub fn connection_string(&self) -> String {
+        self.connection_options.connection_string()
+    }
+
+    pub fn is_reconnect_underway(&self) -> bool {
+        maybe!({ Some(self.inner_state.try_lock()?.is_none()) }).unwrap_or_default()
+    }
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(
         client_cx: &mut gpui::TestAppContext,
@@ -519,6 +528,7 @@ impl SshRemoteClient {
                 Arc::new(Self {
                     client,
                     inner_state: Mutex::new(None),
+                    connection_options: SshConnectionOptions::default(),
                 })
             }),
             server_cx.update(|cx| ChannelClient::new(client_to_server_rx, server_to_client_tx, cx)),

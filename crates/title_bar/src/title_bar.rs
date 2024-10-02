@@ -18,7 +18,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::RecentProjects;
+use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto::{self, DevServerStatus};
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -262,6 +262,46 @@ impl TitleBar {
         self
     }
 
+    fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let host = self.project.read(cx).ssh_connection_string(cx)?;
+        let meta = SharedString::from(format!("Connected to: {host}"));
+        let indicator_color = if self.project.read(cx).ssh_is_connected()? {
+            Color::Success
+        } else {
+            Color::Warning
+        };
+        let indicator = div()
+            .absolute()
+            .w_1_4()
+            .h_1_4()
+            .right_0p5()
+            .bottom_0p5()
+            .p_1()
+            .rounded_2xl()
+            .bg(indicator_color.color(cx));
+
+        Some(
+            div()
+                .child(
+                    IconButton::new("ssh-server-icon", IconName::Server)
+                        .tooltip(move |cx| {
+                            Tooltip::with_meta(
+                                "Remote Project",
+                                Some(&OpenRemote),
+                                meta.clone(),
+                                cx,
+                            )
+                        })
+                        .shape(ui::IconButtonShape::Square)
+                        .on_click(|_, cx| {
+                            cx.dispatch_action(OpenRemote.boxed_clone());
+                        }),
+                )
+                .child(indicator)
+                .into_any_element(),
+        )
+    }
+
     pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         if let Some(dev_server) =
             self.project
@@ -295,6 +335,9 @@ impl TitleBar {
                     }))
                     .into_any_element(),
             );
+        }
+        if self.project.read(cx).is_via_ssh() {
+            return self.render_ssh_project_host(cx);
         }
 
         if self.project.read(cx).is_disconnected() {
