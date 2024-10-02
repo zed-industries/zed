@@ -334,7 +334,7 @@ impl TerminalBuilder {
         );
 
         // setup_env modifies the current process's environment, which we are
-        // ignoring in favour of the env variable here. Instead, we copy over
+        // ignoring in favor of the env variable here. Instead, we copy over
         // the relevant variables from the current environment after
         // modification so that we don't have to re-implement the logic here.
         alacritty_terminal::tty::setup_env();
