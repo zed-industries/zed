@@ -33,6 +33,12 @@ impl Render for ToolbarControls {
             "Include Warnings"
         };
 
+        let warning_color = if include_warnings {
+            Color::Warning
+        } else {
+            Color::Muted
+        };
+
         h_flex()
             .when(has_stale_excerpts, |div| {
                 div.child(
@@ -51,6 +57,7 @@ impl Render for ToolbarControls {
             })
             .child(
                 IconButton::new("toggle-warnings", IconName::Warning)
+                    .icon_color(warning_color)
                     .tooltip(move |cx| Tooltip::text(tooltip, cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(editor) = this.editor() {
