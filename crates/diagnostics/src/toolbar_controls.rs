@@ -1,7 +1,7 @@
 use crate::ProjectDiagnosticsEditor;
 use gpui::{EventEmitter, ParentElement, Render, View, ViewContext, WeakView};
 use ui::prelude::*;
-use ui::{IconButton, IconName, Tooltip};
+use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
@@ -40,10 +40,12 @@ impl Render for ToolbarControls {
         };
 
         h_flex()
+            .gap_1()
             .when(has_stale_excerpts, |div| {
                 div.child(
                     IconButton::new("update-excerpts", IconName::Update)
                         .icon_color(Color::Info)
+                        .shape(IconButtonShape::Square)
                         .disabled(is_updating)
                         .tooltip(move |cx| Tooltip::text("Update excerpts", cx))
                         .on_click(cx.listener(|this, _, cx| {
@@ -58,6 +60,7 @@ impl Render for ToolbarControls {
             .child(
                 IconButton::new("toggle-warnings", IconName::Warning)
                     .icon_color(warning_color)
+                    .shape(IconButtonShape::Square)
                     .tooltip(move |cx| Tooltip::text(tooltip, cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(editor) = this.editor() {
