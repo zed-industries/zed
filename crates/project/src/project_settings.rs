@@ -1,3 +1,4 @@
+use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
@@ -6,7 +7,7 @@ use paths::local_settings_file_relative_path;
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{InvalidSettingsError, Settings, SettingsSources, SettingsStore};
+use settings::{InvalidSettingsError, LocalSettingsKind, Settings, SettingsSources, SettingsStore};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -266,13 +267,14 @@ impl SettingsObserver {
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, content) in store.local_settings(worktree.read(cx).id()) {
+            for (path, kind, content) in store.local_settings(worktree.read(cx).id()) {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
                         path: path.to_string_lossy().into(),
                         content: Some(content),
+                        kind: Some(local_settings_kind_to_proto(kind).into()),
                     })
                     .log_err();
             }
@@ -288,6 +290,11 @@ impl SettingsObserver {
         envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<()> {
+        let kind = match envelope.payload.kind {
+            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+                .with_context(|| format!("unknown kind {kind}"))?,
+            None => proto::LocalSettingsKind::Settings,
+        };
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             let Some(worktree) = this
@@ -297,10 +304,12 @@ impl SettingsObserver {
             else {
                 return;
             };
+
             this.update_settings(
                 worktree,
                 [(
                     PathBuf::from(&envelope.payload.path).into(),
+                    local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
                 cx,
@@ -327,6 +336,7 @@ impl SettingsObserver {
             ssh.send(proto::UpdateUserSettings {
                 project_id: 0,
                 content,
+                kind: Some(proto::LocalSettingsKind::Settings.into()),
             })
             .log_err();
         }
@@ -342,6 +352,7 @@ impl SettingsObserver {
                     ssh.send(proto::UpdateUserSettings {
                         project_id: 0,
                         content,
+                        kind: Some(proto::LocalSettingsKind::Settings.into()),
                     })
                     .log_err();
                 }
@@ -397,6 +408,7 @@ impl SettingsObserver {
                 settings_contents.push(async move {
                     (
                         settings_dir,
+                        LocalSettingsKind::Settings,
                         if removed {
                             None
                         } else {
@@ -413,15 +425,15 @@ impl SettingsObserver {
 
         let worktree = worktree.clone();
         cx.spawn(move |this, cx| async move {
-            let settings_contents: Vec<(Arc<Path>, _)> =
+            let settings_contents: Vec<(Arc<Path>, _, _)> =
                 futures::future::join_all(settings_contents).await;
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     this.update_settings(
                         worktree,
-                        settings_contents
-                            .into_iter()
-                            .map(|(path, content)| (path, content.and_then(|c| c.log_err()))),
+                        settings_contents.into_iter().map(|(path, kind, content)| {
+                            (path, kind, content.and_then(|c| c.log_err()))
+                        }),
                         cx,
                     )
                 })
@@ -433,17 +445,18 @@ impl SettingsObserver {
     fn update_settings(
         &mut self,
         worktree: Model<Worktree>,
-        settings_contents: impl IntoIterator<Item = (Arc<Path>, Option<String>)>,
+        settings_contents: impl IntoIterator<Item = (Arc<Path>, LocalSettingsKind, Option<String>)>,
         cx: &mut ModelContext<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
 
         let result = cx.update_global::<SettingsStore, anyhow::Result<()>>(|store, cx| {
-            for (directory, file_content) in settings_contents {
+            for (directory, kind, file_content) in settings_contents {
                 store.set_local_settings(
                     worktree_id,
                     directory.clone(),
+                    kind,
                     file_content.as_deref(),
                     cx,
                 )?;
@@ -455,6 +468,7 @@ impl SettingsObserver {
                             worktree_id: remote_worktree_id.to_proto(),
                             path: directory.to_string_lossy().into_owned(),
                             content: file_content,
+                            kind: Some(local_settings_kind_to_proto(kind).into()),
                         })
                         .log_err();
                 }
@@ -479,5 +493,21 @@ impl SettingsObserver {
                 cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
             }
         }
+    }
+}
+
+pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSettingsKind {
+    match kind {
+        proto::LocalSettingsKind::Settings => LocalSettingsKind::Settings,
+        proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks,
+        proto::LocalSettingsKind::Editorconfig => LocalSettingsKind::Editorconfig,
+    }
+}
+
+pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSettingsKind {
+    match kind {
+        LocalSettingsKind::Settings => proto::LocalSettingsKind::Settings,
+        LocalSettingsKind::Tasks => proto::LocalSettingsKind::Tasks,
+        LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
     }
 }

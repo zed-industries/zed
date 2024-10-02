@@ -112,6 +112,7 @@ CREATE TABLE "worktree_settings_files" (
     "worktree_id" INTEGER NOT NULL,
     "path" VARCHAR NOT NULL,
     "content" TEXT,
+    "kind" VARCHAR,
     PRIMARY KEY(project_id, worktree_id, path),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
