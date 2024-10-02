@@ -27,7 +27,7 @@ use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
 
-use ui::{h_flex, prelude::*, IconButton, IconName, Tooltip, BASE_REM_SIZE_IN_PX};
+use ui::{h_flex, prelude::*, IconButton, IconButtonShape, IconName, Tooltip, BASE_REM_SIZE_IN_PX};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -306,7 +306,7 @@ impl Render for BufferSearchBar {
                     .child(
                         IconButton::new("select-all", ui::IconName::SelectAll)
                             .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
-                            .size(ButtonSize::Compact)
+                            .shape(IconButtonShape::Square)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
@@ -375,6 +375,7 @@ impl Render for BufferSearchBar {
                         .gap_0p5()
                         .child(
                             IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
+                                .shape(IconButtonShape::Square)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |cx| {
@@ -392,6 +393,7 @@ impl Render for BufferSearchBar {
                         )
                         .child(
                             IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
+                                .shape(IconButtonShape::Square)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |cx| {
@@ -447,6 +449,7 @@ impl Render for BufferSearchBar {
                     .when(!narrow_mode, |div| {
                         div.child(
                             IconButton::new(SharedString::from("Close"), IconName::Close)
+                                .shape(IconButtonShape::Square)
                                 .tooltip(move |cx| {
                                     Tooltip::for_action("Close Search Bar", &Dismiss, cx)
                                 })
