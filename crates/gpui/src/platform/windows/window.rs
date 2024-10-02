@@ -541,12 +541,12 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { ShowWindow(hwnd, SW_SHOWNA).ok().log_err() };
-        unsafe { SetActiveWindow(hwnd).log_err() };
-        unsafe { SetFocus(hwnd).log_err() };
-        // todo(windows)
-        // crate `windows 0.56` reports true as Err
-        unsafe { SetForegroundWindow(hwnd).as_bool() };
+        unsafe {
+            ShowWindow(hwnd, SW_SHOWNA).ok().log_err();
+            SetActiveWindow(hwnd).log_err();
+            SetFocus(hwnd).log_err();
+            SetForegroundWindow(hwnd).as_bool();
+        }
     }
 
     fn is_active(&self) -> bool {
