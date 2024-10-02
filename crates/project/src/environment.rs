@@ -3,13 +3,14 @@ use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
 use collections::HashMap;
-use gpui::{AppContext, Context, Model, ModelContext, Task};
+use gpui::{AppContext, Context, EventEmitter, Model, ModelContext, Task};
 use settings::Settings as _;
 use worktree::WorktreeId;
 
 use anyhow::Result;
 
 use crate::{
+    direnv::DirenvError,
     project_settings::{DirenvSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
@@ -19,6 +20,12 @@ pub struct ProjectEnvironment {
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
+
+pub enum EnvironmentEvent {
+    DirenvError(DirenvError),
+}
+
+impl EventEmitter<EnvironmentEvent> for ProjectEnvironment {}
 
 impl ProjectEnvironment {
     pub fn new(
@@ -121,7 +128,7 @@ impl ProjectEnvironment {
             let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
             cx.spawn(|this, mut cx| async move {
-                let (mut shell_env, warning) = cx
+                let (mut shell_env, error) = cx
                     .background_executor()
                     .spawn({
                         let cwd = worktree_abs_path.clone();
@@ -131,8 +138,11 @@ impl ProjectEnvironment {
                     .ok()
                     .unzip();
 
-                if let Some(warning) = warning.flatten() {
-                    // ??
+                if let Some(error) = error.flatten() {
+                    this.update(&mut cx, move |_, cx| {
+                        cx.emit(EnvironmentEvent::DirenvError(error))
+                    })
+                    .log_err();
                 }
 
                 if let Some(shell_env) = shell_env.as_mut() {
@@ -175,7 +185,7 @@ impl From<EnvironmentOrigin> for String {
 async fn load_shell_environment(
     _dir: &Path,
     _load_direnv: &DirenvSettings,
-) -> Result<(HashMap<String, String>, Option<String>)> {
+) -> Result<(HashMap<String, String>, Option<DirenvError>)> {
     let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
         .into_iter()
         .collect();
@@ -186,13 +196,13 @@ async fn load_shell_environment(
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
-) -> Result<(HashMap<String, String>, Option<String>)> {
+) -> Result<(HashMap<String, String>, Option<DirenvError>)> {
     use crate::direnv::load_direnv_environment;
     use anyhow::{anyhow, Context};
     use std::path::PathBuf;
     use util::parse_env_output;
 
-    let (direnv_environment, warning) = match load_direnv {
+    let (direnv_environment, direnv_error) = match load_direnv {
         DirenvSettings::ShellHook => (None, None),
         DirenvSettings::Direct => load_direnv_environment(dir).await,
     };
@@ -266,5 +276,5 @@ async fn load_shell_environment(
         parsed_env.insert(key, value);
     });
 
-    Ok((parsed_env, warning))
+    Ok((parsed_env, direnv_error))
 }

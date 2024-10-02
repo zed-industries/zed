@@ -29,6 +29,7 @@ use client::{
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+use environment::EnvironmentEvent;
 pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
@@ -614,6 +615,9 @@ impl Project {
                 .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+            cx.subscribe(&environment, Self::on_environment_event)
+                .detach();
+
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
@@ -1944,6 +1948,21 @@ impl Project {
                         .log_err();
                 }
             }
+        }
+    }
+
+    fn on_environment_event(
+        &mut self,
+        _: Model<ProjectEnvironment>,
+        event: &EnvironmentEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            EnvironmentEvent::DirenvError(error) => cx.emit(crate::Event::Notification(format!(
+                "Direnv exited with {}.\n{}",
+                error.status,
+                String::from_utf8_lossy(&error.stderr).trim()
+            ))),
         }
     }
 
