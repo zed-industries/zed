@@ -719,6 +719,16 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            cx.on_release(|this, _| {
+                if let Some(ssh_client) = this.ssh_client.as_ref() {
+                    ssh_client
+                        .to_proto_client()
+                        .send(proto::ShutdownRemoteServer {})
+                        .log_err();
+                }
+            })
+            .detach();
+
             let this = Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),

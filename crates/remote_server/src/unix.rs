@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use fs::RealFs;
 use futures::channel::mpsc;
 use futures::{select, AsyncRead, AsyncWrite, FutureExt};
-use gpui::Context as _;
+use gpui::{AppContext, Context as _};
 use remote::ssh_session::ChannelClient;
 use remote::{
     json_log::LogRecord,
@@ -12,6 +12,7 @@ use remote::{
 use rpc::proto::Envelope;
 use smol::Async;
 use smol::{io::AsyncWriteExt, net::unix::UnixListener, stream::StreamExt as _};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use std::{
     env,
@@ -88,8 +89,139 @@ async fn accept_with_timeout(
     .await
 }
 
-// This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
-const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+fn start_server(
+    stdin_listener: UnixListener,
+    stdout_listener: UnixListener,
+    cx: &mut AppContext,
+) -> Arc<ChannelClient> {
+    // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
+    const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+    let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+    let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+    let (stdin_failed_tx, mut stdin_failed_rx) = mpsc::unbounded::<()>();
+
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+
+    cx.on_app_quit({
+        let shutdown_requested = shutdown_requested.clone();
+        move |_| {
+            let shutdown_requested = shutdown_requested.clone();
+            async move {
+                log::warn!("server: requested app quit");
+                shutdown_requested.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    })
+    .detach();
+
+    cx
+        .spawn({
+            let shutdown_requested = shutdown_requested.clone();
+            |cx| async move {
+            loop {
+                if shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+                    return Ok(());
+                }
+
+                log::info!("server: waiting for a new connection on stdin socket");
+                let mut stream = match accept_with_timeout(&stdin_listener, "stdin", IDLE_TIMEOUT).await {
+                    Ok(stream) => Ok(stream),
+                    Err(err) => {
+                        if shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+                            return Ok(());
+                        }
+
+                        if err.downcast_ref::<AcceptError>().map_or(false, |error| error.is_timeout()) {
+                            log::info!("server: timed out waiting for new connection on stdin socket, shutting down");
+                            cx.update(|cx| {
+                                cx.shutdown();
+                                cx.quit();
+                            }).ok();
+                            return Ok(());
+                        }
+                        Err(err)
+                    }
+                }?;
+
+                log::info!("server: got new connection on stdin socket");
+
+                let mut input_buffer = Vec::new();
+                loop {
+                    let message = match read_message(&mut stream, &mut input_buffer).await {
+                        Ok(message) => message,
+                        Err(error) => {
+                            if shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+                                return Ok(());
+                            }
+                            log::warn!("server: error reading message on stdin: {}", error);
+                            stdin_failed_tx.unbounded_send(()).ok();
+                            log::warn!("server: sent stdin failed message");
+                            break;
+                        }
+                    };
+                    if let Err(error) = incoming_tx.unbounded_send(message) {
+                        return Err::<(), anyhow::Error>(anyhow!(
+                            "server: failed to send message to incoming_tx: {:?}",
+                            error
+                        ));
+                    }
+                }
+            }
+        }})
+        .detach();
+
+    cx.background_executor()
+        .spawn(async move {
+            loop {
+                if shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+
+                log::info!("server: waiting for a new connection on stdout socket");
+                let Ok((mut stream, _)) = stdout_listener.accept().await else {
+                    if !shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+                        log::error!("server: accept on stdout socket failed");
+                    }
+                    break;
+                };
+
+                log::info!("server: got new connection on stdout socket");
+
+                let mut output_buffer = Vec::new();
+                loop {
+                    select! {
+                        message = outgoing_rx.next().fuse() => {
+                            let Some(message) = message else {
+                                log::error!("server: stdout handler, no message");
+                                break;
+                            };
+
+                            if let Err(error) =
+                                write_message(&mut stream, &mut output_buffer, message).await
+                            {
+                                log::error!("server: failed to write stdout message: {:?}", error);
+                                break;
+                            }
+                            if let Err(error) = stream.flush().await {
+                                log::error!("server: failed to flush stdout message: {:?}", error);
+                                break;
+                            }
+                        }
+                        _ = stdin_failed_rx.next().fuse() => {
+                            if !shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+                                log::error!("server: stdin failed, terminating");
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+        .detach();
+
+    ChannelClient::new(incoming_rx, outgoing_tx, cx)
+}
 
 pub fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf) -> Result<()> {
     write_pid_file(&pid_file)
@@ -103,104 +235,9 @@ pub fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: Path
         settings::init(cx);
         HeadlessProject::init(cx);
 
-        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
-
-        let (stdin_failed_tx, mut stdin_failed_rx) = mpsc::unbounded::<()>();
-
-        cx
-            .spawn(|cx| async move {
-                loop {
-                    log::info!("server: waiting for a new connection on stdin socket");
-                    let mut stream = match accept_with_timeout(&stdin_listener, "stdin", IDLE_TIMEOUT).await {
-                        Ok(stream) => Ok(stream),
-                        Err(err) => {
-                            if err.downcast_ref::<AcceptError>().map_or(false, |error| error.is_timeout()) {
-                                log::info!("server: timed out waiting for new connection on stdin socket, shutting down");
-                                cx.update(|cx| {
-                                    // TODO: This is a because `quit` should call shutdown,
-                                    // but it doesn't in headless mode.
-                                    cx.shutdown();
-                                    cx.quit();
-                                }).ok();
-                                return Ok(());
-                            }
-                            Err(err)
-                        }
-                    }?;
-
-                    log::info!("server: got new connection on stdin socket");
-
-                    let mut input_buffer = Vec::new();
-                    loop {
-                        let message = match read_message(&mut stream, &mut input_buffer).await {
-                            Ok(message) => message,
-                            Err(error) => {
-                                log::warn!("server: error reading message on stdin: {}", error);
-                                stdin_failed_tx.unbounded_send(()).ok();
-                                log::warn!("server: sent stdin failed message");
-                                break;
-                            }
-                        };
-                        if let Err(error) = incoming_tx.unbounded_send(message) {
-                            return Err::<(), anyhow::Error>(anyhow!(
-                                "server: failed to send message to incoming_tx: {:?}",
-                                error
-                            ));
-                        }
-                    }
-                }
-            })
-            .detach();
-
-        cx.background_executor()
-            .spawn(async move {
-                loop {
-                    log::info!("server: waiting for a new connection on stdout socket");
-                    let Ok((mut stream, _)) = stdout_listener.accept().await else {
-                        log::error!("server: accept on stdout socket failed");
-                        break;
-                    };
-
-                    log::info!("server: got new connection on stdout socket");
-
-                    let mut output_buffer = Vec::new();
-                    loop {
-                        select! {
-                            message = outgoing_rx.next().fuse() => {
-                                let Some(message) = message else {
-                                    log::error!("server: stdout handler, no message");
-                                    break;
-                                };
-
-                                if let Err(error) =
-                                    write_message(&mut stream, &mut output_buffer, message).await
-                                {
-                                    log::error!("server: failed to write stdout message: {:?}", error);
-                                    break;
-                                }
-                                if let Err(error) = stream.flush().await {
-                                    log::error!("server: failed to flush stdout message: {:?}", error);
-                                    break;
-                                }
-                            }
-                            _ = stdin_failed_rx.next().fuse() => {
-                                log::error!("server: stdin failed, terminating");
-                                break;
-                            }
-                        }
-                    }
-                }
-            })
-            .detach();
-
-        let session = ChannelClient::new(incoming_rx, outgoing_tx, cx);
+        let session = start_server(stdin_listener, stdout_listener, cx);
         let project = cx.new_model(|cx| {
-            HeadlessProject::new(
-                session.clone(),
-                Arc::new(RealFs::new(Default::default(), None)),
-                cx,
-            )
+            HeadlessProject::new(session, Arc::new(RealFs::new(Default::default(), None)), cx)
         });
 
         mem::forget(project);

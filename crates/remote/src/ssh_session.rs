@@ -251,9 +251,9 @@ struct SshRemoteClientState {
 
 pub struct SshRemoteClient {
     client: Arc<ChannelClient>,
-    inner_state: Mutex<Option<SshRemoteClientState>>,
     connection_options: SshConnectionOptions,
-    _subscriptions: Mutex<Vec<Subscription>>,
+    inner_state: Arc<Mutex<Option<SshRemoteClientState>>>,
+    _subscriptions: Arc<Mutex<Vec<Subscription>>>,
 }
 
 impl Drop for SshRemoteClient {
@@ -274,9 +274,9 @@ impl SshRemoteClient {
         let client = cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx))?;
         let this = Arc::new(Self {
             client,
-            inner_state: Mutex::new(None),
             connection_options: connection_options.clone(),
-            _subscriptions: Mutex::new(Vec::new()),
+            inner_state: Arc::new(Mutex::new(None)),
+            _subscriptions: Arc::new(Mutex::new(Vec::new())),
         });
 
         let weak = Arc::downgrade(&this);
@@ -321,7 +321,10 @@ impl SshRemoteClient {
     }
 
     fn shutdown_processes(&self) {
-        let mut state = self.inner_state.lock().take().unwrap();
+        let Some(mut state) = self.inner_state.lock().take() else {
+            return;
+        };
+        log::info!("shutting down ssh processes");
         // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
         // child of master_process.
         let task = mem::replace(&mut state.multiplex_task, Task::ready(Ok(())));
@@ -563,9 +566,9 @@ impl SshRemoteClient {
                 let client = ChannelClient::new(server_to_client_rx, client_to_server_tx, cx);
                 Arc::new(Self {
                     client,
-                    inner_state: Mutex::new(None),
                     connection_options: SshConnectionOptions::default(),
-                    _subscriptions: Mutex::new(Vec::new()),
+                    inner_state: Arc::new(Mutex::new(None)),
+                    _subscriptions: Arc::new(Mutex::new(Vec::new())),
                 })
             }),
             server_cx.update(|cx| ChannelClient::new(client_to_server_rx, server_to_client_tx, cx)),
