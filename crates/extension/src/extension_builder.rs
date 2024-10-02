@@ -25,7 +25,7 @@ use wit_component::ComponentEncoder;
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
 const RUST_TARGET: &str = "wasm32-wasip1";
-const WASI_ADAPTER_URL: &str =
+pub const WASI_ADAPTER_URL: &str =
     "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
 /// Compiling Tree-sitter parsers from C to WASM requires Clang 17, and a WASM build of libc
