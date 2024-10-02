@@ -314,9 +314,9 @@ fn spawn_server(
 }
 
 #[cfg(not(windows))]
-fn check_pid_file(pid_file: &Path) -> Result<bool> {
-    let pid = std::fs::read_to_string(&pid_file)
-        .context("Failed to read PID file")
+fn check_pid_file(path: &Path) -> Result<bool> {
+    let pid = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read PID file at {:?}", path))
         .and_then(|contents| contents.parse::<u32>().context("Failed to parse PID file"))?;
 
     log::debug!("proxy: Checking if process with PID {} exists...", pid);
@@ -331,21 +331,19 @@ fn check_pid_file(pid_file: &Path) -> Result<bool> {
         }
         _ => {
             log::debug!("proxy: Found PID file, but process with that PID does not exist. Removing PID file.");
-            std::fs::remove_file(&pid_file).context("proxy: Failed to remove PID file")?;
+            std::fs::remove_file(&path).context("proxy: Failed to remove PID file")?;
             Ok(false)
         }
     }
 }
 
 #[cfg(not(windows))]
-fn write_pid_file(pid_file: &Path) -> Result<()> {
-    let pid = std::process::id();
-    if pid_file.exists() {
-        // remove the pid file
-        std::fs::remove_file(pid_file)?;
+fn write_pid_file(path: &Path) -> Result<()> {
+    if path.exists() {
+        std::fs::remove_file(path)?;
     }
-    std::fs::write(pid_file, pid.to_string()).context("Failed to write PID file")?;
-    Ok(())
+
+    std::fs::write(path, std::process::id().to_string()).context("Failed to write PID file")
 }
 
 #[cfg(not(windows))]
