@@ -5,7 +5,7 @@ use gpui::{actions, Action, AppContext, FocusHandle, IntoElement};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
-use ui::{ButtonStyle, IconButton};
+use ui::{ButtonStyle, IconButton, IconButtonShape};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 
@@ -112,6 +112,7 @@ impl SearchOptions {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
             .style(ButtonStyle::Subtle)
+            .shape(IconButtonShape::Square)
             .selected(active)
             .tooltip({
                 let action = self.to_toggle_action();
