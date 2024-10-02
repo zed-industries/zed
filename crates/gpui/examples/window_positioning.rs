@@ -52,7 +52,7 @@ fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> Window
         titlebar: None,
         window_background: WindowBackgroundAppearance::Transparent,
         focus: false,
-        show: true,
+        display_state: WindowDisplayState::Visible,
         kind: WindowKind::PopUp,
         is_movable: false,
         app_id: None,
