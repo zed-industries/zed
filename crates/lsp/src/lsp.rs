@@ -749,8 +749,6 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
-            outbound_tx.close();
 
             let server = self.server.clone();
             let name = self.name.clone();
@@ -762,15 +760,16 @@ impl LanguageServer {
                     select! {
                         request_result = shutdown_request.fuse() => {
                             request_result?;
+                            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
+                            outbound_tx.close();
+                            exit?;
                         }
 
                         _ = timer => {
                             log::info!("timeout waiting for language server {name} to shutdown");
                         },
                     }
-
                     response_handlers.lock().take();
-                    exit?;
                     output_done.recv().await;
                     server.lock().take().map(|mut child| child.kill());
                     log::debug!("language server shutdown finished");
