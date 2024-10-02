@@ -46,6 +46,7 @@ lsp.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
+protols-tree-sitter-proto = { workspace = true, optional = true }
 regex.workspace = true
 rope.workspace = true
 rust-embed.workspace = true
@@ -55,25 +56,23 @@ settings.workspace = true
 smol.workspace = true
 task.workspace = true
 toml.workspace = true
+tree-sitter = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-go-mod = { workspace = true, optional = true }
+tree-sitter-gowork = { workspace = true, optional = true }
+tree-sitter-jsdoc = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-regex = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
-
-tree-sitter-bash = {workspace = true, optional = true}
-tree-sitter-c = {workspace = true, optional = true}
-tree-sitter-cpp = {workspace = true, optional = true}
-tree-sitter-css = {workspace = true, optional = true}
-tree-sitter-go = {workspace = true, optional = true}
-tree-sitter-go-mod = {workspace = true, optional = true}
-tree-sitter-gowork = {workspace = true, optional = true}
-tree-sitter-jsdoc = {workspace = true, optional = true}
-tree-sitter-json = {workspace = true, optional = true}
-tree-sitter-md = {workspace = true, optional = true}
-protols-tree-sitter-proto = {workspace = true, optional = true}
-tree-sitter-python = {workspace = true, optional = true}
-tree-sitter-regex = {workspace = true, optional = true}
-tree-sitter-rust = {workspace = true, optional = true}
-tree-sitter-typescript = {workspace = true, optional = true}
-tree-sitter-yaml = {workspace = true, optional = true}
-tree-sitter = {workspace = true, optional = true}
 
 [dev-dependencies]
 text.workspace = true
