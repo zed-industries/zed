@@ -441,7 +441,7 @@ async fn upload_previous_panics(
     Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
-static LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
+const LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)

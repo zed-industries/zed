@@ -351,7 +351,7 @@ pub enum Event {
     DeletedEntry(ProjectEntryId),
 }
 
-static EMPTY_PATH: &str = "";
+const EMPTY_PATH: &str = "";
 
 impl EventEmitter<Event> for Worktree {}
 
