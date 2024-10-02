@@ -35,6 +35,7 @@
     "dll": "storage",
     "doc": "document",
     "docx": "document",
+    "edge": "edge",
     "eex": "elixir",
     "elm": "elm",
     "erl": "erlang",
@@ -227,6 +228,9 @@
     },
     "document": {
       "icon": "icons/file_icons/book.svg"
+    },
+    "edge": {
+      "icon": "icons/file_icons/edge.svg"
     },
     "elixir": {
       "icon": "icons/file_icons/elixir.svg"
