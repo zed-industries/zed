@@ -187,36 +187,16 @@ async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
 ) -> Result<(HashMap<String, String>, Option<String>)> {
-    use crate::direnv::{DirenvLoadError, DirenvWarning};
+    use crate::direnv::load_direnv_environment;
     use anyhow::{anyhow, Context};
     use std::path::PathBuf;
     use util::parse_env_output;
 
-    let mut warning = DirenvWarning::default();
-    let direnv_environment = match load_direnv {
-        DirenvSettings::ShellHook => None,
-        DirenvSettings::Direct => match crate::direnv::load_direnv_environment(dir).await {
-            Ok(env) => env,
-            Err(err) => {
-                match err {
-                    DirenvLoadError::Io(io_error) => {
-                        log::error!("failed to spawn direnv with error: {}", io_error);
-                    }
-                    DirenvLoadError::NonZeroResult { status, stderr } => {
-                        warning = DirenvWarning::from(format!(
-                            "Loading direnv environment failed (exit code {status})\nStderr:\n{}",
-                            String::from_utf8_lossy(&stderr)
-                        ));
-                    }
-                    DirenvLoadError::Serde(serde_error) => {
-                        log::error!("direnv returned incorrect json: {serde_error}");
-                    }
-                }
-                None
-            }
-        },
-    }
-    .unwrap_or(HashMap::default());
+    let (direnv_environment, warning) = match load_direnv {
+        DirenvSettings::ShellHook => (None, None),
+        DirenvSettings::Direct => load_direnv_environment(dir).await,
+    };
+    let direnv_environment = direnv_environment.unwrap_or(HashMap::default());
 
     let marker = "ZED_SHELL_START";
     let shell = std::env::var("SHELL").context(
@@ -286,5 +266,5 @@ async fn load_shell_environment(
         parsed_env.insert(key, value);
     });
 
-    Ok((parsed_env, warning.take()))
+    Ok((parsed_env, warning))
 }
