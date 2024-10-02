@@ -1,6 +1,6 @@
 name = "Clojure"
 grammar = "clojure"
-path_suffixes = ["clj", "cljs", "cljc", "edn", "bb"]
+path_suffixes = ["clj", "cljs", "cljc", "cljd", "edn", "bb"]
 line_comments = [";; "]
 autoclose_before = "}])"
 brackets = [

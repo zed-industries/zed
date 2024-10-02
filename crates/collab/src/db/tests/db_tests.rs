@@ -1,9 +1,8 @@
 use super::*;
 use crate::test_both_dbs;
-use gpui::TestAppContext;
+use chrono::Utc;
 use pretty_assertions::{assert_eq, assert_ne};
 use std::sync::Arc;
-use tests::TestDb;
 
 test_both_dbs!(
     test_get_users,
@@ -46,25 +45,25 @@ async fn test_get_users(db: &Arc<Database>) {
             (
                 user_ids[0],
                 "user1".to_string(),
-                Some(1),
+                1,
                 Some("user1@example.com".to_string()),
             ),
             (
                 user_ids[1],
                 "user2".to_string(),
-                Some(2),
+                2,
                 Some("user2@example.com".to_string()),
             ),
             (
                 user_ids[2],
                 "user3".to_string(),
-                Some(3),
+                3,
                 Some("user3@example.com".to_string()),
             ),
             (
                 user_ids[3],
                 "user4".to_string(),
-                Some(4),
+                4,
                 Some("user4@example.com".to_string()),
             )
         ]
@@ -102,19 +101,25 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
         .user_id;
 
     let user = db
-        .get_or_create_user_by_github_account("the-new-login2", Some(102), None, None)
+        .get_or_create_user_by_github_account("the-new-login2", 102, None, Utc::now(), None)
         .await
         .unwrap();
     assert_eq!(user.id, user_id2);
     assert_eq!(&user.github_login, "the-new-login2");
-    assert_eq!(user.github_user_id, Some(102));
+    assert_eq!(user.github_user_id, 102);
 
     let user = db
-        .get_or_create_user_by_github_account("login3", Some(103), Some("user3@example.com"), None)
+        .get_or_create_user_by_github_account(
+            "login3",
+            103,
+            Some("user3@example.com"),
+            Utc::now(),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(&user.github_login, "login3");
-    assert_eq!(user.github_user_id, Some(103));
+    assert_eq!(user.github_user_id, 103);
     assert_eq!(user.email_address, Some("user3@example.com".into()));
 }
 
@@ -535,18 +540,18 @@ async fn test_project_count(db: &Arc<Database>) {
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], None)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, None)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], None)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, None)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
     // Projects shared by admins aren't counted.
-    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], None)
+    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], false, None)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
@@ -564,9 +569,10 @@ fn test_fuzzy_like_string() {
     assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
-async fn test_fuzzy_search_users(cx: &mut TestAppContext) {
-    let test_db = TestDb::postgres(cx.executor());
+async fn test_fuzzy_search_users(cx: &mut gpui::TestAppContext) {
+    let test_db = tests::TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",

@@ -404,7 +404,12 @@ mod tests {
 
     #[test]
     fn test_match_multibyte_path_entries() {
-        let paths = vec!["aαbβ/cγdδ", "αβγδ/bcde", "c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f", "/d/🆒/h"];
+        let paths = vec![
+            "aαbβ/cγdδ",
+            "αβγδ/bcde",
+            "c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f",
+            "/d/🆒/h",
+        ];
         assert_eq!("1️⃣".len(), 7);
         assert_eq!(
             match_single_path_query("bcd", false, &paths),
@@ -440,6 +445,7 @@ mod tests {
             let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>();
             let char_bag = CharBag::from(lowercase_path.as_slice());
             path_entries.push(PathMatchCandidate {
+                is_dir: false,
                 char_bag,
                 path: &path_arcs[i],
             });
@@ -463,6 +469,7 @@ mod tests {
                 path: Arc::from(candidate.path),
                 path_prefix: "".into(),
                 distance_to_relative_ancestor: usize::MAX,
+                is_dir: false,
             },
         );
 

@@ -22,7 +22,7 @@ use settings::Settings;
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label,
+    prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label, PopoverMenu,
     TabBar, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
@@ -111,6 +111,7 @@ impl ChatPanel {
                 this.is_scrolled_to_bottom = !event.is_scrolled;
             }));
 
+            let local_offset = chrono::Local::now().offset().local_minus_utc();
             let mut this = Self {
                 fs,
                 client,
@@ -120,7 +121,7 @@ impl ChatPanel {
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_editor: input_editor,
-                local_timezone: cx.local_timezone(),
+                local_timezone: UtcOffset::from_whole_seconds(local_offset).unwrap(),
                 subscriptions: Vec::new(),
                 is_scrolled_to_bottom: true,
                 active: false,
@@ -355,11 +356,10 @@ impl ChatPanel {
                 .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
                 .child(Avatar::new(user_being_replied_to.avatar_uri.clone()).size(rems(0.7)))
                 .child(
-                    div().font_weight(FontWeight::SEMIBOLD).child(
-                        Label::new(format!("@{}", user_being_replied_to.github_login))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    ),
+                    Label::new(format!("@{}", user_being_replied_to.github_login))
+                        .size(LabelSize::XSmall)
+                        .weight(FontWeight::SEMIBOLD)
+                        .color(Color::Muted),
                 )
                 .child(
                     div().overflow_y_hidden().child(
@@ -490,22 +490,16 @@ impl ChatPanel {
                         |this| {
                             this.child(
                                 h_flex()
+                                    .gap_2()
                                     .text_ui_sm(cx)
                                     .child(
-                                        div().absolute().child(
-                                            Avatar::new(message.sender.avatar_uri.clone())
-                                                .size(rems(1.)),
-                                        ),
+                                        Avatar::new(message.sender.avatar_uri.clone())
+                                            .size(rems(1.)),
                                     )
                                     .child(
-                                        div()
-                                            .pl(cx.rem_size() + px(6.0))
-                                            .pr(px(8.0))
-                                            .font_weight(FontWeight::BOLD)
-                                            .child(
-                                                Label::new(message.sender.github_login.clone())
-                                                    .size(LabelSize::Small),
-                                            ),
+                                        Label::new(message.sender.github_login.clone())
+                                            .size(LabelSize::Small)
+                                            .weight(FontWeight::BOLD),
                                     )
                                     .child(
                                         Label::new(time_format::format_localized_timestamp(
@@ -566,7 +560,7 @@ impl ChatPanel {
                 },
             )
             .child(
-                self.render_popover_buttons(&cx, message_id, can_delete_message, can_edit_message)
+                self.render_popover_buttons(cx, message_id, can_delete_message, can_edit_message)
                     .mt_neg_2p5(),
             )
     }
@@ -679,7 +673,7 @@ impl ChatPanel {
                         cx,
                         div()
                             .child(
-                                popover_menu(("menu", message_id))
+                                PopoverMenu::new(("menu", message_id))
                                     .trigger(IconButton::new(
                                         ("trigger", message_id),
                                         IconName::Ellipsis,
@@ -711,12 +705,12 @@ impl ChatPanel {
                 menu.entry(
                     "Copy message text",
                     None,
-                    cx.handler_for(&this, move |this, cx| {
+                    cx.handler_for(this, move |this, cx| {
                         if let Some(message) = this.active_chat().and_then(|active_chat| {
                             active_chat.read(cx).find_loaded_message(message_id)
                         }) {
                             let text = message.body.clone();
-                            cx.write_to_clipboard(ClipboardItem::new(text))
+                            cx.write_to_clipboard(ClipboardItem::new_string(text))
                         }
                     }),
                 )
@@ -724,7 +718,7 @@ impl ChatPanel {
                     menu.entry(
                         "Delete message",
                         None,
-                        cx.handler_for(&this, move |this, cx| this.remove_message(message_id, cx)),
+                        cx.handler_for(this, move |this, cx| this.remove_message(message_id, cx)),
                     )
                 })
             })
@@ -808,13 +802,11 @@ impl ChatPanel {
                 {
                     task.detach();
                 }
-            } else {
-                if let Some(task) = chat
-                    .update(cx, |chat, cx| chat.send_message(message, cx))
-                    .log_err()
-                {
-                    task.detach();
-                }
+            } else if let Some(task) = chat
+                .update(cx, |chat, cx| chat.send_message(message, cx))
+                .log_err()
+            {
+                task.detach();
             }
         }
     }
@@ -860,7 +852,7 @@ impl ChatPanel {
             let scroll_to_message_id = this.update(&mut cx, |this, cx| {
                 this.set_active_chat(chat.clone(), cx);
 
-                scroll_to_message_id.or_else(|| this.last_acknowledged_message_id)
+                scroll_to_message_id.or(this.last_acknowledged_message_id)
             })?;
 
             if let Some(message_id) = scroll_to_message_id {
@@ -1044,13 +1036,12 @@ impl Render for ChatPanel {
                                         .id(("reply-preview", reply_to_message_id))
                                         .child(Label::new("Replying to ").size(LabelSize::Small))
                                         .child(
-                                            div().font_weight(FontWeight::BOLD).child(
-                                                Label::new(format!(
-                                                    "@{}",
-                                                    user_being_replied_to.github_login.clone()
-                                                ))
-                                                .size(LabelSize::Small),
-                                            ),
+                                            Label::new(format!(
+                                                "@{}",
+                                                user_being_replied_to.github_login.clone()
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .weight(FontWeight::BOLD),
                                         )
                                         .when_some(channel_id, |this, channel_id| {
                                             this.cursor_pointer().on_click(cx.listener(
@@ -1114,9 +1105,11 @@ impl Panel for ChatPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<ChatPanelSettings>(self.fs.clone(), cx, move |settings| {
-            settings.dock = Some(position)
-        });
+        settings::update_settings_file::<ChatPanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| settings.dock = Some(position),
+        );
     }
 
     fn size(&self, cx: &gpui::WindowContext) -> Pixels {

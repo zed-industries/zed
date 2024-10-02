@@ -1,17 +1,59 @@
 mod slash_command_registry;
 
 use anyhow::Result;
-use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
-use language::{CodeLabel, LspAdapterDelegate};
+use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
+use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
+use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
 };
-use workspace::Workspace;
+use workspace::{ui::IconName, Workspace};
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterCompletion {
+    /// Run the command
+    Run,
+    /// Continue composing the current argument, doesn't add a space
+    Compose,
+    /// Continue the command composition, adds a space
+    Continue,
+}
+
+impl From<bool> for AfterCompletion {
+    fn from(value: bool) -> Self {
+        if value {
+            AfterCompletion::Run
+        } else {
+            AfterCompletion::Continue
+        }
+    }
+}
+
+impl AfterCompletion {
+    pub fn run(&self) -> bool {
+        match self {
+            AfterCompletion::Run => true,
+            AfterCompletion::Compose | AfterCompletion::Continue => false,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ArgumentCompletion {
+    /// The label to display for this completion.
+    pub label: CodeLabel,
+    /// The new text that should be inserted into the command when this completion is accepted.
+    pub new_text: String,
+    /// Whether the command should be run when accepting this completion.
+    pub after_completion: AfterCompletion,
+    /// Whether to replace the all arguments, or whether to treat this as an independent argument.
+    pub replace_previous_arguments: bool,
 }
 
 pub trait SlashCommand: 'static + Send + Sync {
@@ -22,23 +64,28 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn description(&self) -> String;
     fn menu_text(&self) -> String;
     fn complete_argument(
-        &self,
-        query: String,
+        self: Arc<Self>,
+        arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>>;
+        cx: &mut WindowContext,
+    ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
+    fn accepts_arguments(&self) -> bool {
+        self.requires_argument()
+    }
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
+        context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
         //
         // It may be that `LspAdapterDelegate` needs a more general name, or
         // perhaps another kind of delegate is needed here.
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>>;
 }
@@ -49,14 +96,23 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
+#[derive(Debug, Default, PartialEq)]
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
     pub run_commands_in_text: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
-    pub render_placeholder: RenderFoldPlaceholder,
+    pub icon: IconName,
+    pub label: SharedString,
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl SlashCommandOutputSection<language::Anchor> {
+    pub fn is_valid(&self, buffer: &language::TextBuffer) -> bool {
+        self.range.start.is_valid(buffer) && !self.range.to_offset(buffer).is_empty()
+    }
 }

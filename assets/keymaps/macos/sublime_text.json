@@ -1,0 +1,70 @@
+[
+  {
+    "bindings": {
+      "cmd-shift-[": "pane::ActivatePrevItem",
+      "cmd-shift-]": "pane::ActivateNextItem",
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-shift-up": "editor::AddSelectionAbove",
+      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "cmd-ctrl-up": "editor::MoveLineUp",
+      "cmd-ctrl-down": "editor::MoveLineDown",
+      "cmd-shift-space": "editor::SelectAll",
+      "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
+      "cmd-shift-l": "editor::SplitSelectionIntoLines",
+      "cmd-shift-a": "editor::SelectLargerSyntaxNode",
+      "cmd-shift-d": "editor::DuplicateLineDown",
+      "shift-f12": "editor::FindAllReferences",
+      "alt-cmd-down": "editor::GoToDefinition",
+      "ctrl-alt-cmd-down": "editor::GoToDefinitionSplit",
+      "alt-shift-cmd-down": "editor::FindAllReferences",
+      "ctrl-.": "editor::GoToHunk",
+      "ctrl-,": "editor::GoToPrevHunk",
+      "cmd-k cmd-u": "editor::ConvertToUpperCase",
+      "cmd-k cmd-l": "editor::ConvertToLowerCase",
+      "cmd-shift-j": "editor::JoinLines",
+      "shift-alt-m": "markdown::OpenPreviewToTheSide",
+      "ctrl-backspace": "editor::DeleteToPreviousWordStart",
+      "ctrl-delete": "editor::DeleteToNextWordEnd"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "cmd-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "f4": "search::SelectNextMatch",
+      "shift-f4": "search::SelectPrevMatch",
+      "cmd-1": ["pane::ActivateItem", 0],
+      "cmd-2": ["pane::ActivateItem", 1],
+      "cmd-3": ["pane::ActivateItem", 2],
+      "cmd-4": ["pane::ActivateItem", 3],
+      "cmd-5": ["pane::ActivateItem", 4],
+      "cmd-6": ["pane::ActivateItem", 5],
+      "cmd-7": ["pane::ActivateItem", 6],
+      "cmd-8": ["pane::ActivateItem", 7],
+      "cmd-9": "pane::ActivateLastItem"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-k cmd-b": "workspace::ToggleLeftDock",
+      "cmd-t": "file_finder::Toggle",
+      "shift-cmd-r": "project_symbols::Toggle",
+      // Currently busted: https://github.com/zed-industries/feedback/issues/898
+      "ctrl-0": "project_panel::ToggleFocus"
+    }
+  }
+]

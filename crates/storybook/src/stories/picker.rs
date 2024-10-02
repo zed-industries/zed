@@ -51,9 +51,7 @@ impl PickerDelegate for Delegate {
         selected: bool,
         _cx: &mut gpui::ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let Some(candidate_ix) = self.matches.get(ix) else {
-            return None;
-        };
+        let candidate_ix = self.matches.get(ix)?;
         // TASK: Make StringMatchCandidate::string a SharedString
         let candidate = SharedString::from(self.candidates[*candidate_ix].string.clone());
 

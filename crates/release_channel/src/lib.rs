@@ -118,6 +118,11 @@ impl ReleaseChannel {
             .map(|channel| channel.0)
     }
 
+    /// Returns whether we want to poll for updates for this [`ReleaseChannel`]
+    pub fn poll_for_updates(&self) -> bool {
+        !matches!(self, ReleaseChannel::Dev)
+    }
+
     /// Returns the display name for this [`ReleaseChannel`].
     pub fn display_name(&self) -> &'static str {
         match self {

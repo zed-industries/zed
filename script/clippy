@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
 
-cargo xtask clippy
+if [[ ! " $* " == *" -p "* && ! " $* " == *" --package "* ]]; then
+    set -- "$@" --workspace
+fi
+
+set -x
+"${CARGO:-cargo}" clippy "$@" --release --all-targets --all-features -- --deny warnings

@@ -1,64 +1,55 @@
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, Bias, Direction, Editor};
-use gpui::{actions, View};
-use ui::{ViewContext, WindowContext};
-use workspace::Workspace;
+use gpui::{actions, ViewContext};
 
 use crate::{state::Mode, Vim};
 
 actions!(vim, [ChangeListOlder, ChangeListNewer]);
 
-pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_, _: &ChangeListOlder, cx| {
-        Vim::update(cx, |vim, cx| {
-            move_to_change(vim, Direction::Prev, cx);
-        })
+pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &ChangeListOlder, cx| {
+        vim.move_to_change(Direction::Prev, cx);
     });
-    workspace.register_action(|_, _: &ChangeListNewer, cx| {
-        Vim::update(cx, |vim, cx| {
-            move_to_change(vim, Direction::Next, cx);
-        })
+    Vim::action(editor, cx, |vim, _: &ChangeListNewer, cx| {
+        vim.move_to_change(Direction::Next, cx);
     });
 }
 
-fn move_to_change(vim: &mut Vim, direction: Direction, cx: &mut WindowContext) {
-    let count = vim.take_count(cx).unwrap_or(1);
-    let selections = vim.update_state(|state| {
-        if state.change_list.is_empty() {
-            return None;
+impl Vim {
+    fn move_to_change(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+        let count = self.take_count(cx).unwrap_or(1);
+        if self.change_list.is_empty() {
+            return;
         }
 
-        let prev = state
-            .change_list_position
-            .unwrap_or(state.change_list.len());
+        let prev = self.change_list_position.unwrap_or(self.change_list.len());
         let next = if direction == Direction::Prev {
             prev.saturating_sub(count)
         } else {
-            (prev + count).min(state.change_list.len() - 1)
+            (prev + count).min(self.change_list.len() - 1)
         };
-        state.change_list_position = Some(next);
-        state.change_list.get(next).cloned()
-    });
+        self.change_list_position = Some(next);
+        let Some(selections) = self.change_list.get(next).cloned() else {
+            return;
+        };
+        self.update_editor(cx, |_, editor, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let map = s.display_map();
+                s.select_display_ranges(selections.into_iter().map(|a| {
+                    let point = a.to_display_point(&map);
+                    point..point
+                }))
+            })
+        });
+    }
 
-    let Some(selections) = selections else {
-        return;
-    };
-    vim.update_active_editor(cx, |_, editor, cx| {
-        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            let map = s.display_map();
-            s.select_display_ranges(selections.into_iter().map(|a| {
-                let point = a.to_display_point(&map);
-                point..point
-            }))
-        })
-    });
-}
+    pub(crate) fn push_to_change_list(&mut self, cx: &mut ViewContext<Self>) {
+        let Some((map, selections)) = self.update_editor(cx, |_, editor, cx| {
+            editor.selections.all_adjusted_display(cx)
+        }) else {
+            return;
+        };
 
-pub(crate) fn push_to_change_list(vim: &mut Vim, editor: View<Editor>, cx: &mut WindowContext) {
-    let (map, selections) =
-        editor.update(cx, |editor, cx| editor.selections.all_adjusted_display(cx));
-
-    let pop_state =
-        vim.state()
+        let pop_state = self
             .change_list
             .last()
             .map(|previous| {
@@ -69,25 +60,24 @@ pub(crate) fn push_to_change_list(vim: &mut Vim, editor: View<Editor>, cx: &mut 
             })
             .unwrap_or(false);
 
-    let new_positions = selections
-        .into_iter()
-        .map(|s| {
-            let point = if vim.state().mode == Mode::Insert {
-                movement::saturating_left(&map, s.head())
-            } else {
-                s.head()
-            };
-            map.display_point_to_anchor(point, Bias::Left)
-        })
-        .collect();
+        let new_positions = selections
+            .into_iter()
+            .map(|s| {
+                let point = if self.mode == Mode::Insert {
+                    movement::saturating_left(&map, s.head())
+                } else {
+                    s.head()
+                };
+                map.display_point_to_anchor(point, Bias::Left)
+            })
+            .collect();
 
-    vim.update_state(|state| {
-        state.change_list_position.take();
+        self.change_list_position.take();
         if pop_state {
-            state.change_list.pop();
+            self.change_list.pop();
         }
-        state.change_list.push(new_positions);
-    })
+        self.change_list.push(new_positions);
+    }
 }
 
 #[cfg(test)]

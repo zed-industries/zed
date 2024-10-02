@@ -4,11 +4,10 @@ use chrono::Utc;
 use client::telemetry;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http::Method;
-use isahc::config::Configurable;
+use http_client::{HttpRequestExt, Method};
 
-use http::{self, HttpClient, HttpClientWithUrl};
-use paths::{CRASHES_DIR, CRASHES_RETIRED_DIR};
+use http_client::{self, HttpClient, HttpClientWithUrl};
+use paths::{crashes_dir, crashes_retired_dir};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
 use settings::Settings;
@@ -22,14 +21,15 @@ use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::LocationData;
 use telemetry_events::Panic;
 use telemetry_events::PanicRequest;
-use util::{paths, ResultExt};
+use util::ResultExt;
 
 use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
-    installation_id: Option<String>,
     app_version: SemanticVersion,
+    system_id: Option<String>,
+    installation_id: Option<String>,
     session_id: String,
 ) {
     let is_pty = stdout_is_a_pty();
@@ -50,7 +50,7 @@ pub fn init_panic_hook(
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
 
         if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
@@ -102,6 +102,7 @@ pub fn init_panic_hook(
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
+            system_id: system_id.clone(),
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),
         };
@@ -113,14 +114,14 @@ pub fn init_panic_hook(
         if !is_pty {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-                let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
+                let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
                 let panic_file = std::fs::OpenOptions::new()
                     .append(true)
                     .create(true)
                     .open(&panic_file_path)
                     .log_err();
                 if let Some(mut panic_file) = panic_file {
-                    writeln!(&mut panic_file, "{}", panic_data_json).log_err();
+                    writeln!(&mut panic_file, "{panic_data_json}").log_err();
                     panic_file.flush().log_err();
                 }
             }
@@ -162,7 +163,7 @@ pub fn monitor_main_thread_hangs(
 
     use parking_lot::Mutex;
 
-    use http::Method;
+    use http_client::Method;
     use std::{
         ffi::c_int,
         sync::{mpsc, OnceLock},
@@ -176,7 +177,7 @@ pub fn monitor_main_thread_hangs(
     let background_executor = cx.background_executor();
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
-    // Initialize SIGUSR2 handler to send a backrace to a channel.
+    // Initialize SIGUSR2 handler to send a backtrace to a channel.
     let (backtrace_tx, backtrace_rx) = mpsc::channel();
     static BACKTRACE: Mutex<Vec<backtrace::Frame>> = Mutex::new(Vec::new());
     static BACKTRACE_SENDER: OnceLock<mpsc::Sender<()>> = OnceLock::new();
@@ -226,7 +227,7 @@ pub fn monitor_main_thread_hangs(
 
     let (mut tx, mut rx) = futures::channel::mpsc::channel(3);
     foreground_executor
-        .spawn(async move { while let Some(_) = rx.next().await {} })
+        .spawn(async move { while (rx.next().await).is_some() {} })
         .detach();
 
     background_executor
@@ -259,7 +260,7 @@ pub fn monitor_main_thread_hangs(
             let os_version = client::telemetry::os_version();
 
             loop {
-                while let Some(_) = backtrace_rx.recv().ok() {
+                while backtrace_rx.recv().is_ok() {
                     if !telemetry_settings.diagnostics {
                         return;
                     }
@@ -323,7 +324,7 @@ pub fn monitor_main_thread_hangs(
                         continue;
                     };
 
-                    let Ok(request) = http::Request::builder()
+                    let Ok(request) = http_client::Request::builder()
                         .method(Method::POST)
                         .uri(url.as_ref())
                         .header("x-zed-checksum", checksum)
@@ -368,7 +369,7 @@ async fn upload_previous_panics(
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<Option<(i64, String)>> {
     let panic_report_url = http.build_zed_api_url("/telemetry/panics", &[])?;
-    let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+    let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
 
     let mut most_recent_panic = None;
 
@@ -416,7 +417,7 @@ async fn upload_previous_panics(
                     continue;
                 };
 
-                let Ok(request) = http::Request::builder()
+                let Ok(request) = http_client::Request::builder()
                     .method(Method::POST)
                     .uri(panic_report_url.as_ref())
                     .header("x-zed-checksum", checksum)
@@ -440,7 +441,7 @@ async fn upload_previous_panics(
     Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
-static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
+const LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
@@ -460,8 +461,8 @@ async fn upload_previous_crashes(
 
     let crash_report_url = http.build_zed_api_url("/telemetry/crashes", &[])?;
 
-    // crash directories are only set on MacOS
-    for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR]
+    // Crash directories are only set on macOS.
+    for dir in [crashes_dir(), crashes_retired_dir()]
         .iter()
         .filter_map(|d| d.as_deref())
     {
@@ -488,13 +489,13 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let mut request = http::Request::post(&crash_report_url.to_string())
-                .redirect_policy(isahc::config::RedirectPolicy::Follow)
+            let mut request = http_client::Request::post(&crash_report_url.to_string())
+                .follow_redirects(http_client::RedirectPolicy::FollowAll)
                 .header("Content-Type", "text/plain");
 
             if let Some((panicked_on, payload)) = most_recent_panic.as_ref() {
                 request = request
-                    .header("x-zed-panicked-on", format!("{}", panicked_on))
+                    .header("x-zed-panicked-on", format!("{panicked_on}"))
                     .header("x-zed-panic", payload)
             }
             if let Some(installation_id) = installation_id.as_ref() {

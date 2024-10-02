@@ -1,17 +1,17 @@
 use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, div, rems, uniform_list, AnyElement, AppContext, Div, EventEmitter, FocusHandle,
-    FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Render, Styled, UniformListScrollHandle, View, ViewContext,
+    actions, div, rems, uniform_list, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
+    Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent, MouseMoveEvent,
+    ParentElement, Render, SharedString, Styled, UniformListScrollHandle, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
-use ui::{h_flex, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
+use ui::{h_flex, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
-    item::{Item, ItemHandle, TabContentParams},
+    item::{Item, ItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
@@ -110,7 +110,7 @@ impl SyntaxTreeView {
 
         let subscription = cx.subscribe(&editor, |this, _, event, cx| {
             let did_reparse = match event {
-                editor::EditorEvent::Reparsed => true,
+                editor::EditorEvent::Reparsed(_) => true,
                 editor::EditorEvent::SelectionsChanged { .. } => false,
                 _ => return,
             };
@@ -249,24 +249,23 @@ impl SyntaxTreeView {
         }
 
         let node = cursor.node();
-        return row
-            .child(if node.is_named() {
-                Label::new(node.kind()).color(Color::Default)
-            } else {
-                Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
-            })
-            .child(
-                div()
-                    .child(Label::new(format_node_range(node)).color(Color::Muted))
-                    .pl_1(),
-            )
-            .text_bg(if selected {
-                colors.element_selected
-            } else {
-                Hsla::default()
-            })
-            .pl(rems(depth as f32))
-            .hover(|style| style.bg(colors.element_hover));
+        row.child(if node.is_named() {
+            Label::new(node.kind()).color(Color::Default)
+        } else {
+            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+        })
+        .child(
+            div()
+                .child(Label::new(format_node_range(node)).color(Color::Muted))
+                .pl_1(),
+        )
+        .text_bg(if selected {
+            colors.element_selected
+        } else {
+            Hsla::default()
+        })
+        .pl(rems(depth as f32))
+        .hover(|style| style.bg(colors.element_hover))
     }
 }
 
@@ -380,14 +379,8 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
-        Label::new("Syntax Tree")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Syntax Tree".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -412,6 +405,12 @@ impl Item for SyntaxTreeView {
     }
 }
 
+impl Default for SyntaxTreeToolbarItemView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SyntaxTreeToolbarItemView {
     pub fn new() -> Self {
         Self {
@@ -431,7 +430,7 @@ impl SyntaxTreeToolbarItemView {
 
         let view = cx.view().clone();
         Some(
-            popover_menu("Syntax Tree")
+            PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))
                 .menu(move |cx| {
                     ContextMenu::build(cx, |mut menu, cx| {
@@ -472,7 +471,7 @@ impl SyntaxTreeToolbarItemView {
 
     fn render_header(active_layer: &OwnedSyntaxLayer) -> ButtonLike {
         ButtonLike::new("syntax tree header")
-            .child(Label::new(active_layer.language.name()))
+            .child(Label::new(active_layer.language.name().0))
             .child(Label::new(format_node_range(active_layer.node())))
     }
 }
@@ -492,7 +491,7 @@ fn format_node_range(node: Node) -> String {
 impl Render for SyntaxTreeToolbarItemView {
     fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         self.render_menu(cx)
-            .unwrap_or_else(|| popover_menu("Empty Syntax Tree"))
+            .unwrap_or_else(|| PopoverMenu::new("Empty Syntax Tree"))
     }
 }
 

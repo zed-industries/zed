@@ -1,3 +1,4 @@
+#![allow(clippy::reversed_empty_ranges)]
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::{ActiveCall, ParticipantLocation};
 use client::ChannelId;
@@ -73,7 +74,7 @@ async fn test_basic_following(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -135,7 +136,7 @@ async fn test_basic_following(
         assert_eq!(editor.selections.ranges(cx), vec![2..1]);
     });
 
-    // When client B starts following client A, all visible view states are replicated to client B.
+    // When client B starts following client A, only the active view state is replicated to client B.
     workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, cx));
 
     cx_c.executor().run_until_parked();
@@ -156,12 +157,12 @@ async fn test_basic_following(
     );
     assert_eq!(
         editor_b1.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![3..2]
+        vec![3..3]
     );
 
     executor.run_until_parked();
     let active_call_c = cx_c.read(ActiveCall::global);
-    let project_c = client_c.build_dev_server_project(project_id, cx_c).await;
+    let project_c = client_c.join_remote_project(project_id, cx_c).await;
     let (workspace_c, cx_c) = client_c.build_workspace(&project_c, cx_c);
     active_call_c
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
@@ -174,7 +175,7 @@ async fn test_basic_following(
 
     cx_d.executor().run_until_parked();
     let active_call_d = cx_d.read(ActiveCall::global);
-    let project_d = client_d.build_dev_server_project(project_id, cx_d).await;
+    let project_d = client_d.join_remote_project(project_id, cx_d).await;
     let (workspace_d, cx_d) = client_d.build_workspace(&project_d, cx_d);
     active_call_d
         .update(cx_d, |call, cx| call.set_location(Some(&project_d), cx))
@@ -194,7 +195,7 @@ async fn test_basic_following(
 
     // Client C unfollows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx);
+        workspace.unfollow(peer_id_a, cx).unwrap();
     });
 
     // All clients see that clients B is following client A.
@@ -266,7 +267,7 @@ async fn test_basic_following(
 
     // When client A activates a different editor, client B does so as well.
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a1, cx)
+        workspace.activate_item(&editor_a1, true, true, cx)
     });
     executor.run_until_parked();
     workspace_b.update(cx_b, |workspace, cx| {
@@ -288,7 +289,7 @@ async fn test_basic_following(
                 .get_open_buffer(&(worktree_id, "2.txt").into(), cx)
                 .unwrap()
         });
-        let mut result = MultiBuffer::new(0, Capability::ReadWrite);
+        let mut result = MultiBuffer::new(Capability::ReadWrite);
         result.push_excerpts(
             buffer_a1,
             [ExcerptRange {
@@ -311,7 +312,7 @@ async fn test_basic_following(
         let editor = cx.new_view(|cx| {
             Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), true, cx)
         });
-        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
         editor
     });
     executor.run_until_parked();
@@ -398,10 +399,10 @@ async fn test_basic_following(
 
     // After unfollowing, client B stops receiving updates from client A.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx)
+        workspace.unfollow(peer_id_a, cx).unwrap()
     });
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a2, cx)
+        workspace.activate_item(&editor_a2, true, true, cx)
     });
     executor.run_until_parked();
     assert_eq!(
@@ -466,7 +467,7 @@ async fn test_basic_following(
 
     // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.activate_item(&multibuffer_editor_b, cx)
+        workspace.activate_item(&multibuffer_editor_b, true, true, cx)
     });
     executor.run_until_parked();
     workspace_a.update(cx_a, |workspace, cx| {
@@ -505,7 +506,7 @@ async fn test_basic_following(
 
     // Client B activates an item that doesn't implement following,
     // so the previously-opened screen-sharing item gets activated.
-    let unfollowable_item = cx_b.new_view(|cx| TestItem::new(cx));
+    let unfollowable_item = cx_b.new_view(TestItem::new);
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
             pane.add_item(Box::new(unfollowable_item), true, true, None, cx)
@@ -568,7 +569,7 @@ async fn test_following_tab_order(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -685,7 +686,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
 
     // Client B joins the project.
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1198,7 +1199,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1334,7 +1335,7 @@ async fn test_peers_simultaneously_following_each_other(
         .await
         .unwrap();
 
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
     executor.run_until_parked();
@@ -1684,7 +1685,7 @@ async fn test_following_into_excluded_file(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await

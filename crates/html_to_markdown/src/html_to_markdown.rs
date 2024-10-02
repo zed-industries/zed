@@ -1,4 +1,4 @@
-//! Provides conversion from rustdoc's HTML output to Markdown.
+//! Convert HTML to Markdown.
 
 mod html_element;
 pub mod markdown;
@@ -18,7 +18,7 @@ pub use crate::html_element::*;
 pub use crate::markdown_writer::*;
 
 /// Converts the provided HTML to Markdown.
-pub fn convert_html_to_markdown(html: impl Read, handlers: &mut Vec<TagHandler>) -> Result<String> {
+pub fn convert_html_to_markdown(html: impl Read, handlers: &mut [TagHandler]) -> Result<String> {
     let dom = parse_html(html).context("failed to parse HTML")?;
 
     let markdown_writer = MarkdownWriter::new();

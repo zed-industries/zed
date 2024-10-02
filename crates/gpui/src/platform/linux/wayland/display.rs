@@ -6,14 +6,14 @@ use std::{
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 
-use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay};
+use crate::{Bounds, DisplayId, Pixels, PlatformDisplay};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WaylandDisplay {
     /// The ID of the wl_output object
     pub id: ObjectId,
     pub name: Option<String>,
-    pub bounds: Bounds<DevicePixels>,
+    pub bounds: Bounds<Pixels>,
 }
 
 impl Hash for WaylandDisplay {
@@ -35,7 +35,7 @@ impl PlatformDisplay for WaylandDisplay {
         }
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
 }

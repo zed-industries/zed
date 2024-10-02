@@ -249,15 +249,14 @@ impl ChannelStore {
     }
 
     pub fn initialize(&mut self) {
-        if !self.did_subscribe {
-            if self
+        if !self.did_subscribe
+            && self
                 .client
                 .send(proto::SubscribeToChannels {})
                 .log_err()
                 .is_some()
-            {
-                self.did_subscribe = true;
-            }
+        {
+            self.did_subscribe = true;
         }
     }
 
@@ -423,7 +422,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .acknowledge_message_id(message_id);
         cx.notify();
     }
@@ -436,7 +435,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .update_latest_message_id(message_id);
         cx.notify();
     }
@@ -450,7 +449,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .acknowledge_notes_version(epoch, version);
         cx.notify()
     }
@@ -464,7 +463,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .update_latest_notes_version(epoch, version);
         cx.notify()
     }
@@ -888,7 +887,6 @@ impl ChannelStore {
     async fn handle_update_channels(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
@@ -902,7 +900,6 @@ impl ChannelStore {
     async fn handle_update_user_channels(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateUserChannels>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -926,7 +923,7 @@ impl ChannelStore {
                 if let Some(role) = ChannelRole::from_i32(membership.role) {
                     this.channel_states
                         .entry(ChannelId(membership.channel_id))
-                        .or_insert_with(|| ChannelState::default())
+                        .or_default()
                         .set_role(role)
                 }
             }
@@ -1010,7 +1007,7 @@ impl ChannelStore {
                                                 .into_iter()
                                                 .map(language::proto::deserialize_operation)
                                                 .collect::<Result<Vec<_>>>()?;
-                                        buffer.apply_ops(incoming_operations, cx)?;
+                                        buffer.apply_ops(incoming_operations, cx);
                                         anyhow::Ok(outgoing_operations)
                                     })
                                     .log_err();
@@ -1096,11 +1093,7 @@ impl ChannelStore {
                         id: ChannelId(channel.id),
                         visibility: channel.visibility(),
                         name: channel.name.into(),
-                        parent_path: channel
-                            .parent_path
-                            .into_iter()
-                            .map(|cid| ChannelId(cid))
-                            .collect(),
+                        parent_path: channel.parent_path.into_iter().map(ChannelId).collect(),
                     }),
                 ),
             }
@@ -1115,14 +1108,11 @@ impl ChannelStore {
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
-                let delete_channels: Vec<ChannelId> = payload
-                    .delete_channels
-                    .into_iter()
-                    .map(|cid| ChannelId(cid))
-                    .collect();
+                let delete_channels: Vec<ChannelId> =
+                    payload.delete_channels.into_iter().map(ChannelId).collect();
                 self.channel_index.delete_channels(&delete_channels);
                 self.channel_participants
-                    .retain(|channel_id, _| !delete_channels.contains(&channel_id));
+                    .retain(|channel_id, _| !delete_channels.contains(channel_id));
 
                 for channel_id in &delete_channels {
                     let channel_id = *channel_id;

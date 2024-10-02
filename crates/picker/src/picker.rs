@@ -20,7 +20,7 @@ enum ElementContainer {
     UniformList(UniformListScrollHandle),
 }
 
-actions!(picker, [UseSelectedQuery]);
+actions!(picker, [ConfirmCompletion]);
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
@@ -49,6 +49,15 @@ pub struct Picker<D: PickerDelegate> {
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
     is_modal: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum PickerEditorPosition {
+    #[default]
+    /// Render the editor at the start of the picker. Usually the top
+    Start,
+    /// Render the editor at the end of the picker. Usually the bottom
+    End,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -87,10 +96,10 @@ pub trait PickerDelegate: Sized + 'static {
         false
     }
 
+    /// Override if you want to have <enter> update the query instead of confirming.
     fn confirm_update_query(&mut self, _cx: &mut ViewContext<Picker<Self>>) -> Option<String> {
         None
     }
-
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
@@ -99,21 +108,32 @@ pub trait PickerDelegate: Sized + 'static {
     fn should_dismiss(&self) -> bool {
         true
     }
-    fn selected_as_query(&self) -> Option<String> {
+    fn confirm_completion(&self, _query: String) -> Option<String> {
         None
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        PickerEditorPosition::default()
     }
 
     fn render_editor(&self, editor: &View<Editor>, _cx: &mut ViewContext<Picker<Self>>) -> Div {
         v_flex()
+            .when(
+                self.editor_position() == PickerEditorPosition::End,
+                |this| this.child(Divider::horizontal()),
+            )
             .child(
                 h_flex()
                     .overflow_hidden()
                     .flex_none()
                     .h_9()
-                    .px_4()
+                    .px_3()
                     .child(editor.clone()),
             )
-            .child(Divider::horizontal())
+            .when(
+                self.editor_position() == PickerEditorPosition::Start,
+                |this| this.child(Divider::horizontal()),
+            )
     }
 
     fn render_match(
@@ -300,7 +320,6 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.delegate.set_selected_index(count - 1, cx);
             self.set_selected_index(count - 1, true, cx);
             cx.notify();
         }
@@ -310,7 +329,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.set_selected_index(new_index, false, cx);
+        self.set_selected_index(new_index, true, cx);
         cx.notify();
     }
 
@@ -350,10 +369,11 @@ impl<D: PickerDelegate> Picker<D> {
         self.delegate.confirm_input(input.secondary, cx);
     }
 
-    fn use_selected_query(&mut self, _: &UseSelectedQuery, cx: &mut ViewContext<Self>) {
-        if let Some(new_query) = self.delegate.selected_as_query() {
+    fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
+        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx)) {
             self.set_query(new_query, cx);
-            cx.stop_propagation();
+        } else {
+            cx.propagate()
         }
     }
 
@@ -489,7 +509,7 @@ impl<D: PickerDelegate> Picker<D> {
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, cx| {
-                    // We specficially want to use the platform key here, as
+                    // We specifically want to use the platform key here, as
                     // ctrl will already be held down for the tab switcher.
                     this.handle_click(ix, event.modifiers.platform, cx)
                 }),
@@ -504,7 +524,7 @@ impl<D: PickerDelegate> Picker<D> {
                     picker
                         .border_color(cx.theme().colors().border_variant)
                         .border_b_1()
-                        .pb(px(-1.0))
+                        .py(px(-1.0))
                 },
             )
     }
@@ -528,7 +548,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .with_sizing_behavior(sizing_behavior)
             .flex_grow()
-            .py_2()
+            .py_1()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
             ElementContainer::List(state) => list(state.clone())
@@ -538,6 +558,16 @@ impl<D: PickerDelegate> Picker<D> {
                 .into_any_element(),
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn logical_scroll_top_index(&self) -> usize {
+        match &self.element_container {
+            ElementContainer::List(state) => state.logical_scroll_top().item_ix,
+            ElementContainer::UniformList(scroll_handle) => {
+                scroll_handle.logical_scroll_top_index()
+            }
+        }
+    }
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
@@ -545,6 +575,8 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let editor_position = self.delegate.editor_position();
+
         v_flex()
             .key_context("Picker")
             .size_full()
@@ -562,11 +594,17 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
-            .on_action(cx.listener(Self::use_selected_query))
+            .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
-            .child(match &self.head {
-                Head::Editor(editor) => self.delegate.render_editor(&editor.clone(), cx),
-                Head::Empty(empty_head) => div().child(empty_head.clone()),
+            .children(match &self.head {
+                Head::Editor(editor) => {
+                    if editor_position == PickerEditorPosition::Start {
+                        Some(self.delegate.render_editor(&editor.clone(), cx))
+                    } else {
+                        None
+                    }
+                }
+                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
             })
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
@@ -592,5 +630,15 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 )
             })
             .children(self.delegate.render_footer(cx))
+            .children(match &self.head {
+                Head::Editor(editor) => {
+                    if editor_position == PickerEditorPosition::End {
+                        Some(self.delegate.render_editor(&editor.clone(), cx))
+                    } else {
+                        None
+                    }
+                }
+                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
+            })
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "zed_gleam"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 publish = false
 license = "Apache-2.0"
@@ -13,4 +13,5 @@ path = "src/gleam.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = { path = "../../crates/extension_api" }
+html_to_markdown = "0.1.0"
+zed_extension_api = "0.1.0"

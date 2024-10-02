@@ -41,6 +41,6 @@ pub fn schedule_resolved_task(
                 })
             });
         }
-        cx.emit(crate::Event::SpawnTask(spawn_in_terminal));
+        cx.emit(crate::Event::SpawnTask(Box::new(spawn_in_terminal)));
     }
 }

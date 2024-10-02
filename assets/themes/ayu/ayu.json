@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "Ayu",
   "author": "Zed Industries",
   "themes": [
@@ -38,6 +39,7 @@
         "icon.accent": "#5ac1feff",
         "status_bar.background": "#313337ff",
         "title_bar.background": "#313337ff",
+        "title_bar.inactive_background": "#1f2127ff",
         "toolbar.background": "#0d1016ff",
         "tab_bar.background": "#1f2127ff",
         "tab.inactive_background": "#1f2127ff",
@@ -407,6 +409,7 @@
         "icon.accent": "#3b9ee5ff",
         "status_bar.background": "#dcdddeff",
         "title_bar.background": "#dcdddeff",
+        "title_bar.inactive_background": "#ececedff",
         "toolbar.background": "#fcfcfcff",
         "tab_bar.background": "#ececedff",
         "tab.inactive_background": "#ececedff",
@@ -776,6 +779,7 @@
         "icon.accent": "#72cffeff",
         "status_bar.background": "#464a52ff",
         "title_bar.background": "#464a52ff",
+        "title_bar.inactive_background": "#353944ff",
         "toolbar.background": "#242835ff",
         "tab_bar.background": "#353944ff",
         "tab.inactive_background": "#353944ff",

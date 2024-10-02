@@ -17,11 +17,13 @@ chrono.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }
 menu.workspace = true
+serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
-strum = { version = "0.25.0", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
+ui_macros.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

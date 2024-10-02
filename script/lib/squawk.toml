@@ -1,4 +1,10 @@
 excluded_rules = [
+    # We use `serial` already, no point changing now.
+    "prefer-identity",
+
+    # We store timestamps in UTC, so we don't care about the timezone.
+    "prefer-timestamptz",
+
     "prefer-big-int",
     "prefer-bigint-over-int",
 ]

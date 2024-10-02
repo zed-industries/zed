@@ -7,7 +7,10 @@ use calloop::{
 };
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
-use std::{thread, time::Duration};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 use util::ResultExt;
 
 struct TimerAfter {
@@ -32,11 +35,19 @@ impl LinuxDispatcher {
             .unwrap_or(1);
 
         let mut background_threads = (0..thread_count)
-            .map(|_| {
+            .map(|i| {
                 let receiver = background_receiver.clone();
                 std::thread::spawn(move || {
                     for runnable in receiver {
+                        let start = Instant::now();
+
                         runnable.run();
+
+                        log::trace!(
+                            "background thread {}: ran runnable. took: {:?}",
+                            i,
+                            start.elapsed()
+                        );
                     }
                 })
             })

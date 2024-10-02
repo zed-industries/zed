@@ -1,3 +1,4 @@
+(comment) @annotation
 (type_declaration
     "type" @context
     (type_spec
@@ -34,7 +35,7 @@
         (var_spec
             name: (identifier) @name) @item))
 
-(method_spec
+(method_elem
     name: (_) @name
     parameters: (parameter_list
       "(" @context

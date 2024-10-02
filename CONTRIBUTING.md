@@ -11,7 +11,7 @@ If you're looking for ideas about what to work on, check out:
 - Our [public roadmap](https://zed.dev/roadmap) contains a rough outline of our near-term priorities for Zed.
 - Our [top-ranking issues](https://github.com/zed-industries/zed/issues/5393) based on votes by the community.
 
-For adding themes or support for a new language to Zed, check out our [extension docs](https://github.com/zed-industries/extensions/blob/main/AUTHORING_EXTENSIONS.md).
+For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
 
 ## Proposing changes
 
@@ -41,7 +41,7 @@ We plan to set aside time each week to pair program with contributors on promisi
 
 Zed is made up of several smaller crates - let's go over those you're most likely to interact with:
 
-- [`gpui`](/crates/gpui) is a GPU-accelerated UI framework which provides all of the building blocks for Zed. **We recommend familiarizing yourself with the root level GPUI documentation**
+- [`gpui`](/crates/gpui) is a GPU-accelerated UI framework which provides all of the building blocks for Zed. **We recommend familiarizing yourself with the root level GPUI documentation.**
 - [`editor`](/crates/editor) contains the core `Editor` type that drives both the code editor and all various input fields within Zed. It also handles a display layer for LSP features such as Inlay Hints or code completions.
 - [`project`](/crates/project) manages files and navigation within the filetree. It is also Zed's side of communication with LSP.
 - [`workspace`](/crates/workspace) handles local state serialization and groups projects together.

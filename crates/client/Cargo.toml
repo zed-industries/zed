@@ -18,24 +18,23 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 [dependencies]
 anyhow.workspace = true
 async-recursion = "0.3"
-async-tungstenite = { version = "0.16", features = ["async-std", "async-native-tls"] }
-async-native-tls = { version = "0.5.0", features = ["vendored"] }
+async-tls = "0.13"
+async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
 feature_flags.workspace = true
-fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-http.workspace = true
-lazy_static.workspace = true
+http_client.workspace = true
 log.workspace = true
 once_cell.workspace = true
+paths.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
 release_channel.workspace = true
-rpc.workspace = true
+rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -49,8 +48,10 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
+tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
 url.workspace = true
 util.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
@@ -59,17 +60,11 @@ gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-async-native-tls = {"version" = "0.5.0", features = ["vendored"]}
-# This is an indirect dependency of async-tungstenite that is included
-# here so we can vendor libssl with the feature flag.
-[package.metadata.cargo-machete]
-ignored = ["async-native-tls"]
+async-native-tls = { version = "0.5.0", features = ["vendored"] }

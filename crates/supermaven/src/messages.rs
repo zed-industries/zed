@@ -14,6 +14,7 @@ pub enum OutboundMessage {
     StateUpdate(StateUpdateMessage),
     #[allow(dead_code)]
     UseFreeVersion,
+    Logout,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

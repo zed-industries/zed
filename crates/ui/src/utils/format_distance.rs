@@ -42,16 +42,6 @@ impl FormatDistance {
         Self::new(date, DateTimeType::Local(Local::now()))
     }
 
-    pub fn to_string(self) -> String {
-        format_distance(
-            self.date,
-            self.base_date.to_naive(),
-            self.include_seconds,
-            self.add_suffix,
-            self.hide_prefix,
-        )
-    }
-
     pub fn include_seconds(mut self, include_seconds: bool) -> Self {
         self.include_seconds = include_seconds;
         self
@@ -68,6 +58,21 @@ impl FormatDistance {
     }
 }
 
+impl std::fmt::Display for FormatDistance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            format_distance(
+                self.date,
+                self.base_date.to_naive(),
+                self.include_seconds,
+                self.add_suffix,
+                self.hide_prefix,
+            )
+        )
+    }
+}
 /// Calculates the distance in seconds between two [`NaiveDateTime`] objects.
 /// It returns a signed integer denoting the difference. If `date` is earlier than `base_date`, the returned value will be negative.
 ///
@@ -118,12 +123,7 @@ fn distance_string(
         }
         .to_string()
     } else if distance < 40 && include_seconds {
-        if hide_prefix {
-            "half a minute"
-        } else {
-            "half a minute"
-        }
-        .to_string()
+        "half a minute".to_string()
     } else if distance < 60 && include_seconds {
         if hide_prefix {
             "a minute"
@@ -268,9 +268,11 @@ mod tests {
     #[test]
     fn test_format_distance() {
         let date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
         );
         let base_date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
         );
 
@@ -283,9 +285,11 @@ mod tests {
     #[test]
     fn test_format_distance_with_suffix() {
         let date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
         );
         let base_date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
         );
 

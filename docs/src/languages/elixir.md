@@ -1,7 +1,14 @@
 # Elixir
 
-- Tree Sitter: [tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
-- Language Server: [elixir-ls](https://github.com/elixir-lsp/elixir-ls)
+Elixir support is available through the [Elixir extension](https://github.com/zed-industries/zed/tree/main/extensions/elixir).
+
+- Tree Sitter:
+  - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
+  - [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
+- Language servers:
+  - [elixir-lsp/elixir-ls](https://github.com/elixir-lsp/elixir-ls)
+  - [elixir-tools/next-ls](https://github.com/elixir-tools/next-ls)
+  - [lexical-lsp/lexical](https://github.com/lexical-lsp/lexical)
 
 ## Choosing a language server
 
@@ -37,13 +44,13 @@ To switch to `lexical`, add the following to your `settings.json`:
 
 1. Install `elixir`:
 
-```bash
+```sh
 brew install elixir
 ```
 
 2. Install `elixir-ls`:
 
-```bash
+```sh
 brew install elixir-ls
 ```
 
@@ -70,7 +77,7 @@ If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), u
 }
 ```
 
-### Additional workspace configuration options (requires Zed `0.128.0`):
+### Additional workspace configuration options
 
 You can pass additional elixir-ls workspace configuration options via lsp settings in `settings.json`.
 
@@ -87,3 +94,9 @@ The following example disables dialyzer:
 ```
 
 See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for more options.
+
+### HEEx
+
+Zed also supports HEEx templates. HEEx is a mix of [EEx](https://hexdocs.pm/eex/1.12.3/EEx.html) (Embedded Elixir) and HTML, and is used in Phoenix LiveView applications.
+
+- Tree Sitter: [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)

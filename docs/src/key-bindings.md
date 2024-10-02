@@ -43,6 +43,21 @@ You can see more examples in Zed's [`default.json`](https://github.com/zed-indus
 
 _There are some key bindings that can't be overridden; we are working on an issue surrounding this._
 
+### Disabling a key binding
+
+Use `null` value to disable a key binding:
+
+```json
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-\\": null
+    }
+  }
+]
+```
+
 ### Keybinding syntax
 
 Zed has the ability to match against not just a single keypress, but a sequence of keys typed in order. Each key in the `"bindings"` map is a sequence of keypresses separated with a space.
@@ -50,24 +65,60 @@ Zed has the ability to match against not just a single keypress, but a sequence 
 Each key press is a sequence of modifiers followed by a key. The modifiers are:
 
 - `ctrl-` The control key
-- `cmd-` On macOS, this is the command key
-- `alt-` On macOS, this is the option key
+- `cmd-`, `win-` or `super-` for the platform modifier (Command on macOS, Windows key on Windows, and the Super key on Linux).
+- `alt-` for alt (option on macOS)
 - `shift-` The shift key
 - `fn-` The function key
 
-The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`).
+The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`).
 
 A few examples:
 
-```
+```json
  "bindings": {
    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
    "space e": "editor::Complete", // type space then e
    "ç": "editor::Complete", // matches ⌥-c
+   "shift shift": "file_finder::Toggle", // matches pressing and releasing shift twice
  }
 ```
 
-NOTE: Keys on a keyboard are not always the same as the character they generate. For example `shift-e` actually types `E` (or `alt-c` types `ç`). Zed allows you to match against either the key and its modifiers or the character it generates. This means you can specify `alt-c` or `ç`, but not `alt-ç`. It is usually better to specify the key and its modifiers, as this will work better on different keyboard layouts.
+The `shift-` modifier can only be used in combination with a letter to indicate the uppercase version. For example `shift-g` matches typing `G`. Although on many keyboards shift is used to type punctuation characters like `(`, the keypress is not considered to be modified and so `shift-(` does not match.
+
+The `alt-` modifier can be used on many layouts to generate a different key. For example on macOS US keyboard the combination `alt-c` types `ç`. You can match against either in your keymap file, though by convention Zed spells this combination as `alt-c`.
+
+It is possible to match against typing a modifier key on its own. For example `shift shift` can be used to implement JetBrains search everywhere shortcut. In this case the binding happens on key release instead of key press.
+
+### Contexts
+
+Each key binding includes a `context` which determes when the key binding is active. If no context key is present it is considered to be in the `Global` context. The context is a boolean expression that can include the following:
+
+- Pane
+- Workspace
+- Editor
+- Menu
+- Terminal
+- Assistant
+- ProjectPanel
+- ProjectSearch
+- BufferSearch
+- Search
+- Dock
+- EmptyPane
+- SharedScreen
+- VimControl
+- vim_mode == normal
+- vim_mode == visual
+- vim_mode == insert
+- vim_mode == replace
+- vim_mode == operator
+- vim_mode == waiting
+
+<!--
+TBD: Improve keybinding contexts documentation https://github.com/zed-industries/zed/issues/14718
+-->
+
+See also: [vim context docs](./vim.md#contexts)
 
 ### Remapping keys
 
@@ -88,7 +139,7 @@ A common request is to be able to map from one sequence of keys to another. As o
   {
     "context": "Editor && vim_mode == insert",
     "bindings": {
-      "j k": ["workspace::SendKeystrokes", "escape"],
+      "j k": ["workspace::SendKeystrokes", "escape"]
     }
   }
 ]
@@ -97,14 +148,39 @@ A common request is to be able to map from one sequence of keys to another. As o
 There are some limitations to this, notably:
 
 - Any asynchronous operation will not happen until after all your key bindings have been dispatched. For example this means that while you can use a binding to open a file (as in the `cmd-alt-r` example) you cannot send further keystrokes and hope to have them interpreted by the new view.
-- - Other examples of asynchronous things are: communicating with a language server, changing the language of a buffer, anything that hits the network.
+- Other examples of asynchronous things are: communicating with a language server, changing the language of a buffer, anything that hits the network.
 - There is a limit of 100 simulated keys at a time, this is to avoid accidental infinite recursion if you trigger SendKeystrokes again inside your bindings.
 
 The argument to `SendKeystrokes` is a space-separated list of keystrokes (using the same syntax as above). Due to the way that keystrokes are parsed, any segment that is not recognized as a keypress will be sent verbatim to the currently focused input field.
 
+### Forward keys to terminal
+
+If you're on Linux or Windows, you might find yourself wanting to forward key combinations to the built-in terminal instead of them being handled by Zed.
+
+For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
+
+```json
+{
+  "context": "Terminal",
+  "bindings": {
+    "ctrl-n": ["terminal::SendKeystroke", "ctrl-n"]
+  }
+}
+```
+
+### Task Key bindings
+
+You can also bind keys to launch Zed Tasks defined in your tasks.json.
+See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
+
 ### All key bindings
 
 #### Global
+
+<!--
+TBD: Update these to reflect current bindings
+TBD: Add Column with Linux shortcuts
+-->
 
 | **Command**               | **Target**   | **Default Shortcut**    |
 | ------------------------- | ------------ | ----------------------- |
@@ -135,7 +211,7 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Open                      | Workspace    | `⌘ + O`                 |
 | Toggle zoom               | Workspace    | `Shift + Escape`        |
 | Debug elements            | Zed          | `⌘ + Alt + I`           |
-| Decrease buffer font size | Zed          | `⌘ + `                  |
+| Decrease buffer font size | Zed          | `⌘ + -`                 |
 | Hide                      | Zed          | `⌘ + H`                 |
 | Hide others               | Zed          | `Alt + ⌘ + H`           |
 | Increase buffer font size | Zed          | `⌘ + +`                 |
@@ -171,7 +247,7 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Copy                             | Editor     | `⌘ + C`                         |
 | Cut                              | Editor     | `⌘ + X`                         |
 | Cut to end of line               | Editor     | `Control + K`                   |
-| Delete                           | Editor     | `Control + D`                   |
+| Select Next                      | Editor     | `Control + D`                   |
 | Delete                           | Editor     | `Delete`                        |
 | Delete line                      | Editor     | `⌘ + Shift + K`                 |
 | Delete to beginning of line      | Editor     | `⌘ + Backspace`                 |
@@ -193,6 +269,8 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Format                           | Editor     | `⌘ + Shift + I`                 |
 | Go to definition                 | Editor     | `F12`                           |
 | Go to definition split           | Editor     | `Alt + F12`                     |
+| Go to declaration                | Editor     | `Ctrl + F12`                    |
+| Go to declaration split          | Editor     | `Alt + Ctrl + F12`              |
 | Go to diagnostic                 | Editor     | `F8`                            |
 | Go to implementation             | Editor     | `Shift + F12`                   |
 | Go to prev diagnostic            | Editor     | `Shift + F8`                    |
@@ -242,7 +320,9 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Redo                             | Editor     | `⌘ + Shift + Z`                 |
 | Redo selection                   | Editor     | `⌘ + Shift + U`                 |
 | Rename                           | Editor     | `F2`                            |
-| Reveal in finder                 | Editor     | `Alt + ⌘ + R`                   |
+| Reveal in File Manager           | Editor     | `Alt + ⌘ + R`                   |
+| Toggle hunk diff                 | Editor     | `⌘ + '`                         |
+| Expand all hunk diffs            | Editor     | `⌘ + "`                         |
 | Revert selected hunks            | Editor     | `⌘ + Alt + Z`                   |
 | Select all                       | Editor     | `⌘ + A`                         |
 | Select all matches               | Editor     | `⌘ + Shift + L`                 |
@@ -327,46 +407,48 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 
 #### Pane
 
-| **Command**                   | **Target**     | **Default Shortcut**    |
-| ----------------------------- | -------------- | ----------------------- |
-| Activate item 1               | Pane           | `Control + 1`           |
-| Activate item 2               | Pane           | `Control + 2`           |
-| Activate item 3               | Pane           | `Control + 3`           |
-| Activate item 4               | Pane           | `Control + 4`           |
-| Activate item 5               | Pane           | `Control + 5`           |
-| Activate item 6               | Pane           | `Control + 6`           |
-| Activate item 7               | Pane           | `Control + 7`           |
-| Activate item 8               | Pane           | `Control + 8`           |
-| Activate item 9               | Pane           | `Control + 9`           |
-| Activate last item            | Pane           | `Control + 0`           |
-| Activate next item            | Pane           | `Alt + ⌘ + Right`       |
-| Activate next item            | Pane           | `⌘ + }`                 |
-| Activate prev item            | Pane           | `Alt + ⌘ + Left`        |
-| Activate prev item            | Pane           | `⌘ + {`                 |
-| Close active item             | Pane           | `⌘ + W`                 |
-| Close all items               | Pane           | `⌘ + K, ⌘ + W`          |
-| Close clean items             | Pane           | `⌘ + K, U`              |
-| Close inactive items          | Pane           | `Alt + ⌘ + T`           |
-| Go back                       | Pane           | `Control + `            |
-| Go forward                    | Pane           | `Control + _`           |
-| Reopen closed item            | Pane           | `⌘ + Shift + T`         |
-| Split down                    | Pane           | `⌘ + K, Down`           |
-| Split left                    | Pane           | `⌘ + K, Left`           |
-| Split right                   | Pane           | `⌘ + K, Right`          |
-| Split up                      | Pane           | `⌘ + K, Up`             |
-| Toggle filters                | Project Search | `Alt + ⌘ + F`           |
-| Toggle focus                  | Project Search | `⌘ + F`                 |
-| Toggle focus                  | Project Search | `⌘ + Shift + F`         |
-| Activate regex mode           | Search         | `Alt + ⌘ + G`           |
-| Activate text mode            | Search         | `Alt + ⌘ + X`           |
-| Cycle mode                    | Search         | `Alt + Tab`             |
-| Select all matches            | Search         | `Alt + Enter`           |
-| Select next match             | Search         | `⌘ + G`                 |
-| Select prev match             | Search         | `⌘ + Shift + G`         |
-| Toggle case sensitive         | Search         | `Alt + ⌘ + C`           |
-| Toggle replace                | Search         | `⌘ + Shift + H`         |
-| Toggle whole word             | Search         | `Alt + ⌘ + W`           |
-| Close inactive tabs and panes | Workspace      | `Control + Alt + ⌘ + W` |
+| **Command**                   | **Target**     | **Default Shortcut**          |
+| ----------------------------- | -------------- | ----------------------------- |
+| Activate item 1               | Pane           | `Control + 1`                 |
+| Activate item 2               | Pane           | `Control + 2`                 |
+| Activate item 3               | Pane           | `Control + 3`                 |
+| Activate item 4               | Pane           | `Control + 4`                 |
+| Activate item 5               | Pane           | `Control + 5`                 |
+| Activate item 6               | Pane           | `Control + 6`                 |
+| Activate item 7               | Pane           | `Control + 7`                 |
+| Activate item 8               | Pane           | `Control + 8`                 |
+| Activate item 9               | Pane           | `Control + 9`                 |
+| Activate last item            | Pane           | `Control + 0`                 |
+| Activate next item            | Pane           | `Alt + ⌘ + Right`             |
+| Activate next item            | Pane           | `⌘ + }`                       |
+| Activate prev item            | Pane           | `Alt + ⌘ + Left`              |
+| Activate prev item            | Pane           | `⌘ + {`                       |
+| Swap item to left             | Pane           | `Control + Shift + Page Up`   |
+| Swap item to right            | Pane           | `Control + Shift + Page Down` |
+| Close active item             | Pane           | `⌘ + W`                       |
+| Close all items               | Pane           | `⌘ + K, ⌘ + W`                |
+| Close clean items             | Pane           | `⌘ + K, U`                    |
+| Close inactive items          | Pane           | `Alt + ⌘ + T`                 |
+| Go back                       | Pane           | `Control + -`                 |
+| Go forward                    | Pane           | `Control + Shift + _`         |
+| Reopen closed item            | Pane           | `⌘ + Shift + T`               |
+| Split down                    | Pane           | `⌘ + K, Down`                 |
+| Split left                    | Pane           | `⌘ + K, Left`                 |
+| Split right                   | Pane           | `⌘ + K, Right`                |
+| Split up                      | Pane           | `⌘ + K, Up`                   |
+| Toggle filters                | Project Search | `Alt + ⌘ + F`                 |
+| Toggle focus                  | Project Search | `⌘ + F`                       |
+| Toggle focus                  | Project Search | `⌘ + Shift + F`               |
+| Activate regex mode           | Search         | `Alt + ⌘ + G`                 |
+| Activate text mode            | Search         | `Alt + ⌘ + X`                 |
+| Cycle mode                    | Search         | `Alt + Tab`                   |
+| Select all matches            | Search         | `Alt + Enter`                 |
+| Select next match             | Search         | `⌘ + G`                       |
+| Select prev match             | Search         | `⌘ + Shift + G`               |
+| Toggle case sensitive         | Search         | `Alt + ⌘ + C`                 |
+| Toggle replace                | Search         | `⌘ + Shift + H`               |
+| Toggle whole word             | Search         | `Alt + ⌘ + W`                 |
+| Close inactive tabs and panes | Workspace      | `Control + Alt + ⌘ + W`       |
 
 #### Buffer Search Bar
 
@@ -458,7 +540,7 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Paste                   | Project Panel | `⌘ + V`               |
 | Rename                  | Project Panel | `Enter`               |
 | Rename                  | Project Panel | `F2`                  |
-| Reveal in finder        | Project Panel | `Alt + ⌘ + R`         |
+| Reveal in File Manager  | Project Panel | `Alt + ⌘ + R`         |
 
 #### Project Search Bar
 

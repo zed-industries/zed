@@ -2,16 +2,13 @@ use anyhow::{Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
-    actions, rems, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WindowContext,
+    actions, rems, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
-use ui::{
-    h_flex, v_flex, Button, ButtonCommon, Clickable, Color, HighlightedLabel, Label, LabelCommon,
-    LabelSize, ListItem, ListItemSpacing, Selectable,
-};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
@@ -99,7 +96,7 @@ impl BranchListDelegate {
         branch_name_trailoff_after: usize,
         cx: &AppContext,
     ) -> Result<Self> {
-        let project = workspace.project().read(&cx);
+        let project = workspace.project().read(cx);
         let repo = project
             .get_first_worktree_root_repo(cx)
             .context("failed to get root repository for first worktree")?;
@@ -316,11 +313,14 @@ impl PickerDelegate for BranchListDelegate {
                 .start_slot(HighlightedLabel::new(shortened_branch_name, highlights)),
         )
     }
+
     fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         let label = if self.last_query.is_empty() {
-            h_flex()
+            Label::new("Recent Branches")
+                .size(LabelSize::Small)
+                .mt_1()
                 .ml_3()
-                .child(Label::new("Recent Branches").size(LabelSize::Small))
+                .into_any_element()
         } else {
             let match_label = self.matches.is_empty().not().then(|| {
                 let suffix = if self.matches.len() == 1 { "" } else { "es" };
@@ -333,35 +333,49 @@ impl PickerDelegate for BranchListDelegate {
                 .justify_between()
                 .child(Label::new("Branches").size(LabelSize::Small))
                 .children(match_label)
+                .into_any_element()
         };
-        Some(label.mt_1().into_any())
+        Some(v_flex().mt_1().child(label).into_any_element())
     }
+
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         if self.last_query.is_empty() {
             return None;
         }
 
         Some(
-            h_flex().mr_3().pb_2().child(h_flex().w_full()).child(
-            Button::new("branch-picker-create-branch-button", "Create branch").on_click(
-                cx.listener(|_, _, cx| {
-                    cx.spawn(|picker, mut cx| async move {
-                                        picker.update(&mut cx, |this, cx| {
-                                            let new_branch_name = this.delegate.last_query.clone();
-                                            let normalized_new_branch_name = normalize_new_branch_name(&new_branch_name);
-                                            let status = this.delegate.create_branch(&normalized_new_branch_name, cx);
-                                            if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to create branch '{normalized_new_branch_name}', check for conflicts or unstashed files"), cx);
-                                                status?;
-                                            }
+            h_flex()
+                .p_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .justify_end()
+                .child(h_flex().w_full())
+                .child(
+                    Button::new("branch-picker-create-branch-button", "Create Branch")
+                        .icon(IconName::Plus)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start)
+                        .on_click(
+                          cx.listener(|_, _, cx| {
+                              cx.spawn(|picker, mut cx| async move {
+                                picker.update(&mut cx, |this, cx| {
+                                    let new_branch_name = this.delegate.last_query.clone();
+                                    let normalized_new_branch_name = normalize_new_branch_name(&new_branch_name);
+                                    let status = this.delegate.create_branch(&normalized_new_branch_name, cx);
+                                    if status.is_err() {
+                                        this.delegate.display_error_toast(format!("Failed to create branch '{normalized_new_branch_name}', check for conflicts or unstashed files"), cx);
+                                        status?;
+                                    }
 
-                                            this.cancel(&Default::default(), cx);
-                                            Ok::<(), anyhow::Error>(())
+                                    this.cancel(&Default::default(), cx);
+                                    Ok::<(), anyhow::Error>(())
                                 })
-
-                    }).detach_and_log_err(cx);
-                }),
-            ).style(ui::ButtonStyle::Filled)).into_any_element(),
+                            })
+                            .detach_and_log_err(cx);
+                        }))
+                )
+                .into_any_element(),
         )
     }
 }

@@ -222,7 +222,7 @@ impl PickerDelegate for TasksModalDelegate {
                             let resolved_task =
                                 picker.delegate.project.update(cx, |project, cx| {
                                     let ssh_connection_string = project.ssh_connection_string(cx);
-                                    if project.is_remote() && ssh_connection_string.is_none() {
+                                    if project.is_via_collab() && ssh_connection_string.is_none() {
                                         Task::ready((Vec::new(), Vec::new()))
                                     } else {
                                         let remote_templates = if project.is_local() {
@@ -389,7 +389,7 @@ impl PickerDelegate for TasksModalDelegate {
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
             TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_type_icon(&name.to_lowercase())
-                .map(|icon_path| Icon::from_path(icon_path)),
+                .map(Icon::from_path),
         }
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
         let history_run_icon = if Some(ix) <= self.divider_index {
@@ -410,7 +410,7 @@ impl PickerDelegate for TasksModalDelegate {
 
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
-                .inset(false)
+                .inset(true)
                 .start_slot::<Icon>(icon)
                 .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
@@ -448,7 +448,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     picker.refresh(cx);
                                 }))
                                 .tooltip(|cx| {
-                                    Tooltip::text("Delete previously scheduled task", cx)
+                                    Tooltip::text("Delete Previously Scheduled Task", cx)
                                 }),
                         );
                         item.end_hover_slot(delete_button)
@@ -462,7 +462,7 @@ impl PickerDelegate for TasksModalDelegate {
         )
     }
 
-    fn selected_as_query(&self) -> Option<String> {
+    fn confirm_completion(&self, _: String) -> Option<String> {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
@@ -491,11 +491,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
         let current_modifiers = cx.modifiers();
-        let left_button = if is_recent_selected {
-            Some(("Edit task", picker::UseSelectedQuery.boxed_clone()))
-        } else if !self.matches.is_empty() {
-            Some(("Edit template", picker::UseSelectedQuery.boxed_clone()))
-        } else if self
+        let left_button = if self
             .project
             .read(cx)
             .task_inventory()
@@ -503,7 +499,7 @@ impl PickerDelegate for TasksModalDelegate {
             .last_scheduled_task(None)
             .is_some()
         {
-            Some(("Rerun last task", Rerun::default().boxed_clone()))
+            Some(("Rerun Last Task", Rerun::default().boxed_clone()))
         } else {
             None
         };
@@ -515,6 +511,8 @@ impl PickerDelegate for TasksModalDelegate {
                 .justify_between()
                 .rounded_b_md()
                 .bg(cx.theme().colors().ghost_element_selected)
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
                 .child(
                     left_button
                         .map(|(label, action)| {
@@ -539,9 +537,9 @@ impl PickerDelegate for TasksModalDelegate {
                         .boxed_clone();
                         this.children(KeyBinding::for_action(&*action, cx).map(|keybind| {
                             let spawn_oneshot_label = if current_modifiers.secondary() {
-                                "Spawn oneshot without history"
+                                "Spawn Oneshot Without History"
                             } else {
-                                "Spawn oneshot"
+                                "Spawn Oneshot"
                             };
 
                             Button::new("spawn-onehshot", spawn_oneshot_label)
@@ -553,9 +551,9 @@ impl PickerDelegate for TasksModalDelegate {
                         this.children(KeyBinding::for_action(&menu::SecondaryConfirm, cx).map(
                             |keybind| {
                                 let label = if is_recent_selected {
-                                    "Rerun without history"
+                                    "Rerun Without History"
                                 } else {
-                                    "Spawn without history"
+                                    "Spawn Without History"
                                 };
                                 Button::new("spawn", label)
                                     .label_size(LabelSize::Small)
@@ -663,7 +661,7 @@ mod tests {
             "Only one task should match the query {query_str}"
         );
 
-        cx.dispatch_action(picker::UseSelectedQuery);
+        cx.dispatch_action(picker::ConfirmCompletion);
         assert_eq!(
             query(&tasks_picker, cx),
             "echo 4",
@@ -710,7 +708,7 @@ mod tests {
             "Last recently used one show task should be listed first"
         );
 
-        cx.dispatch_action(picker::UseSelectedQuery);
+        cx.dispatch_action(picker::ConfirmCompletion);
         assert_eq!(
             query(&tasks_picker, cx),
             query_str,

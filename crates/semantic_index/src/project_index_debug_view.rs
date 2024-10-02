@@ -9,7 +9,7 @@ use settings::Settings;
 use std::{path::Path, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
-use workspace::item::{Item, TabContentParams};
+use workspace::item::Item;
 
 pub struct ProjectIndexDebugView {
     index: Model<ProjectIndex>,
@@ -55,8 +55,12 @@ impl ProjectIndexDebugView {
             for index in worktree_indices {
                 let (root_path, worktree_id, worktree_paths) =
                     index.read_with(&cx, |index, cx| {
-                        let worktree = index.worktree.read(cx);
-                        (worktree.abs_path(), worktree.id(), index.paths(cx))
+                        let worktree = index.worktree().read(cx);
+                        (
+                            worktree.abs_path(),
+                            worktree.id(),
+                            index.embedding_index().paths(cx),
+                        )
                     })?;
                 rows.push(Row::Worktree(root_path));
                 rows.extend(
@@ -82,10 +86,12 @@ impl ProjectIndexDebugView {
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         let project_index = self.index.read(cx);
-        let fs = project_index.fs.clone();
+        let fs = project_index.fs().clone();
         let worktree_index = project_index.worktree_index(worktree_id, cx)?.read(cx);
-        let root_path = worktree_index.worktree.read(cx).abs_path();
-        let chunks = worktree_index.chunks_for_path(file_path.clone(), cx);
+        let root_path = worktree_index.worktree().read(cx).abs_path();
+        let chunks = worktree_index
+            .embedding_index()
+            .chunks_for_path(file_path.clone(), cx);
 
         cx.spawn(|this, mut cx| async move {
             let chunks = chunks.await?;
@@ -258,7 +264,9 @@ impl Render for ProjectIndexDebugView {
                     list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
                     list
                 },
-                |_, mut list, cx| list.paint(cx),
+                |_, mut list, cx| {
+                    list.paint(cx);
+                },
             )
             .size_full()
             .into_any_element()
@@ -271,14 +279,8 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
-        Label::new("Project Index (Debug)")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Project Index (Debug)".into())
     }
 
     fn clone_on_split(

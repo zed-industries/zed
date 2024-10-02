@@ -18,4 +18,5 @@ test-support = ["dep:parking_lot"]
 [dependencies]
 chrono.workspace = true
 parking_lot = { workspace = true, optional = true }
+serde.workspace = true
 smallvec.workspace = true

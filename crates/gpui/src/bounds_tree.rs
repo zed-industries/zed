@@ -52,11 +52,9 @@ where
             // the surface area the least. This attempts to keep the tree balanced
             // in terms of surface area. If there is an intersection with the other child,
             // add its keys to the intersections vector.
-            let left_cost = new_bounds
-                .union(&self.nodes[left].bounds())
-                .half_perimeter();
+            let left_cost = new_bounds.union(self.nodes[left].bounds()).half_perimeter();
             let right_cost = new_bounds
-                .union(&self.nodes[right].bounds())
+                .union(self.nodes[right].bounds())
                 .half_perimeter();
             if left_cost < right_cost {
                 max_intersecting_ordering =

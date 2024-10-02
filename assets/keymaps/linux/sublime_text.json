@@ -1,0 +1,64 @@
+[
+  {
+    "bindings": {
+      "ctrl-shift-[": "pane::ActivatePrevItem",
+      "ctrl-shift-]": "pane::ActivateNextItem",
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-shift-up": "editor::MoveLineUp",
+      "ctrl-shift-down": "editor::MoveLineDown",
+      "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-l": "editor::SplitSelectionIntoLines",
+      "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-d": "editor::DuplicateLineDown",
+      "f12": "editor::GoToDefinition",
+      "ctrl-f12": "editor::GoToDefinitionSplit",
+      "shift-f12": "editor::FindAllReferences",
+      "ctrl-shift-f12": "editor::FindAllReferences",
+      "ctrl-.": "editor::GoToHunk",
+      "ctrl-,": "editor::GoToPrevHunk",
+      "ctrl-k ctrl-u": "editor::ConvertToUpperCase",
+      "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
+      "shift-alt-m": "markdown::OpenPreviewToTheSide",
+      "ctrl-backspace": "editor::DeleteToPreviousWordStart",
+      "ctrl-delete": "editor::DeleteToNextWordEnd"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "ctrl-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "f4": "search::SelectNextMatch",
+      "shift-f4": "search::SelectPrevMatch",
+      "alt-1": ["pane::ActivateItem", 0],
+      "alt-2": ["pane::ActivateItem", 1],
+      "alt-3": ["pane::ActivateItem", 2],
+      "alt-4": ["pane::ActivateItem", 3],
+      "alt-5": ["pane::ActivateItem", 4],
+      "alt-6": ["pane::ActivateItem", 5],
+      "alt-7": ["pane::ActivateItem", 6],
+      "alt-8": ["pane::ActivateItem", 7],
+      "alt-9": "pane::ActivateLastItem"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-k ctrl-b": "workspace::ToggleLeftDock",
+      // "ctrl-0": "project_panel::ToggleFocus", // normally resets zoom
+      "shift-ctrl-r": "project_symbols::Toggle"
+    }
+  }
+]

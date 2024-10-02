@@ -6,8 +6,9 @@ pub mod serde;
 pub mod test;
 
 use futures::Future;
-use lazy_static::lazy_static;
-use rand::{seq::SliceRandom, Rng};
+
+use regex::Regex;
+use std::sync::OnceLock;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -250,7 +251,7 @@ pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
 
     for line in env.split_terminator('\n') {
         if let Some(separator_index) = line.find('=') {
-            if &line[..separator_index] != "" {
+            if !line[..separator_index].is_empty() {
                 if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
                     f(key, value)
                 }
@@ -309,13 +310,14 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
 }
 
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
-    lazy_static! {
-        pub static ref ZED_MEASUREMENTS: bool = env::var("ZED_MEASUREMENTS")
+    static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
+    let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
+        env::var("ZED_MEASUREMENTS")
             .map(|measurements| measurements == "1" || measurements == "true")
-            .unwrap_or(false);
-    }
+            .unwrap_or(false)
+    });
 
-    if *ZED_MEASUREMENTS {
+    if *zed_measurements {
         let start = Instant::now();
         let result = f();
         let elapsed = start.elapsed();
@@ -333,7 +335,6 @@ pub trait ResultExt<E> {
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
-    fn inspect_error(self, func: impl FnOnce(&E)) -> Self;
 }
 
 impl<T, E> ResultExt<E> for Result<T, E>
@@ -347,8 +348,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                let caller = Location::caller();
-                log::error!("{}:{}: {:?}", caller.file(), caller.line(), error);
+                log_error_with_caller(*Location::caller(), error, log::Level::Error);
                 None
             }
         }
@@ -362,24 +362,36 @@ where
         self
     }
 
+    #[track_caller]
     fn warn_on_err(self) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log::warn!("{:?}", error);
+                log_error_with_caller(*Location::caller(), error, log::Level::Warn);
                 None
             }
         }
     }
+}
 
-    /// https://doc.rust-lang.org/std/result/enum.Result.html#method.inspect_err
-    fn inspect_error(self, func: impl FnOnce(&E)) -> Self {
-        if let Err(err) = &self {
-            func(err);
-        }
+fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
+where
+    E: std::fmt::Debug,
+{
+    // In this codebase, the first segment of the file path is
+    // the 'crates' folder, followed by the crate name.
+    let target = caller.file().split('/').nth(1);
 
-        self
-    }
+    log::logger().log(
+        &log::Record::builder()
+            .target(target.unwrap_or(""))
+            .module_path(target)
+            .args(format_args!("{:?}", error))
+            .file(Some(caller.file()))
+            .line(Some(caller.line()))
+            .level(level)
+            .build(),
+    );
 }
 
 pub trait TryFutureExt {
@@ -455,13 +467,7 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log::log!(
-                        level,
-                        "{}:{}: {:?}",
-                        location.file(),
-                        location.line(),
-                        error
-                    );
+                    log_error_with_caller(location, error, level);
                     None
                 }
             }),
@@ -511,54 +517,59 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
     Deferred(Some(f))
 }
 
-pub struct RandomCharIter<T: Rng> {
-    rng: T,
-    simple_text: bool,
-}
+#[cfg(any(test, feature = "test-support"))]
+mod rng {
+    use rand::{seq::SliceRandom, Rng};
+    pub struct RandomCharIter<T: Rng> {
+        rng: T,
+        simple_text: bool,
+    }
 
-impl<T: Rng> RandomCharIter<T> {
-    pub fn new(rng: T) -> Self {
-        Self {
-            rng,
-            simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+    impl<T: Rng> RandomCharIter<T> {
+        pub fn new(rng: T) -> Self {
+            Self {
+                rng,
+                simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+            }
+        }
+
+        pub fn with_simple_text(mut self) -> Self {
+            self.simple_text = true;
+            self
         }
     }
 
-    pub fn with_simple_text(mut self) -> Self {
-        self.simple_text = true;
-        self
-    }
-}
+    impl<T: Rng> Iterator for RandomCharIter<T> {
+        type Item = char;
 
-impl<T: Rng> Iterator for RandomCharIter<T> {
-    type Item = char;
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.simple_text {
+                return if self.rng.gen_range(0..100) < 5 {
+                    Some('\n')
+                } else {
+                    Some(self.rng.gen_range(b'a'..b'z' + 1).into())
+                };
+            }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.simple_text {
-            return if self.rng.gen_range(0..100) < 5 {
-                Some('\n')
-            } else {
-                Some(self.rng.gen_range(b'a'..b'z' + 1).into())
-            };
-        }
-
-        match self.rng.gen_range(0..100) {
-            // whitespace
-            0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
-            // two-byte greek letters
-            20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
-            // // three-byte characters
-            33..=45 => ['✋', '✅', '❌', '❎', '⭐']
-                .choose(&mut self.rng)
-                .copied(),
-            // // four-byte characters
-            46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
-            // ascii letters
-            _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
+            match self.rng.gen_range(0..100) {
+                // whitespace
+                0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
+                // two-byte greek letters
+                20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
+                // // three-byte characters
+                33..=45 => ['✋', '✅', '❌', '❎', '⭐']
+                    .choose(&mut self.rng)
+                    .copied(),
+                // // four-byte characters
+                46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
+                // ascii letters
+                _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
+            }
         }
     }
 }
-
+#[cfg(any(test, feature = "test-support"))]
+pub use rng::RandomCharIter;
 /// Get an embedded file as a string.
 pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     match A::get(path).unwrap().data {
@@ -633,27 +644,27 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
 /// This is useful for turning regular alphanumerically sorted sequences as `1-abc, 10, 11-def, .., 2, 21-abc`
 /// into `1-abc, 2, 10, 11-def, .., 21-abc`
 #[derive(Debug, PartialEq, Eq)]
-pub struct NumericPrefixWithSuffix<'a>(i32, &'a str);
+pub struct NumericPrefixWithSuffix<'a>(Option<u64>, &'a str);
 
 impl<'a> NumericPrefixWithSuffix<'a> {
-    pub fn from_numeric_prefixed_str(str: &'a str) -> Option<Self> {
+    pub fn from_numeric_prefixed_str(str: &'a str) -> Self {
         let i = str.chars().take_while(|c| c.is_ascii_digit()).count();
         let (prefix, remainder) = str.split_at(i);
 
-        match prefix.parse::<i32>() {
-            Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
-            Err(_) => None,
-        }
+        let prefix = prefix.parse().ok();
+        Self(prefix, remainder)
     }
 }
-
 impl Ord for NumericPrefixWithSuffix<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let NumericPrefixWithSuffix(num_a, remainder_a) = self;
-        let NumericPrefixWithSuffix(num_b, remainder_b) = other;
-        num_a
-            .cmp(num_b)
-            .then_with(|| UniCase::new(remainder_a).cmp(&UniCase::new(remainder_b)))
+        match (self.0, other.0) {
+            (None, None) => UniCase::new(self.1).cmp(&UniCase::new(other.1)),
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(a), Some(b)) => a
+                .cmp(&b)
+                .then_with(|| UniCase::new(self.1).cmp(&UniCase::new(other.1))),
+        }
     }
 }
 
@@ -662,15 +673,17 @@ impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
         Some(self.cmp(other))
     }
 }
-lazy_static! {
-    static ref EMOJI_REGEX: regex::Regex = regex::Regex::new("(\\p{Emoji}|\u{200D})").unwrap();
+
+fn emoji_regex() -> &'static Regex {
+    static EMOJI_REGEX: OnceLock<Regex> = OnceLock::new();
+    EMOJI_REGEX.get_or_init(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap())
 }
 
 /// Returns true if the given string consists of emojis only.
 /// E.g. "👨‍👩‍👧‍👧👋" will return true, but "👋!" will return false.
 pub fn word_consists_of_emojis(s: &str) -> bool {
     let mut prev_end = 0;
-    for capture in EMOJI_REGEX.find_iter(s) {
+    for capture in emoji_regex().find_iter(s) {
         if capture.start() != prev_end {
             return false;
         }
@@ -724,66 +737,62 @@ mod tests {
         let target = "1a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, "a"))
+            NumericPrefixWithSuffix(Some(1), "a")
         );
 
         let target = "12ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "ab"))
+            NumericPrefixWithSuffix(Some(12), "ab")
         );
 
         let target = "12_ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "_ab"))
+            NumericPrefixWithSuffix(Some(12), "_ab")
         );
 
         let target = "1_2ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, "_2ab"))
+            NumericPrefixWithSuffix(Some(1), "_2ab")
         );
 
         let target = "1.2";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, ".2"))
+            NumericPrefixWithSuffix(Some(1), ".2")
         );
 
         let target = "1.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, ".2_a"))
+            NumericPrefixWithSuffix(Some(1), ".2_a")
         );
 
         let target = "12.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, ".2_a"))
+            NumericPrefixWithSuffix(Some(12), ".2_a")
         );
 
         let target = "12a.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "a.2_a"))
+            NumericPrefixWithSuffix(Some(12), "a.2_a")
         );
     }
 
     #[test]
     fn test_numeric_prefix_with_suffix() {
         let mut sorted = vec!["1-abc", "10", "11def", "2", "21-abc"];
-        sorted.sort_by_key(|s| {
-            NumericPrefixWithSuffix::from_numeric_prefixed_str(s).unwrap_or_else(|| {
-                panic!("Cannot convert string `{s}` into NumericPrefixWithSuffix")
-            })
-        });
+        sorted.sort_by_key(|s| NumericPrefixWithSuffix::from_numeric_prefixed_str(s));
         assert_eq!(sorted, ["1-abc", "2", "10", "11def", "21-abc"]);
 
         for numeric_prefix_less in ["numeric_prefix_less", "aaa", "~™£"] {
             assert_eq!(
                 NumericPrefixWithSuffix::from_numeric_prefixed_str(numeric_prefix_less),
-                None,
+                NumericPrefixWithSuffix(None, numeric_prefix_less),
                 "String without numeric prefix `{numeric_prefix_less}` should not be converted into NumericPrefixWithSuffix"
             )
         }

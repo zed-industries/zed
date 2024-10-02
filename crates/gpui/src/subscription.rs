@@ -154,6 +154,14 @@ pub struct Subscription {
 }
 
 impl Subscription {
+    /// Creates a new subscription with a callback that gets invoked when
+    /// this subscription is dropped.
+    pub fn new(unsubscribe: impl 'static + FnOnce()) -> Self {
+        Self {
+            unsubscribe: Some(Box::new(unsubscribe)),
+        }
+    }
+
     /// Detaches the subscription from this handle. The callback will
     /// continue to be invoked until the views or models it has been
     /// subscribed to are dropped

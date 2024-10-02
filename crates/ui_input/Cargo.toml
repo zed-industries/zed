@@ -1,0 +1,22 @@
+[package]
+name = "ui_input"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/ui_input.rs"
+
+[dependencies]
+editor.workspace = true
+gpui.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+
+[features]
+default = []

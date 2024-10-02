@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{HighlightStyle, StyledText};
+use gpui::{FontWeight, HighlightStyle, StyledText};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
@@ -29,6 +29,11 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
+    fn weight(mut self, weight: FontWeight) -> Self {
+        self.base = self.base.weight(weight);
+        self
+    }
+
     fn line_height_style(mut self, line_height_style: LineHeightStyle) -> Self {
         self.base = self.base.line_height_style(line_height_style);
         self
@@ -48,11 +53,21 @@ impl LabelCommon for HighlightedLabel {
         self.base = self.base.italic(italic);
         self
     }
+
+    fn alpha(mut self, alpha: f32) -> Self {
+        self.base = self.base.alpha(alpha);
+        self
+    }
+
+    fn underline(mut self, underline: bool) -> Self {
+        self.base = self.base.underline(underline);
+        self
+    }
 }
 
 pub fn highlight_ranges(
     text: &str,
-    indices: &Vec<usize>,
+    indices: &[usize],
     style: HighlightStyle,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
     let mut highlight_indices = indices.iter().copied().peekable();

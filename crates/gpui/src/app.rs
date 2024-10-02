@@ -11,23 +11,25 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use futures::{channel::oneshot, future::LocalBoxFuture, Future};
+use futures::{
+    channel::oneshot,
+    future::{LocalBoxFuture, Shared},
+    Future, FutureExt,
+};
 use slotmap::SlotMap;
-use smol::future::FutureExt;
-use time::UtcOffset;
 
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
-use http::{self, HttpClient};
+use http_client::HttpClient;
 pub use model_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
+    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
+    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
     Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
@@ -113,9 +115,20 @@ impl App {
         log::info!("GPUI was compiled in test mode");
 
         Self(AppContext::new(
-            current_platform(),
+            current_platform(false),
             Arc::new(()),
-            http::client(None),
+            Arc::new(NullHttpClient),
+        ))
+    }
+
+    /// Build an app in headless mode. This prevents opening windows,
+    /// but makes it possible to run an application in an context like
+    /// SSH, where GUI applications are not allowed.
+    pub fn headless() -> Self {
+        Self(AppContext::new(
+            current_platform(true),
+            Arc::new(()),
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -125,6 +138,14 @@ impl App {
         let asset_source = Arc::new(asset_source);
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
+        drop(context_lock);
+        self
+    }
+
+    /// Set the http client for the application
+    pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
+        let mut context_lock = self.0.borrow_mut();
+        context_lock.http_client = http_client;
         drop(context_lock);
         self
     }
@@ -191,7 +212,8 @@ impl App {
 
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
-type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
+pub(crate) type KeystrokeObserver =
+    Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
@@ -210,7 +232,6 @@ pub struct AppContext {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
-    pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
@@ -266,7 +287,6 @@ impl AppContext {
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
-                asset_cache: AssetCache::new(),
                 loading_assets: Default::default(),
                 asset_source,
                 http_client,
@@ -459,6 +479,15 @@ impl AppContext {
             .collect()
     }
 
+    /// Returns the window handles ordered by their appearance on screen, front to back.
+    ///
+    /// The first window in the returned list is the active/topmost window of the application.
+    ///
+    /// This method returns None if the platform doesn't implement the method yet.
+    pub fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        self.platform.window_stack()
+    }
+
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()
@@ -479,13 +508,14 @@ impl AppContext {
                 Ok(mut window) => {
                     let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
                     window.root_view.replace(root_view.into());
+                    WindowContext::new(cx, &mut window).defer(|cx| cx.appearance_changed());
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)
                 }
                 Err(e) => {
                     cx.windows.remove(id);
-                    return Err(e);
+                    Err(e)
                 }
             }
         })
@@ -611,10 +641,11 @@ impl AppContext {
     /// Displays a platform modal for selecting paths.
     /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
+    /// May return an error on Linux if the file picker couldn't be opened.
     pub fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         self.platform.prompt_for_paths(options)
     }
 
@@ -622,13 +653,22 @@ impl AppContext {
     /// The provided directory will be used to set the initial location.
     /// When a path is selected, it is relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
-    pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+    /// May return an error on Linux if the file picker couldn't be opened.
+    pub fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         self.platform.prompt_for_new_path(directory)
     }
 
     /// Reveals the specified path at the platform level, such as in Finder on macOS.
     pub fn reveal_path(&self, path: &Path) {
         self.platform.reveal_path(path)
+    }
+
+    /// Opens the specified path with the system's default application.
+    pub fn open_with_system(&self, path: &Path) {
+        self.platform.open_with_system(path)
     }
 
     /// Returns whether the user has configured scrollbars to auto-hide at the platform level.
@@ -641,13 +681,8 @@ impl AppContext {
         self.platform.restart(binary_path)
     }
 
-    /// Returns the local timezone at the platform level.
-    pub fn local_timezone(&self) -> UtcOffset {
-        self.platform.local_timezone()
-    }
-
     /// Updates the http client assigned to GPUI
-    pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+    pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
     }
 
@@ -1024,7 +1059,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
@@ -1034,7 +1069,14 @@ impl AppContext {
             activate();
             subscription
         }
-        inner(&mut self.keystroke_observers, Box::new(f))
+
+        inner(
+            &mut self.keystroke_observers,
+            Box::new(move |event, cx| {
+                f(event, cx);
+                true
+            }),
+        )
     }
 
     /// Register key bindings.
@@ -1119,14 +1161,7 @@ impl AppContext {
         for window in self.windows() {
             window
                 .update(self, |_, cx| {
-                    cx.window
-                        .rendered_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
-                    cx.window
-                        .next_frame
-                        .dispatch_tree
-                        .clear_pending_keystrokes();
+                    cx.clear_pending_keystrokes();
                 })
                 .ok();
         }
@@ -1253,6 +1288,40 @@ impl AppContext {
             + 'static,
     ) {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
+    }
+
+    /// Remove an asset from GPUI's cache
+    pub fn remove_cached_asset<A: Asset + 'static>(&mut self, source: &A::Source) {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        self.loading_assets.remove(&asset_id);
+    }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time, and the results of this call will be cached
+    ///
+    /// This asset will not be cached by default, see [Self::use_cached_asset]
+    pub fn fetch_asset<A: Asset + 'static>(
+        &mut self,
+        source: &A::Source,
+    ) -> (Shared<Task<A::Output>>, bool) {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        let mut is_first = false;
+        let task = self
+            .loading_assets
+            .remove(&asset_id)
+            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
+            .unwrap_or_else(|| {
+                is_first = true;
+                let future = A::load(source.clone(), self);
+                let task = self.background_executor().spawn(future).shared();
+                task
+            });
+
+        self.loading_assets.insert(asset_id, Box::new(task.clone()));
+
+        (task, is_first)
     }
 }
 
@@ -1450,4 +1519,22 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+}
+
+struct NullHttpClient;
+
+impl HttpClient for NullHttpClient {
+    fn send(
+        &self,
+        _req: http_client::Request<http_client::AsyncBody>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+    > {
+        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+    }
+
+    fn proxy(&self) -> Option<&http_client::Uri> {
+        None
+    }
 }

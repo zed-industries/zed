@@ -8,19 +8,20 @@ pub use error::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;
-pub use prost::Message;
+pub use prost::{DecodeError, Message};
 use serde::Serialize;
-use std::any::{Any, TypeId};
-use std::time::Instant;
 use std::{
+    any::{Any, TypeId},
     cmp,
-    fmt::Debug,
-    iter,
+    fmt::{self, Debug},
+    iter, mem,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use std::{fmt, mem};
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
+
+pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const SSH_PROJECT_ID: u64 = 0;
 
 pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
@@ -137,6 +138,8 @@ impl fmt::Display for PeerId {
 }
 
 messages!(
+    (AcceptTermsOfService, Foreground),
+    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -153,12 +156,9 @@ messages!(
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
     (ChannelMessageUpdate, Foreground),
-    (CompleteWithLanguageModel, Background),
     (ComputeEmbeddings, Background),
     (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
-    (CountTokensWithLanguageModel, Background),
-    (CountTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -192,6 +192,8 @@ messages!(
     (GetCompletionsResponse, Background),
     (GetDefinition, Background),
     (GetDefinitionResponse, Background),
+    (GetDeclaration, Background),
+    (GetDeclarationResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
     (GetHover, Background),
@@ -204,12 +206,16 @@ messages!(
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
     (GetReferencesResponse, Background),
+    (GetSignatureHelp, Background),
+    (GetSignatureHelpResponse, Background),
     (GetSupermavenApiKey, Background),
     (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
+    (GetLlmToken, Background),
+    (GetLlmTokenResponse, Background),
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
@@ -226,7 +232,6 @@ messages!(
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
-    (LanguageModelResponse, Background),
     (LeaveChannelBuffer, Background),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
@@ -246,6 +251,8 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
+    (CountLanguageModelTokens, Background),
+    (CountLanguageModelTokensResponse, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -272,8 +279,6 @@ messages!(
     (SaveBuffer, Foreground),
     (SetChannelMemberRole, Foreground),
     (SetChannelVisibility, Foreground),
-    (SearchProject, Background),
-    (SearchProjectResponse, Background),
     (SendChannelMessage, Background),
     (SendChannelMessageResponse, Background),
     (ShareProject, Foreground),
@@ -305,6 +310,7 @@ messages!(
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
+    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UsersResponse, Foreground),
@@ -329,6 +335,9 @@ messages!(
     (MultiLspQueryResponse, Background),
     (DevServerProjectsUpdate, Foreground),
     (ValidateDevServerProjectRequest, Background),
+    (ListRemoteDirectory, Background),
+    (ListRemoteDirectoryResponse, Background),
+    (UpdateDevServerProject, Background),
     (DeleteDevServer, Foreground),
     (DeleteDevServerProject, Foreground),
     (RegenerateDevServerToken, Foreground),
@@ -337,10 +346,29 @@ messages!(
     (OpenNewBuffer, Foreground),
     (RestartLanguageServers, Foreground),
     (LinkedEditingRange, Background),
-    (LinkedEditingRangeResponse, Background)
+    (LinkedEditingRangeResponse, Background),
+    (AdvertiseContexts, Foreground),
+    (OpenContext, Foreground),
+    (OpenContextResponse, Foreground),
+    (CreateContext, Foreground),
+    (CreateContextResponse, Foreground),
+    (UpdateContext, Foreground),
+    (SynchronizeContexts, Foreground),
+    (SynchronizeContextsResponse, Foreground),
+    (LspExtSwitchSourceHeader, Background),
+    (LspExtSwitchSourceHeaderResponse, Background),
+    (AddWorktree, Foreground),
+    (AddWorktreeResponse, Foreground),
+    (FindSearchCandidates, Background),
+    (FindSearchCandidatesResponse, Background),
+    (CloseBuffer, Foreground),
+    (UpdateUserSettings, Foreground),
+    (CheckFileExists, Background),
+    (CheckFileExistsResponse, Background)
 );
 
 request_messages!(
+    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -349,9 +377,7 @@ request_messages!(
     (Call, Ack),
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
-    (CompleteWithLanguageModel, LanguageModelResponse),
     (ComputeEmbeddings, ComputeEmbeddingsResponse),
-    (CountTokensWithLanguageModel, CountTokensResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -369,16 +395,21 @@ request_messages!(
     (GetCodeActions, GetCodeActionsResponse),
     (GetCompletions, GetCompletionsResponse),
     (GetDefinition, GetDefinitionResponse),
+    (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetHover, GetHoverResponse),
+    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
     (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
+    (GetSignatureHelp, GetSignatureHelpResponse),
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
+    (ListRemoteDirectory, ListRemoteDirectoryResponse),
+    (UpdateDevServerProject, Ack),
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
@@ -401,6 +432,7 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
+    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
@@ -420,7 +452,7 @@ request_messages!(
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
-    (SearchProject, SearchProjectResponse),
+    (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
@@ -449,31 +481,42 @@ request_messages!(
     (DeleteDevServerProject, Ack),
     (RegenerateDevServerToken, RegenerateDevServerTokenResponse),
     (RenameDevServer, Ack),
-    (RestartLanguageServers, Ack)
+    (RestartLanguageServers, Ack),
+    (OpenContext, OpenContextResponse),
+    (CreateContext, CreateContextResponse),
+    (SynchronizeContexts, SynchronizeContextsResponse),
+    (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
+    (AddWorktree, AddWorktreeResponse),
+    (CheckFileExists, CheckFileExistsResponse)
 );
 
 entity_messages!(
     {project_id, ShareProject},
     AddProjectCollaborator,
+    AddWorktree,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
     BlameBuffer,
     BufferReloaded,
     BufferSaved,
+    CloseBuffer,
     CopyProjectEntry,
     CreateBufferForPeer,
     CreateProjectEntry,
     DeleteProjectEntry,
     ExpandProjectEntry,
+    FindSearchCandidates,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,
     GetDefinition,
+    GetDeclaration,
     GetImplementation,
     GetDocumentHighlights,
     GetHover,
     GetProjectSymbols,
     GetReferences,
+    GetSignatureHelp,
     GetTypeDefinition,
     InlayHints,
     JoinProject,
@@ -495,7 +538,6 @@ entity_messages!(
     ResolveCompletionDocumentation,
     ResolveInlayHint,
     SaveBuffer,
-    SearchProject,
     StartLanguageServer,
     SynchronizeBuffers,
     TaskContextForLocation,
@@ -511,6 +553,14 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
+    AdvertiseContexts,
+    OpenContext,
+    CreateContext,
+    UpdateContext,
+    SynchronizeContexts,
+    LspExtSwitchSourceHeader,
+    UpdateUserSettings,
+    CheckFileExists,
 );
 
 entity_messages!(

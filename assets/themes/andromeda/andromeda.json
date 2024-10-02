@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "Andromeda",
   "author": "Zed Industries",
   "themes": [
@@ -38,6 +39,7 @@
         "icon.accent": "#10a793ff",
         "status_bar.background": "#262933ff",
         "title_bar.background": "#262933ff",
+        "title_bar.inactive_background": "#21242bff",
         "toolbar.background": "#1e2025ff",
         "tab_bar.background": "#21242bff",
         "tab.inactive_background": "#21242bff",

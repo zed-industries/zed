@@ -1,10 +1,11 @@
 use client::telemetry;
-use gpui::{AppContext, Task};
+use gpui::Task;
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
 use std::{env, fmt::Display};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+use ui::WindowContext;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
@@ -15,10 +16,11 @@ pub struct SystemSpecs {
     memory: u64,
     architecture: &'static str,
     commit_sha: Option<String>,
+    gpu_specs: Option<String>,
 }
 
 impl SystemSpecs {
-    pub fn new(cx: &AppContext) -> Task<Self> {
+    pub fn new(cx: &WindowContext) -> Task<Self> {
         let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx);
         let os_name = telemetry::os_name();
@@ -34,6 +36,15 @@ impl SystemSpecs {
             _ => None,
         };
 
+        let gpu_specs = if let Some(specs) = cx.gpu_specs() {
+            Some(format!(
+                "{} || {} || {}",
+                specs.device_name, specs.driver_name, specs.driver_info
+            ))
+        } else {
+            None
+        };
+
         cx.background_executor().spawn(async move {
             let os_version = telemetry::os_version();
             SystemSpecs {
@@ -44,6 +55,7 @@ impl SystemSpecs {
                 memory,
                 architecture,
                 commit_sha,
+                gpu_specs,
             }
         })
     }
@@ -67,6 +79,11 @@ impl Display for SystemSpecs {
             format!("Architecture: {}", self.architecture),
         ]
         .into_iter()
+        .chain(
+            self.gpu_specs
+                .as_ref()
+                .map(|specs| format!("GPU: {}", specs)),
+        )
         .collect::<Vec<String>>()
         .join("\n");
 

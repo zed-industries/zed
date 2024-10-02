@@ -44,9 +44,13 @@
   (float)
 ] @number
 
-; Variables
-(assignment
-  left: (identifier) @variable)
+; Self references
+
+[
+  (parameters (identifier) @variable.special)
+  (attribute (identifier) @variable.special)
+  (#match? @variable.special "^self$")
+]
 
 (comment) @comment
 (string) @string

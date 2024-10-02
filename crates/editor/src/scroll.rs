@@ -2,6 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
+use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -49,7 +50,7 @@ impl ScrollAnchor {
             scroll_position.y = 0.;
         } else {
             let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
-            scroll_position.y = scroll_top + scroll_position.y;
+            scroll_position.y += scroll_top;
         }
         scroll_position
     }
@@ -199,8 +200,31 @@ impl ScrollManager {
                 0,
             )
         } else {
+            let scroll_top = scroll_position.y;
+            let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+                ScrollBeyondLastLine::OnePage => scroll_top,
+                ScrollBeyondLastLine::Off => {
+                    if let Some(height_in_lines) = self.visible_line_count {
+                        let max_row = map.max_point().row().0 as f32;
+                        scroll_top.min(max_row - height_in_lines + 1.).max(0.)
+                    } else {
+                        scroll_top
+                    }
+                }
+                ScrollBeyondLastLine::VerticalScrollMargin => {
+                    if let Some(height_in_lines) = self.visible_line_count {
+                        let max_row = map.max_point().row().0 as f32;
+                        scroll_top
+                            .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
+                            .max(0.)
+                    } else {
+                        scroll_top
+                    }
+                }
+            };
+
             let scroll_top_buffer_point =
-                DisplayPoint::new(DisplayRow(scroll_position.y as u32), 0).to_point(&map);
+                DisplayPoint::new(DisplayRow(scroll_top as u32), 0).to_point(map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
@@ -210,7 +234,7 @@ impl ScrollManager {
                     anchor: top_anchor,
                     offset: point(
                         scroll_position.x.max(0.),
-                        scroll_position.y - top_anchor.to_display_point(&map).row().as_f32(),
+                        scroll_top - top_anchor.to_display_point(map).row().as_f32(),
                     ),
                 },
                 scroll_top_buffer_point.row,
@@ -283,8 +307,8 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn autoscroll_requested(&self) -> bool {
-        self.autoscroll_request.is_some()
+    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
+        self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
 
     pub fn is_dragging_scrollbar(&self) -> bool {
@@ -328,6 +352,11 @@ impl Editor {
 
     pub fn visible_line_count(&self) -> Option<f32> {
         self.scroll_manager.visible_line_count
+    }
+
+    pub fn visible_row_count(&self) -> Option<u32> {
+        self.visible_line_count()
+            .map(|line_count| line_count as u32 - 1)
     }
 
     pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
@@ -437,7 +466,7 @@ impl Editor {
     }
 
     pub fn scroll_screen(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -447,7 +476,10 @@ impl Editor {
         }
 
         let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position + point(0., amount.lines(self));
+        let Some(visible_line_count) = self.visible_line_count() else {
+            return;
+        };
+        let new_pos = cur_position + point(0., amount.lines(visible_line_count));
         self.set_scroll_position(new_pos, cx);
     }
 
@@ -473,7 +505,7 @@ impl Editor {
         }
 
         if let Some(visible_lines) = self.visible_line_count() {
-            if newest_head.row() < DisplayRow(screen_top.row().0 + visible_lines as u32) {
+            if newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32) {
                 return Ordering::Equal;
             }
         }

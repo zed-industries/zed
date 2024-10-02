@@ -1,5 +1,6 @@
 use crate::{db::ChannelId, tests::TestServer};
 use call::ActiveCall;
+use chrono::Utc;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
 use rpc::proto;
@@ -52,7 +53,7 @@ async fn test_channel_guests(
     assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
     assert!(project_b
         .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.create_entry((worktree_id, "b.txt"), false, cx)
         })
         .await
@@ -167,7 +168,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .get_or_create_user_by_github_account("user_b", Some(100), None, None)
+        .get_or_create_user_by_github_account("user_b", 100, None, Utc::now(), None)
         .await
         .unwrap();
 
@@ -265,7 +266,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .add_contributor("user_b", Some(100), None, None)
+        .add_contributor("user_b", 100, None, Utc::now(), None)
         .await
         .unwrap();
 

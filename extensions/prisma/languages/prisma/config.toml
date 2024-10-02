@@ -8,3 +8,7 @@ brackets = [
     { start = "(", end = ")", close = true, newline = true }
 ]
 tab_size = 2
+word_characters = ["@"]
+
+[overrides.string]
+word_characters = ["@"]

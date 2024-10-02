@@ -1,34 +1,34 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod socks;
 pub mod telemetry;
 pub mod user;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
+    client::IntoClientRequest,
     error::Error as WebsocketError,
-    http::{Request, StatusCode},
+    http::{HeaderValue, Request, StatusCode},
 };
+use chrono::{DateTime, Utc};
 use clock::SystemClock;
-use collections::HashMap;
 use futures::{
-    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
+    channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
     TryFutureExt as _, TryStreamExt,
 };
-use gpui::{
-    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
-};
-use http::{HttpClient, HttpClientWithUrl};
-use lazy_static::lazy_static;
+use gpui::{actions, AppContext, AsyncAppContext, Global, Model, Task, WeakModel};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
-use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
+use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use socks::connect_socks_proxy_stream;
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -40,7 +40,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Weak,
+        Arc, LazyLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -62,27 +62,35 @@ impl fmt::Display for DevServerToken {
     }
 }
 
-lazy_static! {
-    static ref ZED_SERVER_URL: Option<String> = std::env::var("ZED_SERVER_URL").ok();
-    static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
-    /// An environment variable whose presence indicates that the development auth
-    /// provider should be used.
-    ///
-    /// Only works in development. Setting this environment variable in other release
-    /// channels is a no-op.
-    pub static ref ZED_DEVELOPMENT_AUTH: bool =
-        std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty());
-    pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
+static ZED_SERVER_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
+static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+
+/// An environment variable whose presence indicates that the development auth
+/// provider should be used.
+///
+/// Only works in development. Setting this environment variable in other release
+/// channels is a no-op.
+pub static ZED_DEVELOPMENT_AUTH: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty())
+});
+pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_IMPERSONATE")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ADMIN_API_TOKEN: Option<String> = std::env::var("ZED_ADMIN_API_TOKEN")
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ZED_APP_PATH: Option<PathBuf> =
-        std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
-    pub static ref ZED_ALWAYS_ACTIVE: bool =
-        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
-}
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
+
+pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
@@ -108,7 +116,7 @@ impl Settings for ClientSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
         if let Some(server_url) = &*ZED_SERVER_URL {
-            result.server_url.clone_from(&server_url)
+            result.server_url.clone_from(server_url)
         }
         Ok(result)
     }
@@ -195,6 +203,7 @@ pub struct Client {
     telemetry: Arc<Telemetry>,
     credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static>,
     state: RwLock<ClientState>,
+    handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -217,6 +226,9 @@ pub struct Client {
             >,
         >,
     >,
+
+    #[cfg(any(test, feature = "test-support"))]
+    rpc_url: RwLock<Option<Url>>,
 }
 
 #[derive(Error, Debug)]
@@ -228,7 +240,7 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http::Error),
+    InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -286,30 +298,7 @@ impl Status {
 struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
-    entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
     _reconnect_task: Option<Task<()>>,
-    entities_by_type_and_remote_id: HashMap<(TypeId, u64), WeakSubscriber>,
-    models_by_message_type: HashMap<TypeId, AnyWeakModel>,
-    entity_types_by_message_type: HashMap<TypeId, TypeId>,
-    #[allow(clippy::type_complexity)]
-    message_handlers: HashMap<
-        TypeId,
-        Arc<
-            dyn Send
-                + Sync
-                + Fn(
-                    AnyModel,
-                    Box<dyn AnyTypedEnvelope>,
-                    &Arc<Client>,
-                    AsyncAppContext,
-                ) -> LocalBoxFuture<'static, Result<()>>,
-        >,
-    >,
-}
-
-enum WeakSubscriber {
-    Entity { handle: AnyWeakModel },
-    Pending(Vec<Box<dyn AnyTypedEnvelope>>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -361,12 +350,7 @@ impl Default for ClientState {
         Self {
             credentials: None,
             status: watch::channel_with(Status::SignedOut),
-            entity_id_extractors: Default::default(),
             _reconnect_task: None,
-            models_by_message_type: Default::default(),
-            entities_by_type_and_remote_id: Default::default(),
-            entity_types_by_message_type: Default::default(),
-            message_handlers: Default::default(),
         }
     }
 }
@@ -387,13 +371,13 @@ impl Drop for Subscription {
         match self {
             Subscription::Entity { client, id } => {
                 if let Some(client) = client.upgrade() {
-                    let mut state = client.state.write();
+                    let mut state = client.handler_set.lock();
                     let _ = state.entities_by_type_and_remote_id.remove(id);
                 }
             }
             Subscription::Message { client, id } => {
                 if let Some(client) = client.upgrade() {
-                    let mut state = client.state.write();
+                    let mut state = client.handler_set.lock();
                     let _ = state.entity_types_by_message_type.remove(id);
                     let _ = state.message_handlers.remove(id);
                 }
@@ -412,22 +396,31 @@ pub struct PendingEntitySubscription<T: 'static> {
 impl<T: 'static> PendingEntitySubscription<T> {
     pub fn set_model(mut self, model: &Model<T>, cx: &mut AsyncAppContext) -> Subscription {
         self.consumed = true;
-        let mut state = self.client.state.write();
+        let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
-        let Some(WeakSubscriber::Pending(messages)) =
-            state.entities_by_type_and_remote_id.remove(&id)
+        let Some(EntityMessageSubscriber::Pending(messages)) =
+            handlers.entities_by_type_and_remote_id.remove(&id)
         else {
             unreachable!()
         };
 
-        state.entities_by_type_and_remote_id.insert(
+        handlers.entities_by_type_and_remote_id.insert(
             id,
-            WeakSubscriber::Entity {
+            EntityMessageSubscriber::Entity {
                 handle: model.downgrade().into(),
             },
         );
-        drop(state);
+        drop(handlers);
         for message in messages {
+            let client_id = self.client.id();
+            let type_name = message.payload_type_name();
+            let sender_id = message.original_sender_id();
+            log::debug!(
+                "handling queued rpc message. client_id:{}, sender_id:{:?}, type:{}",
+                client_id,
+                sender_id,
+                type_name
+            );
             self.client.handle_message(message, cx);
         }
         Subscription::Entity {
@@ -440,8 +433,8 @@ impl<T: 'static> PendingEntitySubscription<T> {
 impl<T: 'static> Drop for PendingEntitySubscription<T> {
     fn drop(&mut self) {
         if !self.consumed {
-            let mut state = self.client.state.write();
-            if let Some(WeakSubscriber::Pending(messages)) = state
+            let mut state = self.client.handler_set.lock();
+            if let Some(EntityMessageSubscriber::Pending(messages)) = state
                 .entities_by_type_and_remote_id
                 .remove(&(TypeId::of::<T>(), self.remote_id))
             {
@@ -509,7 +502,7 @@ impl Client {
         let credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static> =
             if use_zed_development_auth {
                 Arc::new(DevelopmentCredentialsProvider {
-                    path: util::paths::CONFIG_DIR.join("development_auth"),
+                    path: paths::config_dir().join("development_auth"),
                 })
             } else {
                 Arc::new(KeychainCredentialsProvider)
@@ -522,21 +515,25 @@ impl Client {
             http,
             credentials_provider,
             state: Default::default(),
+            handler_set: Default::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             establish_connection: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            rpc_url: RwLock::default(),
         })
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new(
+        let http = Arc::new(HttpClientWithUrl::new_uri(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
-            ProxySettings::get_global(cx).proxy.clone(),
+            cx.http_client().proxy().cloned(),
         ));
-        Self::new(clock, http.clone(), cx)
+        Self::new(clock, http, cx)
     }
 
     pub fn id(&self) -> u64 {
@@ -556,10 +553,7 @@ impl Client {
     pub fn teardown(&self) {
         let mut state = self.state.write();
         state._reconnect_task.take();
-        state.message_handlers.clear();
-        state.models_by_message_type.clear();
-        state.entities_by_type_and_remote_id.clear();
-        state.entity_id_extractors.clear();
+        self.handler_set.lock().clear();
         self.peer.teardown();
     }
 
@@ -581,6 +575,12 @@ impl Client {
             + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Connection, EstablishConnectionError>>,
     {
         *self.establish_connection.write() = Some(Box::new(connect));
+        self
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn override_rpc_url(&self, url: Url) -> &Self {
+        *self.rpc_url.write() = Some(url);
         self
     }
 
@@ -666,14 +666,14 @@ impl Client {
     {
         let id = (TypeId::of::<T>(), remote_id);
 
-        let mut state = self.state.write();
+        let mut state = self.handler_set.lock();
         if state.entities_by_type_and_remote_id.contains_key(&id) {
             return Err(anyhow!("already subscribed to entity"));
         }
 
         state
             .entities_by_type_and_remote_id
-            .insert(id, WeakSubscriber::Pending(Default::default()));
+            .insert(id, EntityMessageSubscriber::Pending(Default::default()));
 
         Ok(PendingEntitySubscription {
             client: self.clone(),
@@ -692,15 +692,31 @@ impl Client {
     where
         M: EnvelopedMessage,
         E: 'static,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        F: 'static + Future<Output = Result<()>>,
+    {
+        self.add_message_handler_impl(entity, move |model, message, _, cx| {
+            handler(model, message, cx)
+        })
+    }
+
+    fn add_message_handler_impl<M, E, H, F>(
+        self: &Arc<Self>,
+        entity: WeakModel<E>,
+        handler: H,
+    ) -> Subscription
+    where
+        M: EnvelopedMessage,
+        E: 'static,
         H: 'static
             + Sync
-            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
+            + Fn(Model<E>, TypedEnvelope<M>, AnyProtoClient, AsyncAppContext) -> F
             + Send
             + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
         let message_type_id = TypeId::of::<M>();
-        let mut state = self.state.write();
+        let mut state = self.handler_set.lock();
         state
             .models_by_message_type
             .insert(message_type_id, entity.into());
@@ -737,101 +753,26 @@ impl Client {
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static
-            + Sync
-            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
-            + Send
-            + Sync,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_message_handler(model, move |handle, envelope, this, cx| {
-            Self::respond_to_request(
-                envelope.receipt(),
-                handler(handle, envelope, this.clone(), cx),
-                this,
-            )
-        })
-    }
-
-    pub fn add_model_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage,
-        E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
-        F: 'static + Future<Output = Result<()>>,
-    {
-        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
-            handler(subscriber.downcast::<E>().unwrap(), message, client, cx)
-        })
-    }
-
-    fn add_entity_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage,
-        E: 'static,
-        H: 'static + Fn(AnyModel, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
-        F: 'static + Future<Output = Result<()>>,
-    {
-        let model_type_id = TypeId::of::<E>();
-        let message_type_id = TypeId::of::<M>();
-
-        let mut state = self.state.write();
-        state
-            .entity_types_by_message_type
-            .insert(message_type_id, model_type_id);
-        state
-            .entity_id_extractors
-            .entry(message_type_id)
-            .or_insert_with(|| {
-                |envelope| {
-                    envelope
-                        .as_any()
-                        .downcast_ref::<TypedEnvelope<M>>()
-                        .unwrap()
-                        .payload
-                        .remote_entity_id()
-                }
-            });
-        let prev_handler = state.message_handlers.insert(
-            message_type_id,
-            Arc::new(move |handle, envelope, client, cx| {
-                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(handle, *envelope, client.clone(), cx).boxed_local()
-            }),
-        );
-        if prev_handler.is_some() {
-            panic!("registered handler for the same message twice");
-        }
-    }
-
-    pub fn add_model_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage + RequestMessage,
-        E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
-        F: 'static + Future<Output = Result<M::Response>>,
-    {
-        self.add_model_message_handler(move |entity, envelope, client, cx| {
-            Self::respond_to_request::<M, _>(
-                envelope.receipt(),
-                handler(entity, envelope, client.clone(), cx),
-                client,
-            )
+        self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
+            Self::respond_to_request(envelope.receipt(), handler(handle, envelope, cx), this)
         })
     }
 
     async fn respond_to_request<T: RequestMessage, F: Future<Output = Result<T::Response>>>(
         receipt: Receipt<T>,
         response: F,
-        client: Arc<Self>,
+        client: AnyProtoClient,
     ) -> Result<()> {
         match response.await {
             Ok(response) => {
-                client.respond(receipt, response)?;
+                client.send_response(receipt.message_id, response)?;
                 Ok(())
             }
             Err(error) => {
-                client.respond_with_error(receipt, error.to_proto())?;
+                client.send_response(receipt.message_id, error.to_proto())?;
                 Err(error)
             }
         }
@@ -1078,38 +1019,50 @@ impl Client {
         self.establish_websocket_connection(credentials, cx)
     }
 
-    async fn get_rpc_url(
+    fn rpc_url(
+        &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> Result<Url> {
-        if let Some(url) = &*ZED_RPC_URL {
-            return Url::parse(url).context("invalid rpc url");
-        }
+    ) -> impl Future<Output = Result<url::Url>> {
+        #[cfg(any(test, feature = "test-support"))]
+        let url_override = self.rpc_url.read().clone();
 
-        let mut url = http.build_url("/rpc");
-        if let Some(preview_param) =
-            release_channel.and_then(|channel| channel.release_query_param())
-        {
-            url += "?";
-            url += preview_param;
-        }
-        let response = http.get(&url, Default::default(), false).await?;
-        let collab_url = if response.status().is_redirection() {
-            response
-                .headers()
-                .get("Location")
-                .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
-                .to_str()
-                .map_err(EstablishConnectionError::other)?
-                .to_string()
-        } else {
-            Err(anyhow!(
-                "unexpected /rpc response status {}",
-                response.status()
-            ))?
-        };
+        async move {
+            #[cfg(any(test, feature = "test-support"))]
+            if let Some(url) = url_override {
+                return Ok(url);
+            }
 
-        Url::parse(&collab_url).context("invalid rpc url")
+            if let Some(url) = &*ZED_RPC_URL {
+                return Url::parse(url).context("invalid rpc url");
+            }
+
+            let mut url = http.build_url("/rpc");
+            if let Some(preview_param) =
+                release_channel.and_then(|channel| channel.release_query_param())
+            {
+                url += "?";
+                url += preview_param;
+            }
+
+            let response = http.get(&url, Default::default(), false).await?;
+            let collab_url = if response.status().is_redirection() {
+                response
+                    .headers()
+                    .get("Location")
+                    .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
+                    .to_str()
+                    .map_err(EstablishConnectionError::other)?
+                    .to_string()
+            } else {
+                Err(anyhow!(
+                    "unexpected /rpc response status {}",
+                    response.status()
+                ))?
+            };
+
+            Url::parse(&collab_url).context("invalid rpc url")
+        }
     }
 
     fn establish_websocket_connection(
@@ -1126,41 +1079,80 @@ impl Client {
             .ok()
             .unwrap_or_default();
 
-        let request = Request::builder()
-            .header("Authorization", credentials.authorization_header())
-            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION)
-            .header("x-zed-app-version", app_version)
-            .header(
-                "x-zed-release-channel",
-                release_channel.map(|r| r.dev_name()).unwrap_or("unknown"),
-            );
-
         let http = self.http.clone();
+        let proxy = http.proxy().cloned();
+        let credentials = credentials.clone();
+        let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
-            let mut rpc_url = Self::get_rpc_url(http, release_channel).await?;
+            use HttpOrHttps::*;
+
+            #[derive(Debug)]
+            enum HttpOrHttps {
+                Http,
+                Https,
+            }
+
+            let mut rpc_url = rpc_url.await?;
+            let url_scheme = match rpc_url.scheme() {
+                "https" => Https,
+                "http" => Http,
+                _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
+            };
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let stream = smol::net::TcpStream::connect(rpc_host).await?;
+            let stream = connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
-            match rpc_url.scheme() {
-                "https" => {
-                    rpc_url.set_scheme("wss").unwrap();
-                    let request = request.uri(rpc_url.as_str()).body(())?;
+            rpc_url
+                .set_scheme(match url_scheme {
+                    Https => "wss",
+                    Http => "ws",
+                })
+                .unwrap();
+
+            // We call `into_client_request` to let `tungstenite` construct the WebSocket request
+            // for us from the RPC URL.
+            //
+            // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
+            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
+
+            // We then modify the request to add our desired headers.
+            let request_headers = request.headers_mut();
+            request_headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&credentials.authorization_header())?,
+            );
+            request_headers.insert(
+                "x-zed-protocol-version",
+                HeaderValue::from_str(&rpc::PROTOCOL_VERSION.to_string())?,
+            );
+            request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
+            request_headers.insert(
+                "x-zed-release-channel",
+                HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
+            );
+
+            match url_scheme {
+                Https => {
                     let (stream, _) =
-                        async_tungstenite::async_std::client_async_tls(request, stream).await?;
+                        async_tungstenite::async_tls::client_async_tls_with_connector(
+                            request,
+                            stream,
+                            Some(async_tls::TlsConnector::from(
+                                http_client::TLS_CONFIG.clone(),
+                            )),
+                        )
+                        .await?;
                     Ok(Connection::new(
                         stream
                             .map_err(|error| anyhow!(error))
                             .sink_map_err(|error| anyhow!(error)),
                     ))
                 }
-                "http" => {
-                    rpc_url.set_scheme("ws").unwrap();
-                    let request = request.uri(rpc_url.as_str()).body(())?;
+                Http => {
                     let (stream, _) = async_tungstenite::client_async(request, stream).await?;
                     Ok(Connection::new(
                         stream
@@ -1168,7 +1160,6 @@ impl Client {
                             .sink_map_err(|error| anyhow!(error)),
                     ))
                 }
-                _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             }
         })
     }
@@ -1178,6 +1169,7 @@ impl Client {
         cx: &AsyncAppContext,
     ) -> Task<Result<Credentials>> {
         let http = self.http.clone();
+        let this = self.clone();
         cx.spawn(|cx| async move {
             let background = cx.background_executor().clone();
 
@@ -1207,7 +1199,8 @@ impl Client {
                     {
                         eprintln!("authenticate as admin {login}, {token}");
 
-                        return Self::authenticate_as_admin(http, login.clone(), token.clone())
+                        return this
+                            .authenticate_as_admin(http, login.clone(), token.clone())
                             .await;
                     }
 
@@ -1295,6 +1288,7 @@ impl Client {
     }
 
     async fn authenticate_as_admin(
+        self: &Arc<Self>,
         http: Arc<HttpClientWithUrl>,
         login: String,
         mut api_token: String,
@@ -1309,12 +1303,82 @@ impl Client {
             id: u64,
         }
 
-        // Use the collab server's admin API to retrieve the id
+        let github_user = {
+            #[derive(Deserialize)]
+            struct GithubUser {
+                id: i32,
+                login: String,
+                created_at: DateTime<Utc>,
+            }
+
+            let request = {
+                let mut request_builder =
+                    Request::get(&format!("https://api.github.com/users/{login}"));
+                if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+                    request_builder =
+                        request_builder.header("Authorization", format!("Bearer {}", github_token));
+                }
+
+                request_builder.body(AsyncBody::empty())?
+            };
+
+            let mut response = http
+                .send(request)
+                .await
+                .context("error fetching GitHub user")?;
+
+            let mut body = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body)
+                .await
+                .context("error reading GitHub user")?;
+
+            if !response.status().is_success() {
+                let text = String::from_utf8_lossy(body.as_slice());
+                bail!(
+                    "status error {}, response: {text:?}",
+                    response.status().as_u16()
+                );
+            }
+
+            serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
+                log::error!("Error deserializing: {:?}", err);
+                log::error!(
+                    "GitHub API response text: {:?}",
+                    String::from_utf8_lossy(body.as_slice())
+                );
+                anyhow!("error deserializing GitHub user")
+            })?
+        };
+
+        let query_params = [
+            ("github_login", &github_user.login),
+            ("github_user_id", &github_user.id.to_string()),
+            (
+                "github_user_created_at",
+                &github_user.created_at.to_rfc3339(),
+            ),
+        ];
+
+        // Use the collab server's admin API to retrieve the ID
         // of the impersonated user.
-        let mut url = Self::get_rpc_url(http.clone(), None).await?;
+        let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
-        url.set_query(Some(&format!("github_login={login}")));
-        let request = Request::get(url.as_str())
+        url.set_query(Some(
+            &query_params
+                .iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}={}",
+                        key,
+                        url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join("&"),
+        ));
+        let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))
             .body("".into())?;
 
@@ -1340,7 +1404,7 @@ impl Client {
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncAppContext) {
         self.state.write().credentials = None;
-        self.disconnect(&cx);
+        self.disconnect(cx);
 
         if self.has_credentials(cx).await {
             self.credentials_provider
@@ -1454,120 +1518,95 @@ impl Client {
         }
     }
 
-    fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
-        log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
-        self.peer.respond(receipt, response)
-    }
-
-    fn respond_with_error<T: RequestMessage>(
-        &self,
-        receipt: Receipt<T>,
-        error: proto::Error,
-    ) -> Result<()> {
-        log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
-        self.peer.respond_with_error(receipt, error)
-    }
-
     fn handle_message(
         self: &Arc<Client>,
         message: Box<dyn AnyTypedEnvelope>,
         cx: &AsyncAppContext,
     ) {
-        let mut state = self.state.write();
+        let sender_id = message.sender_id();
+        let request_id = message.message_id();
         let type_name = message.payload_type_name();
-        let payload_type_id = message.payload_type_id();
-        let sender_id = message.original_sender_id();
+        let original_sender_id = message.original_sender_id();
 
-        let mut subscriber = None;
-
-        if let Some(handle) = state
-            .models_by_message_type
-            .get(&payload_type_id)
-            .and_then(|handle| handle.upgrade())
-        {
-            subscriber = Some(handle);
-        } else if let Some((extract_entity_id, entity_type_id)) =
-            state.entity_id_extractors.get(&payload_type_id).zip(
-                state
-                    .entity_types_by_message_type
-                    .get(&payload_type_id)
-                    .copied(),
-            )
-        {
-            let entity_id = (extract_entity_id)(message.as_ref());
-
-            match state
-                .entities_by_type_and_remote_id
-                .get_mut(&(entity_type_id, entity_id))
-            {
-                Some(WeakSubscriber::Pending(pending)) => {
-                    pending.push(message);
-                    return;
-                }
-                Some(weak_subscriber) => match weak_subscriber {
-                    WeakSubscriber::Entity { handle } => {
-                        subscriber = handle.upgrade();
-                    }
-
-                    WeakSubscriber::Pending(_) => {}
-                },
-                _ => {}
-            }
-        }
-
-        let subscriber = if let Some(subscriber) = subscriber {
-            subscriber
-        } else {
-            log::info!("unhandled message {}", type_name);
-            self.peer.respond_with_unhandled_message(message).log_err();
-            return;
-        };
-
-        let handler = state.message_handlers.get(&payload_type_id).cloned();
-        // Dropping the state prevents deadlocks if the handler interacts with rpc::Client.
-        // It also ensures we don't hold the lock while yielding back to the executor, as
-        // that might cause the executor thread driving this future to block indefinitely.
-        drop(state);
-
-        if let Some(handler) = handler {
-            let future = handler(subscriber, message, self, cx.clone());
+        if let Some(future) = ProtoMessageHandlerSet::handle_message(
+            &self.handler_set,
+            message,
+            self.clone().into(),
+            cx.clone(),
+        ) {
             let client_id = self.id();
             log::debug!(
                 "rpc message received. client_id:{}, sender_id:{:?}, type:{}",
                 client_id,
-                sender_id,
+                original_sender_id,
                 type_name
             );
             cx.spawn(move |_| async move {
-                    match future.await {
-                        Ok(()) => {
-                            log::debug!(
-                                "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                                client_id,
-                                sender_id,
-                                type_name
-                            );
-                        }
-                        Err(error) => {
-                            log::error!(
-                                "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
-                                client_id,
-                                sender_id,
-                                type_name,
-                                error
-                            );
-                        }
+                match future.await {
+                    Ok(()) => {
+                        log::debug!(
+                            "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
+                            client_id,
+                            original_sender_id,
+                            type_name
+                        );
                     }
-                })
-                .detach();
+                    Err(error) => {
+                        log::error!(
+                            "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
+                            client_id,
+                            original_sender_id,
+                            type_name,
+                            error
+                        );
+                    }
+                }
+            })
+            .detach();
         } else {
             log::info!("unhandled message {}", type_name);
-            self.peer.respond_with_unhandled_message(message).log_err();
+            self.peer
+                .respond_with_unhandled_message(sender_id.into(), request_id, type_name)
+                .log_err();
         }
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {
         &self.telemetry
+    }
+}
+
+impl ProtoClient for Client {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>> {
+        self.request_dynamic(envelope, request_type).boxed()
+    }
+
+    fn send(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
+        log::debug!("rpc send. client_id:{}, name:{}", self.id(), message_type);
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
+    }
+
+    fn send_response(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
+        log::debug!(
+            "rpc respond. client_id:{}, name:{}",
+            self.id(),
+            message_type
+        );
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
+    }
+
+    fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+        &self.handler_set
+    }
+
+    fn is_via_collab(&self) -> bool {
+        true
     }
 }
 
@@ -1696,7 +1735,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 }
 
 /// prefix for the zed:// url scheme
-pub static ZED_URL_SCHEME: &str = "zed";
+pub const ZED_URL_SCHEME: &str = "zed";
 
 /// Parses the given link into a Zed link.
 ///
@@ -1727,7 +1766,7 @@ mod tests {
 
     use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
     use settings::SettingsStore;
@@ -1911,8 +1950,8 @@ mod tests {
 
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
-        client.add_model_message_handler(
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, _, mut cx| {
+        AnyProtoClient::from(client.clone()).add_model_message_handler(
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
@@ -1974,7 +2013,7 @@ mod tests {
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx1.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -1982,7 +2021,7 @@ mod tests {
         drop(subscription1);
         let _subscription2 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -2008,7 +2047,7 @@ mod tests {
         let (done_tx, mut done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
                 model
                     .update(&mut cx, |model, _| model.subscription.take())
                     .unwrap();

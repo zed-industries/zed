@@ -309,6 +309,16 @@ pub fn transparent_black() -> Hsla {
     }
 }
 
+/// Transparent black in [`Hsla`]
+pub fn transparent_white() -> Hsla {
+    Hsla {
+        h: 0.,
+        s: 0.,
+        l: 1.,
+        a: 0.,
+    }
+}
+
 /// Opaque grey in [`Hsla`], values will be clamped to the range [0, 1]
 pub fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
     Hsla {
@@ -450,6 +460,16 @@ impl Hsla {
     /// Where 0.0 will leave the color unchanged, and 1.0 will completely fade out the color.
     pub fn fade_out(&mut self, factor: f32) {
         self.a *= 1.0 - factor.clamp(0., 1.);
+    }
+
+    /// Returns a new HSLA color with the same hue, saturation, and lightness, but with a modified alpha value.
+    pub fn opacity(&self, factor: f32) -> Self {
+        Hsla {
+            h: self.h,
+            s: self.s,
+            l: self.l,
+            a: self.a * factor.clamp(0., 1.),
+        }
     }
 }
 

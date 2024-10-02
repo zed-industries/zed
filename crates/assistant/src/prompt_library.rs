@@ -1,26 +1,29 @@
-use crate::{
-    slash_command::SlashCommandCompletionProvider, AssistantPanel, CompletionProvider,
-    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, Role,
-};
+use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
-use collections::HashMap;
-use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorEvent};
+use collections::{HashMap, HashSet};
+use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, percentage, point, size, Animation, AnimationExt, AppContext, BackgroundExecutor,
-    Bounds, DevicePixels, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task,
-    TitlebarOptions, Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
+    EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
+    TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
-use heed::{types::SerdeBincode, Database, RoTxn};
+use heed::{
+    types::{SerdeBincode, SerdeJson, Str},
+    Database, RoTxn,
+};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
+use release_channel::ReleaseChannel;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -31,30 +34,42 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+use text::LineEnding;
 use theme::ThemeSettings;
 use ui::{
-    div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
+    div, prelude::*, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
+    SharedString, Styled, Tooltip, ViewContext, VisualContext,
 };
-use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::Workspace;
+use zed_actions::InlineAssist;
 
 actions!(
     prompt_library,
-    [NewPrompt, DeletePrompt, ToggleDefaultPrompt]
+    [
+        NewPrompt,
+        DeletePrompt,
+        DuplicatePrompt,
+        ToggleDefaultPrompt
+    ]
 );
 
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
 pub fn init(cx: &mut AppContext) {
-    let db_path = PROMPTS_DIR.join("prompts-library-db.0.mdb");
+    let db_path = paths::prompts_dir().join("prompts-library-db.0.mdb");
     let prompt_store_future = PromptStore::new(db_path, cx.background_executor().clone())
         .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
         .boxed()
         .shared();
     cx.set_global(GlobalPromptStore(prompt_store_future))
 }
+
+const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
+    "This prompt supports special functionality.\n",
+    "It's read-only, but you can remove it from your default prompt."
+);
 
 /// This function opens a new prompt library window if one doesn't exist already.
 /// If one exists, it brings it to the foreground.
@@ -80,18 +95,16 @@ pub fn open_prompt_library(
         cx.spawn(|cx| async move {
             let store = store.await?;
             cx.update(|cx| {
-                let bounds = Bounds::centered(
-                    None,
-                    size(DevicePixels::from(1024), DevicePixels::from(768)),
-                    cx,
-                );
+                let app_id = ReleaseChannel::global(cx).app_id();
+                let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
                             title: Some("Prompt Library".into()),
-                            appears_transparent: true,
+                            appears_transparent: cfg!(target_os = "macos"),
                             traffic_light_position: Some(point(px(9.0), px(9.0))),
                         }),
+                        app_id: Some(app_id.to_owned()),
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()
                     },
@@ -113,12 +126,13 @@ pub struct PromptLibrary {
 }
 
 struct PromptEditor {
-    editor: View<Editor>,
+    title_editor: View<Editor>,
+    body_editor: View<Editor>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
-    next_body_to_save: Option<Rope>,
+    next_title_and_body_to_save: Option<(String, Rope)>,
     pending_save: Option<Task<Option<()>>>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct PromptPickerDelegate {
@@ -141,6 +155,14 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn match_count(&self) -> usize {
         self.matches.len()
+    }
+
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        if self.store.prompt_count() == 0 {
+            "No prompts.".into()
+        } else {
+            "No prompts found matching your search.".into()
+        }
     }
 
     fn selected_index(&self) -> usize {
@@ -226,15 +248,29 @@ impl PickerDelegate for PromptPickerDelegate {
             .end_hover_slot(
                 h_flex()
                     .gap_2()
-                    .child(
+                    .child(if prompt_id.is_built_in() {
+                        div()
+                            .id("built-in-prompt")
+                            .child(Icon::new(IconName::FileLock).color(Color::Muted))
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    "Built-in prompt",
+                                    None,
+                                    BUILT_IN_TOOLTIP_TEXT,
+                                    cx,
+                                )
+                            })
+                            .into_any()
+                    } else {
                         IconButton::new("delete-prompt", IconName::Trash)
                             .icon_color(Color::Muted)
                             .shape(IconButtonShape::Square)
                             .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
                             .on_click(cx.listener(move |_, _, cx| {
                                 cx.emit(PromptPickerEvent::Deleted { prompt_id })
-                            })),
-                    )
+                            }))
+                            .into_any_element()
+                    })
                     .child(
                         IconButton::new("toggle-default-prompt", IconName::Sparkle)
                             .selected(default)
@@ -267,7 +303,7 @@ impl PickerDelegate for PromptPickerDelegate {
             .flex_none()
             .py_1()
             .px_2()
-            .mx_2()
+            .mx_1()
             .child(editor.clone())
     }
 }
@@ -347,9 +383,14 @@ impl PromptLibrary {
     pub fn save_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
         const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
+        if prompt_id.is_built_in() {
+            return;
+        }
+
         let prompt_metadata = self.store.metadata(prompt_id).unwrap();
         let prompt_editor = self.prompt_editors.get_mut(&prompt_id).unwrap();
-        let body = prompt_editor.editor.update(cx, |editor, cx| {
+        let title = prompt_editor.title_editor.read(cx).text(cx);
+        let body = prompt_editor.body_editor.update(cx, |editor, cx| {
             editor
                 .buffer()
                 .read(cx)
@@ -363,20 +404,24 @@ impl PromptLibrary {
         let store = self.store.clone();
         let executor = cx.background_executor().clone();
 
-        prompt_editor.next_body_to_save = Some(body);
+        prompt_editor.next_title_and_body_to_save = Some((title, body));
         if prompt_editor.pending_save.is_none() {
             prompt_editor.pending_save = Some(cx.spawn(|this, mut cx| {
                 async move {
                     loop {
-                        let next_body_to_save = this.update(&mut cx, |this, _| {
+                        let title_and_body = this.update(&mut cx, |this, _| {
                             this.prompt_editors
                                 .get_mut(&prompt_id)?
-                                .next_body_to_save
+                                .next_title_and_body_to_save
                                 .take()
                         })?;
 
-                        if let Some(body) = next_body_to_save {
-                            let title = title_from_body(body.chars_at(0));
+                        if let Some((title, body)) = title_and_body {
+                            let title = if title.trim().is_empty() {
+                                None
+                            } else {
+                                Some(SharedString::from(title))
+                            };
                             store
                                 .save(prompt_id, title, prompt_metadata.default, body)
                                 .await
@@ -409,6 +454,12 @@ impl PromptLibrary {
         }
     }
 
+    pub fn duplicate_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_prompt_id) = self.active_prompt_id {
+            self.duplicate_prompt(active_prompt_id, cx);
+        }
+    }
+
     pub fn toggle_default_for_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_prompt_id) = self.active_prompt_id {
             self.toggle_default_for_prompt(active_prompt_id, cx);
@@ -429,53 +480,73 @@ impl PromptLibrary {
         if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
             if focus {
                 prompt_editor
-                    .editor
+                    .body_editor
                     .update(cx, |editor, cx| editor.focus(cx));
             }
             self.set_active_prompt(Some(prompt_id), cx);
-        } else {
+        } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
-            let commands = SlashCommandRegistry::global(cx);
             let prompt = self.store.load(prompt_id);
             self.pending_load = cx.spawn(|this, mut cx| async move {
                 let prompt = prompt.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
                 this.update(&mut cx, |this, cx| match prompt {
                     Ok(prompt) => {
-                        let buffer = cx.new_model(|cx| {
-                            let mut buffer = Buffer::local(prompt, cx);
-                            buffer.set_language(markdown.log_err(), cx);
-                            buffer.set_language_registry(language_registry);
-                            buffer
+                        let title_editor = cx.new_view(|cx| {
+                            let mut editor = Editor::auto_width(cx);
+                            editor.set_placeholder_text("Untitled", cx);
+                            editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(Some(false), cx);
+                            }
+                            editor
                         });
-                        let editor = cx.new_view(|cx| {
+                        let body_editor = cx.new_view(|cx| {
+                            let buffer = cx.new_model(|cx| {
+                                let mut buffer = Buffer::local(prompt, cx);
+                                buffer.set_language(markdown.log_err(), cx);
+                                buffer.set_language_registry(language_registry);
+                                buffer
+                            });
+
                             let mut editor = Editor::for_buffer(buffer, None, cx);
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(Some(false), cx);
+                            }
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
+                            editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Box::new(
-                                SlashCommandCompletionProvider::new(commands, None, None),
+                                SlashCommandCompletionProvider::new(None, None),
                             ));
                             if focus {
                                 editor.focus(cx);
                             }
                             editor
                         });
-                        let _subscription =
-                            cx.subscribe(&editor, move |this, _editor, event, cx| {
-                                this.handle_prompt_editor_event(prompt_id, event, cx)
-                            });
+                        let _subscriptions = vec![
+                            cx.subscribe(&title_editor, move |this, editor, event, cx| {
+                                this.handle_prompt_title_editor_event(prompt_id, editor, event, cx)
+                            }),
+                            cx.subscribe(&body_editor, move |this, editor, event, cx| {
+                                this.handle_prompt_body_editor_event(prompt_id, editor, event, cx)
+                            }),
+                        ];
                         this.prompt_editors.insert(
                             prompt_id,
                             PromptEditor {
-                                editor,
-                                next_body_to_save: None,
+                                title_editor,
+                                body_editor,
+                                next_title_and_body_to_save: None,
                                 pending_save: None,
                                 token_count: None,
                                 pending_token_count: Task::ready(None),
-                                _subscription,
+                                _subscriptions,
                             },
                         );
                         this.set_active_prompt(Some(prompt_id), cx);
@@ -549,10 +620,51 @@ impl PromptLibrary {
         }
     }
 
+    pub fn duplicate_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        if let Some(prompt) = self.prompt_editors.get(&prompt_id) {
+            const DUPLICATE_SUFFIX: &str = " copy";
+            let title_to_duplicate = prompt.title_editor.read(cx).text(cx);
+            let existing_titles = self
+                .prompt_editors
+                .iter()
+                .filter(|&(&id, _)| id != prompt_id)
+                .map(|(_, prompt_editor)| prompt_editor.title_editor.read(cx).text(cx))
+                .filter(|title| title.starts_with(&title_to_duplicate))
+                .collect::<HashSet<_>>();
+
+            let title = if existing_titles.is_empty() {
+                title_to_duplicate + DUPLICATE_SUFFIX
+            } else {
+                let mut i = 1;
+                loop {
+                    let new_title = format!("{title_to_duplicate}{DUPLICATE_SUFFIX} {i}");
+                    if !existing_titles.contains(&new_title) {
+                        break new_title;
+                    }
+                    i += 1;
+                }
+            };
+
+            let new_id = PromptId::new();
+            let body = prompt.body_editor.read(cx).text(cx);
+            let save = self
+                .store
+                .save(new_id, Some(title.into()), false, body.into());
+            self.picker.update(cx, |picker, cx| picker.refresh(cx));
+            cx.spawn(|this, mut cx| async move {
+                save.await?;
+                this.update(&mut cx, |prompt_library, cx| {
+                    prompt_library.load_prompt(new_id, true, cx)
+                })
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+
     fn focus_active_prompt(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
         if let Some(active_prompt) = self.active_prompt_id {
             self.prompt_editors[&active_prompt]
-                .editor
+                .body_editor
                 .update(cx, |editor, cx| editor.focus(cx));
             cx.stop_propagation();
         }
@@ -562,17 +674,21 @@ impl PromptLibrary {
         self.picker.update(cx, |picker, cx| picker.focus(cx));
     }
 
-    pub fn inline_assist(&mut self, _: &InlineAssist, cx: &mut ViewContext<Self>) {
+    pub fn inline_assist(&mut self, action: &InlineAssist, cx: &mut ViewContext<Self>) {
         let Some(active_prompt_id) = self.active_prompt_id else {
             cx.propagate();
             return;
         };
 
-        let prompt_editor = &self.prompt_editors[&active_prompt_id].editor;
-        let provider = CompletionProvider::global(cx);
-        if provider.is_authenticated() {
+        let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+
+        let initial_prompt = action.prompt.clone();
+        if provider.is_authenticated(cx) {
             InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(&prompt_editor, None, false, cx)
+                assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
             })
         } else {
             for window in cx.windows() {
@@ -592,63 +708,76 @@ impl PromptLibrary {
         }
     }
 
-    fn cancel_last_inline_assist(
-        &mut self,
-        _: &editor::actions::Cancel,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let canceled = InlineAssistant::update_global(cx, |assistant, cx| {
-            assistant.cancel_last_inline_assist(cx)
-        });
-        if !canceled {
-            cx.propagate();
+    fn move_down_from_title(&mut self, _: &editor::actions::MoveDown, cx: &mut ViewContext<Self>) {
+        if let Some(prompt_id) = self.active_prompt_id {
+            if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
+                cx.focus_view(&prompt_editor.body_editor);
+            }
         }
     }
 
-    fn handle_prompt_editor_event(
+    fn move_up_from_body(&mut self, _: &editor::actions::MoveUp, cx: &mut ViewContext<Self>) {
+        if let Some(prompt_id) = self.active_prompt_id {
+            if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
+                cx.focus_view(&prompt_editor.title_editor);
+            }
+        }
+    }
+
+    fn handle_prompt_title_editor_event(
         &mut self,
         prompt_id: PromptId,
+        title_editor: View<Editor>,
         event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let EditorEvent::BufferEdited = event {
-            let prompt_editor = self.prompt_editors.get(&prompt_id).unwrap();
-            let buffer = prompt_editor
-                .editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .unwrap();
+        match event {
+            EditorEvent::BufferEdited => {
+                self.save_prompt(prompt_id, cx);
+                self.count_tokens(prompt_id, cx);
+            }
+            EditorEvent::Blurred => {
+                title_editor.update(cx, |title_editor, cx| {
+                    title_editor.change_selections(None, cx, |selections| {
+                        let cursor = selections.oldest_anchor().head();
+                        selections.select_anchor_ranges([cursor..cursor]);
+                    });
+                });
+            }
+            _ => {}
+        }
+    }
 
-            buffer.update(cx, |buffer, cx| {
-                let mut chars = buffer.chars_at(0);
-                match chars.next() {
-                    Some('#') => {
-                        if chars.next() != Some(' ') {
-                            drop(chars);
-                            buffer.edit([(1..1, " ")], None, cx);
-                        }
-                    }
-                    Some(' ') => {
-                        drop(chars);
-                        buffer.edit([(0..0, "#")], None, cx);
-                    }
-                    _ => {
-                        drop(chars);
-                        buffer.edit([(0..0, "# ")], None, cx);
-                    }
-                }
-            });
-
-            self.save_prompt(prompt_id, cx);
-            self.count_tokens(prompt_id, cx);
+    fn handle_prompt_body_editor_event(
+        &mut self,
+        prompt_id: PromptId,
+        body_editor: View<Editor>,
+        event: &EditorEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            EditorEvent::BufferEdited => {
+                self.save_prompt(prompt_id, cx);
+                self.count_tokens(prompt_id, cx);
+            }
+            EditorEvent::Blurred => {
+                body_editor.update(cx, |body_editor, cx| {
+                    body_editor.change_selections(None, cx, |selections| {
+                        let cursor = selections.oldest_anchor().head();
+                        selections.select_anchor_ranges([cursor..cursor]);
+                    });
+                });
+            }
+            _ => {}
         }
     }
 
     fn count_tokens(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
         if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
-            let editor = &prompt.editor.read(cx);
+            let editor = &prompt.body_editor.read(cx);
             let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
             let body = buffer.as_rope().clone();
             prompt.pending_token_count = cx.spawn(|this, mut cx| {
@@ -658,22 +787,22 @@ impl PromptLibrary {
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
                     let token_count = cx
                         .update(|cx| {
-                            let provider = CompletionProvider::global(cx);
-                            let model = provider.model();
-                            provider.count_tokens(
+                            model.count_tokens(
                                 LanguageModelRequest {
-                                    model,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
-                                        content: body.to_string(),
+                                        content: vec![body.to_string().into()],
+                                        cache: false,
                                     }],
+                                    tools: Vec::new(),
                                     stop: Vec::new(),
-                                    temperature: 1.,
+                                    temperature: None,
                                 },
                                 cx,
                             )
                         })?
                         .await?;
+
                     this.update(&mut cx, |this, cx| {
                         let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
                         prompt_editor.token_count = Some(token_count);
@@ -691,12 +820,13 @@ impl PromptLibrary {
             .capture_action(cx.listener(Self::focus_active_prompt))
             .bg(cx.theme().colors().panel_background)
             .h_full()
+            .px_1()
             .w_1_3()
             .overflow_x_hidden()
             .child(
                 h_flex()
                     .p(Spacing::Small.rems(cx))
-                    .h(TitleBar::height(cx))
+                    .h_9()
                     .w_full()
                     .flex_none()
                     .justify_end()
@@ -724,123 +854,238 @@ impl PromptLibrary {
             .flex_none()
             .min_w_64()
             .children(self.active_prompt_id.and_then(|prompt_id| {
-                let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
-                let focus_handle = prompt_editor.editor.focus_handle(cx);
-                let current_model = CompletionProvider::global(cx).model();
-                let token_count = prompt_editor.token_count.map(|count| count.to_string());
+                let focus_handle = prompt_editor.body_editor.focus_handle(cx);
+                let model = LanguageModelRegistry::read_global(cx).active_model();
+                let settings = ThemeSettings::get_global(cx);
 
                 Some(
-                    h_flex()
+                    v_flex()
                         .id("prompt-editor-inner")
                         .size_full()
-                        .items_start()
+                        .relative()
+                        .overflow_hidden()
+                        .pl(Spacing::XXLarge.rems(cx))
+                        .pt(Spacing::Large.rems(cx))
                         .on_click(cx.listener(move |_, _, cx| {
                             cx.focus(&focus_handle);
                         }))
                         .child(
-                            div()
-                                .on_action(cx.listener(Self::focus_picker))
-                                .on_action(cx.listener(Self::inline_assist))
-                                .on_action(cx.listener(Self::cancel_last_inline_assist))
-                                .flex_grow()
-                                .h_full()
-                                .pt(Spacing::XXLarge.rems(cx))
-                                .pl(Spacing::XXLarge.rems(cx))
-                                .child(prompt_editor.editor.clone()),
-                        )
-                        .child(
-                            v_flex()
-                                .w_12()
-                                .py(Spacing::Large.rems(cx))
-                                .justify_start()
-                                .items_end()
-                                .gap_1()
-                                .child(h_flex().h_8().font_family(buffer_font).when_some_else(
-                                    token_count,
-                                    |tokens_ready, token_count| {
-                                        tokens_ready.pr_3().justify_end().child(
-                                            // This isn't actually a button, it just let's us easily add
-                                            // a tooltip to the token count.
-                                            Button::new("token_count", token_count.clone())
-                                                .style(ButtonStyle::Transparent)
-                                                .color(Color::Muted)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::with_meta(
-                                                        format!("{} tokens", token_count,),
-                                                        None,
-                                                        format!(
-                                                            "Model: {}",
-                                                            current_model.display_name()
-                                                        ),
-                                                        cx,
-                                                    )
-                                                }),
-                                        )
-                                    },
-                                    |tokens_loading| {
-                                        tokens_loading.w_12().justify_center().child(
-                                            Icon::new(IconName::ArrowCircle)
-                                                .size(IconSize::Small)
-                                                .color(Color::Muted)
-                                                .with_animation(
-                                                    "arrow-circle",
-                                                    Animation::new(Duration::from_secs(4)).repeat(),
-                                                    |icon, delta| {
-                                                        icon.transform(Transformation::rotate(
-                                                            percentage(delta),
-                                                        ))
-                                                    },
-                                                ),
-                                        )
-                                    },
-                                ))
+                            h_flex()
+                                .group("active-editor-header")
+                                .pr(Spacing::XXLarge.rems(cx))
+                                .pt(Spacing::XSmall.rems(cx))
+                                .pb(Spacing::Large.rems(cx))
+                                .justify_between()
                                 .child(
-                                    h_flex().justify_center().w_12().h_8().child(
-                                        IconButton::new("toggle-default-prompt", IconName::Sparkle)
-                                            .style(ButtonStyle::Transparent)
-                                            .selected(prompt_metadata.default)
-                                            .selected_icon(IconName::SparkleFilled)
-                                            .icon_color(if prompt_metadata.default {
-                                                Color::Accent
-                                            } else {
-                                                Color::Muted
-                                            })
-                                            .shape(IconButtonShape::Square)
-                                            .tooltip(move |cx| {
-                                                Tooltip::text(
-                                                    if prompt_metadata.default {
-                                                        "Remove from Default Prompt"
-                                                    } else {
-                                                        "Add to Default Prompt"
-                                                    },
-                                                    cx,
+                                    h_flex().gap_1().child(
+                                        div()
+                                            .max_w_80()
+                                            .on_action(cx.listener(Self::move_down_from_title))
+                                            .border_1()
+                                            .border_color(transparent_black())
+                                            .rounded_md()
+                                            .group_hover("active-editor-header", |this| {
+                                                this.border_color(
+                                                    cx.theme().colors().border_variant,
                                                 )
                                             })
-                                            .on_click(|_, cx| {
-                                                cx.dispatch_action(Box::new(ToggleDefaultPrompt));
-                                            }),
+                                            .child(EditorElement::new(
+                                                &prompt_editor.title_editor,
+                                                EditorStyle {
+                                                    background: cx.theme().system().transparent,
+                                                    local_player: cx.theme().players().local(),
+                                                    text: TextStyle {
+                                                        color: cx
+                                                            .theme()
+                                                            .colors()
+                                                            .editor_foreground,
+                                                        font_family: settings
+                                                            .ui_font
+                                                            .family
+                                                            .clone(),
+                                                        font_features: settings
+                                                            .ui_font
+                                                            .features
+                                                            .clone(),
+                                                        font_size: HeadlineSize::Large
+                                                            .size()
+                                                            .into(),
+                                                        font_weight: settings.ui_font.weight,
+                                                        line_height: relative(
+                                                            settings.buffer_line_height.value(),
+                                                        ),
+                                                        ..Default::default()
+                                                    },
+                                                    scrollbar_width: Pixels::ZERO,
+                                                    syntax: cx.theme().syntax().clone(),
+                                                    status: cx.theme().status().clone(),
+                                                    inlay_hints_style:
+                                                        editor::make_inlay_hints_style(cx),
+                                                    suggestions_style: HighlightStyle {
+                                                        color: Some(cx.theme().status().predictive),
+                                                        ..HighlightStyle::default()
+                                                    },
+                                                    ..EditorStyle::default()
+                                                },
+                                            )),
                                     ),
                                 )
                                 .child(
-                                    h_flex().justify_center().w_12().h_8().child(
-                                        IconButton::new("delete-prompt", IconName::Trash)
-                                            .size(ButtonSize::Large)
-                                            .style(ButtonStyle::Transparent)
-                                            .shape(IconButtonShape::Square)
-                                            .tooltip(move |cx| {
-                                                Tooltip::for_action(
-                                                    "Delete Prompt",
-                                                    &DeletePrompt,
-                                                    cx,
+                                    h_flex()
+                                        .h_full()
+                                        .child(
+                                            h_flex()
+                                                .h_full()
+                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .child(div()),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .h_full()
+                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .children(prompt_editor.token_count.map(
+                                                    |token_count| {
+                                                        let token_count: SharedString =
+                                                            token_count.to_string().into();
+                                                        let label_token_count: SharedString =
+                                                            token_count.to_string().into();
+
+                                                        h_flex()
+                                                            .id("token_count")
+                                                            .tooltip(move |cx| {
+                                                                let token_count =
+                                                                    token_count.clone();
+
+                                                                Tooltip::with_meta(
+                                                                    format!(
+                                                                        "{} tokens",
+                                                                        token_count.clone()
+                                                                    ),
+                                                                    None,
+                                                                    format!(
+                                                                        "Model: {}",
+                                                                        model
+                                                                            .as_ref()
+                                                                            .map(|model| model
+                                                                                .name()
+                                                                                .0)
+                                                                            .unwrap_or_default()
+                                                                    ),
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .child(
+                                                                Label::new(format!(
+                                                                    "{} tokens",
+                                                                    label_token_count.clone()
+                                                                ))
+                                                                .color(Color::Muted),
+                                                            )
+                                                    },
+                                                ))
+                                                .child(if prompt_id.is_built_in() {
+                                                    div()
+                                                        .id("built-in-prompt")
+                                                        .child(
+                                                            Icon::new(IconName::FileLock)
+                                                                .color(Color::Muted),
+                                                        )
+                                                        .tooltip(move |cx| {
+                                                            Tooltip::with_meta(
+                                                                "Built-in prompt",
+                                                                None,
+                                                                BUILT_IN_TOOLTIP_TEXT,
+                                                                cx,
+                                                            )
+                                                        })
+                                                        .into_any()
+                                                } else {
+                                                    IconButton::new(
+                                                        "delete-prompt",
+                                                        IconName::Trash,
+                                                    )
+                                                    .size(ButtonSize::Large)
+                                                    .style(ButtonStyle::Transparent)
+                                                    .shape(IconButtonShape::Square)
+                                                    .size(ButtonSize::Large)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::for_action(
+                                                            "Delete Prompt",
+                                                            &DeletePrompt,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(DeletePrompt));
+                                                    })
+                                                    .into_any_element()
+                                                })
+                                                .child(
+                                                    IconButton::new(
+                                                        "duplicate-prompt",
+                                                        IconName::BookCopy,
+                                                    )
+                                                    .size(ButtonSize::Large)
+                                                    .style(ButtonStyle::Transparent)
+                                                    .shape(IconButtonShape::Square)
+                                                    .size(ButtonSize::Large)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::for_action(
+                                                            "Duplicate Prompt",
+                                                            &DuplicatePrompt,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            DuplicatePrompt,
+                                                        ));
+                                                    }),
                                                 )
-                                            })
-                                            .on_click(|_, cx| {
-                                                cx.dispatch_action(Box::new(DeletePrompt));
-                                            }),
-                                    ),
+                                                .child(
+                                                    IconButton::new(
+                                                        "toggle-default-prompt",
+                                                        IconName::Sparkle,
+                                                    )
+                                                    .style(ButtonStyle::Transparent)
+                                                    .selected(prompt_metadata.default)
+                                                    .selected_icon(IconName::SparkleFilled)
+                                                    .icon_color(if prompt_metadata.default {
+                                                        Color::Accent
+                                                    } else {
+                                                        Color::Muted
+                                                    })
+                                                    .shape(IconButtonShape::Square)
+                                                    .size(ButtonSize::Large)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text(
+                                                            if prompt_metadata.default {
+                                                                "Remove from Default Prompt"
+                                                            } else {
+                                                                "Add to Default Prompt"
+                                                            },
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            ToggleDefaultPrompt,
+                                                        ));
+                                                    }),
+                                                ),
+                                        ),
                                 ),
+                        )
+                        .child(
+                            div()
+                                .on_action(cx.listener(Self::focus_picker))
+                                .on_action(cx.listener(Self::inline_assist))
+                                .on_action(cx.listener(Self::move_up_from_body))
+                                .flex_grow()
+                                .h_full()
+                                .child(prompt_editor.body_editor.clone()),
                         ),
                 )
             }))
@@ -849,19 +1094,15 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
-
+        let ui_font = theme::setup_ui_font(cx);
         let theme = cx.theme().clone();
-        cx.set_rem_size(ui_font_size);
 
         h_flex()
             .id("prompt-manager")
             .key_context("PromptLibrary")
             .on_action(cx.listener(|this, &NewPrompt, cx| this.new_prompt(cx)))
             .on_action(cx.listener(|this, &DeletePrompt, cx| this.delete_active_prompt(cx)))
+            .on_action(cx.listener(|this, &DuplicatePrompt, cx| this.duplicate_active_prompt(cx)))
             .on_action(cx.listener(|this, &ToggleDefaultPrompt, cx| {
                 this.toggle_default_for_active_prompt(cx)
             }))
@@ -870,7 +1111,55 @@ impl Render for PromptLibrary {
             .font(ui_font)
             .text_color(theme.colors().text)
             .child(self.render_prompt_list(cx))
-            .child(self.render_active_prompt(cx))
+            .map(|el| {
+                if self.store.prompt_count() == 0 {
+                    el.child(
+                        v_flex()
+                            .w_2_3()
+                            .h_full()
+                            .items_center()
+                            .justify_center()
+                            .gap_4()
+                            .bg(cx.theme().colors().editor_background)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Book)
+                                            .size(IconSize::Medium)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("No prompts yet")
+                                            .size(LabelSize::Large)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .child(h_flex())
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(Label::new("Create your first prompt:"))
+                                            .child(
+                                                Button::new("create-prompt", "New Prompt")
+                                                    .full_width()
+                                                    .key_binding(KeyBinding::for_action(
+                                                        &NewPrompt, cx,
+                                                    ))
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(NewPrompt.boxed_clone())
+                                                    }),
+                                            ),
+                                    )
+                                    .child(h_flex()),
+                            ),
+                    )
+                } else {
+                    el.child(self.render_active_prompt(cx))
+                }
+            })
     }
 }
 
@@ -883,20 +1172,30 @@ pub struct PromptMetadata {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PromptId(Uuid);
+#[serde(tag = "kind")]
+pub enum PromptId {
+    User { uuid: Uuid },
+    EditWorkflow,
+}
 
 impl PromptId {
     pub fn new() -> PromptId {
-        PromptId(Uuid::new_v4())
+        PromptId::User {
+            uuid: Uuid::new_v4(),
+        }
+    }
+
+    pub fn is_built_in(&self) -> bool {
+        !matches!(self, PromptId::User { .. })
     }
 }
 
 pub struct PromptStore {
     executor: BackgroundExecutor,
     env: heed::Env,
-    bodies: Database<SerdeBincode<PromptId>, SerdeBincode<String>>,
-    metadata: Database<SerdeBincode<PromptId>, SerdeBincode<PromptMetadata>>,
     metadata_cache: RwLock<MetadataCache>,
+    metadata: Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
+    bodies: Database<SerdeJson<PromptId>, Str>,
 }
 
 #[derive(Default)]
@@ -907,7 +1206,7 @@ struct MetadataCache {
 
 impl MetadataCache {
     fn from_db(
-        db: Database<SerdeBincode<PromptId>, SerdeBincode<PromptMetadata>>,
+        db: Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
         txn: &RoTxn,
     ) -> Result<Self> {
         let mut cache = MetadataCache::default();
@@ -959,25 +1258,110 @@ impl PromptStore {
                 let db_env = unsafe {
                     heed::EnvOpenOptions::new()
                         .map_size(1024 * 1024 * 1024) // 1GB
-                        .max_dbs(2) // bodies and metadata
+                        .max_dbs(4) // Metadata and bodies (possibly v1 of both as well)
                         .open(db_path)?
                 };
 
                 let mut txn = db_env.write_txn()?;
-                let bodies = db_env.create_database(&mut txn, Some("bodies"))?;
-                let metadata = db_env.create_database(&mut txn, Some("metadata"))?;
+                let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
+                let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
+
+                // Remove edit workflow prompt, as we decided to opt into it using
+                // a slash command instead.
+                metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
+                bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
+
+                txn.commit()?;
+
+                Self::upgrade_dbs(&db_env, metadata, bodies).log_err();
+
+                let txn = db_env.read_txn()?;
                 let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
                 txn.commit()?;
 
                 Ok(PromptStore {
                     executor,
                     env: db_env,
-                    bodies,
-                    metadata,
                     metadata_cache: RwLock::new(metadata_cache),
+                    metadata,
+                    bodies,
                 })
             }
         })
+    }
+
+    fn upgrade_dbs(
+        env: &heed::Env,
+        metadata_db: heed::Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
+        bodies_db: heed::Database<SerdeJson<PromptId>, Str>,
+    ) -> Result<()> {
+        #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+        pub struct PromptIdV1(Uuid);
+
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        pub struct PromptMetadataV1 {
+            pub id: PromptIdV1,
+            pub title: Option<SharedString>,
+            pub default: bool,
+            pub saved_at: DateTime<Utc>,
+        }
+
+        let mut txn = env.write_txn()?;
+        let Some(bodies_v1_db) = env
+            .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<String>>(
+                &txn,
+                Some("bodies"),
+            )?
+        else {
+            return Ok(());
+        };
+        let mut bodies_v1 = bodies_v1_db
+            .iter(&txn)?
+            .collect::<heed::Result<HashMap<_, _>>>()?;
+
+        let Some(metadata_v1_db) = env
+            .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<PromptMetadataV1>>(
+                &txn,
+                Some("metadata"),
+            )?
+        else {
+            return Ok(());
+        };
+        let metadata_v1 = metadata_v1_db
+            .iter(&txn)?
+            .collect::<heed::Result<HashMap<_, _>>>()?;
+
+        for (prompt_id_v1, metadata_v1) in metadata_v1 {
+            let prompt_id_v2 = PromptId::User {
+                uuid: prompt_id_v1.0,
+            };
+            let Some(body_v1) = bodies_v1.remove(&prompt_id_v1) else {
+                continue;
+            };
+
+            if metadata_db
+                .get(&txn, &prompt_id_v2)?
+                .map_or(true, |metadata_v2| {
+                    metadata_v1.saved_at > metadata_v2.saved_at
+                })
+            {
+                metadata_db.put(
+                    &mut txn,
+                    &prompt_id_v2,
+                    &PromptMetadata {
+                        id: prompt_id_v2,
+                        title: metadata_v1.title.clone(),
+                        default: metadata_v1.default,
+                        saved_at: metadata_v1.saved_at,
+                    },
+                )?;
+                bodies_db.put(&mut txn, &prompt_id_v2, &body_v1)?;
+            }
+        }
+
+        txn.commit()?;
+
+        Ok(())
     }
 
     pub fn load(&self, id: PromptId) -> Task<Result<String>> {
@@ -985,9 +1369,12 @@ impl PromptStore {
         let bodies = self.bodies;
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
-            bodies
+            let mut prompt = bodies
                 .get(&txn, &id)?
-                .ok_or_else(|| anyhow!("prompt not found"))
+                .ok_or_else(|| anyhow!("prompt not found"))?
+                .into();
+            LineEnding::normalize(&mut prompt);
+            Ok(prompt)
         })
     }
 
@@ -1018,6 +1405,11 @@ impl PromptStore {
             txn.commit()?;
             Ok(())
         })
+    }
+
+    /// Returns the number of prompts in the store.
+    fn prompt_count(&self) -> usize {
+        self.metadata_cache.read().metadata.len()
     }
 
     fn metadata(&self, id: PromptId) -> Option<PromptMetadata> {
@@ -1076,6 +1468,10 @@ impl PromptStore {
         default: bool,
         body: Rope,
     ) -> Task<Result<()>> {
+        if id.is_built_in() {
+            return Task::ready(Err(anyhow!("built-in prompts cannot be saved")));
+        }
+
         let prompt_metadata = PromptMetadata {
             id,
             title,
@@ -1103,16 +1499,26 @@ impl PromptStore {
     fn save_metadata(
         &self,
         id: PromptId,
-        title: Option<SharedString>,
+        mut title: Option<SharedString>,
         default: bool,
     ) -> Task<Result<()>> {
+        let mut cache = self.metadata_cache.write();
+
+        if id.is_built_in() {
+            title = cache
+                .metadata_by_id
+                .get(&id)
+                .and_then(|metadata| metadata.title.clone());
+        }
+
         let prompt_metadata = PromptMetadata {
             id,
             title,
             default,
             saved_at: Utc::now(),
         };
-        self.metadata_cache.write().insert(prompt_metadata.clone());
+
+        cache.insert(prompt_metadata.clone());
 
         let db_connection = self.env.clone();
         let metadata = self.metadata;
@@ -1137,24 +1543,3 @@ pub struct GlobalPromptStore(
 );
 
 impl Global for GlobalPromptStore {}
-
-fn title_from_body(body: impl IntoIterator<Item = char>) -> Option<SharedString> {
-    let mut chars = body.into_iter().take_while(|c| *c != '\n').peekable();
-
-    let mut level = 0;
-    while let Some('#') = chars.peek() {
-        level += 1;
-        chars.next();
-    }
-
-    if level > 0 {
-        let title = chars.collect::<String>().trim().to_string();
-        if title.is_empty() {
-            None
-        } else {
-            Some(title.into())
-        }
-    } else {
-        None
-    }
-}

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "Sandcastle",
   "author": "Zed Industries",
   "themes": [
@@ -38,6 +39,7 @@
         "icon.accent": "#518b8bff",
         "status_bar.background": "#333944ff",
         "title_bar.background": "#333944ff",
+        "title_bar.inactive_background": "#2b3038ff",
         "toolbar.background": "#282c33ff",
         "tab_bar.background": "#2b3038ff",
         "tab.inactive_background": "#2b3038ff",

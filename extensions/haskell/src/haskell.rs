@@ -21,7 +21,7 @@ impl zed::Extension for HaskellExtension {
         Ok(zed::Command {
             command: path,
             args: vec!["lsp".to_string()],
-            env: Default::default(),
+            env: worktree.shell_env(),
         })
     }
 

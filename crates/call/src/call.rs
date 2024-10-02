@@ -114,7 +114,6 @@ impl ActiveCall {
     async fn handle_incoming_call(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::IncomingCall>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
@@ -142,7 +141,6 @@ impl ActiveCall {
     async fn handle_call_canceled(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CallCanceled>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
@@ -531,14 +529,13 @@ mod test {
         let (a, b) = cx.update(|cx| {
             (
                 one_at_a_time.spawn(cx, |_| async {
-                    assert!(false);
-                    Ok(2)
+                    panic!("");
                 }),
                 one_at_a_time.spawn(cx, |_| async { Ok(3) }),
             )
         });
 
-        assert_eq!(a.await.unwrap(), None);
+        assert_eq!(a.await.unwrap(), None::<u32>);
         assert_eq!(b.await.unwrap(), Some(3));
 
         let promise = cx.update(|cx| one_at_a_time.spawn(cx, |_| async { Ok(4) }));

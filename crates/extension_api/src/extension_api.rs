@@ -1,6 +1,6 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
-/// Provides access to Zed settings.
+pub mod http_client;
 pub mod settings;
 
 use core::fmt;
@@ -24,9 +24,11 @@ pub use wit::{
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
-    zed::extension::slash_command::SlashCommand,
+    zed::extension::slash_command::{
+        SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
+    },
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    LanguageServerInstallationStatus, Range, Worktree,
+    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -66,9 +68,11 @@ pub trait Extension: Send + Sync {
     /// language.
     fn language_server_command(
         &mut self,
-        language_server_id: &LanguageServerId,
-        worktree: &Worktree,
-    ) -> Result<Command>;
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Command> {
+        Err("`language_server_command` not implemented".to_string())
+    }
 
     /// Returns the initialization options to pass to the specified language server.
     fn language_server_initialization_options(
@@ -106,14 +110,42 @@ pub trait Extension: Send + Sync {
         None
     }
 
-    /// Runs the given slash command.
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
+    fn complete_slash_command_argument(
+        &self,
+        _command: SlashCommand,
+        _args: Vec<String>,
+    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Returns the output from running the provided slash command.
     fn run_slash_command(
         &self,
         _command: SlashCommand,
-        _argument: Option<String>,
-        _worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
-        Ok(None)
+        _args: Vec<String>,
+        _worktree: Option<&Worktree>,
+    ) -> Result<SlashCommandOutput, String> {
+        Err("`run_slash_command` not implemented".to_string())
+    }
+
+    /// Returns a list of package names as suggestions to be included in the
+    /// search results of the `/docs` slash command.
+    ///
+    /// This can be used to provide completions for known packages (e.g., from the
+    /// local project or a registry) before a package has been indexed.
+    fn suggest_docs_packages(&self, _provider: String) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Indexes the docs for the specified package.
+    fn index_docs(
+        &self,
+        _provider: String,
+        _package: String,
+        _database: &KeyValueStore,
+    ) -> Result<(), String> {
+        Err("`index_docs` not implemented".to_string())
     }
 }
 
@@ -150,11 +182,11 @@ static mut EXTENSION: Option<Box<dyn Extension>> = None;
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
-    #![allow(clippy::too_many_arguments)]
+    #![allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.0.7",
+        path: "./wit/since_v0.2.0",
     });
 }
 
@@ -223,12 +255,31 @@ impl wit::Guest for Component {
         Ok(labels)
     }
 
+    fn complete_slash_command_argument(
+        command: SlashCommand,
+        args: Vec<String>,
+    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
+        extension().complete_slash_command_argument(command, args)
+    }
+
     fn run_slash_command(
         command: SlashCommand,
-        argument: Option<String>,
-        worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
-        extension().run_slash_command(command, argument, worktree)
+        args: Vec<String>,
+        worktree: Option<&Worktree>,
+    ) -> Result<SlashCommandOutput, String> {
+        extension().run_slash_command(command, args, worktree)
+    }
+
+    fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {
+        extension().suggest_docs_packages(provider)
+    }
+
+    fn index_docs(
+        provider: String,
+        package: String,
+        database: &KeyValueStore,
+    ) -> Result<(), String> {
+        extension().index_docs(provider, package, database)
     }
 }
 

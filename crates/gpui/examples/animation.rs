@@ -9,7 +9,7 @@ impl AssetSource for Assets {
         std::fs::read(path)
             .map(Into::into)
             .map_err(Into::into)
-            .map(|result| Some(result))
+            .map(Some)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
@@ -22,6 +22,11 @@ impl AssetSource for Assets {
             .collect::<Vec<_>>())
     }
 }
+
+const ARROW_CIRCLE_SVG: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/image/arrow_circle.svg"
+);
 
 struct AnimationExample {}
 
@@ -42,7 +47,7 @@ impl Render for AnimationExample {
                     .child(
                         svg()
                             .size_8()
-                            .path("examples/image/arrow_circle.svg")
+                            .path(ARROW_CIRCLE_SVG)
                             .text_color(black())
                             .with_animation(
                                 "image_circle",

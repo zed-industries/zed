@@ -1,6 +1,6 @@
 [package]
 name = "zed_zig"
-version = "0.1.2"
+version = "0.3.0"
 edition = "2021"
 publish = false
 license = "Apache-2.0"
@@ -13,4 +13,4 @@ path = "src/zig.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = { path = "../../crates/extension_api" }
+zed_extension_api = "0.1.0"

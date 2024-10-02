@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use channel::{ChannelChat, ChannelStore, MessageParams};
 use client::{UserId, UserStore};
 use collections::HashSet;
@@ -6,17 +6,16 @@ use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorSt
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
-    Render, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
+    Render, Task, TextStyle, View, ViewContext, WeakView,
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
     LanguageServerId, ToOffset,
 };
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use project::{search::SearchQuery, Completion};
 use settings::Settings;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, TextSize};
 
@@ -24,10 +23,18 @@ use crate::panel_settings::MessageEditorSettings;
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
-lazy_static! {
-    static ref MENTIONS_SEARCH: SearchQuery =
-        SearchQuery::regex("@[-_\\w]+", false, false, false, Vec::new(), Vec::new()).unwrap();
-}
+static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
+    SearchQuery::regex(
+        "@[-_\\w]+",
+        false,
+        false,
+        false,
+        Default::default(),
+        Default::default(),
+        None,
+    )
+    .unwrap()
+});
 
 pub struct MessageEditor {
     pub editor: View<Editor>,
@@ -46,6 +53,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: language::Anchor,
+        _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<Vec<Completion>>> {
         let Some(handle) = self.0.upgrade() else {
@@ -132,7 +140,7 @@ impl MessageEditor {
 
         let markdown = language_registry.language_for_name("Markdown");
         cx.spawn(|_, mut cx| async move {
-            let markdown = markdown.await?;
+            let markdown = markdown.await.context("failed to load Markdown language")?;
             buffer.update(&mut cx, |buffer, cx| {
                 buffer.set_language(Some(markdown), cx)
             })
@@ -220,10 +228,10 @@ impl MessageEditor {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let language::Event::Reparsed | language::Event::Edited = event {
+        if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let buffer = buffer.read(cx).snapshot();
             self.mentions_task = Some(cx.spawn(|this, cx| async move {
                 cx.background_executor()
@@ -285,8 +293,8 @@ impl MessageEditor {
         completion_fn: impl Fn(&StringMatch) -> (String, CodeLabel),
     ) -> Vec<Completion> {
         let matches = fuzzy::match_strings(
-            &candidates,
-            &query,
+            candidates,
+            query,
             true,
             10,
             &Default::default(),
@@ -306,7 +314,6 @@ impl MessageEditor {
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
-                    show_new_completions_on_confirm: false,
                 }
             })
             .collect()
@@ -339,7 +346,7 @@ impl MessageEditor {
     ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let Some(query) = buffer.update(cx, |buffer, _| {
+        let query = buffer.update(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == '@' {
@@ -351,9 +358,7 @@ impl MessageEditor {
                 query.push(ch);
             }
             None
-        }) else {
-            return None;
-        };
+        })?;
 
         let start_offset = end_offset - query.len();
         let start_anchor = buffer.read(cx).anchor_before(start_offset);
@@ -392,8 +397,8 @@ impl MessageEditor {
         end_anchor: Anchor,
         cx: &mut ViewContext<Self>,
     ) -> Option<(Anchor, String, &'static [StringMatchCandidate])> {
-        lazy_static! {
-            static ref EMOJI_FUZZY_MATCH_CANDIDATES: Vec<StringMatchCandidate> = {
+        static EMOJI_FUZZY_MATCH_CANDIDATES: LazyLock<Vec<StringMatchCandidate>> =
+            LazyLock::new(|| {
                 let emojis = emojis::iter()
                     .flat_map(|s| s.shortcodes())
                     .map(|emoji| StringMatchCandidate {
@@ -403,12 +408,11 @@ impl MessageEditor {
                     })
                     .collect::<Vec<_>>();
                 emojis
-            };
-        }
+            });
 
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let Some(query) = buffer.update(cx, |buffer, _| {
+        let query = buffer.update(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == ':' {
@@ -444,9 +448,7 @@ impl MessageEditor {
                 query.push(ch);
             }
             None
-        }) else {
-            return None;
-        };
+        })?;
 
         let start_offset = end_offset - query.len() - 1;
         let start_anchor = buffer.read(cx).anchor_before(start_offset);
@@ -525,14 +527,12 @@ impl Render for MessageEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: TextSize::Small.rems(cx).into(),
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         div()

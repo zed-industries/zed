@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
+    anchored, deferred, div, px, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
     Element, ElementId, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId,
     ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
     WindowContext,
@@ -118,7 +118,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             let mut menu_layout_id = None;
 
             let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-                let mut anchored = anchored().snap_to_window();
+                let mut anchored = anchored().snap_to_window_with_margin(px(8.));
                 if let Some(anchor) = this.anchor {
                     anchored = anchored.anchor(anchor);
                 }

@@ -13,7 +13,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::TryFutureExt;
 use waker_fn::waker_fn;
@@ -25,14 +25,16 @@ use rand::rngs::StdRng;
 /// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
 /// A pointer to the executor that is currently running,
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -208,10 +210,10 @@ impl BackgroundExecutor {
                 Poll::Pending => {
                     let timeout =
                         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout) {
-                        if deadline.is_some_and(|deadline| deadline < Instant::now()) {
-                            return Err(future);
-                        }
+                    if !self.dispatcher.park(timeout)
+                        && deadline.is_some_and(|deadline| deadline < Instant::now())
+                    {
+                        return Err(future);
                     }
                 }
             }
@@ -314,6 +316,14 @@ impl BackgroundExecutor {
         }
     }
 
+    /// Get the current time.
+    ///
+    /// Calling this instead of `std::time::Instant::now` allows the use
+    /// of fake timers in tests.
+    pub fn now(&self) -> Instant {
+        self.dispatcher.now()
+    }
+
     /// Returns a task that will complete after the given duration.
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
@@ -397,7 +407,11 @@ impl BackgroundExecutor {
 
     /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
-        num_cpus::get()
+        #[cfg(any(test, feature = "test-support"))]
+        return 4;
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        return num_cpus::get();
     }
 
     /// Whether we're on the main thread.

@@ -17,6 +17,7 @@ doctest = false
 name = "test_app"
 
 [features]
+no-webrtc = []
 test-support = [
     "async-trait",
     "collections/test-support",
@@ -56,7 +57,7 @@ gpui = { workspace = true, features = ["test-support"] }
 live_kit_server.workspace = true
 nanoid.workspace = true
 sha2.workspace = true
-simplelog = "0.9"
+simplelog.workspace = true
 
 [build-dependencies]
 serde.workspace = true

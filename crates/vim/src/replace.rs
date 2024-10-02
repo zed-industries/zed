@@ -3,37 +3,33 @@ use crate::{
     state::Mode,
     Vim,
 };
-use editor::{display_map::ToDisplayPoint, Bias, ToPoint};
-use gpui::{actions, ViewContext, WindowContext};
+use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
+use gpui::{actions, ViewContext};
 use language::{AutoindentMode, Point};
 use std::ops::Range;
 use std::sync::Arc;
-use workspace::Workspace;
 
 actions!(vim, [ToggleReplace, UndoReplace]);
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_, _: &ToggleReplace, cx: &mut ViewContext<Workspace>| {
-        Vim::update(cx, |vim, cx| {
-            vim.update_state(|state| state.replacements = vec![]);
-            vim.switch_mode(Mode::Replace, false, cx);
-        });
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &ToggleReplace, cx| {
+        vim.replacements = vec![];
+        vim.start_recording(cx);
+        vim.switch_mode(Mode::Replace, false, cx);
     });
 
-    workspace.register_action(|_, _: &UndoReplace, cx: &mut ViewContext<Workspace>| {
-        Vim::update(cx, |vim, cx| {
-            if vim.state().mode != Mode::Replace {
-                return;
-            }
-            let count = vim.take_count(cx);
-            undo_replace(vim, count, cx)
-        });
+    Vim::action(editor, cx, |vim, _: &UndoReplace, cx| {
+        if vim.mode != Mode::Replace {
+            return;
+        }
+        let count = vim.take_count(cx);
+        vim.undo_replace(count, cx)
     });
 }
 
-pub(crate) fn multi_replace(text: Arc<str>, cx: &mut WindowContext) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |vim, editor, cx| {
+impl Vim {
+    pub(crate) fn multi_replace(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(cx);
@@ -57,11 +53,7 @@ pub(crate) fn multi_replace(text: Arc<str>, cx: &mut WindowContext) {
                             .buffer_snapshot
                             .text_for_range(replace_range.clone())
                             .collect();
-                        vim.update_state(|state| {
-                            state
-                                .replacements
-                                .push((replace_range.clone(), current_text))
-                        });
+                        vim.replacements.push((replace_range.clone(), current_text));
                         (replace_range, text.clone())
                     })
                     .collect::<Vec<_>>();
@@ -82,58 +74,56 @@ pub(crate) fn multi_replace(text: Arc<str>, cx: &mut WindowContext) {
                 editor.set_clip_at_line_ends(true, cx);
             });
         });
-    });
-}
+    }
 
-fn undo_replace(vim: &mut Vim, maybe_times: Option<usize>, cx: &mut WindowContext) {
-    vim.update_active_editor(cx, |vim, editor, cx| {
-        editor.transact(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            let map = editor.snapshot(cx);
-            let selections = editor.selections.all::<Point>(cx);
-            let mut new_selections = vec![];
-            let edits: Vec<(Range<Point>, String)> = selections
-                .into_iter()
-                .filter_map(|selection| {
-                    let end = selection.head();
-                    let start = motion::backspace(
-                        &map,
-                        end.to_display_point(&map),
-                        maybe_times.unwrap_or(1),
-                    )
-                    .to_point(&map);
-                    new_selections.push(
-                        map.buffer_snapshot.anchor_before(start)
-                            ..map.buffer_snapshot.anchor_before(start),
-                    );
+    fn undo_replace(&mut self, maybe_times: Option<usize>, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                let map = editor.snapshot(cx);
+                let selections = editor.selections.all::<Point>(cx);
+                let mut new_selections = vec![];
+                let edits: Vec<(Range<Point>, String)> = selections
+                    .into_iter()
+                    .filter_map(|selection| {
+                        let end = selection.head();
+                        let start = motion::backspace(
+                            &map,
+                            end.to_display_point(&map),
+                            maybe_times.unwrap_or(1),
+                        )
+                        .to_point(&map);
+                        new_selections.push(
+                            map.buffer_snapshot.anchor_before(start)
+                                ..map.buffer_snapshot.anchor_before(start),
+                        );
 
-                    let mut undo = None;
-                    let edit_range = start..end;
-                    for (i, (range, inverse)) in vim.state().replacements.iter().rev().enumerate() {
-                        if range.start.to_point(&map.buffer_snapshot) <= edit_range.start
-                            && range.end.to_point(&map.buffer_snapshot) >= edit_range.end
-                        {
-                            undo = Some(inverse.clone());
-                            vim.update_state(|state| {
-                                state.replacements.remove(state.replacements.len() - i - 1);
-                            });
-                            break;
+                        let mut undo = None;
+                        let edit_range = start..end;
+                        for (i, (range, inverse)) in vim.replacements.iter().rev().enumerate() {
+                            if range.start.to_point(&map.buffer_snapshot) <= edit_range.start
+                                && range.end.to_point(&map.buffer_snapshot) >= edit_range.end
+                            {
+                                undo = Some(inverse.clone());
+                                vim.replacements.remove(vim.replacements.len() - i - 1);
+                                break;
+                            }
                         }
-                    }
-                    Some((edit_range, undo?))
-                })
-                .collect::<Vec<_>>();
+                        Some((edit_range, undo?))
+                    })
+                    .collect::<Vec<_>>();
 
-            editor.buffer().update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
-            });
+                editor.buffer().update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                });
 
-            editor.change_selections(None, cx, |s| {
-                s.select_ranges(new_selections);
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges(new_selections);
+                });
+                editor.set_clip_at_line_ends(true, cx);
             });
-            editor.set_clip_at_line_ends(true, cx);
         });
-    });
+    }
 }
 
 #[cfg(test)]
@@ -238,10 +228,34 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_replace_mode_with_counts(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("3 shift-r - escape").await;
+        cx.shared_state().await.assert_eq("--ˇ-lo\n");
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("3 shift-r a b c escape")
+            .await;
+        cx.shared_state().await.assert_eq("abcabcabˇc\n");
+    }
+
+    #[gpui::test]
+    async fn test_replace_mode_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello world\n").await;
+        cx.simulate_shared_keystrokes("shift-r - - - escape 4 l .")
+            .await;
+        cx.shared_state().await.assert_eq("---lo --ˇ-ld\n");
+    }
+
+    #[gpui::test]
     async fn test_replace_mode_undo(cx: &mut gpui::TestAppContext) {
         let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
 
-        const UNDO_REPLACE_EXAMPLES: &[&'static str] = &[
+        const UNDO_REPLACE_EXAMPLES: &[&str] = &[
             // replace undo with single line
             "ˇThe quick brown fox jumps over the lazy dog.",
             // replace undo with ending line

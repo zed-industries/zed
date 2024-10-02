@@ -14,16 +14,19 @@ use theme::ThemeSettings;
 enum ContextMenuItem {
     Separator,
     Header(SharedString),
+    Label(SharedString),
     Entry {
-        toggled: Option<bool>,
+        toggle: Option<(IconPosition, bool)>,
         label: SharedString,
         icon: Option<IconName>,
-        handler: Rc<dyn Fn(&mut WindowContext)>,
+        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
         action: Option<Box<dyn Action>>,
+        disabled: bool,
     },
     CustomEntry {
         entry_render: Box<dyn Fn(&mut WindowContext) -> AnyElement>,
-        handler: Rc<dyn Fn(&mut WindowContext)>,
+        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
+        selectable: bool,
     },
 }
 
@@ -50,7 +53,7 @@ impl FluentBuilder for ContextMenu {}
 impl ContextMenu {
     pub fn build(
         cx: &mut WindowContext,
-        f: impl FnOnce(Self, &mut WindowContext) -> Self,
+        f: impl FnOnce(Self, &mut ViewContext<Self>) -> Self,
     ) -> View<Self> {
         cx.new_view(|cx| {
             let focus_handle = cx.focus_handle();
@@ -95,11 +98,12 @@ impl ContextMenu {
         handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: None,
+            toggle: None,
             label: label.into(),
-            handler: Rc::new(handler),
+            handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
             action,
+            disabled: false,
         });
         self
     }
@@ -108,15 +112,29 @@ impl ContextMenu {
         mut self,
         label: impl Into<SharedString>,
         toggled: bool,
+        position: IconPosition,
         action: Option<Box<dyn Action>>,
         handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: Some(toggled),
+            toggle: Some((position, toggled)),
             label: label.into(),
-            handler: Rc::new(handler),
+            handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
             action,
+            disabled: false,
+        });
+        self
+    }
+
+    pub fn custom_row(
+        mut self,
+        entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::CustomEntry {
+            entry_render: Box::new(entry_render),
+            handler: Rc::new(|_, _| {}),
+            selectable: false,
         });
         self
     }
@@ -128,40 +146,82 @@ impl ContextMenu {
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
-            handler: Rc::new(handler),
+            handler: Rc::new(move |_, cx| handler(cx)),
+            selectable: true,
         });
+        self
+    }
+
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.items.push(ContextMenuItem::Label(label.into()));
         self
     }
 
     pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: None,
+            toggle: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
-            handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
+
+            handler: Rc::new(move |context, cx| {
+                if let Some(context) = &context {
+                    cx.focus(context);
+                }
+                cx.dispatch_action(action.boxed_clone());
+            }),
             icon: None,
+            disabled: false,
+        });
+        self
+    }
+
+    pub fn disabled_action(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry {
+            toggle: None,
+            label: label.into(),
+            action: Some(action.boxed_clone()),
+
+            handler: Rc::new(move |context, cx| {
+                if let Some(context) = &context {
+                    cx.focus(context);
+                }
+                cx.dispatch_action(action.boxed_clone());
+            }),
+            icon: None,
+            disabled: true,
         });
         self
     }
 
     pub fn link(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: None,
+            toggle: None,
             label: label.into(),
+
             action: Some(action.boxed_clone()),
-            handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
-            icon: Some(IconName::Link),
+            handler: Rc::new(move |_, cx| cx.dispatch_action(action.boxed_clone())),
+            icon: Some(IconName::ArrowUpRight),
+            disabled: false,
         });
         self
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        match self.selected_index.and_then(|ix| self.items.get(ix)) {
-            Some(
-                ContextMenuItem::Entry { handler, .. }
-                | ContextMenuItem::CustomEntry { handler, .. },
-            ) => (handler)(cx),
-            _ => {}
+        let context = self.action_context.as_ref();
+        if let Some(
+            ContextMenuItem::Entry {
+                handler,
+                disabled: false,
+                ..
+            }
+            | ContextMenuItem::CustomEntry { handler, .. },
+        ) = self.selected_index.and_then(|ix| self.items.get(ix))
+        {
+            (handler)(context, cx)
         }
 
         cx.emit(DismissEvent);
@@ -221,7 +281,7 @@ impl ContextMenu {
         }
     }
 
-    pub fn on_action_dispatch(&mut self, dispatched: &Box<dyn Action>, cx: &mut ViewContext<Self>) {
+    pub fn on_action_dispatch(&mut self, dispatched: &dyn Action, cx: &mut ViewContext<Self>) {
         if self.clicked {
             cx.propagate();
             return;
@@ -230,10 +290,11 @@ impl ContextMenu {
         if let Some(ix) = self.items.iter().position(|item| {
             if let ContextMenuItem::Entry {
                 action: Some(action),
+                disabled: false,
                 ..
             } = item
             {
-                action.partial_eq(&**dispatched)
+                action.partial_eq(dispatched)
             } else {
                 false
             }
@@ -256,11 +317,22 @@ impl ContextMenu {
             cx.propagate()
         }
     }
+
+    pub fn on_blur_subscription(mut self, new_subscription: Subscription) -> Self {
+        self._on_blur_subscription = new_subscription;
+        self
+    }
 }
 
 impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
-        matches!(self, Self::Entry { .. } | Self::CustomEntry { .. })
+        match self {
+            ContextMenuItem::Header(_)
+            | ContextMenuItem::Separator
+            | ContextMenuItem::Label { .. } => false,
+            ContextMenuItem::Entry { disabled, .. } => !disabled,
+            ContextMenuItem::CustomEntry { selectable, .. } => *selectable,
+        }
     }
 }
 
@@ -271,7 +343,10 @@ impl Render for ContextMenu {
         div().occlude().elevation_2(cx).flex().flex_row().child(
             WithRemSize::new(ui_font_size).flex().child(
                 v_flex()
+                    .id("context-menu")
                     .min_w(px(200.))
+                    .max_h(vh(0.75, cx))
+                    .overflow_y_scroll()
                     .track_focus(&self.focus_handle)
                     .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
                     .key_context("menu")
@@ -285,6 +360,7 @@ impl Render for ContextMenu {
                         for item in self.items.iter() {
                             if let ContextMenuItem::Entry {
                                 action: Some(action),
+                                disabled: false,
                                 ..
                             } = item
                             {
@@ -306,31 +382,44 @@ impl Render for ContextMenu {
                                         .inset(true)
                                         .into_any_element()
                                 }
+                                ContextMenuItem::Label(label) => ListItem::new(ix)
+                                    .inset(true)
+                                    .disabled(true)
+                                    .child(Label::new(label.clone()))
+                                    .into_any_element(),
                                 ContextMenuItem::Entry {
-                                    toggled,
+                                    toggle,
                                     label,
                                     handler,
                                     icon,
                                     action,
+                                    disabled,
                                 } => {
                                     let handler = handler.clone();
                                     let menu = cx.view().downgrade();
-
+                                    let color = if *disabled {
+                                        Color::Muted
+                                    } else {
+                                        Color::Default
+                                    };
                                     let label_element = if let Some(icon) = icon {
                                         h_flex()
                                             .gap_1()
-                                            .child(Label::new(label.clone()))
-                                            .child(Icon::new(*icon))
+                                            .child(Label::new(label.clone()).color(color))
+                                            .child(
+                                                Icon::new(*icon).size(IconSize::Small).color(color),
+                                            )
                                             .into_any_element()
                                     } else {
-                                        Label::new(label.clone()).into_any_element()
+                                        Label::new(label.clone()).color(color).into_any_element()
                                     };
 
                                     ListItem::new(ix)
                                         .inset(true)
+                                        .disabled(*disabled)
                                         .selected(Some(ix) == self.selected_index)
-                                        .when_some(*toggled, |list_item, toggled| {
-                                            list_item.start_slot(if toggled {
+                                        .when_some(*toggle, |list_item, (position, toggled)| {
+                                            let contents = if toggled {
                                                 v_flex().flex_none().child(
                                                     Icon::new(IconName::Check).color(Color::Accent),
                                                 )
@@ -338,7 +427,13 @@ impl Render for ContextMenu {
                                                 v_flex()
                                                     .flex_none()
                                                     .size(IconSize::default().rems())
-                                            })
+                                            };
+                                            match position {
+                                                IconPosition::Start => {
+                                                    list_item.start_slot(contents)
+                                                }
+                                                IconPosition::End => list_item.end_slot(contents),
+                                            }
                                         })
                                         .child(
                                             h_flex()
@@ -360,32 +455,47 @@ impl Render for ContextMenu {
                                                         .map(|binding| div().ml_4().child(binding))
                                                 })),
                                         )
-                                        .on_click(move |_, cx| {
-                                            handler(cx);
-                                            menu.update(cx, |menu, cx| {
-                                                menu.clicked = true;
-                                                cx.emit(DismissEvent);
-                                            })
-                                            .ok();
+                                        .on_click({
+                                            let context = self.action_context.clone();
+                                            move |_, cx| {
+                                                handler(context.as_ref(), cx);
+                                                menu.update(cx, |menu, cx| {
+                                                    menu.clicked = true;
+                                                    cx.emit(DismissEvent);
+                                                })
+                                                .ok();
+                                            }
                                         })
                                         .into_any_element()
                                 }
                                 ContextMenuItem::CustomEntry {
                                     entry_render,
                                     handler,
+                                    selectable,
                                 } => {
                                     let handler = handler.clone();
                                     let menu = cx.view().downgrade();
+                                    let selectable = *selectable;
                                     ListItem::new(ix)
                                         .inset(true)
-                                        .selected(Some(ix) == self.selected_index)
-                                        .on_click(move |_, cx| {
-                                            handler(cx);
-                                            menu.update(cx, |menu, cx| {
-                                                menu.clicked = true;
-                                                cx.emit(DismissEvent);
+                                        .selected(if selectable {
+                                            Some(ix) == self.selected_index
+                                        } else {
+                                            false
+                                        })
+                                        .selectable(selectable)
+                                        .when(selectable, |item| {
+                                            item.on_click({
+                                                let context = self.action_context.clone();
+                                                move |_, cx| {
+                                                    handler(context.as_ref(), cx);
+                                                    menu.update(cx, |menu, cx| {
+                                                        menu.clicked = true;
+                                                        cx.emit(DismissEvent);
+                                                    })
+                                                    .ok();
+                                                }
                                             })
-                                            .ok();
                                         })
                                         .child(entry_render(cx))
                                         .into_any_element()

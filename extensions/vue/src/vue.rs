@@ -1,28 +1,51 @@
+use std::collections::HashMap;
 use std::{env, fs};
+
+use serde::Deserialize;
 use zed::lsp::{Completion, CompletionKind};
 use zed::CodeLabelSpan;
 use zed_extension_api::{self as zed, serde_json, Result};
 
-struct VueExtension {
-    did_find_server: bool,
-}
-
 const SERVER_PATH: &str = "node_modules/@vue/language-server/bin/vue-language-server.js";
 const PACKAGE_NAME: &str = "@vue/language-server";
+
+const TYPESCRIPT_PACKAGE_NAME: &str = "typescript";
+
+/// The relative path to TypeScript's SDK.
+const TYPESCRIPT_TSDK_PATH: &str = "node_modules/typescript/lib";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageJson {
+    #[serde(default)]
+    dependencies: HashMap<String, String>,
+    #[serde(default)]
+    dev_dependencies: HashMap<String, String>,
+}
+
+struct VueExtension {
+    did_find_server: bool,
+    typescript_tsdk_path: String,
+}
 
 impl VueExtension {
     fn server_exists(&self) -> bool {
         fs::metadata(SERVER_PATH).map_or(false, |stat| stat.is_file())
     }
 
-    fn server_script_path(&mut self, id: &zed::LanguageServerId) -> Result<String> {
+    fn server_script_path(
+        &mut self,
+        language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<String> {
         let server_exists = self.server_exists();
         if self.did_find_server && server_exists {
+            self.install_typescript_if_needed(worktree)?;
             return Ok(SERVER_PATH.to_string());
         }
 
         zed::set_language_server_installation_status(
-            id,
+            language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         // We hardcode the version to 1.8 since we do not support @vue/language-server 2.0 yet.
@@ -32,7 +55,7 @@ impl VueExtension {
             || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
         {
             zed::set_language_server_installation_status(
-                id,
+                language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
             let result = zed::npm_install_package(PACKAGE_NAME, &version);
@@ -52,8 +75,54 @@ impl VueExtension {
             }
         }
 
+        self.install_typescript_if_needed(worktree)?;
         self.did_find_server = true;
         Ok(SERVER_PATH.to_string())
+    }
+
+    /// Returns whether a local copy of TypeScript exists in the worktree.
+    fn typescript_exists_for_worktree(&self, worktree: &zed::Worktree) -> Result<bool> {
+        let package_json = worktree.read_text_file("package.json")?;
+        let package_json: PackageJson = serde_json::from_str(&package_json)
+            .map_err(|err| format!("failed to parse package.json: {err}"))?;
+
+        let dev_dependencies = &package_json.dev_dependencies;
+        let dependencies = &package_json.dependencies;
+
+        // Since the extension is not allowed to read the filesystem within the project
+        // except through the worktree (which does not contains `node_modules`), we check
+        // the `package.json` to see if `typescript` is listed in the dependencies.
+        Ok(dev_dependencies.contains_key(TYPESCRIPT_PACKAGE_NAME)
+            || dependencies.contains_key(TYPESCRIPT_PACKAGE_NAME))
+    }
+
+    fn install_typescript_if_needed(&mut self, worktree: &zed::Worktree) -> Result<()> {
+        if self
+            .typescript_exists_for_worktree(worktree)
+            .unwrap_or_default()
+        {
+            println!("found local TypeScript installation at '{TYPESCRIPT_TSDK_PATH}'");
+            return Ok(());
+        }
+
+        let installed_typescript_version =
+            zed::npm_package_installed_version(TYPESCRIPT_PACKAGE_NAME)?;
+        let latest_typescript_version = zed::npm_package_latest_version(TYPESCRIPT_PACKAGE_NAME)?;
+
+        if installed_typescript_version.as_ref() != Some(&latest_typescript_version) {
+            println!("installing {TYPESCRIPT_PACKAGE_NAME}@{latest_typescript_version}");
+            zed::npm_install_package(TYPESCRIPT_PACKAGE_NAME, &latest_typescript_version)?;
+        } else {
+            println!("typescript already installed");
+        }
+
+        self.typescript_tsdk_path = env::current_dir()
+            .unwrap()
+            .join(TYPESCRIPT_TSDK_PATH)
+            .to_string_lossy()
+            .to_string();
+
+        Ok(())
     }
 }
 
@@ -61,15 +130,16 @@ impl zed::Extension for VueExtension {
     fn new() -> Self {
         Self {
             did_find_server: false,
+            typescript_tsdk_path: TYPESCRIPT_TSDK_PATH.to_owned(),
         }
     }
 
     fn language_server_command(
         &mut self,
-        id: &zed::LanguageServerId,
-        _: &zed::Worktree,
+        language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let server_path = self.server_script_path(id)?;
+        let server_path = self.server_script_path(language_server_id, worktree)?;
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args: vec![
@@ -86,12 +156,12 @@ impl zed::Extension for VueExtension {
 
     fn language_server_initialization_options(
         &mut self,
-        _: &zed::LanguageServerId,
-        _: &zed::Worktree,
+        _language_server_id: &zed::LanguageServerId,
+        _worktree: &zed::Worktree,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(serde_json::json!({
             "typescript": {
-                "tsdk": "node_modules/typescript/lib"
+                "tsdk": self.typescript_tsdk_path
             }
         })))
     }

@@ -31,6 +31,12 @@ pub struct MarkdownWriter {
     pub(crate) markdown: String,
 }
 
+impl Default for MarkdownWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MarkdownWriter {
     pub fn new() -> Self {
         Self {
@@ -64,8 +70,8 @@ impl MarkdownWriter {
         self.push_str("\n\n");
     }
 
-    pub fn run(mut self, root_node: &Handle, handlers: &mut Vec<TagHandler>) -> Result<String> {
-        self.visit_node(&root_node, handlers)?;
+    pub fn run(mut self, root_node: &Handle, handlers: &mut [TagHandler]) -> Result<String> {
+        self.visit_node(root_node, handlers)?;
         Ok(Self::prettify_markdown(self.markdown))
     }
 
@@ -104,7 +110,7 @@ impl MarkdownWriter {
         }
 
         if let Some(current_element) = current_element.as_ref() {
-            match self.start_tag(&current_element, handlers) {
+            match self.start_tag(current_element, handlers) {
                 StartTagOutcome::Continue => {}
                 StartTagOutcome::Skip => return Ok(()),
             }

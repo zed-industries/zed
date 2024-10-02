@@ -44,7 +44,7 @@ impl SelectionsCollection {
             buffer,
             next_selection_id: 1,
             line_mode: false,
-            disjoint: Arc::from([]),
+            disjoint: Arc::default(),
             pending: Some(PendingSelection {
                 selection: Selection {
                     id: 0,
@@ -109,7 +109,7 @@ impl SelectionsCollection {
 
     pub fn all<'a, D>(&self, cx: &AppContext) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+        D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
         let disjoint_anchors = &self.disjoint;
         let mut disjoint =
@@ -155,6 +155,18 @@ impl SelectionsCollection {
             }
         }
         selections
+    }
+
+    /// Returns the newest selection, adjusted to take into account the selection line_mode
+    pub fn newest_adjusted(&self, cx: &mut AppContext) -> Selection<Point> {
+        let mut selection = self.newest::<Point>(cx);
+        if self.line_mode {
+            let map = self.display_map(cx);
+            let new_range = map.expand_to_line(selection.range());
+            selection.start = new_range.start;
+            selection.end = new_range.end;
+        }
+        selection
     }
 
     pub fn all_adjusted_display(
@@ -256,7 +268,10 @@ impl SelectionsCollection {
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
-        self.disjoint[0].clone()
+        self.pending
+            .as_ref()
+            .map(|pending| pending.selection.clone())
+            .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
@@ -324,7 +339,7 @@ impl SelectionsCollection {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
 
-        let line = display_map.layout_row(row, &text_layout_details);
+        let line = display_map.layout_row(row, text_layout_details);
 
         let start_col = line.closest_index_for_x(positions.start) as u32;
         if start_col < line_len || (is_empty && positions.start == line.width) {
@@ -378,12 +393,12 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.display_map(self.cx)
     }
 
-    fn buffer(&self) -> Ref<MultiBufferSnapshot> {
+    pub fn buffer(&self) -> Ref<MultiBufferSnapshot> {
         self.collection.buffer(self.cx)
     }
 
     pub fn clear_disjoint(&mut self) {
-        self.collection.disjoint = Arc::from([]);
+        self.collection.disjoint = Arc::default();
     }
 
     pub fn delete(&mut self, selection_id: usize) {
@@ -420,46 +435,6 @@ impl<'a> MutableSelectionsCollection<'a> {
             },
             mode,
         });
-        self.selections_changed = true;
-    }
-
-    pub(crate) fn set_pending_display_range(
-        &mut self,
-        range: Range<DisplayPoint>,
-        mode: SelectMode,
-    ) {
-        let (start, end, reversed) = {
-            let display_map = self.display_map();
-            let buffer = self.buffer();
-            let mut start = range.start;
-            let mut end = range.end;
-            let reversed = if start > end {
-                mem::swap(&mut start, &mut end);
-                true
-            } else {
-                false
-            };
-
-            let end_bias = if end > start { Bias::Left } else { Bias::Right };
-            (
-                buffer.anchor_before(start.to_point(&display_map)),
-                buffer.anchor_at(end.to_point(&display_map), end_bias),
-                reversed,
-            )
-        };
-
-        let new_pending = PendingSelection {
-            selection: Selection {
-                id: post_inc(&mut self.collection.next_selection_id),
-                start,
-                end,
-                reversed,
-                goal: SelectionGoal::None,
-            },
-            mode,
-        };
-
-        self.collection.pending = Some(new_pending);
         self.selections_changed = true;
     }
 
@@ -875,7 +850,7 @@ pub(crate) fn resolve_multiple<'a, D, I>(
     snapshot: &MultiBufferSnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
 where
-    D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+    D: TextDimension + Ord + Sub<D, Output = D>,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     let (to_summarize, selections) = selections.into_iter().tee();

@@ -1,0 +1,12 @@
+{"Put":{"state":"ˇHellö world"}}
+{"Key":"f"}
+{"Key":"ctrl-k"}
+{"Key":"o"}
+{"Key":":"}
+{"Get":{"state":"Hellˇö world","mode":"Normal"}}
+{"Put":{"state":"ˇHellö world"}}
+{"Key":"t"}
+{"Key":"ctrl-k"}
+{"Key":"o"}
+{"Key":":"}
+{"Get":{"state":"Helˇlö world","mode":"Normal"}}

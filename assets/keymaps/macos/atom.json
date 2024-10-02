@@ -1,0 +1,96 @@
+// Default Keymap (Atom) for Zed on macOS
+[
+  {
+    "bindings": {
+      "ctrl-alt-cmd-l": "workspace::Reload",
+      "cmd-k cmd-p": "workspace::ActivatePreviousPane",
+      "cmd-k cmd-n": "workspace::ActivateNextPane"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-shift-l": "language_selector::Toggle",
+      "cmd-|": "pane::RevealInProjectPanel",
+      "cmd-b": "editor::GoToDefinition",
+      "alt-cmd-b": "editor::GoToDefinitionSplit",
+      "cmd-<": "editor::ScrollCursorCenter",
+      "cmd-g": ["editor::SelectNext", { "replace_newest": true }],
+      "cmd-shift-g": ["editor::SelectPrevious", { "replace_newest": true }],
+      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-up": "editor::AddSelectionAbove",
+      "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",
+      "cmd-k cmd-u": "editor::ConvertToUpperCase",
+      "cmd-k cmd-l": "editor::ConvertToLowerCase",
+      "alt-enter": "editor::Newline",
+      "cmd-shift-d": "editor::DuplicateLineDown",
+      "ctrl-cmd-up": "editor::MoveLineUp",
+      "ctrl-cmd-down": "editor::MoveLineDown",
+      "cmd-\\": "workspace::ToggleLeftDock",
+      "ctrl-shift-m": "markdown::OpenPreviewToTheSide"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "cmd-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "cmd-f3": "search::SelectNextMatch",
+      "cmd-shift-f3": "search::SelectPrevMatch"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-\\": "workspace::ToggleLeftDock",
+      "cmd-k cmd-b": "workspace::ToggleLeftDock",
+      "cmd-t": "file_finder::Toggle",
+      "cmd-shift-r": "project_symbols::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "alt-cmd-/": "search::ToggleRegex",
+      "ctrl-0": "project_panel::ToggleFocus",
+      "cmd-1": ["pane::ActivateItem", 0],
+      "cmd-2": ["pane::ActivateItem", 1],
+      "cmd-3": ["pane::ActivateItem", 2],
+      "cmd-4": ["pane::ActivateItem", 3],
+      "cmd-5": ["pane::ActivateItem", 4],
+      "cmd-6": ["pane::ActivateItem", 5],
+      "cmd-7": ["pane::ActivateItem", 6],
+      "cmd-8": ["pane::ActivateItem", 7],
+      "cmd-9": "pane::ActivateLastItem"
+    }
+  },
+  {
+    "context": "ProjectPanel",
+    "bindings": {
+      "f2": "project_panel::Rename",
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "cmd-x": "project_panel::Cut",
+      "cmd-c": "project_panel::Copy",
+      "cmd-v": "project_panel::Paste"
+    }
+  },
+  {
+    "context": "ProjectPanel && not_editing",
+    "bindings": {
+      "ctrl-shift-c": "project_panel::CopyPath",
+      "ctrl-[": "project_panel::CollapseSelectedEntry",
+      "ctrl-b": "project_panel::CollapseSelectedEntry",
+      "ctrl-]": "project_panel::ExpandSelectedEntry",
+      "ctrl-f": "project_panel::ExpandSelectedEntry",
+      "a": "project_panel::NewFile",
+      "d": "project_panel::Duplicate",
+      "home": "menu::SelectFirst",
+      "end": "menu::SelectLast",
+      "shift-a": "project_panel::NewDirectory"
+    }
+  }
+]

@@ -1,11 +1,11 @@
 use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::SlashCommandOutputSection;
-use gpui::{AppContext, Task, WeakView};
-use language::LspAdapterDelegate;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use gpui::{Task, WeakView};
+use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub(crate) struct PromptSlashCommand;
@@ -16,11 +16,11 @@ impl SlashCommand for PromptSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert prompt from library".into()
+        "Insert prompt from library".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Prompt from Library".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -28,35 +28,47 @@ impl SlashCommand for PromptSlashCommand {
     }
 
     fn complete_argument(
-        &self,
-        query: String,
+        self: Arc<Self>,
+        arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+        cx: &mut WindowContext,
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
+        let query = arguments.to_owned().join(" ");
         cx.background_executor().spawn(async move {
             let prompts = store.await?.search(query).await;
             Ok(prompts
                 .into_iter()
-                .filter_map(|prompt| Some(prompt.title?.to_string()))
+                .filter_map(|prompt| {
+                    let prompt_title = prompt.title?.to_string();
+                    Some(ArgumentCompletion {
+                        label: prompt_title.clone().into(),
+                        new_text: prompt_title,
+                        after_completion: true.into(),
+                        replace_previous_arguments: true,
+                    })
+                })
                 .collect())
         })
     }
 
     fn run(
         self: Arc<Self>,
-        title: Option<&str>,
+        arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(title) = title else {
+        let title = arguments.to_owned().join(" ");
+        if title.trim().is_empty() {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
         let store = PromptStore::global(cx);
-        let title = SharedString::from(title.to_string());
+        let title = SharedString::from(title.clone());
         let prompt = cx.background_executor().spawn({
             let title = title.clone();
             async move {
@@ -69,42 +81,26 @@ impl SlashCommand for PromptSlashCommand {
             }
         });
         cx.foreground_executor().spawn(async move {
-            let prompt = prompt.await?;
+            let mut prompt = prompt.await?;
+
+            if prompt.starts_with('/') {
+                // Prevent an edge case where the inserted prompt starts with a slash command (that leads to funky rendering).
+                prompt.insert(0, '\n');
+            }
+            if prompt.is_empty() {
+                prompt.push('\n');
+            }
             let range = 0..prompt.len();
             Ok(SlashCommandOutput {
                 text: prompt,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            id,
-                            unfold,
-                            title: title.clone(),
-                        }
-                        .into_any_element()
-                    }),
+                    icon: IconName::Library,
+                    label: title,
+                    metadata: None,
                 }],
                 run_commands_in_text: true,
             })
         })
-    }
-}
-
-#[derive(IntoElement)]
-pub struct PromptPlaceholder {
-    pub title: SharedString,
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-}
-
-impl RenderOnce for PromptPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::Library))
-            .child(Label::new(self.title))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

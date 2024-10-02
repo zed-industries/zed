@@ -66,7 +66,7 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
         .update(cx, |store, cx| {
             let projects = store.dev_server_projects();
             assert_eq!(projects.len(), 1);
-            assert_eq!(projects[0].path, "/remote");
+            assert_eq!(projects[0].paths, vec!["/remote"]);
             workspace::join_dev_server_project(
                 projects[0].id,
                 projects[0].project_id.unwrap(),
@@ -96,7 +96,7 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
 
     let content = dev_server
         .fs()
-        .load(&Path::new("/remote/1.txt"))
+        .load(Path::new("/remote/1.txt"))
         .await
         .unwrap();
     assert_eq!(content, "wow!remote\nremote\nremote\n");
@@ -206,7 +206,7 @@ async fn create_dev_server_project(
         .update(cx, |store, cx| {
             let projects = store.dev_server_projects();
             assert_eq!(projects.len(), 1);
-            assert_eq!(projects[0].path, "/remote");
+            assert_eq!(projects[0].paths, vec!["/remote"]);
             workspace::join_dev_server_project(
                 projects[0].id,
                 projects[0].project_id.unwrap(),
@@ -505,6 +505,29 @@ async fn test_dev_server_reconnect(
 }
 
 #[gpui::test]
+async fn test_dev_server_restart(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppContext) {
+    let (server, client1) = TestServer::start1(cx1).await;
+
+    let (_dev_server, remote_workspace) =
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx2).await;
+    let cx = VisualTestContext::from_window(remote_workspace.into(), cx1).as_mut();
+
+    server.reset().await;
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("cmd-p 1 enter");
+    remote_workspace
+        .update(cx, |ws, cx| {
+            ws.active_item_as::<Editor>(cx)
+                .unwrap()
+                .update(cx, |ed, cx| {
+                    assert_eq!(ed.text(cx).to_string(), "remote\nremote\nremote");
+                })
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 async fn test_create_dev_server_project_path_validation(
     cx1: &mut gpui::TestAppContext,
     cx2: &mut gpui::TestAppContext,
@@ -575,7 +598,8 @@ async fn test_save_as_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Tes
 
     let title = remote_workspace
         .update(&mut cx, |ws, cx| {
-            ws.active_item(cx).unwrap().tab_description(0, &cx).unwrap()
+            let active_item = ws.active_item(cx).unwrap();
+            active_item.tab_description(0, cx).unwrap()
         })
         .unwrap();
 
@@ -583,7 +607,7 @@ async fn test_save_as_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Tes
 
     let path = Path::new("/remote/2.txt");
     assert_eq!(
-        dev_server.fs().load(&path).await.unwrap(),
+        dev_server.fs().load(path).await.unwrap(),
         "remote\nremote\nremote"
     );
 }
@@ -608,12 +632,12 @@ async fn test_new_file_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Te
 
     let title = remote_workspace
         .update(&mut cx, |ws, cx| {
-            ws.active_item(cx).unwrap().tab_description(0, &cx).unwrap()
+            ws.active_item(cx).unwrap().tab_description(0, cx).unwrap()
         })
         .unwrap();
 
     assert_eq!(title, "2.txt");
 
     let path = Path::new("/remote/2.txt");
-    assert_eq!(dev_server.fs().load(&path).await.unwrap(), "new!");
+    assert_eq!(dev_server.fs().load(path).await.unwrap(), "new!");
 }

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
-use language::LanguageServerName;
+use language::{LanguageName, LanguageServerName};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -76,6 +76,10 @@ pub struct ExtensionManifest {
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
+    #[serde(default)]
+    pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
+    #[serde(default)]
+    pub snippets: Option<PathBuf>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -102,10 +106,10 @@ pub struct GrammarManifestEntry {
 pub struct LanguageServerManifestEntry {
     /// Deprecated in favor of `languages`.
     #[serde(default)]
-    language: Option<Arc<str>>,
+    language: Option<LanguageName>,
     /// The list of languages this language server should work with.
     #[serde(default)]
-    languages: Vec<Arc<str>>,
+    languages: Vec<LanguageName>,
     #[serde(default)]
     pub language_ids: HashMap<String, String>,
     #[serde(default)]
@@ -120,7 +124,7 @@ impl LanguageServerManifestEntry {
     ///
     /// We can replace this with just field access for the `languages` field once
     /// we have removed `language`.
-    pub fn languages(&self) -> impl IntoIterator<Item = Arc<str>> + '_ {
+    pub fn languages(&self) -> impl IntoIterator<Item = LanguageName> + '_ {
         let language = if self.languages.is_empty() {
             self.language.clone()
         } else {
@@ -133,9 +137,11 @@ impl LanguageServerManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct SlashCommandManifestEntry {
     pub description: String,
-    pub tooltip_text: String,
     pub requires_argument: bool,
 }
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct IndexedDocsProviderEntry {}
 
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
@@ -200,5 +206,7 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         slash_commands: BTreeMap::default(),
+        indexed_docs_providers: BTreeMap::default(),
+        snippets: None,
     }
 }

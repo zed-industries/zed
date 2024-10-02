@@ -3,9 +3,10 @@ mod event_coalescer;
 use crate::{ChannelId, TelemetrySettings};
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
+use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http::{self, HttpClient, HttpClientWithUrl, Method};
+use http_client::{self, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -15,14 +16,15 @@ use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CpuEvent, EditEvent,
-    EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent,
-    MemoryEvent, SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, AssistantKind, AssistantPhase, CallEvent, CpuEvent,
+    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent,
+    InlineCompletionEvent, MemoryEvent, ReplEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
+use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
 
@@ -35,9 +37,10 @@ pub struct Telemetry {
 
 struct TelemetryState {
     settings: TelemetrySettings,
-    metrics_id: Option<Arc<str>>,      // Per logged-in user
+    system_id: Option<Arc<str>>,       // Per system
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<String>,        // Per app launch
+    metrics_id: Option<Arc<str>>,      // Per logged-in user
     release_channel: Option<&'static str>,
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
@@ -47,10 +50,29 @@ struct TelemetryState {
     first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
+    worktree_id_map: WorktreeIdMap,
 
     os_name: String,
     app_version: String,
     os_version: Option<String>,
+}
+
+#[derive(Debug)]
+struct WorktreeIdMap(HashMap<String, ProjectCache>);
+
+#[derive(Debug)]
+struct ProjectCache {
+    name: String,
+    worktree_ids_reported: HashSet<WorktreeId>,
+}
+
+impl ProjectCache {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            worktree_ids_reported: HashSet::default(),
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -170,9 +192,10 @@ impl Telemetry {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,
             release_channel,
+            system_id: None,
             installation_id: None,
-            metrics_id: None,
             session_id: None,
+            metrics_id: None,
             events_queue: Vec::new(),
             flush_events_task: None,
             log_file: None,
@@ -180,6 +203,20 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
+            worktree_id_map: WorktreeIdMap(HashMap::from_iter([
+                (
+                    "pnpm-lock.yaml".to_string(),
+                    ProjectCache::new("pnpm".to_string()),
+                ),
+                (
+                    "yarn.lock".to_string(),
+                    ProjectCache::new("yarn".to_string()),
+                ),
+                (
+                    "package.json".to_string(),
+                    ProjectCache::new("node".to_string()),
+                ),
+            ])),
 
             os_version: None,
             os_name: os_name(),
@@ -192,7 +229,7 @@ impl Telemetry {
                 let state = state.clone();
                 async move {
                     if let Some(tempfile) =
-                        NamedTempFile::new_in(util::paths::CONFIG_DIR.as_path()).log_err()
+                        NamedTempFile::new_in(paths::logs_dir().as_path()).log_err()
                     {
                         state.lock().log_file = Some(tempfile);
                     }
@@ -248,15 +285,17 @@ impl Telemetry {
 
     pub fn start(
         self: &Arc<Self>,
+        system_id: Option<String>,
         installation_id: Option<String>,
         session_id: String,
         cx: &mut AppContext,
     ) {
         let mut state = self.state.lock();
+        state.system_id = system_id.map(|id| id.into());
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
-        state.os_name = os_version();
+        state.os_name = os_name();
 
         drop(state);
 
@@ -269,7 +308,10 @@ impl Telemetry {
 
                 let refresh_kind = ProcessRefreshKind::new().with_cpu().with_memory();
                 let current_process = Pid::from_u32(std::process::id());
-                system.refresh_process_specifics(current_process, refresh_kind);
+                system.refresh_processes_specifics(
+                    sysinfo::ProcessesToUpdate::Some(&[current_process]),
+                    refresh_kind,
+                );
 
                 // Waiting some amount of time before the first query is important to get a reasonable value
                 // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
@@ -279,7 +321,10 @@ impl Telemetry {
                     smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
 
                     let current_process = Pid::from_u32(std::process::id());
-                    system.refresh_process_specifics(current_process, refresh_kind);
+                    system.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::Some(&[current_process]),
+                        refresh_kind,
+                    );
                     let Some(process) = system.process(current_process) else {
                         log::error!(
                             "Failed to find own process {current_process:?} in system process table"
@@ -350,6 +395,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
+        phase: AssistantPhase,
         model: String,
         response_latency: Option<Duration>,
         error_message: Option<String>,
@@ -357,6 +403,7 @@ impl Telemetry {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
             kind,
+            phase,
             model: model.to_string(),
             response_latency,
             error_message,
@@ -450,6 +497,67 @@ impl Telemetry {
         self.report_event(event)
     }
 
+    pub fn report_discovered_project_events(
+        self: &Arc<Self>,
+        worktree_id: WorktreeId,
+        updated_entries_set: &UpdatedEntriesSet,
+    ) {
+        let project_names: Vec<String> = {
+            let mut state = self.state.lock();
+            state
+                .worktree_id_map
+                .0
+                .iter_mut()
+                .filter_map(|(project_file_name, project_type_telemetry)| {
+                    if project_type_telemetry
+                        .worktree_ids_reported
+                        .contains(&worktree_id)
+                    {
+                        return None;
+                    }
+
+                    let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
+                        path.as_ref()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name_str| name_str == project_file_name)
+                            .unwrap_or(false)
+                    });
+
+                    if !project_file_found {
+                        return None;
+                    }
+
+                    project_type_telemetry
+                        .worktree_ids_reported
+                        .insert(worktree_id);
+
+                    Some(project_type_telemetry.name.clone())
+                })
+                .collect()
+        };
+
+        // Done on purpose to avoid calling `self.state.lock()` multiple times
+        for project_name in project_names {
+            self.report_app_event(format!("open {} project", project_name));
+        }
+    }
+
+    pub fn report_repl_event(
+        self: &Arc<Self>,
+        kernel_language: String,
+        kernel_status: String,
+        repl_session_id: String,
+    ) {
+        let event = Event::Repl(ReplEvent {
+            kernel_language,
+            kernel_status,
+            repl_session_id,
+        });
+
+        self.report_event(event)
+    }
+
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
@@ -513,10 +621,6 @@ impl Telemetry {
             return;
         }
 
-        if ZED_CLIENT_CHECKSUM_SEED.is_none() {
-            return;
-        };
-
         let this = self.clone();
         self.executor
             .spawn(
@@ -537,8 +641,10 @@ impl Telemetry {
                         let state = this.state.lock();
 
                         let request_body = EventRequestBody {
+                            system_id: state.system_id.as_deref().map(Into::into),
                             installation_id: state.installation_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
+                            metrics_id: state.metrics_id.as_deref().map(Into::into),
                             is_staff: state.is_staff,
                             app_version: state.app_version.clone(),
                             os_name: state.os_name.clone(),
@@ -552,11 +658,9 @@ impl Telemetry {
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
-                    let Some(checksum) = calculate_json_checksum(&json_bytes) else {
-                        return Ok(());
-                    };
+                    let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
-                    let request = http::Request::builder()
+                    let request = http_client::Request::builder()
                         .method(Method::POST)
                         .uri(
                             this.http_client
@@ -579,13 +683,31 @@ impl Telemetry {
     }
 }
 
+pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
+    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+        return None;
+    };
+
+    let mut summer = Sha256::new();
+    summer.update(checksum_seed);
+    summer.update(json);
+    summer.update(checksum_seed);
+    let mut checksum = String::new();
+    for byte in summer.finalize().as_slice() {
+        use std::fmt::Write;
+        write!(&mut checksum, "{:02x}", byte).unwrap();
+    }
+
+    Some(checksum)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
@@ -594,6 +716,7 @@ mod tests {
             Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
         ));
         let http = FakeHttpClient::with_200_response();
+        let system_id = Some("system_id".to_string());
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
@@ -601,7 +724,7 @@ mod tests {
             let telemetry = Telemetry::new(clock.clone(), http, cx);
 
             telemetry.state.lock().max_queue_size = 4;
-            telemetry.start(installation_id, session_id, cx);
+            telemetry.start(system_id, installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 
@@ -679,13 +802,14 @@ mod tests {
             Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
         ));
         let http = FakeHttpClient::with_200_response();
+        let system_id = Some("system_id".to_string());
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
         cx.update(|cx| {
             let telemetry = Telemetry::new(clock.clone(), http, cx);
             telemetry.state.lock().max_queue_size = 4;
-            telemetry.start(installation_id, session_id, cx);
+            telemetry.start(system_id, installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
 
@@ -736,22 +860,4 @@ mod tests {
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
     }
-}
-
-pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
-        return None;
-    };
-
-    let mut summer = Sha256::new();
-    summer.update(checksum_seed);
-    summer.update(&json);
-    summer.update(checksum_seed);
-    let mut checksum = String::new();
-    for byte in summer.finalize().as_slice() {
-        use std::fmt::Write;
-        write!(&mut checksum, "{:02x}", byte).unwrap();
-    }
-
-    Some(checksum)
 }

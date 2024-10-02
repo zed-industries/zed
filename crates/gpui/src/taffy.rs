@@ -24,7 +24,7 @@ pub struct TaffyLayoutEngine {
     nodes_to_measure: FxHashMap<LayoutId, NodeMeasureFn>,
 }
 
-static EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
+const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
@@ -69,7 +69,7 @@ impl TaffyLayoutEngine {
                 .expect(EXPECT_MESSAGE)
                 .into();
             self.children_to_parents
-                .extend(children.into_iter().map(|child_id| (*child_id, parent_id)));
+                .extend(children.iter().map(|child_id| (*child_id, parent_id)));
             parent_id
         };
         self.styles.insert(layout_id, style);

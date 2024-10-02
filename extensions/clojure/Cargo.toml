@@ -1,6 +1,6 @@
 [package]
 name = "zed_clojure"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 publish = false
 license = "Apache-2.0"
@@ -13,4 +13,4 @@ path = "src/clojure.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.0.4"
+zed_extension_api = "0.1.0"

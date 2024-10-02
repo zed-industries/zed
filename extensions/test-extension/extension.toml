@@ -1,0 +1,15 @@
+id = "test-extension"
+name = "Test Extension"
+description = "An extension for use in tests."
+version = "0.1.0"
+schema_version = 1
+authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.gleam]
+name = "Gleam LSP"
+language = "Gleam"
+
+[grammars.gleam]
+repository = "https://github.com/gleam-lang/tree-sitter-gleam"
+commit = "8432ffe32ccd360534837256747beb5b1c82fca1"

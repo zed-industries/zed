@@ -1,10 +1,6 @@
-// todo(windows): remove
-#![allow(unused_variables)]
-
 use std::{
-    cell::{Cell, RefCell},
-    ffi::{c_void, OsString},
-    os::windows::ffi::{OsStrExt, OsStringExt},
+    cell::RefCell,
+    mem::ManuallyDrop,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -12,21 +8,24 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use copypasta::{ClipboardContext, ClipboardProvider};
+use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use time::UtcOffset;
 use windows::{
     core::*,
     Win32::{
         Foundation::*,
-        Graphics::Gdi::*,
+        Graphics::{
+            Gdi::*,
+            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
+        },
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
+    UI::ViewManagement::UISettings,
 };
 
 use crate::*;
@@ -36,9 +35,14 @@ pub(crate) struct WindowsPlatform {
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
+    main_receiver: flume::Receiver<Runnable>,
+    dispatch_event: HANDLE,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    text_system: Arc<dyn PlatformTextSystem>,
+    text_system: Arc<DirectWriteTextSystem>,
+    windows_version: WindowsVersion,
+    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    validation_number: usize,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -74,27 +78,37 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
-        let dispatcher = Arc::new(WindowsDispatcher::new());
+        let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
+        let dispatch_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
+        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = if let Some(direct_write) = DirectWriteTextSystem::new().log_err() {
-            log::info!("Using direct write text system.");
-            Arc::new(direct_write) as Arc<dyn PlatformTextSystem>
-        } else {
-            log::info!("Using cosmic text system.");
-            Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
-        };
+        let bitmap_factory = ManuallyDrop::new(unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .expect("Error creating bitmap factory.")
+        });
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Error creating DirectWriteTextSystem"),
+        );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
+        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let validation_number = rand::random::<usize>();
 
         Self {
             state,
             raw_window_handles,
             icon,
+            main_receiver,
+            dispatch_event,
             background_executor,
             foreground_executor,
             text_system,
+            windows_version,
+            bitmap_factory,
+            validation_number,
         }
     }
 
@@ -131,7 +145,16 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(&self, target_window: HWND) -> bool {
+    fn close_one_window(
+        &self,
+        target_window: HWND,
+        validation_number: usize,
+        msg: *const MSG,
+    ) -> bool {
+        if validation_number != self.validation_number {
+            unsafe { DispatchMessageW(msg) };
+            return false;
+        }
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
@@ -140,6 +163,24 @@ impl WindowsPlatform {
         lock.remove(index);
 
         lock.is_empty()
+    }
+
+    #[inline]
+    fn run_foreground_tasks(&self) {
+        for runnable in self.main_receiver.drain() {
+            runnable.run();
+        }
+    }
+
+    fn generate_creation_info(&self) -> WindowCreationInfo {
+        WindowCreationInfo {
+            icon: self.icon,
+            executor: self.foreground_executor.clone(),
+            current_cursor: self.state.borrow().current_cursor,
+            windows_version: self.windows_version,
+            validation_number: self.validation_number,
+            main_receiver: self.main_receiver.clone(),
+        }
     }
 }
 
@@ -158,12 +199,12 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let vsync_event = create_event().unwrap();
-        begin_vsync(vsync_event.to_raw());
+        let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
+        begin_vsync(*vsync_event);
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
-                    Some(&[vsync_event.to_raw()]),
+                    Some(&[*vsync_event, self.dispatch_event]),
                     false,
                     INFINITE,
                     QS_ALLINPUT,
@@ -172,18 +213,22 @@ impl Platform for WindowsPlatform {
 
             match wait_result {
                 // compositor clock ticked so we should draw a frame
-                WAIT_EVENT(0) => {
-                    self.redraw_all();
-                }
+                WAIT_EVENT(0) => self.redraw_all(),
+                // foreground tasks are dispatched
+                WAIT_EVENT(1) => self.run_foreground_tasks(),
                 // Windows thread messages are posted
-                WAIT_EVENT(1) => {
+                WAIT_EVENT(2) => {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                             match msg.message {
                                 WM_QUIT => break 'a,
                                 CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(HWND(msg.lParam.0)) {
+                                    if self.close_one_window(
+                                        HWND(msg.lParam.0 as _),
+                                        msg.wParam.0,
+                                        &msg,
+                                    ) {
                                         break 'a;
                                     }
                                 }
@@ -196,6 +241,8 @@ impl Platform for WindowsPlatform {
                             }
                         }
                     }
+                    // foreground tasks may have been queued in the message handlers
+                    self.run_foreground_tasks();
                 }
                 _ => {
                     log::error!("Something went wrong while waiting {:?}", wait_result);
@@ -248,13 +295,9 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    // todo(windows)
-    fn activate(&self, ignoring_other_apps: bool) {}
+    fn activate(&self, _ignoring_other_apps: bool) {}
 
-    // todo(windows)
-    fn hide(&self) {
-        unimplemented!()
-    }
+    fn hide(&self) {}
 
     // todo(windows)
     fn hide_other_apps(&self) {
@@ -285,24 +328,15 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let lock = self.state.borrow();
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            self.icon,
-            self.foreground_executor.clone(),
-            lock.current_cursor,
-        );
-        drop(lock);
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
         Ok(Box::new(window))
     }
 
-    // todo(windows)
     fn window_appearance(&self) -> WindowAppearance {
-        WindowAppearance::Dark
+        system_appearance().log_err().unwrap_or_default()
     }
 
     fn open_url(&self, url: &str) {
@@ -321,98 +355,26 @@ impl Platform for WindowsPlatform {
         self.state.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
-    fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
+    fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
-
         self.foreground_executor()
             .spawn(async move {
-                let tx = Cell::new(Some(tx));
-
-                // create file open dialog
-                let folder_dialog: IFileOpenDialog = unsafe {
-                    CoCreateInstance::<std::option::Option<&IUnknown>, IFileOpenDialog>(
-                        &FileOpenDialog,
-                        None,
-                        CLSCTX_ALL,
-                    )
-                    .unwrap()
-                };
-
-                // dialog options
-                let mut dialog_options: FILEOPENDIALOGOPTIONS = FOS_FILEMUSTEXIST;
-                if options.multiple {
-                    dialog_options |= FOS_ALLOWMULTISELECT;
-                }
-                if options.directories {
-                    dialog_options |= FOS_PICKFOLDERS;
-                }
-
-                unsafe {
-                    folder_dialog.SetOptions(dialog_options).unwrap();
-                    folder_dialog
-                        .SetTitle(&HSTRING::from(OsString::from("Select a folder")))
-                        .unwrap();
-                }
-
-                let hr = unsafe { folder_dialog.Show(None) };
-
-                if hr.is_err() {
-                    if hr.unwrap_err().code() == HRESULT(0x800704C7u32 as i32) {
-                        // user canceled error
-                        if let Some(tx) = tx.take() {
-                            tx.send(None).unwrap();
-                        }
-                        return;
-                    }
-                }
-
-                let mut results = unsafe { folder_dialog.GetResults().unwrap() };
-
-                let mut paths: Vec<PathBuf> = Vec::new();
-                for i in 0..unsafe { results.GetCount().unwrap() } {
-                    let mut item: IShellItem = unsafe { results.GetItemAt(i).unwrap() };
-                    let mut path: PWSTR =
-                        unsafe { item.GetDisplayName(SIGDN_FILESYSPATH).unwrap() };
-                    let mut path_os_string = OsString::from_wide(unsafe { path.as_wide() });
-
-                    paths.push(PathBuf::from(path_os_string));
-                }
-
-                if let Some(tx) = tx.take() {
-                    if paths.len() == 0 {
-                        tx.send(None).unwrap();
-                    } else {
-                        tx.send(Some(paths)).unwrap();
-                    }
-                }
+                let _ = tx.send(file_open_dialog(options));
             })
             .detach();
 
         rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (tx, rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                unsafe {
-                    let Ok(dialog) = show_savefile_dialog(directory) else {
-                        let _ = tx.send(None);
-                        return;
-                    };
-                    let Ok(_) = dialog.Show(None) else {
-                        let _ = tx.send(None); // user cancel
-                        return;
-                    };
-                    if let Ok(shell_item) = dialog.GetResult() {
-                        if let Ok(file) = shell_item.GetDisplayName(SIGDN_FILESYSPATH) {
-                            let _ = tx.send(Some(PathBuf::from(file.to_string().unwrap())));
-                            return;
-                        }
-                    }
-                    let _ = tx.send(None);
-                }
+                let _ = tx.send(file_save_dialog(directory));
             })
             .detach();
 
@@ -437,6 +399,24 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
+    fn open_with_system(&self, path: &Path) {
+        let Ok(full_path) = path.canonicalize() else {
+            log::error!("unable to parse file full path: {}", path.display());
+            return;
+        };
+        self.background_executor()
+            .spawn(async move {
+                let Some(full_path_str) = full_path.to_str() else {
+                    return;
+                };
+                if full_path_str.is_empty() {
+                    return;
+                };
+                open_target(full_path_str);
+            })
+            .detach();
+    }
+
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.state.borrow_mut().callbacks.quit = Some(callback);
     }
@@ -446,8 +426,8 @@ impl Platform for WindowsPlatform {
     }
 
     // todo(windows)
-    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
-    fn set_dock_menu(&self, menus: Vec<MenuItem>, keymap: &Keymap) {}
+    fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
@@ -465,27 +445,8 @@ impl Platform for WindowsPlatform {
         Ok(std::env::current_exe()?)
     }
 
-    fn local_timezone(&self) -> UtcOffset {
-        let mut info = unsafe { std::mem::zeroed() };
-        let ret = unsafe { GetTimeZoneInformation(&mut info) };
-        if ret == TIME_ZONE_ID_INVALID {
-            log::error!(
-                "Unable to get local timezone: {}",
-                std::io::Error::last_os_error()
-            );
-            return UtcOffset::UTC;
-        }
-        // Windows treat offset as:
-        // UTC = localtime + offset
-        // so we add a minus here
-        let hours = -info.Bias / 60;
-        let minutes = -info.Bias % 60;
-
-        UtcOffset::from_hms(hours as _, minutes as _, 0).unwrap()
-    }
-
     // todo(windows)
-    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow!("not yet implemented"))
     }
 
@@ -493,30 +454,21 @@ impl Platform for WindowsPlatform {
         let hcursor = load_cursor(style);
         let mut lock = self.state.borrow_mut();
         if lock.current_cursor.0 != hcursor.0 {
-            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0 as isize));
             lock.current_cursor = hcursor;
         }
     }
 
-    // todo(windows)
     fn should_auto_hide_scrollbars(&self) -> bool {
-        false
+        should_auto_hide_scrollbars().log_err().unwrap_or(false)
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        if item.text.len() > 0 {
-            let mut ctx = ClipboardContext::new().unwrap();
-            ctx.set_contents(item.text().to_owned()).unwrap();
-        }
+        write_to_clipboard(item);
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().ok()?;
-        Some(ClipboardItem {
-            text: content,
-            metadata: None,
-        })
+        read_from_clipboard()
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -570,7 +522,7 @@ impl Platform for WindowsPlatform {
                     )
                 };
                 let password = credential_blob.to_vec();
-                unsafe { CredFree(credentials as *const c_void) };
+                unsafe { CredFree(credentials as *const _ as _) };
                 Ok(Some((username, password)))
             }
         })
@@ -595,9 +547,19 @@ impl Platform for WindowsPlatform {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
+            ManuallyDrop::drop(&mut self.bitmap_factory);
             OleUninitialize();
         }
     }
+}
+
+pub(crate) struct WindowCreationInfo {
+    pub(crate) icon: HICON,
+    pub(crate) executor: ForegroundExecutor,
+    pub(crate) current_cursor: HCURSOR,
+    pub(crate) windows_version: WindowsVersion,
+    pub(crate) validation_number: usize,
+    pub(crate) main_receiver: flume::Receiver<Runnable>,
 }
 
 fn open_target(target: &str) {
@@ -610,7 +572,7 @@ fn open_target(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!("Unable to open target: {}", std::io::Error::last_os_error());
         }
     }
@@ -626,7 +588,7 @@ fn open_target_in_explorer(target: &str) {
             None,
             SW_SHOWDEFAULT,
         );
-        if ret.0 <= 32 {
+        if ret.0 as isize <= 32 {
             log::error!(
                 "Unable to open target in explorer: {}",
                 std::io::Error::last_os_error()
@@ -635,34 +597,81 @@ fn open_target_in_explorer(target: &str) {
     }
 }
 
-unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
-    let dialog: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)?;
-    let bind_context = CreateBindCtx(0)?;
-    let Ok(full_path) = directory.canonicalize() else {
-        return Ok(dialog);
-    };
-    let dir_str = full_path.into_os_string();
-    if dir_str.is_empty() {
-        return Ok(dialog);
+fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> {
+    let folder_dialog: IFileOpenDialog =
+        unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)? };
+
+    let mut dialog_options = FOS_FILEMUSTEXIST;
+    if options.multiple {
+        dialog_options |= FOS_ALLOWMULTISELECT;
     }
-    let dir_vec = dir_str.encode_wide().collect_vec();
-    let ret = SHCreateItemFromParsingName(PCWSTR::from_raw(dir_vec.as_ptr()), &bind_context)
-        .inspect_err(|e| log::error!("unable to create IShellItem: {}", e));
-    if ret.is_ok() {
-        let dir_shell_item: IShellItem = ret.unwrap();
-        let _ = dialog
-            .SetFolder(&dir_shell_item)
-            .inspect_err(|e| log::error!("unable to set folder for save file dialog: {}", e));
+    if options.directories {
+        dialog_options |= FOS_PICKFOLDERS;
     }
 
-    Ok(dialog)
+    unsafe {
+        folder_dialog.SetOptions(dialog_options)?;
+        if folder_dialog.Show(None).is_err() {
+            // User cancelled
+            return Ok(None);
+        }
+    }
+
+    let results = unsafe { folder_dialog.GetResults()? };
+    let file_count = unsafe { results.GetCount()? };
+    if file_count == 0 {
+        return Ok(None);
+    }
+
+    let mut paths = Vec::new();
+    for i in 0..file_count {
+        let item = unsafe { results.GetItemAt(i)? };
+        let path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
+        paths.push(PathBuf::from(path));
+    }
+
+    Ok(Some(paths))
 }
 
-fn begin_vsync(vsync_evnet: HANDLE) {
+fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
+    let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
+    if !directory.to_string_lossy().is_empty() {
+        if let Some(full_path) = directory.canonicalize().log_err() {
+            let full_path = full_path.to_string_lossy();
+            let full_path_str = full_path.trim_start_matches("\\\\?\\");
+            if !full_path_str.is_empty() {
+                let path_item: IShellItem =
+                    unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_str), None)? };
+                unsafe { dialog.SetFolder(&path_item).log_err() };
+            }
+        }
+    }
+    unsafe {
+        dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {
+            pszName: windows::core::w!("All files"),
+            pszSpec: windows::core::w!("*.*"),
+        }])?;
+        if dialog.Show(None).is_err() {
+            // User cancelled
+            return Ok(None);
+        }
+    }
+    let shell_item = unsafe { dialog.GetResult()? };
+    let file_path_string = unsafe {
+        let pwstr = shell_item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let string = pwstr.to_string()?;
+        CoTaskMemFree(Some(pwstr.0 as _));
+        string
+    };
+    Ok(Some(PathBuf::from(file_path_string)))
+}
+
+fn begin_vsync(vsync_event: HANDLE) {
+    let event: SafeHandle = vsync_event.into();
     std::thread::spawn(move || unsafe {
         loop {
             windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(vsync_evnet).log_err();
+            SetEvent(*event).log_err();
         }
     });
 }
@@ -681,4 +690,31 @@ fn load_icon() -> Result<HICON> {
         .context("unable to load icon file")?
     };
     Ok(HICON(handle.0))
+}
+
+#[inline]
+fn should_auto_hide_scrollbars() -> Result<bool> {
+    let ui_settings = UISettings::new()?;
+    Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{ClipboardItem, Platform, WindowsPlatform};
+
+    #[test]
+    fn test_clipboard() {
+        let platform = WindowsPlatform::new();
+        let item = ClipboardItem::new_string("你好".to_string());
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let item = ClipboardItem::new_string("12345".to_string());
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+    }
 }

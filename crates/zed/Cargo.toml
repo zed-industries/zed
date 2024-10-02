@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.141.0"
+version = "0.157.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -19,6 +19,7 @@ activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
+async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 backtrace = "0.3"
@@ -32,16 +33,19 @@ client.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
+command_palette_hooks.workspace = true
 copilot.workspace = true
 db.workspace = true
+dev_server_projects.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extensions_ui.workspace = true
+feature_flags.workspace = true
 feedback.workspace = true
-file_icons.workspace = true
 file_finder.workspace = true
+file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -49,50 +53,62 @@ git_hosting_providers.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
 headless.workspace = true
-http.workspace = true
+http_client.workspace = true
 image_viewer.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
-isahc.workspace = true
 journal.workspace = true
 language.workspace = true
+language_model.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
-languages.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
-nix = {workspace = true, features = ["pthread", "signal"] }
+nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
 outline_panel.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
 quick_action_bar.workspace = true
 recent_projects.workspace = true
-dev_server_projects.workspace = true
 release_channel.workspace = true
+remote.workspace = true
+repl.workspace = true
 rope.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+session.workspace = true
 settings.workspace = true
-simplelog = "0.9"
+settings_ui.workspace = true
+shellexpand.workspace = true
+simplelog.workspace = true
 smol.workspace = true
-tab_switcher.workspace = true
+snippet_provider.workspace = true
+snippets_ui.workspace = true
 supermaven.workspace = true
+sysinfo.workspace = true
+tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
+time.workspace = true
+ui.workspace = true
+ureq_client.workspace = true
+url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
 uuid.workspace = true
@@ -100,6 +116,9 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
@@ -113,11 +132,12 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
-icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
+icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
 identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"

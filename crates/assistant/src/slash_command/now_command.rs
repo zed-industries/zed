@@ -2,11 +2,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
-use chrono::{DateTime, Local};
-use gpui::{AppContext, Task, WeakView};
-use language::LspAdapterDelegate;
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+};
+use chrono::Local;
+use gpui::{Task, WeakView};
+use language::{BufferSnapshot, LspAdapterDelegate};
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub(crate) struct NowSlashCommand;
@@ -17,11 +19,11 @@ impl SlashCommand for NowSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert the current date and time".into()
+        "Insert current date and time".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert current date and time".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -29,55 +31,37 @@ impl SlashCommand for NowSlashCommand {
     }
 
     fn complete_argument(
-        &self,
-        _query: String,
+        self: Arc<Self>,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+        _cx: &mut WindowContext,
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        _arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let now = Local::now();
-        let text = format!("Today is {now}.", now = now.to_rfc3339());
+        let text = format!("Today is {now}.", now = now.to_rfc2822());
         let range = 0..text.len();
 
         Task::ready(Ok(SlashCommandOutput {
             text,
             sections: vec![SlashCommandOutputSection {
                 range,
-                render_placeholder: Arc::new(move |id, unfold, _cx| {
-                    NowPlaceholder { id, unfold, now }.into_any_element()
-                }),
+                icon: IconName::CountdownTimer,
+                label: now.to_rfc2822().into(),
+                metadata: None,
             }],
             run_commands_in_text: false,
         }))
-    }
-}
-
-#[derive(IntoElement)]
-struct NowPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-    pub now: DateTime<Local>,
-}
-
-impl RenderOnce for NowPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::CountdownTimer))
-            .child(Label::new(self.now.to_rfc3339()))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

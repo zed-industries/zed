@@ -24,7 +24,7 @@ test-support = [
 ]
 
 [dependencies]
-aho-corasick = "1.1"
+aho-corasick.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 client.workspace = true
@@ -37,7 +37,7 @@ fuzzy.workspace = true
 git.workspace = true
 globset.workspace = true
 gpui.workspace = true
-http.workspace = true
+http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
@@ -45,11 +45,13 @@ lsp.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 pathdiff.workspace = true
+paths.workspace = true
 postage.workspace = true
 prettier.workspace = true
 worktree.workspace = true
 rand.workspace = true
 regex.workspace = true
+remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 task.workspace = true
@@ -58,14 +60,19 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
+shellexpand.workspace = true
 shlex.workspace = true
 similar = "1.3"
 smol.workspace = true
 snippet.workspace = true
+snippet_provider.workspace = true
 terminal.workspace = true
 text.workspace = true
 util.workspace = true
 which.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

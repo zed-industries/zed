@@ -1,8 +1,8 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use client::proto;
-use itertools::Itertools;
-use language::{char_kind, BufferSnapshot};
+use gpui::Model;
+use language::{Buffer, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -12,26 +12,46 @@ use std::{
     path::Path,
     sync::{Arc, OnceLock},
 };
+use text::Anchor;
 use util::paths::PathMatcher;
 
 static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: OnceLock<Regex> = OnceLock::new();
 
+pub enum SearchResult {
+    Buffer {
+        buffer: Model<Buffer>,
+        ranges: Vec<Range<Anchor>>,
+    },
+    LimitReached,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SearchInputKind {
+    Query,
+    Include,
+    Exclude,
+}
+
 #[derive(Clone, Debug)]
 pub struct SearchInputs {
     query: Arc<str>,
-    files_to_include: Vec<PathMatcher>,
-    files_to_exclude: Vec<PathMatcher>,
+    files_to_include: PathMatcher,
+    files_to_exclude: PathMatcher,
+    buffers: Option<Vec<Model<Buffer>>>,
 }
 
 impl SearchInputs {
     pub fn as_str(&self) -> &str {
         self.query.as_ref()
     }
-    pub fn files_to_include(&self) -> &[PathMatcher] {
+    pub fn files_to_include(&self) -> &PathMatcher {
         &self.files_to_include
     }
-    pub fn files_to_exclude(&self) -> &[PathMatcher] {
+    pub fn files_to_exclude(&self) -> &PathMatcher {
         &self.files_to_exclude
+    }
+    pub fn buffers(&self) -> &Option<Vec<Model<Buffer>>> {
+        &self.buffers
     }
 }
 #[derive(Clone, Debug)]
@@ -62,17 +82,19 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        files_to_include: PathMatcher,
+        files_to_exclude: PathMatcher,
+        buffers: Option<Vec<Model<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
-            .build(&[&query])?;
+            .build([&query])?;
         let inner = SearchInputs {
             query: query.into(),
             files_to_exclude,
             files_to_include,
+            buffers,
         };
         Ok(Self::Text {
             search: Arc::new(search),
@@ -89,8 +111,9 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        files_to_include: PathMatcher,
+        files_to_exclude: PathMatcher,
+        buffers: Option<Vec<Model<Buffer>>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -111,6 +134,7 @@ impl SearchQuery {
             query: initial_query,
             files_to_exclude,
             files_to_include,
+            buffers,
         };
         Ok(Self::Regex {
             regex,
@@ -123,7 +147,7 @@ impl SearchQuery {
         })
     }
 
-    pub fn from_proto(message: proto::SearchProject) -> Result<Self> {
+    pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
         if message.regex {
             Self::regex(
                 message.query,
@@ -132,6 +156,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None, // search opened only don't need search remote
             )
         } else {
             Self::text(
@@ -141,9 +166,11 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None, // search opened only don't need search remote
             )
         }
     }
+
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
@@ -159,24 +186,16 @@ impl SearchQuery {
             }
         }
     }
-    pub fn to_proto(&self, project_id: u64) -> proto::SearchProject {
-        proto::SearchProject {
-            project_id,
+
+    pub fn to_proto(&self) -> proto::SearchQuery {
+        proto::SearchQuery {
             query: self.as_str().to_string(),
             regex: self.is_regex(),
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
             include_ignored: self.include_ignored(),
-            files_to_include: self
-                .files_to_include()
-                .iter()
-                .map(|matcher| matcher.to_string())
-                .join(","),
-            files_to_exclude: self
-                .files_to_exclude()
-                .iter()
-                .map(|matcher| matcher.to_string())
-                .join(","),
+            files_to_include: self.files_to_include().sources().join(","),
+            files_to_exclude: self.files_to_exclude().sources().join(","),
         }
     }
 
@@ -284,13 +303,17 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
-                        let scope = buffer.language_scope_at(range_offset + mat.start());
-                        let kind = |c| char_kind(&scope, c);
+                        let classifier = buffer.char_classifier_at(range_offset + mat.start());
 
-                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(kind);
-                        let start_kind = kind(rope.chars_at(mat.start()).next().unwrap());
-                        let end_kind = kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(kind);
+                        let prev_kind = rope
+                            .reversed_chars_at(mat.start())
+                            .next()
+                            .map(|c| classifier.kind(c));
+                        let start_kind =
+                            classifier.kind(rope.chars_at(mat.start()).next().unwrap());
+                        let end_kind =
+                            classifier.kind(rope.reversed_chars_at(mat.end()).next().unwrap());
+                        let next_kind = rope.chars_at(mat.end()).next().map(|c| classifier.kind(c));
                         if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
                             continue;
                         }
@@ -377,38 +400,39 @@ impl SearchQuery {
         matches!(self, Self::Regex { .. })
     }
 
-    pub fn files_to_include(&self) -> &[PathMatcher] {
+    pub fn files_to_include(&self) -> &PathMatcher {
         self.as_inner().files_to_include()
     }
 
-    pub fn files_to_exclude(&self) -> &[PathMatcher] {
+    pub fn files_to_exclude(&self) -> &PathMatcher {
         self.as_inner().files_to_exclude()
     }
 
-    pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
-        match file_path {
-            Some(file_path) => {
-                let mut path = file_path.to_path_buf();
-                loop {
-                    if self
-                        .files_to_exclude()
-                        .iter()
-                        .any(|exclude_glob| exclude_glob.is_match(&path))
-                    {
-                        return false;
-                    } else if self.files_to_include().is_empty()
-                        || self
-                            .files_to_include()
-                            .iter()
-                            .any(|include_glob| include_glob.is_match(&path))
-                    {
-                        return true;
-                    } else if !path.pop() {
-                        return false;
-                    }
-                }
+    pub fn buffers(&self) -> Option<&Vec<Model<Buffer>>> {
+        self.as_inner().buffers.as_ref()
+    }
+
+    pub fn is_opened_only(&self) -> bool {
+        self.as_inner().buffers.is_some()
+    }
+
+    pub fn filters_path(&self) -> bool {
+        !(self.files_to_exclude().sources().is_empty()
+            && self.files_to_include().sources().is_empty())
+    }
+
+    pub fn file_matches(&self, file_path: &Path) -> bool {
+        let mut path = file_path.to_path_buf();
+        loop {
+            if self.files_to_exclude().is_match(&path) {
+                return false;
+            } else if self.files_to_include().sources().is_empty()
+                || self.files_to_include().is_match(&path)
+            {
+                return true;
+            } else if !path.pop() {
+                return false;
             }
-            None => self.files_to_include().is_empty(),
         }
     }
     pub fn as_inner(&self) -> &SearchInputs {
@@ -418,16 +442,14 @@ impl SearchQuery {
     }
 }
 
-fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<Vec<PathMatcher>> {
-    glob_set
+pub fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
+    let globs = glob_set
         .split(',')
         .map(str::trim)
-        .filter(|glob_str| !glob_str.is_empty())
-        .map(|glob_str| {
-            PathMatcher::new(glob_str)
-                .with_context(|| format!("deserializing path match glob {glob_str}"))
-        })
-        .collect()
+        .filter(|&glob_str| (!glob_str.is_empty()))
+        .map(|glob_str| glob_str.to_owned())
+        .collect::<Vec<_>>();
+    Ok(PathMatcher::new(&globs)?)
 }
 
 #[cfg(test)]
@@ -445,7 +467,7 @@ mod tests {
             "dir/[a-z].txt",
             "../dir/filé",
         ] {
-            let path_matcher = PathMatcher::new(valid_path).unwrap_or_else(|e| {
+            let path_matcher = PathMatcher::new(&[valid_path.to_owned()]).unwrap_or_else(|e| {
                 panic!("Valid path {valid_path} should be accepted, but got: {e}")
             });
             assert!(
@@ -458,7 +480,7 @@ mod tests {
     #[test]
     fn path_matcher_creation_for_globs() {
         for invalid_glob in ["dir/[].txt", "dir/[a-z.txt", "dir/{file"] {
-            match PathMatcher::new(invalid_glob) {
+            match PathMatcher::new(&[invalid_glob.to_owned()]) {
                 Ok(_) => panic!("Invalid glob {invalid_glob} should not be accepted"),
                 Err(_expected) => {}
             }
@@ -471,9 +493,9 @@ mod tests {
             "dir/[a-z].txt",
             "{dir,file}",
         ] {
-            match PathMatcher::new(valid_glob) {
+            match PathMatcher::new(&[valid_glob.to_owned()]) {
                 Ok(_expected) => {}
-                Err(e) => panic!("Valid glob {valid_glob} should be accepted, but got: {e}"),
+                Err(e) => panic!("Valid glob should be accepted, but got: {e}"),
             }
         }
     }

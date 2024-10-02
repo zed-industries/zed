@@ -1,41 +1,55 @@
+use anyhow::Context;
+
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowKind, WindowParams, X11ClientStatePtr,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
 use raw_window_handle as rwh;
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
+    properties::WmSizeHints,
     protocol::{
+        sync,
         xinput::{self, ConnectionExt as _},
-        xproto::{
-            self, ClientMessageEvent, ConnectionExt as _, EventMask, TranslateCoordinatesReply,
-        },
+        xproto::{self, ClientMessageEvent, ConnectionExt, EventMask, TranslateCoordinatesReply},
     },
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
 use std::{
-    cell::RefCell,
-    ffi::c_void,
-    num::NonZeroU32,
-    ops::Div,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{self, Arc},
+    cell::RefCell, ffi::c_void, mem::size_of, num::NonZeroU32, ops::Div, ptr::NonNull, rc::Rc,
+    sync::Arc,
 };
 
-use super::{X11Display, XINPUT_MASTER_DEVICE};
-
+use super::{X11Display, XINPUT_ALL_DEVICES, XINPUT_ALL_DEVICE_GROUPS};
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
+        XA_ATOM,
+        XdndAware,
+        XdndStatus,
+        XdndEnter,
+        XdndLeave,
+        XdndPosition,
+        XdndSelection,
+        XdndDrop,
+        XdndFinished,
+        XdndTypeList,
+        XdndActionCopy,
+        TextUriList: b"text/uri-list",
         UTF8_STRING,
+        TEXT,
+        STRING,
+        TEXT_PLAIN_UTF8: b"text/plain;charset=utf-8",
+        TEXT_PLAIN: b"text/plain",
+        XDND_DATA,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
@@ -46,10 +60,20 @@ x11rb::atom_manager! {
         _NET_WM_STATE_FULLSCREEN,
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
+        _NET_ACTIVE_WINDOW,
+        _NET_WM_SYNC_REQUEST,
+        _NET_WM_SYNC_REQUEST_COUNTER,
+        _NET_WM_BYPASS_COMPOSITOR,
         _NET_WM_MOVERESIZE,
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
+        _NET_WM_SYNC,
+        _NET_SUPPORTED,
+        _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
+        _GTK_FRAME_EXTENTS,
+        _GTK_EDGE_CONSTRAINTS,
+        _NET_CLIENT_LIST_STACKING,
     }
 }
 
@@ -63,6 +87,64 @@ fn query_render_extent(xcb_connection: &XCBConnection, x_window: xproto::Window)
         width: reply.width as u32,
         height: reply.height as u32,
         depth: 1,
+    }
+}
+
+impl ResizeEdge {
+    fn to_moveresize(&self) -> u32 {
+        match self {
+            ResizeEdge::TopLeft => 0,
+            ResizeEdge::Top => 1,
+            ResizeEdge::TopRight => 2,
+            ResizeEdge::Right => 3,
+            ResizeEdge::BottomRight => 4,
+            ResizeEdge::Bottom => 5,
+            ResizeEdge::BottomLeft => 6,
+            ResizeEdge::Left => 7,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EdgeConstraints {
+    top_tiled: bool,
+    #[allow(dead_code)]
+    top_resizable: bool,
+
+    right_tiled: bool,
+    #[allow(dead_code)]
+    right_resizable: bool,
+
+    bottom_tiled: bool,
+    #[allow(dead_code)]
+    bottom_resizable: bool,
+
+    left_tiled: bool,
+    #[allow(dead_code)]
+    left_resizable: bool,
+}
+
+impl EdgeConstraints {
+    fn from_atom(atom: u32) -> Self {
+        EdgeConstraints {
+            top_tiled: (atom & (1 << 0)) != 0,
+            top_resizable: (atom & (1 << 1)) != 0,
+            right_tiled: (atom & (1 << 2)) != 0,
+            right_resizable: (atom & (1 << 3)) != 0,
+            bottom_tiled: (atom & (1 << 4)) != 0,
+            bottom_resizable: (atom & (1 << 5)) != 0,
+            left_tiled: (atom & (1 << 6)) != 0,
+            left_resizable: (atom & (1 << 7)) != 0,
+        }
+    }
+
+    fn to_tiling(&self) -> Tiling {
+        Tiling {
+            top: self.top_tiled,
+            right: self.right_tiled,
+            bottom: self.bottom_tiled,
+            left: self.left_tiled,
+        }
     }
 }
 
@@ -148,6 +230,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -161,14 +244,33 @@ pub struct X11WindowState {
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
+    pub(crate) counter_id: sync::Counter,
+    pub(crate) last_sync_counter: Option<sync::Int64>,
     _raw: RawWindow,
-    bounds: Bounds<i32>,
+    bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
+    background_appearance: WindowBackgroundAppearance,
+    maximized_vertical: bool,
+    maximized_horizontal: bool,
+    hidden: bool,
+    active: bool,
+    hovered: bool,
+    fullscreen: bool,
+    client_side_decorations_supported: bool,
+    decorations: WindowDecorations,
+    edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
+    last_insets: [u32; 4],
+}
+
+impl X11WindowState {
+    fn is_transparent(&self) -> bool {
+        self.background_appearance != WindowBackgroundAppearance::Opaque
+    }
 }
 
 #[derive(Clone)]
@@ -214,6 +316,7 @@ impl X11WindowState {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -225,19 +328,11 @@ impl X11WindowState {
             .map_or(x_main_screen_index, |did| did.0 as usize);
 
         let visual_set = find_visuals(&xcb_connection, x_screen_index);
-        let visual_maybe = match params.window_background {
-            WindowBackgroundAppearance::Opaque => visual_set.opaque,
-            WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
-                visual_set.transparent
-            }
-        };
-        let visual = match visual_maybe {
+
+        let visual = match visual_set.transparent {
             Some(visual) => visual,
             None => {
-                log::warn!(
-                    "Unable to find a matching visual for {:?}",
-                    params.window_background
-                );
+                log::warn!("Unable to find a transparent visual",);
                 visual_set.inherit
             }
         };
@@ -256,7 +351,6 @@ impl X11WindowState {
         };
 
         let win_aux = xproto::CreateWindowAux::new()
-            .background_pixel(x11rb::NONE)
             // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
             .border_pixel(visual_set.black_pixel)
             .colormap(colormap)
@@ -265,26 +359,64 @@ impl X11WindowState {
                     | xproto::EventMask::STRUCTURE_NOTIFY
                     | xproto::EventMask::FOCUS_CHANGE
                     | xproto::EventMask::KEY_PRESS
-                    | xproto::EventMask::KEY_RELEASE,
+                    | xproto::EventMask::KEY_RELEASE
+                    | EventMask::PROPERTY_CHANGE,
             );
+
+        let mut bounds = params.bounds.to_device_pixels(scale_factor);
+        if bounds.size.width.0 == 0 || bounds.size.height.0 == 0 {
+            log::warn!("Window bounds contain a zero value. height={}, width={}. Falling back to defaults.", bounds.size.height.0, bounds.size.width.0);
+            bounds.size.width = 800.into();
+            bounds.size.height = 600.into();
+        }
 
         xcb_connection
             .create_window(
                 visual.depth,
                 x_window,
                 visual_set.root,
-                params.bounds.origin.x.0 as i16,
-                params.bounds.origin.y.0 as i16,
-                params.bounds.size.width.0 as u16,
-                params.bounds.size.height.0 as u16,
+                (bounds.origin.x.0 + 2) as i16,
+                bounds.origin.y.0 as i16,
+                bounds.size.width.0 as u16,
+                bounds.size.height.0 as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
                 visual.id,
                 &win_aux,
             )
             .unwrap()
-            .check()?;
+            .check().with_context(|| {
+                format!("CreateWindow request to X server failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
+                    visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
+            })?;
 
+        if let Some(size) = params.window_min_size {
+            let mut size_hints = WmSizeHints::new();
+            size_hints.min_size = Some((size.width.0 as i32, size.height.0 as i32));
+            size_hints
+                .set_normal_hints(xcb_connection, x_window)
+                .unwrap();
+        }
+
+        let reply = xcb_connection
+            .get_geometry(x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        if reply.x == 0 && reply.y == 0 {
+            bounds.origin.x.0 += 2;
+            // Work around a bug where our rendered content appears
+            // outside the window bounds when opened at the default position
+            // (14px, 49px on X + Gnome + Ubuntu 22).
+            xcb_connection
+                .configure_window(
+                    x_window,
+                    &xproto::ConfigureWindowAux::new()
+                        .x(bounds.origin.x.0)
+                        .y(bounds.origin.y.0),
+                )
+                .unwrap();
+        }
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
                 xcb_connection
@@ -316,7 +448,26 @@ impl X11WindowState {
                 x_window,
                 atoms.WM_PROTOCOLS,
                 xproto::AtomEnum::ATOM,
-                &[atoms.WM_DELETE_WINDOW],
+                &[atoms.WM_DELETE_WINDOW, atoms._NET_WM_SYNC_REQUEST],
+            )
+            .unwrap();
+
+        sync::initialize(xcb_connection, 3, 1).unwrap();
+        let sync_request_counter = xcb_connection.generate_id().unwrap();
+        sync::create_counter(
+            xcb_connection,
+            sync_request_counter,
+            sync::Int64 { lo: 0, hi: 0 },
+        )
+        .unwrap();
+
+        xcb_connection
+            .change_property32(
+                xproto::PropMode::REPLACE,
+                x_window,
+                atoms._NET_WM_SYNC_REQUEST_COUNTER,
+                xproto::AtomEnum::CARDINAL,
+                &[sync_request_counter],
             )
             .unwrap();
 
@@ -324,18 +475,31 @@ impl X11WindowState {
             .xinput_xi_select_events(
                 x_window,
                 &[xinput::EventMask {
-                    deviceid: XINPUT_MASTER_DEVICE,
+                    deviceid: XINPUT_ALL_DEVICE_GROUPS,
                     mask: vec![
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
                             | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::ENTER
                             | xinput::XIEventMask::LEAVE,
                     ],
                 }],
             )
             .unwrap();
 
-        xcb_connection.map_window(x_window).unwrap();
+        xcb_connection
+            .xinput_xi_select_events(
+                x_window,
+                &[xinput::EventMask {
+                    deviceid: XINPUT_ALL_DEVICES,
+                    mask: vec![
+                        xinput::XIEventMask::HIERARCHY,
+                        xinput::XIEventMask::DEVICE_CHANGED,
+                    ],
+                }],
+            )
+            .unwrap();
+
         xcb_connection.flush().unwrap();
 
         let raw = RawWindow {
@@ -364,23 +528,43 @@ impl X11WindowState {
             // Note: this has to be done after the GPU init, or otherwise
             // the sizes are immediately invalidated.
             size: query_render_extent(xcb_connection, x_window),
-            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
+            // We set it to transparent by default, even if we have client-side
+            // decorations, since those seem to work on X11 even without `true` here.
+            // If the window appearance changes, then the renderer will get updated
+            // too
+            transparent: false,
         };
+        xcb_connection.map_window(x_window).unwrap();
 
         Ok(Self {
             client,
             executor,
-            display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
+            display: Rc::new(
+                X11Display::new(xcb_connection, scale_factor, x_screen_index).unwrap(),
+            ),
             _raw: raw,
             x_root_window: visual_set.root,
-            bounds: params.bounds.map(|v| v.0),
+            bounds: bounds.to_pixels(scale_factor),
             scale_factor,
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
             input_handler: None,
+            active: false,
+            hovered: false,
+            fullscreen: false,
+            maximized_vertical: false,
+            maximized_horizontal: false,
+            hidden: false,
             appearance,
             handle,
+            background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
+            client_side_decorations_supported,
+            decorations: WindowDecorations::Server,
+            last_insets: [0, 0, 0, 0],
+            edge_constraints: None,
+            counter_id: sync_request_counter,
+            last_sync_counter: None,
         })
     }
 
@@ -400,26 +584,32 @@ impl Drop for X11Window {
         let mut state = self.0.state.borrow_mut();
         state.renderer.destroy();
 
-        self.0.xcb_connection.unmap_window(self.0.x_window).unwrap();
-        self.0
-            .xcb_connection
-            .destroy_window(self.0.x_window)
-            .unwrap();
-        self.0.xcb_connection.flush().unwrap();
+        let destroy_x_window = maybe!({
+            self.0.xcb_connection.unmap_window(self.0.x_window)?;
+            self.0.xcb_connection.destroy_window(self.0.x_window)?;
+            self.0.xcb_connection.flush()?;
 
-        // Mark window as destroyed so that we can filter out when X11 events
-        // for it still come in.
-        state.destroyed = true;
+            anyhow::Ok(())
+        })
+        .context("unmapping and destroying X11 window")
+        .log_err();
 
-        let this_ptr = self.0.clone();
-        let client_ptr = state.client.clone();
-        state
-            .executor
-            .spawn(async move {
-                this_ptr.close();
-                client_ptr.drop_window(this_ptr.x_window);
-            })
-            .detach();
+        if destroy_x_window.is_some() {
+            // Mark window as destroyed so that we can filter out when X11 events
+            // for it still come in.
+            state.destroyed = true;
+
+            let this_ptr = self.0.clone();
+            let client_ptr = state.client.clone();
+            state
+                .executor
+                .spawn(async move {
+                    this_ptr.close();
+                    client_ptr.drop_window(this_ptr.x_window);
+                })
+                .detach();
+        }
+
         drop(state);
     }
 }
@@ -438,19 +628,21 @@ impl X11Window {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
     ) -> anyhow::Result<Self> {
-        Ok(Self(X11WindowStatePtr {
+        let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
                 handle,
                 client,
                 executor,
                 params,
                 xcb_connection,
+                client_side_decorations_supported,
                 x_main_screen_index,
                 x_window,
                 atoms,
@@ -460,7 +652,12 @@ impl X11Window {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
-        }))
+        };
+
+        let state = ptr.state.borrow_mut();
+        ptr.set_wm_properties(state);
+
+        Ok(Self(ptr))
     }
 
     fn set_wm_hints(&self, wm_hint_property_state: WmHintPropertyState, prop1: u32, prop2: u32) {
@@ -479,30 +676,9 @@ impl X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
-            .unwrap();
-    }
-
-    fn get_wm_hints(&self) -> Vec<u32> {
-        let reply = self
-            .0
-            .xcb_connection
-            .get_property(
-                false,
-                self.0.x_window,
-                self.0.state.borrow().atoms._NET_WM_STATE,
-                xproto::AtomEnum::ATOM,
-                0,
-                u32::MAX,
-            )
             .unwrap()
-            .reply()
+            .check()
             .unwrap();
-        // Reply is in u8 but atoms are represented as u32
-        reply
-            .value
-            .chunks_exact(4)
-            .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect()
     }
 
     fn get_root_position(&self, position: Point<Pixels>) -> TranslateCoordinatesReply {
@@ -519,6 +695,48 @@ impl X11Window {
             .reply()
             .unwrap()
     }
+
+    fn send_moveresize(&self, flag: u32) {
+        let state = self.0.state.borrow();
+
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+
+        let pointer = self
+            .0
+            .xcb_connection
+            .query_pointer(self.0.x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._NET_WM_MOVERESIZE,
+            [
+                pointer.root_x as u32,
+                pointer.root_y as u32,
+                flag,
+                0, // Left mouse button
+                0,
+            ],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
+
+        self.0.xcb_connection.flush().unwrap();
+    }
 }
 
 impl X11WindowStatePtr {
@@ -530,6 +748,78 @@ impl X11WindowStatePtr {
             result
         } else {
             true
+        }
+    }
+
+    pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) {
+        let mut state = self.state.borrow_mut();
+        if event.atom == state.atoms._NET_WM_STATE {
+            self.set_wm_properties(state);
+        } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
+            self.set_edge_constraints(state);
+        }
+    }
+
+    fn set_edge_constraints(&self, mut state: std::cell::RefMut<X11WindowState>) {
+        let reply = self
+            .xcb_connection
+            .get_property(
+                false,
+                self.x_window,
+                state.atoms._GTK_EDGE_CONSTRAINTS,
+                xproto::AtomEnum::CARDINAL,
+                0,
+                4,
+            )
+            .unwrap()
+            .reply()
+            .unwrap();
+
+        if reply.value_len != 0 {
+            let atom = u32::from_ne_bytes(reply.value[0..4].try_into().unwrap());
+            let edge_constraints = EdgeConstraints::from_atom(atom);
+            state.edge_constraints.replace(edge_constraints);
+        }
+    }
+
+    fn set_wm_properties(&self, mut state: std::cell::RefMut<X11WindowState>) {
+        let reply = self
+            .xcb_connection
+            .get_property(
+                false,
+                self.x_window,
+                state.atoms._NET_WM_STATE,
+                xproto::AtomEnum::ATOM,
+                0,
+                u32::MAX,
+            )
+            .unwrap()
+            .reply()
+            .unwrap();
+
+        let atoms = reply
+            .value
+            .chunks_exact(4)
+            .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+
+        state.active = false;
+        state.fullscreen = false;
+        state.maximized_vertical = false;
+        state.maximized_horizontal = false;
+        state.hidden = true;
+
+        for atom in atoms {
+            if atom == state.atoms._NET_WM_STATE_FOCUSED {
+                state.active = true;
+            } else if atom == state.atoms._NET_WM_STATE_FULLSCREEN {
+                state.fullscreen = true;
+            } else if atom == state.atoms._NET_WM_STATE_MAXIMIZED_VERT {
+                state.maximized_vertical = true;
+            } else if atom == state.atoms._NET_WM_STATE_MAXIMIZED_HORZ {
+                state.maximized_horizontal = true;
+            } else if atom == state.atoms._NET_WM_STATE_HIDDEN {
+                state.hidden = true;
+            }
         }
     }
 
@@ -613,8 +903,8 @@ impl X11WindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(selection.range);
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
@@ -627,6 +917,7 @@ impl X11WindowStatePtr {
         let is_resize;
         {
             let mut state = self.state.borrow_mut();
+            let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
 
             is_resize = bounds.size.width != state.bounds.size.width
                 || bounds.size.height != state.bounds.size.height;
@@ -640,11 +931,15 @@ impl X11WindowStatePtr {
             }
 
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
-            if state.renderer.viewport_size() != gpu_size {
-                state
-                    .renderer
-                    .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
+            if true {
+                state.renderer.update_drawable_size(size(
+                    DevicePixels(gpu_size.width as i32),
+                    DevicePixels(gpu_size.height as i32),
+                ));
                 resize_args = Some((state.content_size(), state.scale_factor));
+            }
+            if let Some(value) = state.last_sync_counter.take() {
+                sync::set_counter(&self.xcb_connection, state.counter_id, value).unwrap();
             }
         }
 
@@ -661,15 +956,25 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn set_focused(&self, focus: bool) {
+    pub fn set_active(&self, focus: bool) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
             fun(focus);
         }
     }
 
-    pub fn set_appearance(&mut self, appearance: WindowAppearance) {
-        self.state.borrow_mut().appearance = appearance;
+    pub fn set_hovered(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().hovered_status_change {
+            fun(focus);
+        }
+    }
 
+    pub fn set_appearance(&mut self, appearance: WindowAppearance) {
+        let mut state = self.state.borrow_mut();
+        state.appearance = appearance;
+        let is_transparent = state.is_transparent();
+        state.renderer.update_transparency(is_transparent);
+        state.appearance = appearance;
+        drop(state);
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = callbacks.appearance_changed {
             (fun)()
@@ -678,22 +983,24 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0.state.borrow().bounds.map(|v| v.into())
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.0.state.borrow().bounds
     }
 
     fn is_maximized(&self) -> bool {
         let state = self.0.state.borrow();
-        let wm_hints = self.get_wm_hints();
+
         // A maximized window that gets minimized will still retain its maximized state.
-        !wm_hints.contains(&state.atoms._NET_WM_STATE_HIDDEN)
-            && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_VERT)
-            && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_HORZ)
+        !state.hidden && state.maximized_vertical && state.maximized_horizontal
     }
 
     fn window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
-        WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p)))
+        if self.is_maximized() {
+            WindowBounds::Maximized(state.bounds)
+        } else {
+            WindowBounds::Windowed(state.bounds)
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -758,17 +1065,39 @@ impl PlatformWindow for X11Window {
     }
 
     fn activate(&self) {
-        let win_aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
+        let data = [1, xproto::Time::CURRENT_TIME.into(), 0, 0, 0];
+        let message = xproto::ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            self.0.state.borrow().atoms._NET_ACTIVE_WINDOW,
+            data,
+        );
         self.0
             .xcb_connection
-            .configure_window(self.0.x_window, &win_aux)
+            .send_event(
+                false,
+                self.0.state.borrow().x_root_window,
+                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
             .log_err();
+        self.0
+            .xcb_connection
+            .set_input_focus(
+                xproto::InputFocus::POINTER_ROOT,
+                self.0.x_window,
+                xproto::Time::CURRENT_TIME,
+            )
+            .log_err();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn is_active(&self) -> bool {
-        let state = self.0.state.borrow();
-        self.get_wm_hints()
-            .contains(&state.atoms._NET_WM_STATE_FOCUSED)
+        self.0.state.borrow().active
+    }
+
+    fn is_hovered(&self) -> bool {
+        self.0.state.borrow().hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -793,6 +1122,7 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             )
             .unwrap();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -810,6 +1140,8 @@ impl PlatformWindow for X11Window {
                 xproto::AtomEnum::STRING,
                 &data,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -817,10 +1149,11 @@ impl PlatformWindow for X11Window {
         log::info!("ignoring macOS specific set_edited");
     }
 
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        let mut inner = self.0.state.borrow_mut();
-        let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
-        inner.renderer.update_transparency(transparent);
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+        let mut state = self.0.state.borrow_mut();
+        state.background_appearance = background_appearance;
+        let transparent = state.is_transparent();
+        state.renderer.update_transparency(transparent);
     }
 
     fn show_character_palette(&self) {
@@ -844,6 +1177,8 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -866,9 +1201,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn is_fullscreen(&self) -> bool {
-        let state = self.0.state.borrow();
-        self.get_wm_hints()
-            .contains(&state.atoms._NET_WM_STATE_FULLSCREEN)
+        self.0.state.borrow().fullscreen
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
@@ -881,6 +1214,10 @@ impl PlatformWindow for X11Window {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().hovered_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
@@ -908,20 +1245,28 @@ impl PlatformWindow for X11Window {
         inner.renderer.draw(scene);
     }
 
-    fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {
         let state = self.0.state.borrow();
+
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+
         let coords = self.get_root_position(position);
         let message = ClientMessageEvent::new(
             32,
             self.0.x_window,
             state.atoms._GTK_SHOW_WINDOW_MENU,
             [
-                XINPUT_MASTER_DEVICE as u32,
+                XINPUT_ALL_DEVICE_GROUPS as u32,
                 coords.dst_x as u32,
                 coords.dst_y as u32,
                 0,
@@ -936,43 +1281,158 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
-    fn start_system_move(&self) {
-        let state = self.0.state.borrow();
-        let pointer = self
-            .0
-            .xcb_connection
-            .query_pointer(self.0.x_window)
-            .unwrap()
-            .reply()
-            .unwrap();
+    fn start_window_move(&self) {
         const MOVERESIZE_MOVE: u32 = 8;
-        let message = ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            state.atoms._NET_WM_MOVERESIZE,
-            [
-                pointer.root_x as u32,
-                pointer.root_y as u32,
-                MOVERESIZE_MOVE,
-                1, // Left mouse button
-                1,
-            ],
-        );
+        self.send_moveresize(MOVERESIZE_MOVE);
+    }
+
+    fn start_window_resize(&self, edge: ResizeEdge) {
+        self.send_moveresize(edge.to_moveresize());
+    }
+
+    fn window_decorations(&self) -> crate::Decorations {
+        let state = self.0.state.borrow();
+
+        // Client window decorations require compositor support
+        if !state.client_side_decorations_supported {
+            return Decorations::Server;
+        }
+
+        match state.decorations {
+            WindowDecorations::Server => Decorations::Server,
+            WindowDecorations::Client => {
+                let tiling = if state.fullscreen {
+                    Tiling::tiled()
+                } else if let Some(edge_constraints) = &state.edge_constraints {
+                    edge_constraints.to_tiling()
+                } else {
+                    // https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=2519;drc=1f14cc876cc5bf899d13284a12c451498219bb2d
+                    Tiling {
+                        top: state.maximized_vertical,
+                        bottom: state.maximized_vertical,
+                        left: state.maximized_horizontal,
+                        right: state.maximized_horizontal,
+                    }
+                };
+                Decorations::Client { tiling }
+            }
+        }
+    }
+
+    fn set_client_inset(&self, inset: Pixels) {
+        let mut state = self.0.state.borrow_mut();
+
+        let dp = (inset.0 * state.scale_factor) as u32;
+
+        let insets = if state.fullscreen {
+            [0, 0, 0, 0]
+        } else if let Some(edge_constraints) = &state.edge_constraints {
+            let left = if edge_constraints.left_tiled { 0 } else { dp };
+            let top = if edge_constraints.top_tiled { 0 } else { dp };
+            let right = if edge_constraints.right_tiled { 0 } else { dp };
+            let bottom = if edge_constraints.bottom_tiled { 0 } else { dp };
+
+            [left, right, top, bottom]
+        } else {
+            let (left, right) = if state.maximized_horizontal {
+                (0, 0)
+            } else {
+                (dp, dp)
+            };
+            let (top, bottom) = if state.maximized_vertical {
+                (0, 0)
+            } else {
+                (dp, dp)
+            };
+            [left, right, top, bottom]
+        };
+
+        if state.last_insets != insets {
+            state.last_insets = insets;
+
+            self.0
+                .xcb_connection
+                .change_property(
+                    xproto::PropMode::REPLACE,
+                    self.0.x_window,
+                    state.atoms._GTK_FRAME_EXTENTS,
+                    xproto::AtomEnum::CARDINAL,
+                    size_of::<u32>() as u8 * 8,
+                    4,
+                    bytemuck::cast_slice::<u32, u8>(&insets),
+                )
+                .unwrap()
+                .check()
+                .unwrap();
+        }
+    }
+
+    fn request_decorations(&self, mut decorations: crate::WindowDecorations) {
+        let mut state = self.0.state.borrow_mut();
+
+        if matches!(decorations, crate::WindowDecorations::Client)
+            && !state.client_side_decorations_supported
+        {
+            log::info!(
+                "x11: no compositor present, falling back to server-side window decorations"
+            );
+            decorations = crate::WindowDecorations::Server;
+        }
+
+        // https://github.com/rust-windowing/winit/blob/master/src/platform_impl/linux/x11/util/hint.rs#L53-L87
+        let hints_data: [u32; 5] = match decorations {
+            WindowDecorations::Server => [1 << 1, 0, 1, 0, 0],
+            WindowDecorations::Client => [1 << 1, 0, 0, 0, 0],
+        };
+
         self.0
             .xcb_connection
-            .send_event(
-                false,
-                state.x_root_window,
-                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
+            .change_property(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                state.atoms._MOTIF_WM_HINTS,
+                state.atoms._MOTIF_WM_HINTS,
+                std::mem::size_of::<u32>() as u8 * 8,
+                5,
+                bytemuck::cast_slice::<u32, u8>(&hints_data),
             )
+            .unwrap()
+            .check()
             .unwrap();
+
+        match decorations {
+            WindowDecorations::Server => {
+                state.decorations = WindowDecorations::Server;
+                let is_transparent = state.is_transparent();
+                state.renderer.update_transparency(is_transparent);
+            }
+            WindowDecorations::Client => {
+                state.decorations = WindowDecorations::Client;
+                let is_transparent = state.is_transparent();
+                state.renderer.update_transparency(is_transparent);
+            }
+        }
+
+        drop(state);
+        let mut callbacks = self.0.callbacks.borrow_mut();
+        if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
+            appearance_changed();
+        }
     }
 
-    fn should_render_window_controls(&self) -> bool {
-        false
+    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+        let mut state = self.0.state.borrow_mut();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.0.state.borrow().renderer.gpu_specs().into()
     }
 }

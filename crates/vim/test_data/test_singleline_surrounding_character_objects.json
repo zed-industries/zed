@@ -1,5 +1,15 @@
 {"SetOption":{"value":"wrap"}}
 {"SetOption":{"value":"columns=12"}}
+{"Put":{"state":"\"ˇhello world\"!"}}
+{"Key":"v"}
+{"Key":"i"}
+{"Key":"\""}
+{"Get":{"state":"\"«hello worldˇ»\"!","mode":"Visual"}}
+{"Put":{"state":"\"hˇello world\"!"}}
+{"Key":"v"}
+{"Key":"i"}
+{"Key":"\""}
+{"Get":{"state":"\"«hello worldˇ»\"!","mode":"Visual"}}
 {"Put":{"state":"helˇlo \"world\"!"}}
 {"Key":"v"}
 {"Key":"i"}

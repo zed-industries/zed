@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "Solarized",
   "author": "Zed Industries",
   "themes": [
@@ -38,6 +39,7 @@
         "icon.accent": "#278ad1ff",
         "status_bar.background": "#073743ff",
         "title_bar.background": "#073743ff",
+        "title_bar.inactive_background": "#04313bff",
         "toolbar.background": "#002a35ff",
         "tab_bar.background": "#04313bff",
         "tab.inactive_background": "#04313bff",
@@ -407,6 +409,7 @@
         "icon.accent": "#288bd1ff",
         "status_bar.background": "#cfd0c4ff",
         "title_bar.background": "#cfd0c4ff",
+        "title_bar.inactive_background": "#f3eddaff",
         "toolbar.background": "#fdf6e3ff",
         "tab_bar.background": "#f3eddaff",
         "tab.inactive_background": "#f3eddaff",

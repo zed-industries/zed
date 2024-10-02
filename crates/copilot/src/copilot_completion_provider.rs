@@ -1,7 +1,7 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use editor::{Direction, InlineCompletionProvider};
+use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
@@ -145,7 +145,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                     };
                 }
                 Direction::Next => {
-                    if self.completions.len() == 0 {
+                    if self.completions.is_empty() {
                         self.active_completion_index = 0
                     } else {
                         self.active_completion_index =
@@ -221,15 +221,13 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })
             .detach_and_log_err(cx);
 
-        if should_report_inline_completion_event {
-            if self.active_completion().is_some() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_inline_completion_event(
-                        Self::name().to_string(),
-                        false,
-                        self.file_extension.clone(),
-                    );
-                }
+        if should_report_inline_completion_event && self.active_completion().is_some() {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
             }
         }
     }
@@ -239,7 +237,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<CompletionProposal> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -269,7 +267,14 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
-                Some(completion_text)
+                Some(CompletionProposal {
+                    inlays: vec![InlayProposal::Suggestion(
+                        cursor_position.bias_right(buffer),
+                        completion_text.into(),
+                    )],
+                    text: completion_text.into(),
+                    delete_range: None,
+                })
             }
         } else {
             None
@@ -333,7 +338,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -341,7 +346,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -375,7 +380,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -383,7 +388,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -408,7 +413,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -416,7 +421,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -590,7 +595,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -598,7 +603,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -632,7 +637,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -640,7 +645,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -762,7 +767,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local("c = 3\nd = 4\n", cx));
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [ExcerptRange {
@@ -889,7 +894,7 @@ mod tests {
                 three
             "});
 
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -897,7 +902,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -917,7 +922,7 @@ mod tests {
         });
 
         cx.simulate_keystroke("o");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -925,7 +930,7 @@ mod tests {
                 three
             "},
             vec!["completion_a_2", "completion_b_2"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -944,7 +949,7 @@ mod tests {
         });
 
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -952,7 +957,7 @@ mod tests {
                 three
             "},
             vec!["something_else()"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -1013,7 +1018,7 @@ mod tests {
             .unwrap();
 
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 private_buffer.clone(),
                 [ExcerptRange {
@@ -1060,7 +1065,7 @@ mod tests {
             editor.change_selections(None, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1070,7 +1075,7 @@ mod tests {
             editor.change_selections(None, cx, |s| {
                 s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1148,7 +1153,7 @@ mod tests {
     }
 
     fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
-        _ = cx.update(|cx| {
+        cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);

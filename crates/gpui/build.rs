@@ -3,18 +3,25 @@
 //TODO: consider generating shader code for WGSL
 //TODO: deprecate "runtime-shaders" and "macos-blade"
 
-fn main() {
-    #[cfg(target_os = "macos")]
-    macos::build();
+use std::env;
 
-    #[cfg(target_os = "windows")]
-    {
-        let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
-        let rc_file = std::path::Path::new("resources/windows/gpui.rc");
-        println!("cargo:rerun-if-changed={}", manifest.display());
-        println!("cargo:rerun-if-changed={}", rc_file.display());
-        embed_resource::compile(rc_file, embed_resource::NONE);
-    }
+fn main() {
+    let target = env::var("CARGO_CFG_TARGET_OS");
+    println!("cargo::rustc-check-cfg=cfg(gles)");
+    match target.as_deref() {
+        Ok("macos") => {
+            #[cfg(target_os = "macos")]
+            macos::build();
+        }
+        Ok("windows") => {
+            let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
+            let rc_file = std::path::Path::new("resources/windows/gpui.rc");
+            println!("cargo:rerun-if-changed={}", manifest.display());
+            println!("cargo:rerun-if-changed={}", rc_file.display());
+            embed_resource::compile(rc_file, embed_resource::NONE);
+        }
+        _ => (),
+    };
 }
 
 #[cfg(target_os = "macos")]
@@ -60,7 +67,7 @@ mod macos {
             .allowlist_function("dispatch_suspend")
             .allowlist_function("dispatch_source_cancel")
             .allowlist_function("dispatch_set_context")
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .layout_tests(false)
             .generate()
             .expect("unable to generate bindings");
@@ -74,9 +81,12 @@ mod macos {
     fn generate_shader_bindings() -> PathBuf {
         let output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("scene.h");
         let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-        let mut config = Config::default();
-        config.include_guard = Some("SCENE_H".into());
-        config.language = cbindgen::Language::C;
+        let mut config = Config {
+            include_guard: Some("SCENE_H".into()),
+            language: cbindgen::Language::C,
+            no_includes: true,
+            ..Default::default()
+        };
         config.export.include.extend([
             "Bounds".into(),
             "Corners".into(),
@@ -171,7 +181,7 @@ mod macos {
                 "-c",
                 shader_path,
                 "-include",
-                &header_path.to_str().unwrap(),
+                (header_path.to_str().unwrap()),
                 "-o",
             ])
             .arg(&air_output_path)

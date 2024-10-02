@@ -12,6 +12,7 @@ pub(super) struct ButtonIcon {
     disabled: bool,
     selected: bool,
     selected_icon: Option<IconName>,
+    selected_icon_color: Option<Color>,
     selected_style: Option<ButtonStyle>,
 }
 
@@ -24,6 +25,7 @@ impl ButtonIcon {
             disabled: false,
             selected: false,
             selected_icon: None,
+            selected_icon_color: None,
             selected_style: None,
         }
     }
@@ -46,6 +48,11 @@ impl ButtonIcon {
 
     pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
+        self
+    }
+
+    pub fn selected_icon_color(mut self, color: impl Into<Option<Color>>) -> Self {
+        self.selected_icon_color = color.into();
         self
     }
 }
@@ -83,7 +90,7 @@ impl RenderOnce for ButtonIcon {
         } else if self.selected_style.is_some() && self.selected {
             self.selected_style.unwrap().into()
         } else if self.selected {
-            Color::Selected
+            self.selected_icon_color.unwrap_or(Color::Selected)
         } else {
             self.color
         };

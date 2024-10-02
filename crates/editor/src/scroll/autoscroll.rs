@@ -27,7 +27,7 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Center)
     }
 
-    /// scrolls so the neweset cursor is near the top
+    /// scrolls so the newest cursor is near the top
     /// (offset by vertical_scroll_margin)
     pub fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused)
@@ -61,14 +61,15 @@ impl AutoscrollStrategy {
 }
 
 impl Editor {
-    pub fn autoscroll_requested(&self) -> bool {
-        self.scroll_manager.autoscroll_requested()
+    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
+        self.scroll_manager.autoscroll_request()
     }
 
     pub fn autoscroll_vertically(
         &mut self,
         bounds: Bounds<Pixels>,
         line_height: Pixels,
+        max_scroll_top: f32,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let viewport_height = bounds.size.height;
@@ -84,11 +85,6 @@ impl Editor {
                 }
             }
         }
-        let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
-            (display_map.max_point().row().as_f32() - visible_lines + 1.).max(0.)
-        } else {
-            display_map.max_point().row().as_f32()
-        };
         if scroll_position.y > max_scroll_top {
             scroll_position.y = max_scroll_top;
         }
@@ -193,8 +189,8 @@ impl Editor {
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Focused => {
-                scroll_position.y =
-                    (target_top - self.scroll_manager.vertical_scroll_margin).max(0.0);
+                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
+                scroll_position.y = (target_top - margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {

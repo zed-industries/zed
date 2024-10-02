@@ -36,8 +36,6 @@ pub fn router() -> Router {
 struct GetExtensionsParams {
     filter: Option<String>,
     #[serde(default)]
-    ids: Option<String>,
-    #[serde(default)]
     max_schema_version: i32,
 }
 
@@ -45,18 +43,40 @@ async fn get_extensions(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<GetExtensionsParams>,
 ) -> Result<Json<GetExtensionsResponse>> {
-    let extension_ids = params
-        .ids
-        .as_ref()
-        .map(|s| s.split(',').map(|s| s.trim()).collect::<Vec<_>>());
+    let mut extensions = app
+        .db
+        .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
+        .await?;
 
-    let extensions = if let Some(extension_ids) = extension_ids {
-        app.db.get_extensions_by_ids(&extension_ids, None).await?
-    } else {
-        app.db
-            .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
-            .await?
+    if let Some(filter) = params.filter.as_deref() {
+        let extension_id = filter.to_lowercase();
+        let mut exact_match = None;
+        extensions.retain(|extension| {
+            if extension.id.as_ref() == extension_id {
+                exact_match = Some(extension.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if exact_match.is_none() {
+            exact_match = app
+                .db
+                .get_extensions_by_ids(&[&extension_id], None)
+                .await?
+                .first()
+                .cloned();
+        }
+
+        if let Some(exact_match) = exact_match {
+            extensions.insert(0, exact_match);
+        }
     };
+
+    if let Some(query) = params.filter.as_deref() {
+        let count = extensions.len();
+        tracing::info!(query, count, "extension_search")
+    }
 
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }
@@ -165,7 +185,7 @@ async fn download_extension(
         .clone()
         .zip(app.config.blob_store_bucket.clone())
     else {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -182,7 +202,7 @@ async fn download_extension(
         .await?;
 
     if !version_exists {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_FOUND,
             "unknown extension version".into(),
         ))?;
@@ -299,14 +319,14 @@ async fn fetch_extensions_from_blob_store(
                 if let Some(extension) = fetch_extension_manifest(
                     blob_store_client,
                     blob_store_bucket,
-                    &extension_id,
-                    &published_version,
+                    extension_id,
+                    published_version,
                 )
                 .await
                 .log_err()
                 {
                     new_versions
-                        .entry(&extension_id)
+                        .entry(extension_id)
                         .or_default()
                         .push(extension);
                 }

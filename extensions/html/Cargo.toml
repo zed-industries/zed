@@ -1,6 +1,6 @@
 [package]
 name = "zed_html"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 publish = false
 license = "Apache-2.0"
@@ -13,4 +13,4 @@ path = "src/html.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.0.6"
+zed_extension_api = "0.1.0"

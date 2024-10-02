@@ -13,7 +13,7 @@
             [((identifier) @_attribute)
                 (scoped_identifier (identifier) @_attribute)
                 ])
-            (#eq? @_attribute "test")
+            (#match? @_attribute "test")
         ) @start
         .
         (attribute_item) *
@@ -24,4 +24,16 @@
         ) @end
     )
     (#set! tag rust-test)
+)
+
+; Rust main function
+(
+    (
+        (function_item
+            name: (_) @run
+            body: _
+        ) @_rust_main_function_end
+        (#eq? @run "main")
+    )
+    (#set! tag rust-main)
 )

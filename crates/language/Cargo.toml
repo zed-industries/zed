@@ -27,6 +27,7 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
 futures.workspace = true
@@ -34,9 +35,8 @@ fuzzy.workspace = true
 git.workspace = true
 globset.workspace = true
 gpui.workspace = true
-http.workspace = true
+http_client.workspace = true
 itertools.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 lsp.workspace = true
 parking_lot.workspace = true
@@ -52,6 +52,7 @@ settings.workspace = true
 similar.workspace = true
 smallvec.workspace = true
 smol.workspace = true
+strsim.workspace = true
 sum_tree.workspace = true
 task.workspace = true
 text.workspace = true
@@ -77,10 +78,10 @@ tree-sitter-embedded-template.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-json.workspace = true
-tree-sitter-markdown.workspace = true
+tree-sitter-md.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }

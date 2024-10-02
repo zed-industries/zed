@@ -47,10 +47,20 @@ fn parse_snippet<'a>(
                 source = parse_tabstop(&source[1..], text, tabstops)?;
             }
             Some('\\') => {
+                // As specified in the LSP spec (`Grammar` section),
+                // backslashes can escape some characters:
+                // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#snippet_syntax
                 source = &source[1..];
                 if let Some(c) = source.chars().next() {
-                    text.push(c);
-                    source = &source[c.len_utf8()..];
+                    if c == '$' || c == '\\' || c == '}' {
+                        text.push(c);
+                        // All escapable characters are 1 byte long:
+                        source = &source[1..];
+                    } else {
+                        text.push('\\');
+                    }
+                } else {
+                    text.push('\\');
                 }
             }
             Some('}') => {
@@ -197,6 +207,17 @@ mod tests {
         let snippet = Snippet::parse("{a\\}").unwrap();
         assert_eq!(snippet.text, "{a}");
         assert_eq!(tabstops(&snippet), &[vec![3..3]]);
+
+        // backslash not functioning as an escape
+        let snippet = Snippet::parse("a\\b").unwrap();
+        assert_eq!(snippet.text, "a\\b");
+        assert_eq!(tabstops(&snippet), &[vec![3..3]]);
+
+        // first backslash cancelling escaping that would
+        // have happened with second backslash
+        let snippet = Snippet::parse("one\\\\$1two").unwrap();
+        assert_eq!(snippet.text, "one\\two");
+        assert_eq!(tabstops(&snippet), &[vec![4..4], vec![7..7]]);
     }
 
     fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {

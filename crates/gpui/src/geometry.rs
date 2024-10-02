@@ -363,15 +363,6 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
-impl From<Size<DevicePixels>> for Size<Pixels> {
-    fn from(size: Size<DevicePixels>) -> Self {
-        Size {
-            width: Pixels(size.width.0 as f32),
-            height: Pixels(size.height.0 as f32),
-        }
-    }
-}
-
 /// Constructs a new `Size<T>` with the provided width and height.
 ///
 /// # Arguments
@@ -633,15 +624,6 @@ impl<T: Clone + Default + Debug> From<Point<T>> for Size<T> {
     }
 }
 
-impl From<Size<Pixels>> for Size<DevicePixels> {
-    fn from(size: Size<Pixels>) -> Self {
-        Size {
-            width: DevicePixels(size.width.0 as i32),
-            height: DevicePixels(size.height.0 as i32),
-        }
-    }
-}
-
 impl From<Size<Pixels>> for Size<DefiniteLength> {
     fn from(size: Size<Pixels>) -> Self {
         Size {
@@ -722,28 +704,27 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub size: Size<T>,
 }
 
-impl Bounds<DevicePixels> {
+impl Bounds<Pixels> {
     /// Generate a centered bounds for the given display or primary display if none is provided
     pub fn centered(
         display_id: Option<DisplayId>,
-        size: impl Into<Size<DevicePixels>>,
+        size: Size<Pixels>,
         cx: &mut AppContext,
     ) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
 
-        let size = size.into();
         display
             .map(|display| {
                 let center = display.bounds().center();
                 Bounds {
-                    origin: point(center.x - size.width / 2, center.y - size.height / 2),
+                    origin: point(center.x - size.width / 2., center.y - size.height / 2.),
                     size,
                 }
             })
             .unwrap_or_else(|| Bounds {
-                origin: point(DevicePixels(0), DevicePixels(0)),
+                origin: point(px(0.), px(0.)),
                 size,
             })
     }
@@ -757,8 +738,8 @@ impl Bounds<DevicePixels> {
         display
             .map(|display| display.bounds())
             .unwrap_or_else(|| Bounds {
-                origin: point(DevicePixels(0), DevicePixels(0)),
-                size: size(DevicePixels(1024), DevicePixels(768)),
+                origin: point(px(0.), px(0.)),
+                size: size(px(1024.), px(768.)),
             })
     }
 }
@@ -902,6 +883,14 @@ where
         self.size.height = self.size.height.clone() + double_amount;
     }
 
+    /// inset the bounds by a specified amount
+    /// Note that this may panic if T does not support negative values
+    pub fn inset(&self, amount: T) -> Self {
+        let mut result = self.clone();
+        result.dilate(T::default() - amount);
+        result
+    }
+
     /// Returns the center point of the bounds.
     ///
     /// Calculates the center by taking the origin's x and y coordinates and adding half the width and height
@@ -950,6 +939,15 @@ where
     /// ```
     pub fn half_perimeter(&self) -> T {
         self.size.width.clone() + self.size.height.clone()
+    }
+
+    /// centered_at creates a new bounds centered at the given point.
+    pub fn centered_at(center: Point<T>, size: Size<T>) -> Self {
+        let origin = Point {
+            x: center.x - size.width.half(),
+            y: center.y - size.height.half(),
+        };
+        Self::new(origin, size)
     }
 }
 
@@ -1285,10 +1283,34 @@ where
     ///     size: Size { width: 10.0, height: 20.0 },
     /// });
     /// ```
-    pub fn map_origin(self, f: impl Fn(Point<T>) -> Point<T>) -> Bounds<T> {
+    pub fn map_origin(self, f: impl Fn(T) -> T) -> Bounds<T> {
         Bounds {
-            origin: f(self.origin),
+            origin: self.origin.map(f),
             size: self.size,
+        }
+    }
+
+    /// Applies a function to the origin  of the bounds, producing a new `Bounds` with the new origin
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 10.0, y: 10.0 },
+    ///     size: Size { width: 10.0, height: 20.0 },
+    /// };
+    /// let new_bounds = bounds.map_size(|value| value * 1.5);
+    ///
+    /// assert_eq!(new_bounds, Bounds {
+    ///     origin: Point { x: 10.0, y: 10.0 },
+    ///     size: Size { width: 15.0, height: 30.0 },
+    /// });
+    /// ```
+    pub fn map_size(self, f: impl Fn(T) -> T) -> Bounds<T> {
+        Bounds {
+            origin: self.origin,
+            size: self.size.map(f),
         }
     }
 }
@@ -1306,6 +1328,26 @@ impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
     /// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
     pub fn is_empty(&self) -> bool {
         self.size.width <= T::default() || self.size.height <= T::default()
+    }
+}
+
+impl Size<DevicePixels> {
+    /// Converts the size from physical to logical pixels.
+    pub(crate) fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
+        size(
+            px(self.width.0 as f32 / scale_factor),
+            px(self.height.0 as f32 / scale_factor),
+        )
+    }
+}
+
+impl Size<Pixels> {
+    /// Converts the size from physical to logical pixels.
+    pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
+        size(
+            DevicePixels((self.width.0 * scale_factor) as i32),
+            DevicePixels((self.height.0 * scale_factor) as i32),
+        )
     }
 }
 
@@ -1344,6 +1386,30 @@ impl Bounds<Pixels> {
         Bounds {
             origin: self.origin.scale(factor),
             size: self.size.scale(factor),
+        }
+    }
+
+    /// Convert the bounds from logical pixels to physical pixels
+    pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
+        Bounds {
+            origin: point(
+                DevicePixels((self.origin.x.0 * factor) as i32),
+                DevicePixels((self.origin.y.0 * factor) as i32),
+            ),
+            size: self.size.to_device_pixels(factor),
+        }
+    }
+}
+
+impl Bounds<DevicePixels> {
+    /// Convert the bounds from physical pixels to logical pixels
+    pub fn to_pixels(self, scale_factor: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(
+                px(self.origin.x.0 as f32 / scale_factor),
+                px(self.origin.y.0 as f32 / scale_factor),
+            ),
+            size: self.size.to_pixels(scale_factor),
         }
     }
 }
@@ -1770,11 +1836,18 @@ impl Edges<Pixels> {
 
 impl From<f32> for Edges<Pixels> {
     fn from(val: f32) -> Self {
+        let val: Pixels = val.into();
+        val.into()
+    }
+}
+
+impl From<Pixels> for Edges<Pixels> {
+    fn from(val: Pixels) -> Self {
         Edges {
-            top: val.into(),
-            right: val.into(),
-            bottom: val.into(),
-            left: val.into(),
+            top: val,
+            right: val,
+            bottom: val,
+            left: val,
         }
     }
 }
@@ -1836,20 +1909,20 @@ where
 
 impl Corners<AbsoluteLength> {
     /// Converts the `AbsoluteLength` to `Pixels` based on the provided size and rem size, ensuring the resulting
-    /// `Pixels` do not exceed half of the maximum of the provided size's width and height.
+    /// `Pixels` do not exceed half of the minimum of the provided size's width and height.
     ///
     /// This method is particularly useful when dealing with corner radii, where the radius in pixels should not
     /// exceed half the size of the box it applies to, to avoid the corners overlapping.
     ///
     /// # Arguments
     ///
-    /// * `size` - The `Size<Pixels>` against which the maximum allowable radius is determined.
+    /// * `size` - The `Size<Pixels>` against which the minimum allowable radius is determined.
     /// * `rem_size` - The size of one REM unit in pixels, used for conversion if the `AbsoluteLength` is in REMs.
     ///
     /// # Returns
     ///
     /// Returns a `Corners<Pixels>` instance with each corner's length converted to pixels and clamped to the
-    /// maximum allowable radius based on the provided size.
+    /// minimum allowable radius based on the provided size.
     ///
     /// # Examples
     ///
@@ -1858,7 +1931,7 @@ impl Corners<AbsoluteLength> {
     /// let corners = Corners {
     ///     top_left: AbsoluteLength::Pixels(Pixels(15.0)),
     ///     top_right: AbsoluteLength::Rems(Rems(1.0)),
-    ///     bottom_right: AbsoluteLength::Pixels(Pixels(20.0)),
+    ///     bottom_right: AbsoluteLength::Pixels(Pixels(30.0)),
     ///     bottom_left: AbsoluteLength::Rems(Rems(2.0)),
     /// };
     /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
@@ -1868,11 +1941,11 @@ impl Corners<AbsoluteLength> {
     /// // The resulting corners should not exceed half the size of the smallest dimension (50.0 / 2.0 = 25.0).
     /// assert_eq!(corners_in_pixels.top_left, Pixels(15.0));
     /// assert_eq!(corners_in_pixels.top_right, Pixels(16.0)); // 1 rem converted to pixels
-    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(20.0).min(Pixels(25.0))); // Clamped to 25.0
-    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0).min(Pixels(25.0))); // 2 rems converted to pixels and clamped
+    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(30.0).min(Pixels(25.0))); // Clamped to 25.0
+    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0).min(Pixels(25.0))); // 2 rems converted to pixels and clamped to 25.0
     /// ```
     pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
-        let max = size.width.max(size.height) / 2.;
+        let max = size.width.min(size.height) / 2.;
         Corners {
             top_left: self.top_left.to_pixels(rem_size).min(max),
             top_right: self.top_right.to_pixels(rem_size).min(max),
@@ -2080,7 +2153,7 @@ pub struct Percentage(pub f32);
 /// Generate a `Radian` from a percentage of a full circle.
 pub fn percentage(value: f32) -> Percentage {
     debug_assert!(
-        value >= 0.0 && value <= 1.0,
+        (0.0..=1.0).contains(&value),
         "Percentage must be between 0 and 1"
     );
     Percentage(value)
@@ -2131,6 +2204,12 @@ impl From<Percentage> for Radians {
 )]
 #[repr(transparent)]
 pub struct Pixels(pub f32);
+
+impl std::fmt::Display for Pixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{}px", self.0))
+    }
+}
 
 impl std::ops::Div for Pixels {
     type Output = f32;
@@ -2256,6 +2335,27 @@ impl Pixels {
     pub fn abs(&self) -> Self {
         Self(self.0.abs())
     }
+
+    /// Returns the sign of the `Pixels` value.
+    ///
+    /// # Returns
+    ///
+    /// Returns:
+    /// * `1.0` if the value is positive
+    /// * `-1.0` if the value is negative
+    /// * `0.0` if the value is zero
+    pub fn signum(&self) -> f32 {
+        self.0.signum()
+    }
+
+    /// Returns the f64 value of `Pixels`.
+    ///
+    /// # Returns
+    ///
+    /// A f64 value of the `Pixels`.
+    pub fn to_f64(self) -> f64 {
+        self.0 as f64
+    }
 }
 
 impl Mul<Pixels> for Pixels {
@@ -2354,10 +2454,24 @@ impl From<usize> for Pixels {
 /// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
 /// display.
 #[derive(
-    Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
+    Add,
+    AddAssign,
+    Clone,
+    Copy,
+    Default,
+    Div,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Sub,
+    SubAssign,
+    Serialize,
+    Deserialize,
 )]
 #[repr(transparent)]
-pub struct DevicePixels(pub(crate) i32);
+pub struct DevicePixels(pub i32);
 
 impl DevicePixels {
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
@@ -2495,6 +2609,12 @@ impl From<DevicePixels> for ScaledPixels {
 impl From<ScaledPixels> for f64 {
     fn from(scaled_pixels: ScaledPixels) -> Self {
         scaled_pixels.0 as f64
+    }
+}
+
+impl From<ScaledPixels> for u32 {
+    fn from(pixels: ScaledPixels) -> Self {
+        pixels.0 as u32
     }
 }
 
@@ -3026,12 +3146,12 @@ mod tests {
         };
 
         // Test Case 1: Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds2), true);
+        assert!(bounds1.intersects(&bounds2));
 
         // Test Case 2: Non-Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds3), false);
+        assert!(!bounds1.intersects(&bounds3));
 
         // Test Case 3: Bounds intersecting with themselves
-        assert_eq!(bounds1.intersects(&bounds1), true);
+        assert!(bounds1.intersects(&bounds1));
     }
 }

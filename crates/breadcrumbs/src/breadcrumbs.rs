@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
-    ViewContext,
+    Element, EventEmitter, FocusableView, IntoElement, ParentElement, Render, StyledText,
+    Subscription, ViewContext,
 };
 use itertools::Itertools;
 use std::cmp;
@@ -16,6 +16,12 @@ pub struct Breadcrumbs {
     pane_focused: bool,
     active_item: Option<Box<dyn ItemHandle>>,
     subscription: Option<Subscription>,
+}
+
+impl Default for Breadcrumbs {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Breadcrumbs {
@@ -72,7 +78,7 @@ impl Render for Breadcrumbs {
                 .into_any()
         });
         let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
-            Label::new("›").color(Color::Muted).into_any_element()
+            Label::new("›").color(Color::Placeholder).into_any_element()
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
@@ -83,13 +89,32 @@ impl Render for Breadcrumbs {
             Some(editor) => element.child(
                 ButtonLike::new("toggle outline view")
                     .child(breadcrumbs_stack)
-                    .style(ButtonStyle::Subtle)
-                    .on_click(move |_, cx| {
-                        if let Some(editor) = editor.upgrade() {
-                            outline::toggle(editor, &outline::Toggle, cx)
+                    .style(ButtonStyle::Transparent)
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_, cx| {
+                            if let Some(editor) = editor.upgrade() {
+                                outline::toggle(editor, &editor::actions::ToggleOutline, cx)
+                            }
                         }
                     })
-                    .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
+                    .tooltip(move |cx| {
+                        if let Some(editor) = editor.upgrade() {
+                            let focus_handle = editor.read(cx).focus_handle(cx);
+                            Tooltip::for_action_in(
+                                "Show symbol outline",
+                                &editor::actions::ToggleOutline,
+                                &focus_handle,
+                                cx,
+                            )
+                        } else {
+                            Tooltip::for_action(
+                                "Show symbol outline",
+                                &editor::actions::ToggleOutline,
+                                cx,
+                            )
+                        }
+                    }),
             ),
             None => element
                 // Match the height of the `ButtonLike` in the other arm.
@@ -107,29 +132,30 @@ impl ToolbarItemView for Breadcrumbs {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
-        if let Some(item) = active_pane_item {
-            let this = cx.view().downgrade();
-            self.subscription = Some(item.subscribe_to_item_events(
-                cx,
-                Box::new(move |event, cx| {
-                    if let ItemEvent::UpdateBreadcrumbs = event {
-                        this.update(cx, |this, cx| {
-                            cx.notify();
-                            if let Some(active_item) = this.active_item.as_ref() {
-                                cx.emit(ToolbarItemEvent::ChangeLocation(
-                                    active_item.breadcrumb_location(cx),
-                                ))
-                            }
-                        })
-                        .ok();
-                    }
-                }),
-            ));
-            self.active_item = Some(item.boxed_clone());
-            item.breadcrumb_location(cx)
-        } else {
-            ToolbarItemLocation::Hidden
-        }
+
+        let Some(item) = active_pane_item else {
+            return ToolbarItemLocation::Hidden;
+        };
+
+        let this = cx.view().downgrade();
+        self.subscription = Some(item.subscribe_to_item_events(
+            cx,
+            Box::new(move |event, cx| {
+                if let ItemEvent::UpdateBreadcrumbs = event {
+                    this.update(cx, |this, cx| {
+                        cx.notify();
+                        if let Some(active_item) = this.active_item.as_ref() {
+                            cx.emit(ToolbarItemEvent::ChangeLocation(
+                                active_item.breadcrumb_location(cx),
+                            ))
+                        }
+                    })
+                    .ok();
+                }
+            }),
+        ));
+        self.active_item = Some(item.boxed_clone());
+        item.breadcrumb_location(cx)
     }
 
     fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {

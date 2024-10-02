@@ -26,7 +26,7 @@ impl zed::Extension for OcamlExtension {
         Ok(zed::Command {
             command: path,
             args: Vec::new(),
-            env: Default::default(),
+            env: worktree.shell_env(),
         })
     }
 
@@ -72,7 +72,7 @@ impl zed::Extension for OcamlExtension {
             }
 
             Some((CompletionKind::Field, detail)) => {
-                let filter_range_start = if name.starts_with(&['~', '?']) { 1 } else { 0 };
+                let filter_range_start = if name.starts_with(['~', '?']) { 1 } else { 0 };
 
                 let record_prefix = "type t = { ";
                 let record_suffix = "; }";

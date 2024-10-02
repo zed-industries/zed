@@ -13,6 +13,11 @@ use std::{
     rc::{Rc, Weak},
     sync::Arc,
 };
+#[cfg(target_os = "windows")]
+use windows::Win32::{
+    Graphics::Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
+    System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
+};
 
 /// TestPlatform implements the Platform trait for use in tests.
 pub(crate) struct TestPlatform {
@@ -27,22 +32,41 @@ pub(crate) struct TestPlatform {
     current_primary_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
     pub opened_url: RefCell<Option<String>>,
+    pub text_system: Arc<dyn PlatformTextSystem>,
+    #[cfg(target_os = "windows")]
+    bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
 }
 
 #[derive(Default)]
 pub(crate) struct TestPrompts {
     multiple_choice: VecDeque<oneshot::Sender<usize>>,
-    new_path: VecDeque<(PathBuf, oneshot::Sender<Option<PathBuf>>)>,
+    new_path: VecDeque<(PathBuf, oneshot::Sender<Result<Option<PathBuf>>>)>,
 }
 
 impl TestPlatform {
     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
         #[cfg(target_os = "windows")]
-        unsafe {
+        let bitmap_factory = unsafe {
             windows::Win32::System::Ole::OleInitialize(None)
                 .expect("unable to initialize Windows OLE");
-        }
+            std::mem::ManuallyDrop::new(
+                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                    .expect("Error creating bitmap factory."),
+            )
+        };
+
+        #[cfg(target_os = "macos")]
+        let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
+
+        #[cfg(target_os = "linux")]
+        let text_system = Arc::new(crate::platform::linux::CosmicTextSystem::new());
+
+        #[cfg(target_os = "windows")]
+        let text_system = Arc::new(
+            crate::platform::windows::DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Unable to initialize direct write."),
+        );
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
@@ -56,6 +80,9 @@ impl TestPlatform {
             current_primary_item: Mutex::new(None),
             weak: weak.clone(),
             opened_url: Default::default(),
+            #[cfg(target_os = "windows")]
+            bitmap_factory,
+            text_system,
         })
     }
 
@@ -69,7 +96,7 @@ impl TestPlatform {
             .new_path
             .pop_front()
             .expect("no pending new path prompt");
-        tx.send(select_path(&path)).ok();
+        tx.send(Ok(select_path(&path))).ok();
     }
 
     pub(crate) fn simulate_prompt_answer(&self, response_ix: usize) {
@@ -104,7 +131,7 @@ impl TestPlatform {
             .spawn(async move {
                 if let Some(previous_window) = previous_window {
                     if let Some(window) = window.as_ref() {
-                        if Arc::ptr_eq(&previous_window.0, &window.0) {
+                        if Rc::ptr_eq(&previous_window.0, &window.0) {
                             return;
                         }
                     }
@@ -118,7 +145,7 @@ impl TestPlatform {
     }
 
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
-        self.prompts.borrow().new_path.len() > 0
+        !self.prompts.borrow().new_path.is_empty()
     }
 }
 
@@ -132,14 +159,7 @@ impl Platform for TestPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        #[cfg(target_os = "macos")]
-        return Arc::new(crate::platform::mac::MacTextSystem::new());
-
-        #[cfg(target_os = "linux")]
-        return Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
-
-        #[cfg(target_os = "windows")]
-        return Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
+        self.text_system.clone()
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -212,14 +232,14 @@ impl Platform for TestPlatform {
     fn prompt_for_paths(
         &self,
         _options: crate::PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<std::path::PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<std::path::PathBuf>>>> {
         unimplemented!()
     }
 
     fn prompt_for_new_path(
         &self,
         directory: &std::path::Path,
-    ) -> oneshot::Receiver<Option<std::path::PathBuf>> {
+    ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
         self.prompts
             .borrow_mut()
@@ -251,10 +271,6 @@ impl Platform for TestPlatform {
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()
-    }
-
-    fn local_timezone(&self) -> time::UtcOffset {
-        time::UtcOffset::UTC
     }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<std::path::PathBuf> {
@@ -301,5 +317,19 @@ impl Platform for TestPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         unimplemented!()
+    }
+
+    fn open_with_system(&self, _path: &Path) {
+        unimplemented!()
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for TestPlatform {
+    fn drop(&mut self) {
+        unsafe {
+            std::mem::ManuallyDrop::drop(&mut self.bitmap_factory);
+            windows::Win32::System::Ole::OleUninitialize();
+        }
     }
 }

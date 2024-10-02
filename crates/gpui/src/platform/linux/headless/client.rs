@@ -63,6 +63,10 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        None
+    }
+
     fn open_window(
         &self,
         _handle: AnyWindowHandle,
@@ -80,6 +84,8 @@ impl LinuxClient for HeadlessClient {
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn open_uri(&self, _uri: &str) {}
+
+    fn reveal_path(&self, _path: std::path::PathBuf) {}
 
     fn write_to_primary(&self, _item: crate::ClipboardItem) {}
 

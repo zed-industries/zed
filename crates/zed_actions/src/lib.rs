@@ -22,4 +22,28 @@ pub struct OpenZedUrl {
 
 impl_actions!(zed, [OpenBrowser, OpenZedUrl]);
 
-actions!(zed, [OpenSettings, Quit]);
+actions!(
+    zed,
+    [
+        OpenSettings,
+        OpenAccountSettings,
+        Quit,
+        OpenKeymap,
+        About,
+        OpenLicenses,
+        OpenTelemetryLog,
+        DecreaseBufferFontSize,
+        IncreaseBufferFontSize,
+        ResetBufferFontSize,
+        DecreaseUiFontSize,
+        IncreaseUiFontSize,
+        ResetUiFontSize
+    ]
+);
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct InlineAssist {
+    pub prompt: Option<String>,
+}
+
+impl_actions!(assistant, [InlineAssist]);

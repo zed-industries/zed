@@ -1,8 +1,36 @@
 (identifier) @variable
+(field_identifier) @property
+(namespace_identifier) @namespace
+
+(concept_definition
+    (identifier) @concept)
+
 
 (call_expression
   function: (qualified_identifier
     name: (identifier) @function))
+
+(call_expression
+  (qualified_identifier
+    (identifier) @function.call))
+
+(call_expression
+  (qualified_identifier
+    (qualified_identifier
+      (identifier) @function.call)))
+
+(call_expression
+  (qualified_identifier
+    (qualified_identifier
+      (qualified_identifier
+        (identifier) @function.call))))
+
+((qualified_identifier
+  (qualified_identifier
+    (qualified_identifier
+      (qualified_identifier
+        (identifier) @function.call)))) @_parent
+  (#has-ancestor? @_parent call_expression))
 
 (call_expression
   function: (identifier) @function)
@@ -30,20 +58,35 @@
 (function_declarator
   declarator: (field_identifier) @function)
 
+(operator_name
+  (identifier)? @operator) @function
+
+(destructor_name (identifier) @function)
+
 ((namespace_identifier) @type
  (#match? @type "^[A-Z]"))
 
 (auto) @type
 (type_identifier) @type
+type :(primitive_type) @type.primitive
+
+(requires_clause
+    constraint: (template_type
+        name: (type_identifier) @concept))
+
+(attribute
+    name: (identifier) @keyword)
 
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
-(field_identifier) @property
 (statement_identifier) @label
 (this) @variable.special
+("static_assert") @function.builtin
 
 [
+  "alignas"
+  "alignof"
   "break"
   "case"
   "catch"
@@ -51,9 +94,10 @@
   "co_await"
   "co_return"
   "co_yield"
-  "const"
+  "concept"
   "constexpr"
   "continue"
+  "decltype"
   "default"
   "delete"
   "do"
@@ -65,9 +109,7 @@
   "for"
   "friend"
   "if"
-  "if"
   "inline"
-  "mutable"
   "namespace"
   "new"
   "noexcept"
@@ -75,9 +117,9 @@
   "private"
   "protected"
   "public"
+  "requires"
   "return"
   "sizeof"
-  "static"
   "struct"
   "switch"
   "template"
@@ -88,10 +130,9 @@
   "union"
   "using"
   "virtual"
-  "volatile"
   "while"
-  (primitive_type)
   (sized_type_specifier)
+  (storage_class_specifier)
   (type_qualifier)
 ] @keyword
 
@@ -126,8 +167,11 @@
 ] @string
 
 [
-  "."
+  ","
+  ":"
+  "::"
   ";"
+  (raw_string_delimiter)
 ] @punctuation.delimiter
 
 [
@@ -140,20 +184,47 @@
 ] @punctuation.bracket
 
 [
-  "--"
+  "."
+  ".*"
+  "->*"
+  "~"
   "-"
+  "--"
   "-="
   "->"
   "="
+  "!"
   "!="
-  "*"
+  "|"
+  "|="
+  "||"
+  "^"
+  "^="
   "&"
+  "&="
   "&&"
   "+"
   "++"
   "+="
+  "*"
+  "*="
+  "/"
+  "/="
+  "%"
+  "%="
+  "<<"
+  "<<="
+  ">>"
+  ">>="
   "<"
   "=="
   ">"
+  "<="
+  ">="
+  "<=>"
   "||"
+  "?"
 ] @operator
+
+(conditional_expression ":" @operator)
+(user_defined_literal (literal_suffix) @operator)

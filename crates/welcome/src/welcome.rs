@@ -1,10 +1,11 @@
 mod base_keymap_picker;
 mod base_keymap_setting;
+mod multibuffer_hint;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    actions, svg, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
@@ -14,13 +15,17 @@ use ui::{prelude::*, CheckboxWithLabel};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
-    item::{Item, ItemEvent, TabContentParams},
+    item::{Item, ItemEvent},
     open_new, AppState, Welcome, Workspace, WorkspaceId,
 };
 
 pub use base_keymap_setting::BaseKeymap;
+pub use multibuffer_hint::*;
+
+actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
+pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
@@ -28,8 +33,10 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &Welcome, cx| {
             let welcome_page = WelcomePage::new(workspace, cx);
-            workspace.add_item_to_active_pane(Box::new(welcome_page), None, cx)
+            workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, cx)
         });
+        workspace
+            .register_action(|_workspace, _: &ResetHints, cx| MultibufferHint::set_count(0, cx));
     })
     .detach();
 
@@ -40,7 +47,7 @@ pub fn show_welcome_view(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> Task<anyhow::Result<()>> {
-    open_new(app_state, cx, |workspace, cx| {
+    open_new(Default::default(), app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
         let welcome_page = WelcomePage::new(workspace, cx);
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
@@ -68,27 +75,22 @@ impl Render for WelcomePage {
             .track_focus(&self.focus_handle)
             .child(
                 v_flex()
-                    .w_96()
-                    .gap_4()
+                    .w_80()
+                    .gap_6()
                     .mx_auto()
                     .child(
                         svg()
                             .path("icons/logo_96.svg")
-                            .text_color(gpui::white())
-                            .w(px(96.))
-                            .h(px(96.))
+                            .text_color(cx.theme().colors().icon_disabled)
+                            .w(px(80.))
+                            .h(px(80.))
                             .mx_auto(),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_center()
-                            .child(Label::new("Code at the speed of thought")),
                     )
                     .child(
                         v_flex()
                             .gap_2()
                             .child(
-                                Button::new("choose-theme", "Choose a theme")
+                                Button::new("choose-theme", "Choose Theme")
                                     .full_width()
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.telemetry.report_app_event(
@@ -106,7 +108,7 @@ impl Render for WelcomePage {
                                     })),
                             )
                             .child(
-                                Button::new("choose-keymap", "Choose a keymap")
+                                Button::new("choose-keymap", "Choose Keymap")
                                     .full_width()
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.telemetry.report_app_event(
@@ -124,19 +126,42 @@ impl Render for WelcomePage {
                                     })),
                             )
                             .child(
-                                Button::new("install-cli", "Install the CLI")
+                                Button::new("edit settings", "Edit Settings")
                                     .full_width()
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.telemetry.report_app_event(
-                                            "welcome page: install cli".to_string(),
+                                            "welcome page: edit settings".to_string(),
                                         );
-                                        cx.app_mut()
-                                            .spawn(|cx| async move {
-                                                install_cli::install_cli(&cx).await
-                                            })
-                                            .detach_and_log_err(cx);
+                                        cx.dispatch_action(Box::new(zed_actions::OpenSettings));
                                     })),
                             )
+                            .child(Button::new("view docs", "View Docs").full_width().on_click(
+                                cx.listener(|this, _, cx| {
+                                    this.telemetry
+                                        .report_app_event("welcome page: view docs".to_string());
+                                    cx.open_url(DOCS_URL);
+                                }),
+                            )),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .when(cfg!(target_os = "macos"), |el| {
+                                el.child(
+                                    Button::new("install-cli", "Install the CLI")
+                                        .full_width()
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.telemetry.report_app_event(
+                                                "welcome page: install cli".to_string(),
+                                            );
+                                            cx.app_mut()
+                                                .spawn(|cx| async move {
+                                                    install_cli::install_cli(&cx).await
+                                                })
+                                                .detach_and_log_err(cx);
+                                        })),
+                                )
+                            })
                             .child(
                                 Button::new("sign-in-to-copilot", "Sign in to GitHub Copilot")
                                     .full_width()
@@ -271,7 +296,7 @@ impl WelcomePage {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings| {
+            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
                 let value = match selection {
                     Selection::Unselected => false,
                     Selection::Selected => true,
@@ -295,14 +320,8 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        Label::new("Welcome to Zed!")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Welcome".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

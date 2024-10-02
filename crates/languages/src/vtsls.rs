@@ -5,28 +5,41 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use serde_json::{json, Value};
+use project::lsp_store::language_server_settings;
+use serde_json::Value;
 use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, merge_json_value_into, ResultExt};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
 pub struct VtslsLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl VtslsLspAdapter {
     const SERVER_PATH: &'static str = "node_modules/@vtsls/language-server/bin/vtsls.js";
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         VtslsLspAdapter { node }
+    }
+    async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
+        let is_yarn = adapter
+            .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
+            .await
+            .is_ok();
+
+        if is_yarn {
+            ".yarn/sdks/typescript/lib"
+        } else {
+            "node_modules/typescript/lib"
+        }
     }
 }
 
@@ -35,10 +48,11 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
+const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vtsls");
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("vtsls".into())
+        SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -52,6 +66,20 @@ impl LspAdapter for VtslsLspAdapter {
                 .npm_package_latest_version("@vtsls/language-server")
                 .await?,
         }) as Box<_>)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let env = delegate.shell_env().await;
+        let path = delegate.which(SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path: path.clone(),
+            arguments: typescript_server_binary_arguments(&path),
+            env: Some(env),
+        })
     }
 
     async fn fetch_server_binary(
@@ -101,14 +129,7 @@ impl LspAdapter for VtslsLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &*self.node).await
+        get_cached_ts_server_binary(container_dir, &self.node).await
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -138,9 +159,18 @@ impl LspAdapter for VtslsLspAdapter {
             _ => None,
         }?;
 
-        let text = match &item.detail {
-            Some(detail) => format!("{} {}", item.label, detail),
-            None => item.label.clone(),
+        let one_line = |s: &str| s.replace("    ", "").replace('\n', " ");
+
+        let text = if let Some(description) = item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_ref())
+        {
+            format!("{} {}", item.label, one_line(description))
+        } else if let Some(detail) = &item.detail {
+            format!("{} {}", item.label, one_line(detail))
+        } else {
+            item.label.clone()
         };
 
         Some(language::CodeLabel {
@@ -150,58 +180,68 @@ impl LspAdapter for VtslsLspAdapter {
         })
     }
 
-    async fn initialization_options(
-        self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<serde_json::Value>> {
-        Ok(Some(json!({
-            "typescript":
-            {
-                "tsdk": "node_modules/typescript/lib",
-                "format": {
-                    "enable": true
-                },
-                "inlayHints":{
-                    "parameterNames":
-                    {
-                        "enabled": "all",
-                        "suppressWhenArgumentMatchesName": false,
-
-                    }
-                    },
-                    "parameterTypes":
-                    {
-                        "enabled": true
-                    },
-                    "variableTypes": {
-                        "enabled": true,
-                        "suppressWhenTypeMatchesName": false,
-                    },
-                    "propertyDeclarationTypes":{
-                        "enabled": true,
-                    },
-                    "functionLikeReturnTypes": {
-                        "enabled": true,
-                    },
-                    "enumMemberValues":{
-                        "enabled": true,
-                    }
-            }
-        })))
-    }
-
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _cx: &mut AsyncAppContext,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        Ok(json!({
-            "typescript": {
-                "suggest": {
-                    "completeFunctionCalls": true
+        let tsdk_path = Self::tsdk_path(delegate).await;
+        let config = serde_json::json!({
+            "tsdk": tsdk_path,
+            "suggest": {
+                "completeFunctionCalls": true
+            },
+            "inlayHints": {
+                "parameterNames": {
+                    "enabled": "all",
+                    "suppressWhenArgumentMatchesName": false
+                },
+                "parameterTypes": {
+                    "enabled": true
+                },
+                "variableTypes": {
+                    "enabled": true,
+                    "suppressWhenTypeMatchesName": false
+                },
+                "propertyDeclarationTypes": {
+                    "enabled": true
+                },
+                "functionLikeReturnTypes": {
+                    "enabled": true
+                },
+                "enumMemberValues": {
+                    "enabled": true
                 }
+            },
+            "tsserver": {
+                "maxTsServerMemory": 8092
+            },
+        });
+
+        let mut default_workspace_configuration = serde_json::json!({
+            "typescript": config,
+            "javascript": config,
+            "vtsls": {
+                "experimental": {
+                    "completion": {
+                        "enableServerSideFuzzyMatch": true,
+                        "entriesLimit": 5000,
+                    }
+                },
+               "autoUseWorkspaceTsdk": true
             }
-        }))
+        });
+
+        let override_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut default_workspace_configuration)
+        }
+
+        Ok(default_workspace_configuration)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -215,7 +255,7 @@ impl LspAdapter for VtslsLspAdapter {
 
 async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let server_path = container_dir.join(VtslsLspAdapter::SERVER_PATH);

@@ -100,6 +100,7 @@
 ] @punctuation.delimiter
 
 [
+  "..."
   "-"
   "--"
   "-="
@@ -181,6 +182,7 @@
   "import"
   "in"
   "instanceof"
+  "is"
   "let"
   "new"
   "of"
@@ -193,6 +195,7 @@
   "throw"
   "try"
   "typeof"
+  "using"
   "var"
   "void"
   "while"
@@ -219,6 +222,7 @@
   "enum"
   "export"
   "implements"
+  "infer"
   "interface"
   "keyof"
   "namespace"

@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/tab_switcher.rs"
 doctest = false
@@ -15,7 +18,6 @@ gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
 serde.workspace = true
-terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "Summercamp",
   "author": "Zed Industries",
   "themes": [
@@ -38,6 +39,7 @@
         "icon.accent": "#499befff",
         "status_bar.background": "#2a261cff",
         "title_bar.background": "#2a261cff",
+        "title_bar.inactive_background": "#231f16ff",
         "toolbar.background": "#1b1810ff",
         "tab_bar.background": "#231f16ff",
         "tab.inactive_background": "#231f16ff",

@@ -28,6 +28,7 @@ impl Render for TabStory {
                     Tab::new("tab_1")
                         .end_slot(
                             IconButton::new("close_button", IconName::Close)
+                                .visible_on_hover("")
                                 .shape(IconButtonShape::Square)
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::None)

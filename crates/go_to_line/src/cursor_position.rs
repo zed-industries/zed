@@ -12,11 +12,11 @@ use ui::{
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-#[derive(Copy, Clone, Default, PartialOrd, PartialEq)]
-struct SelectionStats {
-    lines: usize,
-    characters: usize,
-    selections: usize,
+#[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
+pub(crate) struct SelectionStats {
+    pub lines: usize,
+    pub characters: usize,
+    pub selections: usize,
 }
 
 pub struct CursorPosition {
@@ -44,7 +44,10 @@ impl CursorPosition {
         self.selected_count.selections = editor.selections.count();
         let mut last_selection: Option<Selection<usize>> = None;
         for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count.characters += selection.end - selection.start;
+            self.selected_count.characters += buffer
+                .text_for_range(selection.start..selection.end)
+                .map(|t| t.chars().count())
+                .sum::<usize>();
             if last_selection
                 .as_ref()
                 .map_or(true, |last_selection| selection.id > last_selection.id)
@@ -95,7 +98,7 @@ impl CursorPosition {
             if wrote_once {
                 write!(text, ", ").unwrap();
             }
-            let name = if is_short_format { &name[..1] } else { &name };
+            let name = if is_short_format { &name[..1] } else { name };
             let plural_suffix = if count > 1 && !is_short_format {
                 "s"
             } else {
@@ -105,6 +108,11 @@ impl CursorPosition {
             wrote_once = true;
         }
         text.push(')');
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selection_stats(&self) -> &SelectionStats {
+        &self.selected_count
     }
 }
 
@@ -134,7 +142,13 @@ impl Render for CursorPosition {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::for_action("Go to Line/Column", &crate::Toggle, cx)),
+                    .tooltip(|cx| {
+                        Tooltip::for_action(
+                            "Go to Line/Column",
+                            &editor::actions::ToggleGoToLine,
+                            cx,
+                        )
+                    }),
             )
         })
     }

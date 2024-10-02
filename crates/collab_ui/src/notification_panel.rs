@@ -92,7 +92,7 @@ impl NotificationPanel {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let mut status = client.status();
             cx.spawn(|this, mut cx| async move {
-                while let Some(_) = status.next().await {
+                while (status.next().await).is_some() {
                     if this
                         .update(&mut cx, |_, cx| {
                             cx.notify();
@@ -127,11 +127,12 @@ impl NotificationPanel {
                 },
             ));
 
+            let local_offset = chrono::Local::now().offset().local_minus_utc();
             let mut this = Self {
                 fs,
                 client,
                 user_store,
-                local_timezone: cx.local_timezone(),
+                local_timezone: UtcOffset::from_whole_seconds(local_offset).unwrap(),
                 channel_store: ChannelStore::global(cx),
                 notification_store: NotificationStore::global(cx),
                 notification_list,
@@ -671,7 +672,7 @@ impl Panel for NotificationPanel {
         settings::update_settings_file::<NotificationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| settings.dock = Some(position),
+            move |settings, _| settings.dock = Some(position),
         );
     }
 

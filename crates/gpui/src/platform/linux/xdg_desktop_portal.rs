@@ -29,6 +29,24 @@ impl XDPEventSource {
             .spawn(async move {
                 let settings = Settings::new().await?;
 
+                if let Ok(initial_appearance) = settings.color_scheme().await {
+                    sender.send(Event::WindowAppearance(WindowAppearance::from_native(
+                        initial_appearance,
+                    )))?;
+                }
+                if let Ok(initial_theme) = settings
+                    .read::<String>("org.gnome.desktop.interface", "cursor-theme")
+                    .await
+                {
+                    sender.send(Event::CursorTheme(initial_theme))?;
+                }
+                if let Ok(initial_size) = settings
+                    .read::<u32>("org.gnome.desktop.interface", "cursor-size")
+                    .await
+                {
+                    sender.send(Event::CursorSize(initial_size))?;
+                }
+
                 if let Ok(mut cursor_theme_changed) = settings
                     .receive_setting_changed_with_args(
                         "org.gnome.desktop.interface",
@@ -146,40 +164,4 @@ impl WindowAppearance {
     fn set_native(&mut self, cs: ColorScheme) {
         *self = Self::from_native(cs);
     }
-}
-
-pub fn window_appearance(executor: &BackgroundExecutor) -> Result<WindowAppearance, anyhow::Error> {
-    executor.block(async {
-        let settings = Settings::new().await?;
-
-        let scheme = settings.color_scheme().await?;
-
-        let appearance = WindowAppearance::from_native(scheme);
-
-        Ok(appearance)
-    })
-}
-
-pub fn should_auto_hide_scrollbars(executor: &BackgroundExecutor) -> Result<bool, anyhow::Error> {
-    executor.block(async {
-        let settings = Settings::new().await?;
-        let auto_hide = settings
-            .read::<bool>("org.gnome.desktop.interface", "overlay-scrolling")
-            .await?;
-
-        Ok(auto_hide)
-    })
-}
-
-pub async fn cursor_settings() -> Result<(String, Option<u32>), anyhow::Error> {
-    let settings = Settings::new().await?;
-    let cursor_theme = settings
-        .read::<String>("org.gnome.desktop.interface", "cursor-theme")
-        .await?;
-    let cursor_size = settings
-        .read::<u32>("org.gnome.desktop.interface", "cursor-size")
-        .await
-        .ok();
-
-    Ok((cursor_theme, cursor_size))
 }

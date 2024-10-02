@@ -18,8 +18,8 @@ anyhow.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 foreign-types = "0.5"
-metal = "0.25"
+metal = "0.29"
 objc = "0.2"
 
 [build-dependencies]
-bindgen = "0.65.1"
+bindgen = "0.70.0"

@@ -1,7 +1,7 @@
 id = "gleam"
 name = "Gleam"
 description = "Gleam support."
-version = "0.1.3"
+version = "0.2.0"
 schema_version = 1
 authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"
@@ -12,9 +12,10 @@ language = "Gleam"
 
 [grammars.gleam]
 repository = "https://github.com/gleam-lang/tree-sitter-gleam"
-commit = "8432ffe32ccd360534837256747beb5b1c82fca1"
+commit = "426e67087fd62be5f4533581b5916b2cf010fb5b"
 
 [slash_commands.gleam-project]
 description = "Returns information about the current Gleam project."
 requires_argument = false
-tooltip_text = "Insert Gleam project data"
+
+[indexed_docs_providers.gleam-hexdocs]

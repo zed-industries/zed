@@ -1,9 +1,36 @@
 use std::sync::OnceLock;
 
 use ::util::ResultExt;
-use windows::Win32::{Foundation::*, System::Threading::*, UI::WindowsAndMessaging::*};
+use windows::{
+    Wdk::System::SystemServices::RtlGetVersion,
+    Win32::{Foundation::*, UI::WindowsAndMessaging::*},
+    UI::{
+        Color,
+        ViewManagement::{UIColorType, UISettings},
+    },
+};
 
 use crate::*;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WindowsVersion {
+    Win10,
+    Win11,
+}
+
+impl WindowsVersion {
+    pub(crate) fn new() -> anyhow::Result<Self> {
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { RtlGetVersion(&mut version) };
+
+        status.ok()?;
+        if version.dwBuildNumber >= 22000 {
+            Ok(WindowsVersion::Win11)
+        } else {
+            Ok(WindowsVersion::Win10)
+        }
+    }
+}
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;
@@ -74,46 +101,18 @@ pub(crate) unsafe fn set_window_long(
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct OwnedHandle(HANDLE);
-
-impl OwnedHandle {
-    pub(crate) fn new(handle: HANDLE) -> Self {
-        Self(handle)
-    }
-
-    #[inline(always)]
-    pub(crate) fn to_raw(&self) -> HANDLE {
-        self.0
-    }
-}
-
-impl Drop for OwnedHandle {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            unsafe { CloseHandle(self.0) }.log_err();
-        }
-    }
-}
-
-pub(crate) fn create_event() -> windows::core::Result<OwnedHandle> {
-    Ok(OwnedHandle::new(unsafe {
-        CreateEventW(None, false, false, None)?
-    }))
-}
-
 pub(crate) fn windows_credentials_target_name(url: &str) -> String {
     format!("zed:url={}", url)
 }
 
 pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
-    static ARROW: OnceLock<HCURSOR> = OnceLock::new();
-    static IBEAM: OnceLock<HCURSOR> = OnceLock::new();
-    static CROSS: OnceLock<HCURSOR> = OnceLock::new();
-    static HAND: OnceLock<HCURSOR> = OnceLock::new();
-    static SIZEWE: OnceLock<HCURSOR> = OnceLock::new();
-    static SIZENS: OnceLock<HCURSOR> = OnceLock::new();
-    static NO: OnceLock<HCURSOR> = OnceLock::new();
+    static ARROW: OnceLock<SafeCursor> = OnceLock::new();
+    static IBEAM: OnceLock<SafeCursor> = OnceLock::new();
+    static CROSS: OnceLock<SafeCursor> = OnceLock::new();
+    static HAND: OnceLock<SafeCursor> = OnceLock::new();
+    static SIZEWE: OnceLock<SafeCursor> = OnceLock::new();
+    static SIZENS: OnceLock<SafeCursor> = OnceLock::new();
+    static NO: OnceLock<SafeCursor> = OnceLock::new();
     let (lock, name) = match style {
         CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => (&IBEAM, IDC_IBEAM),
         CursorStyle::Crosshair => (&CROSS, IDC_CROSS),
@@ -129,22 +128,15 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
         CursorStyle::OperationNotAllowed => (&NO, IDC_NO),
         _ => (&ARROW, IDC_ARROW),
     };
-    *lock.get_or_init(|| {
+    *(*lock.get_or_init(|| {
         HCURSOR(
             unsafe { LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED) }
                 .log_err()
                 .unwrap_or_default()
                 .0,
         )
-    })
-}
-
-#[inline]
-pub(crate) fn logical_size(physical_size: Size<DevicePixels>, scale_factor: f32) -> Size<Pixels> {
-    Size {
-        width: px(physical_size.width.0 as f32 / scale_factor),
-        height: px(physical_size.height.0 as f32 / scale_factor),
-    }
+        .into()
+    }))
 }
 
 #[inline]
@@ -153,4 +145,23 @@ pub(crate) fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> 
         x: px(x / scale_factor),
         y: px(y / scale_factor),
     }
+}
+
+// https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
+#[inline]
+pub(crate) fn system_appearance() -> Result<WindowAppearance> {
+    let ui_settings = UISettings::new()?;
+    let foreground_color = ui_settings.GetColorValue(UIColorType::Foreground)?;
+    // If the foreground is light, then is_color_light will evaluate to true,
+    // meaning Dark mode is enabled.
+    if is_color_light(&foreground_color) {
+        Ok(WindowAppearance::Dark)
+    } else {
+        Ok(WindowAppearance::Light)
+    }
+}
+
+#[inline(always)]
+fn is_color_light(color: &Color) -> bool {
+    ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
 }

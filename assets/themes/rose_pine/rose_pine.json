@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "Rosé Pine",
   "author": "Zed Industries",
   "themes": [
@@ -38,6 +39,7 @@
         "icon.accent": "#9bced6ff",
         "status_bar.background": "#292738ff",
         "title_bar.background": "#292738ff",
+        "title_bar.inactive_background": "#1c1b2aff",
         "toolbar.background": "#191724ff",
         "tab_bar.background": "#1c1b2aff",
         "tab.inactive_background": "#1c1b2aff",
@@ -417,6 +419,7 @@
         "icon.accent": "#57949fff",
         "status_bar.background": "#dcd8d8ff",
         "title_bar.background": "#dcd8d8ff",
+        "title_bar.inactive_background": "#fef9f2ff",
         "toolbar.background": "#faf4edff",
         "tab_bar.background": "#fef9f2ff",
         "tab.inactive_background": "#fef9f2ff",
@@ -796,6 +799,7 @@
         "icon.accent": "#9bced6ff",
         "status_bar.background": "#38354eff",
         "title_bar.background": "#38354eff",
+        "title_bar.inactive_background": "#28253cff",
         "toolbar.background": "#232136ff",
         "tab_bar.background": "#28253cff",
         "tab.inactive_background": "#28253cff",

@@ -1,28 +1,24 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageServerName};
+use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
+use core::slice;
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
 use schemars::{
-    schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, SettingsSources};
+use serde::{
+    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
+use serde_json::Value;
+use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
-
-impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
-    fn into(self) -> SettingsLocation<'a> {
-        SettingsLocation {
-            worktree_id: self.worktree_id(),
-            path: self.path().as_ref(),
-        }
-    }
-}
 
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
@@ -36,7 +32,7 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_deref())
+    all_language_settings(file, cx).language(language_name.as_ref())
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -44,7 +40,10 @@ pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
-    let location = file.map(|f| f.as_ref().into());
+    let location = file.map(|f| SettingsLocation {
+        worktree_id: f.worktree_id(cx),
+        path: f.path().as_ref(),
+    });
     AllLanguageSettings::get(location, cx)
 }
 
@@ -54,7 +53,7 @@ pub struct AllLanguageSettings {
     /// The inline completion settings.
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
-    languages: HashMap<Arc<str>, LanguageSettings>,
+    languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
@@ -71,12 +70,12 @@ pub struct LanguageSettings {
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
-    /// Whether to show wrap guides in the editor. Setting this to true will
-    /// show a guide at the 'preferred_line_length' value if softwrap is set to
-    /// 'preferred_line_length', and will show any additional guides as specified
-    /// by the 'wrap_guides' setting.
+    // Whether to show wrap guides (vertical rulers) in the editor.
+    // Setting this to true will show a guide at the 'preferred_line_length' value
+    // if softwrap is set to 'preferred_line_length', and will show any
+    // additional guides as specified by the 'wrap_guides' setting.
     pub show_wrap_guides: bool,
-    /// Character counts at which to show wrap guides in the editor.
+    /// Character counts at which to show wrap guides (vertical rulers) in the editor.
     pub wrap_guides: Vec<usize>,
     /// Indent guide related settings.
     pub indent_guides: IndentGuideSettings,
@@ -89,7 +88,7 @@ pub struct LanguageSettings {
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
     /// How to perform a buffer format.
-    pub formatter: Formatter,
+    pub formatter: SelectedFormatter,
     /// Zed's Prettier integration settings.
     pub prettier: PrettierSettings,
     /// Whether to use language servers to provide code intelligence.
@@ -100,7 +99,7 @@ pub struct LanguageSettings {
     /// special tokens:
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    pub language_servers: Vec<Arc<str>>,
+    pub language_servers: Vec<String>,
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     pub show_inline_completions: bool,
@@ -112,12 +111,19 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
+    /// Whether to automatically surround text with brackets.
+    pub use_auto_surround: bool,
+    /// Whether to use additional LSP queries to format (and amend) the code after
+    /// every "trigger" symbol input, defined by LSP server capabilities.
+    pub use_on_type_format: bool,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
     /// Whether to perform linked edits
     pub linked_edits: bool,
+    /// Task configuration for this language.
+    pub tasks: LanguageTaskConfig,
 }
 
 impl LanguageSettings {
@@ -134,22 +140,24 @@ impl LanguageSettings {
     }
 
     pub(crate) fn resolve_language_servers(
-        configured_language_servers: &[Arc<str>],
+        configured_language_servers: &[String],
         available_language_servers: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
-        let (disabled_language_servers, enabled_language_servers): (Vec<Arc<str>>, Vec<Arc<str>>) =
-            configured_language_servers.iter().partition_map(
-                |language_server| match language_server.strip_prefix('!') {
-                    Some(disabled) => Either::Left(disabled.into()),
-                    None => Either::Right(language_server.clone()),
-                },
-            );
+        let (disabled_language_servers, enabled_language_servers): (
+            Vec<LanguageServerName>,
+            Vec<LanguageServerName>,
+        ) = configured_language_servers.iter().partition_map(
+            |language_server| match language_server.strip_prefix('!') {
+                Some(disabled) => Either::Left(LanguageServerName(disabled.to_string().into())),
+                None => Either::Right(LanguageServerName(language_server.clone().into())),
+            },
+        );
 
         let rest = available_language_servers
-            .into_iter()
+            .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&&available_language_server.0)
-                    && !enabled_language_servers.contains(&&available_language_server.0)
+                !disabled_language_servers.contains(&available_language_server)
+                    && !enabled_language_servers.contains(&available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -157,10 +165,10 @@ impl LanguageSettings {
         enabled_language_servers
             .into_iter()
             .flat_map(|language_server| {
-                if language_server.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![LanguageServerName(language_server.clone())]
+                    vec![language_server.clone()]
                 }
             })
             .collect::<Vec<_>>()
@@ -194,14 +202,14 @@ pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The inline completion settings.
-    #[serde(default, alias = "copilot")]
+    #[serde(default)]
     pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
-    #[serde(default, alias = "language_overrides")]
-    pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
+    #[serde(default)]
+    pub languages: HashMap<LanguageName, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
@@ -270,7 +278,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: auto
     #[serde(default)]
-    pub formatter: Option<Formatter>,
+    pub formatter: Option<SelectedFormatter>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
@@ -292,12 +300,12 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     #[serde(default)]
-    pub language_servers: Option<Vec<Arc<str>>>,
+    pub language_servers: Option<Vec<String>>,
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
-    #[serde(default, alias = "show_copilot_suggestions")]
+    #[serde(default)]
     pub show_inline_completions: Option<bool>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
@@ -315,14 +323,24 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
-    // Controls how the editor handles the autoclosed characters.
-    // When set to `false`(default), skipping over and auto-removing of the closing characters
-    // happen only for auto-inserted characters.
-    // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
-    // no matter how they were inserted.
+    /// Whether to automatically surround text with characters for you. For example,
+    /// when you select text and type (, Zed will automatically surround text with ().
+    ///
+    /// Default: true
+    pub use_auto_surround: Option<bool>,
+    /// Controls how the editor handles the autoclosed characters.
+    /// When set to `false`(default), skipping over and auto-removing of the closing characters
+    /// happen only for auto-inserted characters.
+    /// Otherwise(when `true`), the closing characters are always skipped over and auto-removed
+    /// no matter how they were inserted.
     ///
     /// Default: false
     pub always_treat_brackets_as_autoclosed: Option<bool>,
+    /// Whether to use additional LSP queries to format (and amend) the code after
+    /// every "trigger" symbol input, defined by LSP server capabilities.
+    ///
+    /// Default: true
+    pub use_on_type_format: Option<bool>,
     /// Which code actions to run on save after the formatter.
     /// These are not run if formatting is off.
     ///
@@ -333,6 +351,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Task configuration for this language.
+    ///
+    /// Default: {}
+    pub tasks: Option<LanguageTaskConfig>,
 }
 
 /// The contents of the inline completion settings.
@@ -357,35 +379,131 @@ pub struct FeaturesContent {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
-    /// Do not soft wrap.
+    /// Prefer a single line generally, unless an overly long line is encountered.
     None,
+    /// Deprecated: use None instead. Left to avoid breaking existing users' configs.
     /// Prefer a single line generally, unless an overly long line is encountered.
     PreferLine,
-    /// Soft wrap lines that overflow the editor
+    /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length
+    /// Soft wrap lines at the preferred line length.
     PreferredLineLength,
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    Bounded,
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
-    /// Files should be formatted using the current language server.
-    LanguageServer,
-    /// The external program to use to format the files on save.
-    External {
-        /// The external program to run.
-        command: Arc<str>,
-        /// The arguments to pass to the program.
-        arguments: Arc<[String]>,
-    },
-    /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    List(FormatterList),
+}
+
+impl JsonSchema for FormatOnSave {
+    fn schema_name() -> String {
+        "OnSaveFormatter".into()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        let formatter_schema = Formatter::json_schema(generator);
+        schema.instance_type = Some(
+            vec![
+                InstanceType::Object,
+                InstanceType::String,
+                InstanceType::Array,
+            ]
+            .into(),
+        );
+
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("on".into()),
+                Value::String("off".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
+        let mut nested_values = SchemaObject::default();
+
+        nested_values.array().items = Some(formatter_schema.clone().into());
+
+        schema.subschemas().any_of = Some(vec![
+            nested_values.into(),
+            valid_raw_values.into(),
+            formatter_schema,
+        ]);
+        schema.into()
+    }
+}
+
+impl Serialize for FormatOnSave {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::On => serializer.serialize_str("on"),
+            Self::Off => serializer.serialize_str("off"),
+            Self::List(list) => list.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FormatOnSave {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FormatDeserializer;
+
+        impl<'d> Visitor<'d> for FormatDeserializer {
+            type Value = FormatOnSave;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a valid on-save formatter kind")
+            }
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "on" {
+                    Ok(Self::Value::On)
+                } else if v == "off" {
+                    Ok(Self::Value::Off)
+                } else if v == "language_server" {
+                    Ok(Self::Value::List(FormatterList(
+                        Formatter::LanguageServer { name: None }.into(),
+                    )))
+                } else {
+                    let ret: Result<FormatterList, _> =
+                        Deserialize::deserialize(v.into_deserializer());
+                    ret.map(Self::Value::List)
+                }
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
+                ret.map(Self::Value::List)
+            }
+            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
+                ret.map(Self::Value::List)
+            }
+        }
+        deserializer.deserialize_any(FormatDeserializer)
+    }
 }
 
 /// Controls how whitespace should be displayedin the editor.
@@ -408,15 +526,134 @@ pub enum ShowWhitespaceSetting {
 }
 
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Formatter {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    List(FormatterList),
+}
+
+impl JsonSchema for SelectedFormatter {
+    fn schema_name() -> String {
+        "Formatter".into()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        let formatter_schema = Formatter::json_schema(generator);
+        schema.instance_type = Some(
+            vec![
+                InstanceType::Object,
+                InstanceType::String,
+                InstanceType::Array,
+            ]
+            .into(),
+        );
+
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("auto".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
+
+        let mut nested_values = SchemaObject::default();
+
+        nested_values.array().items = Some(formatter_schema.clone().into());
+
+        schema.subschemas().any_of = Some(vec![
+            nested_values.into(),
+            valid_raw_values.into(),
+            formatter_schema,
+        ]);
+        schema.into()
+    }
+}
+
+impl Serialize for SelectedFormatter {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            SelectedFormatter::Auto => serializer.serialize_str("auto"),
+            SelectedFormatter::List(list) => list.serialize(serializer),
+        }
+    }
+}
+impl<'de> Deserialize<'de> for SelectedFormatter {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FormatDeserializer;
+
+        impl<'d> Visitor<'d> for FormatDeserializer {
+            type Value = SelectedFormatter;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a valid formatter kind")
+            }
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "auto" {
+                    Ok(Self::Value::Auto)
+                } else if v == "language_server" {
+                    Ok(Self::Value::List(FormatterList(
+                        Formatter::LanguageServer { name: None }.into(),
+                    )))
+                } else {
+                    let ret: Result<FormatterList, _> =
+                        Deserialize::deserialize(v.into_deserializer());
+                    ret.map(SelectedFormatter::List)
+                }
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
+                ret.map(SelectedFormatter::List)
+            }
+            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
+                ret.map(SelectedFormatter::List)
+            }
+        }
+        deserializer.deserialize_any(FormatDeserializer)
+    }
+}
+/// Controls which formatter should be used when formatting code.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case", transparent)]
+pub struct FormatterList(pub SingleOrVec<Formatter>);
+
+impl AsRef<[Formatter]> for FormatterList {
+    fn as_ref(&self) -> &[Formatter] {
+        match &self.0 {
+            SingleOrVec::Single(single) => slice::from_ref(single),
+            SingleOrVec::Vec(v) => v,
+        }
+    }
+}
+
+/// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Formatter {
     /// Format code using the current language server.
-    LanguageServer,
+    LanguageServer { name: Option<String> },
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -424,7 +661,7 @@ pub enum Formatter {
         /// The external program to run.
         command: Arc<str>,
         /// The arguments to pass to the program.
-        arguments: Arc<[String]>,
+        arguments: Option<Arc<[String]>>,
     },
     /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),
@@ -443,6 +680,11 @@ pub struct IndentGuideSettings {
     /// Default: 1
     #[serde(default = "line_width")]
     pub line_width: u32,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    #[serde(default = "active_line_width")]
+    pub active_line_width: u32,
     /// Determines how indent guides are colored.
     ///
     /// Default: Fixed
@@ -457,6 +699,10 @@ pub struct IndentGuideSettings {
 
 fn line_width() -> u32 {
     1
+}
+
+fn active_line_width() -> u32 {
+    line_width()
 }
 
 /// Determines how indent guides are colored.
@@ -506,6 +752,14 @@ pub struct InlayHintSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub show_other_hints: bool,
+    /// Whether to show a background for inlay hints.
+    ///
+    /// If set to `true`, the background will use the `hint.background` color
+    /// from the current theme.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub show_background: bool,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.
@@ -530,6 +784,13 @@ fn scroll_debounce_ms() -> u64 {
     50
 }
 
+/// The task settings for a particular language.
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+pub struct LanguageTaskConfig {
+    /// Extra task variables to set for a particular language.
+    pub variables: HashMap<String, String>,
+}
+
 impl InlayHintSettings {
     /// Returns the kinds of inlay hints that are enabled based on the settings.
     pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
@@ -549,7 +810,7 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&str>) -> &'a LanguageSettings {
+    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
             if let Some(overrides) = self.languages.get(name) {
                 return overrides;
@@ -579,7 +840,7 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()).as_deref())
+        self.language(language.map(|l| l.name()).as_ref())
             .show_inline_completions
     }
 }
@@ -646,6 +907,17 @@ impl settings::Settings for AllLanguageSettings {
             .ok_or_else(Self::missing_default)?;
 
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
+
+        for (language, suffixes) in &default_value.file_types {
+            let mut builder = GlobSetBuilder::new();
+
+            for suffix in suffixes {
+                builder.add(Glob::new(suffix)?);
+            }
+
+            file_types.insert(language.clone(), builder.build()?);
+        }
+
         for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = Some(copilot);
@@ -684,6 +956,15 @@ impl settings::Settings for AllLanguageSettings {
 
             for (language, suffixes) in &user_settings.file_types {
                 let mut builder = GlobSetBuilder::new();
+
+                let default_value = default_value.file_types.get(&language.clone());
+
+                // Merge the default value with the user's value.
+                if let Some(suffixes) = default_value {
+                    for suffix in suffixes {
+                        builder.add(Glob::new(suffix)?);
+                    }
+                }
 
                 for suffix in suffixes {
                     builder.add(Glob::new(suffix)?);
@@ -748,23 +1029,10 @@ impl settings::Settings for AllLanguageSettings {
             .definitions
             .extend([("Languages".into(), languages_object_schema.into())]);
 
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([
-                (
-                    "languages".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-                // For backward compatibility
-                (
-                    "language_overrides".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-            ]);
+        add_references_to_properties(
+            &mut root_schema,
+            &[("languages", "#/definitions/Languages")],
+        );
 
         root_schema
     }
@@ -778,9 +1046,15 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     }
 
     merge(&mut settings.tab_size, src.tab_size);
+    settings.tab_size = settings
+        .tab_size
+        .clamp(NonZeroU32::new(1).unwrap(), NonZeroU32::new(16).unwrap());
+
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
+    merge(&mut settings.use_auto_surround, src.use_auto_surround);
+    merge(&mut settings.use_on_type_format, src.use_on_type_format);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
         src.always_treat_brackets_as_autoclosed,
@@ -793,6 +1067,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.code_actions_on_format.clone(),
     );
     merge(&mut settings.linked_edits, src.linked_edits);
+    merge(&mut settings.tasks, src.tasks.clone());
 
     merge(
         &mut settings.preferred_line_length,
@@ -855,12 +1130,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_formatter_deserialization() {
+        let raw_auto = "{\"formatter\": \"auto\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
+        assert_eq!(settings.formatter, Some(SelectedFormatter::Auto));
+        let raw = "{\"formatter\": \"language_server\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                Formatter::LanguageServer { name: None }.into()
+            )))
+        );
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                vec![Formatter::LanguageServer { name: None }].into()
+            )))
+        );
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                vec![
+                    Formatter::LanguageServer { name: None },
+                    Formatter::Prettier
+                ]
+                .into()
+            )))
+        );
+    }
+
+    #[test]
+    fn test_formatter_deserialization_invalid() {
+        let raw_auto = "{\"formatter\": {}}";
+        let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
+        assert!(result.is_err());
+    }
+
+    #[test]
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
-                .into_iter()
+                .iter()
                 .copied()
-                .map(|name| LanguageServerName(name.into()))
+                .map(|name| LanguageServerName(name.to_string().into()))
                 .collect::<Vec<_>>()
         }
 

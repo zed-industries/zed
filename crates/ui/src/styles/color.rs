@@ -23,6 +23,7 @@ pub enum Color {
     Selected,
     Success,
     Warning,
+    Custom(Hsla),
 }
 
 impl Color {
@@ -46,6 +47,7 @@ impl Color {
             Color::Selected => cx.theme().colors().text_accent,
             Color::Success => cx.theme().status().success,
             Color::Warning => cx.theme().status().warning,
+            Color::Custom(color) => *color,
         }
     }
 }

@@ -1,6 +1,12 @@
+mod hexdocs;
+
 use std::fs;
+use std::sync::LazyLock;
 use zed::lsp::CompletionKind;
-use zed::{CodeLabel, CodeLabelSpan, LanguageServerId, SlashCommand};
+use zed::{
+    CodeLabel, CodeLabelSpan, KeyValueStore, LanguageServerId, SlashCommand, SlashCommandOutput,
+    SlashCommandOutputSection,
+};
 use zed_extension_api::{self as zed, Result};
 
 struct GleamExtension {
@@ -24,7 +30,7 @@ impl GleamExtension {
         }
 
         zed::set_language_server_installation_status(
-            &language_server_id,
+            language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let release = zed::latest_github_release(
@@ -62,7 +68,7 @@ impl GleamExtension {
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
-                &language_server_id,
+                language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
@@ -78,7 +84,7 @@ impl GleamExtension {
             for entry in entries {
                 let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
                 if entry.file_name().to_str() != Some(&version_dir) {
-                    fs::remove_dir_all(&entry.path()).ok();
+                    fs::remove_dir_all(entry.path()).ok();
                 }
             }
         }
@@ -146,22 +152,59 @@ impl zed::Extension for GleamExtension {
     fn run_slash_command(
         &self,
         command: SlashCommand,
-        _argument: Option<String>,
-        worktree: &zed::Worktree,
-    ) -> Result<Option<String>, String> {
+        _args: Vec<String>,
+        worktree: Option<&zed::Worktree>,
+    ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
             "gleam-project" => {
-                let mut message = String::new();
-                message.push_str("You are in a Gleam project.\n");
+                let worktree = worktree.ok_or("no worktree")?;
 
-                if let Some(gleam_toml) = worktree.read_text_file("gleam.toml").ok() {
-                    message.push_str("The `gleam.toml` is as follows:\n");
-                    message.push_str(&gleam_toml);
+                let mut text = String::new();
+                text.push_str("You are in a Gleam project.\n");
+
+                if let Ok(gleam_toml) = worktree.read_text_file("gleam.toml") {
+                    text.push_str("The `gleam.toml` is as follows:\n");
+                    text.push_str(&gleam_toml);
                 }
 
-                Ok(Some(message))
+                Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: (0..text.len()).into(),
+                        label: "gleam-project".to_string(),
+                    }],
+                    text,
+                })
             }
             command => Err(format!("unknown slash command: \"{command}\"")),
+        }
+    }
+
+    fn suggest_docs_packages(&self, provider: String) -> Result<Vec<String>, String> {
+        match provider.as_str() {
+            "gleam-hexdocs" => {
+                static GLEAM_PACKAGES: LazyLock<Vec<String>> = LazyLock::new(|| {
+                    include_str!("../packages.txt")
+                        .lines()
+                        .filter(|line| !line.starts_with('#'))
+                        .map(|line| line.trim().to_owned())
+                        .collect()
+                });
+
+                Ok(GLEAM_PACKAGES.clone())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    fn index_docs(
+        &self,
+        provider: String,
+        package: String,
+        database: &KeyValueStore,
+    ) -> Result<(), String> {
+        match provider.as_str() {
+            "gleam-hexdocs" => hexdocs::index(package, database),
+            _ => Ok(()),
         }
     }
 }
@@ -201,6 +244,6 @@ mod tests {
 
         let detail = "fn(\n  Method,\n  List(#(String, String)),\n  a,\n  Scheme,\n  String,\n  Option(Int),\n  String,\n  Option(String),\n) -> Request(a)";
         let expected = "fn(Method, List(#(String, String)), a, Scheme, String, Option(Int), String, Option(String)) -> Request(a)";
-        assert_eq!(strip_newlines_from_detail(&detail), expected);
+        assert_eq!(strip_newlines_from_detail(detail), expected);
     }
 }

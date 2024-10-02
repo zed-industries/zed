@@ -1,4 +1,4 @@
-use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem};
+use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem, SharedString};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -49,9 +49,17 @@ impl LineWrapper {
                     continue;
                 }
 
-                if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = ix;
-                    last_candidate_width = width;
+                if Self::is_word_char(c) {
+                    if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
+                        last_candidate_ix = ix;
+                        last_candidate_width = width;
+                    }
+                } else {
+                    // CJK may not be space separated, e.g.: `Hello world你好世界`
+                    if c != ' ' && first_non_whitespace_ix.is_some() {
+                        last_candidate_ix = ix;
+                        last_candidate_width = width;
+                    }
                 }
 
                 if c != ' ' && first_non_whitespace_ix.is_none() {
@@ -88,6 +96,68 @@ impl LineWrapper {
 
             None
         })
+    }
+
+    /// Truncate a line of text to the given width with this wrapper's font and font size.
+    pub fn truncate_line(
+        &mut self,
+        line: SharedString,
+        truncate_width: Pixels,
+        ellipsis: Option<&str>,
+    ) -> SharedString {
+        let mut width = px(0.);
+        let mut ellipsis_width = px(0.);
+        if let Some(ellipsis) = ellipsis {
+            for c in ellipsis.chars() {
+                ellipsis_width += self.width_for_char(c);
+            }
+        }
+
+        let mut char_indices = line.char_indices();
+        let mut truncate_ix = 0;
+        for (ix, c) in char_indices {
+            if width + ellipsis_width <= truncate_width {
+                truncate_ix = ix;
+            }
+
+            let char_width = self.width_for_char(c);
+            width += char_width;
+
+            if width.floor() > truncate_width {
+                return SharedString::from(format!(
+                    "{}{}",
+                    &line[..truncate_ix],
+                    ellipsis.unwrap_or("")
+                ));
+            }
+        }
+
+        line.clone()
+    }
+
+    pub(crate) fn is_word_char(c: char) -> bool {
+        // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
+        c.is_ascii_alphanumeric() ||
+        // Latin script in Unicode for French, German, Spanish, etc.
+        // Latin-1 Supplement
+        // https://en.wikipedia.org/wiki/Latin-1_Supplement
+        matches!(c, '\u{00C0}'..='\u{00FF}') ||
+        // Latin Extended-A
+        // https://en.wikipedia.org/wiki/Latin_Extended-A
+        matches!(c, '\u{0100}'..='\u{017F}') ||
+        // Latin Extended-B
+        // https://en.wikipedia.org/wiki/Latin_Extended-B
+        matches!(c, '\u{0180}'..='\u{024F}') ||
+        // Cyrillic for Russian, Ukrainian, etc.
+        // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
+        matches!(c, '\u{0400}'..='\u{04FF}') ||
+        // Some other known special characters that should be treated as word characters,
+        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
+        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',') ||
+        // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
+        matches!(c,  '/' | ':' | '?' | '&' | '=') ||
+        // `⋯` character is special used in Zed, to keep this at the end of the line.
+        matches!(c, '⋯')
     }
 
     #[inline(always)]
@@ -143,78 +213,167 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, TestAppContext, TestDispatcher, TextRun, WindowTextSystem, WrapBoundary};
+    use crate::{font, TestAppContext, TestDispatcher};
+    #[cfg(target_os = "macos")]
+    use crate::{TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
+
+    fn build_wrapper() -> LineWrapper {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let cx = TestAppContext::new(dispatcher, None);
+        cx.text_system()
+            .add_fonts(vec![std::fs::read(
+                "../../assets/fonts/plex-mono/ZedPlexMono-Regular.ttf",
+            )
+            .unwrap()
+            .into()])
+            .unwrap();
+        let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
+        LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
+    }
 
     #[test]
     fn test_wrap_line() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let cx = TestAppContext::new(dispatcher, None);
+        let mut wrapper = build_wrapper();
 
-        cx.update(|cx| {
-            let text_system = cx.text_system().clone();
-            let mut wrapper = LineWrapper::new(
-                text_system.font_id(&font("Courier")).unwrap(),
-                px(16.),
-                text_system.platform_text_system.clone(),
-            );
-            assert_eq!(
-                wrapper
-                    .wrap_line("aa bbb cccc ddddd eeee", px(72.))
-                    .collect::<Vec<_>>(),
-                &[
-                    Boundary::new(7, 0),
-                    Boundary::new(12, 0),
-                    Boundary::new(18, 0)
-                ],
-            );
-            assert_eq!(
-                wrapper
-                    .wrap_line("aaa aaaaaaaaaaaaaaaaaa", px(72.0))
-                    .collect::<Vec<_>>(),
-                &[
-                    Boundary::new(4, 0),
-                    Boundary::new(11, 0),
-                    Boundary::new(18, 0)
-                ],
-            );
-            assert_eq!(
-                wrapper
-                    .wrap_line("     aaaaaaa", px(72.))
-                    .collect::<Vec<_>>(),
-                &[
-                    Boundary::new(7, 5),
-                    Boundary::new(9, 5),
-                    Boundary::new(11, 5),
-                ]
-            );
-            assert_eq!(
-                wrapper
-                    .wrap_line("                            ", px(72.))
-                    .collect::<Vec<_>>(),
-                &[
-                    Boundary::new(7, 0),
-                    Boundary::new(14, 0),
-                    Boundary::new(21, 0)
-                ]
-            );
-            assert_eq!(
-                wrapper
-                    .wrap_line("          aaaaaaaaaaaaaa", px(72.))
-                    .collect::<Vec<_>>(),
-                &[
-                    Boundary::new(7, 0),
-                    Boundary::new(14, 3),
-                    Boundary::new(18, 3),
-                    Boundary::new(22, 3),
-                ]
-            );
-        });
+        assert_eq!(
+            wrapper
+                .wrap_line("aa bbb cccc ddddd eeee", px(72.))
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(12, 0),
+                Boundary::new(18, 0)
+            ],
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line("aaa aaaaaaaaaaaaaaaaaa", px(72.0))
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(4, 0),
+                Boundary::new(11, 0),
+                Boundary::new(18, 0)
+            ],
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line("     aaaaaaa", px(72.))
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 5),
+                Boundary::new(9, 5),
+                Boundary::new(11, 5),
+            ]
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line("                            ", px(72.))
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(14, 0),
+                Boundary::new(21, 0)
+            ]
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line("          aaaaaaaaaaaaaa", px(72.))
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(14, 3),
+                Boundary::new(18, 3),
+                Boundary::new(22, 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_truncate_line() {
+        let mut wrapper = build_wrapper();
+
+        assert_eq!(
+            wrapper.truncate_line("aa bbb cccc ddddd eeee ffff gggg".into(), px(220.), None),
+            "aa bbb cccc ddddd eeee"
+        );
+        assert_eq!(
+            wrapper.truncate_line(
+                "aa bbb cccc ddddd eeee ffff gggg".into(),
+                px(220.),
+                Some("…")
+            ),
+            "aa bbb cccc ddddd eee…"
+        );
+        assert_eq!(
+            wrapper.truncate_line(
+                "aa bbb cccc ddddd eeee ffff gggg".into(),
+                px(220.),
+                Some("......")
+            ),
+            "aa bbb cccc dddd......"
+        );
+    }
+
+    #[test]
+    fn test_is_word_char() {
+        #[track_caller]
+        fn assert_word(word: &str) {
+            for c in word.chars() {
+                assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+            }
+        }
+
+        #[track_caller]
+        fn assert_not_word(word: &str) {
+            let found = word.chars().any(|c| !LineWrapper::is_word_char(c));
+            assert!(found, "assertion failed for '{}'", word);
+        }
+
+        assert_word("Hello123");
+        assert_word("non-English");
+        assert_word("var_name");
+        assert_word("123456");
+        assert_word("3.1415");
+        assert_word("10^2");
+        assert_word("1~2");
+        assert_word("100%");
+        assert_word("@mention");
+        assert_word("#hashtag");
+        assert_word("$variable");
+        assert_word("more⋯");
+
+        // Space
+        assert_not_word("foo bar");
+
+        // URL case
+        assert_word("https://github.com/zed-industries/zed/");
+        assert_word("github.com");
+        assert_word("a=1&b=2");
+
+        // Latin-1 Supplement
+        assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
+        // Latin Extended-A
+        assert_word("ĀāĂăĄąĆćĈĉĊċČčĎď");
+        // Latin Extended-B
+        assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
+        // Cyrillic
+        assert_word("АБВГДЕЖЗИЙКЛМНОП");
+
+        // non-word characters
+        assert_not_word("你好");
+        assert_not_word("안녕하세요");
+        assert_not_word("こんにちは");
+        assert_not_word("😀😁😂");
+        assert_not_word("()[]{}<>");
     }
 
     // For compatibility with the test macro
+    #[cfg(target_os = "macos")]
     use crate as gpui;
 
+    // These seem to vary wildly based on the text system.
+    #[cfg(target_os = "macos")]
     #[crate::test]
     fn test_wrap_shaped_line(cx: &mut TestAppContext) {
         cx.update(|cx| {

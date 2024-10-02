@@ -3,10 +3,11 @@
 use std::any::{type_name, Any};
 use std::cell::{self, RefCell};
 use std::env;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
 use std::ops::{Deref, DerefMut};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::panic::Location;
 use std::rc::Weak;
 use std::{
@@ -19,22 +20,21 @@ use std::{
 
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
+use ashpd::desktop::open_uri::{OpenDirectoryRequest, OpenFileRequest as OpenUriRequest};
+use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
-use copypasta::ClipboardProvider;
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
-use time::UtcOffset;
 use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
-use crate::platform::linux::xdg_desktop_portal::{should_auto_hide_scrollbars, window_appearance};
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
@@ -45,13 +45,16 @@ use crate::{
 
 use super::x11::X11Client;
 
-pub(crate) const SCROLL_LINES: f64 = 3.0;
+pub(crate) const SCROLL_LINES: f32 = 3.0;
 
 // Values match the defaults on GTK.
 // Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
+
+const FILE_PICKER_PORTAL_MISSING: &str =
+    "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
@@ -67,11 +70,13 @@ pub trait LinuxClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
     fn set_cursor_style(&self, style: CursorStyle);
     fn open_uri(&self, uri: &str);
+    fn reveal_path(&self, path: PathBuf);
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
 }
 
@@ -105,18 +110,13 @@ impl LinuxCommon {
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let appearance = window_appearance(&background_executor)
-            .log_err()
-            .unwrap_or(WindowAppearance::Light);
-        let auto_hide_scrollbars =
-            should_auto_hide_scrollbars(&background_executor).unwrap_or(false);
 
         let common = LinuxCommon {
             background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
-            appearance,
-            auto_hide_scrollbars,
+            appearance: WindowAppearance::Light,
+            auto_hide_scrollbars: false,
             callbacks,
             signal,
             menus: Vec::new(),
@@ -144,11 +144,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
         LinuxClient::run(self);
 
-        self.with_common(|common| {
-            if let Some(mut fun) = common.callbacks.quit.take() {
-                fun();
-            }
-        });
+        let quit = self.with_common(|common| common.callbacks.quit.take());
+        if let Some(mut fun) = quit {
+            fun();
+        }
     }
 
     fn quit(&self) {
@@ -185,7 +184,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
-            while kill -O {pid} 2>/dev/null; do
+            while kill -0 {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
@@ -240,6 +239,10 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.active_window()
     }
 
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        self.window_stack()
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -259,68 +262,84 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let title = if options.multiple {
-                    if !options.files {
-                        "Open folders"
-                    } else {
-                        "Open files"
-                    }
+                let title = if options.directories {
+                    "Open Folder"
                 } else {
-                    if !options.files {
-                        "Open folder"
-                    } else {
-                        "Open file"
-                    }
+                    "Open File"
                 };
 
-                let result = OpenFileRequest::default()
+                let request = match OpenFileRequest::default()
                     .modal(true)
                     .title(title)
-                    .accept_label("Select")
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
                     .await
-                    .ok()
-                    .and_then(|request| request.response().ok())
-                    .and_then(|response| {
+                {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let result = match err {
+                            ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
+                            err => err.into(),
+                        };
+                        done_tx.send(Err(result));
+                        return;
+                    }
+                };
+
+                let result = match request.response() {
+                    Ok(response) => Ok(Some(
                         response
                             .uris()
                             .iter()
-                            .map(|uri| uri.to_file_path().ok())
-                            .collect()
-                    });
-
+                            .filter_map(|uri| uri.to_file_path().ok())
+                            .collect::<Vec<_>>(),
+                    )),
+                    Err(ashpd::Error::Response(_)) => Ok(None),
+                    Err(e) => Err(e.into()),
+                };
                 done_tx.send(result);
             })
             .detach();
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
         let directory = directory.to_owned();
         self.foreground_executor()
             .spawn(async move {
-                let result = SaveFileRequest::default()
+                let request = match SaveFileRequest::default()
                     .modal(true)
-                    .title("Select new path")
-                    .accept_label("Accept")
+                    .title("Save File")
+                    .current_folder(directory)
+                    .expect("pathbuf should not be nul terminated")
                     .send()
                     .await
-                    .ok()
-                    .and_then(|request| request.response().ok())
-                    .and_then(|response| {
-                        response
-                            .uris()
-                            .first()
-                            .and_then(|uri| uri.to_file_path().ok())
-                    });
+                {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let result = match err {
+                            ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
+                            err => err.into(),
+                        };
+                        done_tx.send(Err(result));
+                        return;
+                    }
+                };
 
+                let result = match request.response() {
+                    Ok(response) => Ok(response
+                        .uris()
+                        .first()
+                        .and_then(|uri| uri.to_file_path().ok())),
+                    Err(ashpd::Error::Response(_)) => Ok(None),
+                    Err(e) => Err(e.into()),
+                };
                 done_tx.send(result);
             })
             .detach();
@@ -329,13 +348,20 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn reveal_path(&self, path: &Path) {
-        if path.is_dir() {
-            open::that_detached(path);
-            return;
-        }
-        // If `path` is a file, the system may try to open it in a text editor
-        let dir = path.parent().unwrap_or(Path::new(""));
-        open::that_detached(dir);
+        self.reveal_path(path.to_owned());
+    }
+
+    fn open_with_system(&self, path: &Path) {
+        let executor = self.background_executor().clone();
+        let path = path.to_owned();
+        executor
+            .spawn(async move {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(path)
+                    .spawn()
+                    .expect("Failed to open file with xdg-open");
+            })
+            .detach();
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
@@ -385,10 +411,6 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
-
-    fn local_timezone(&self) -> UtcOffset {
-        UtcOffset::UTC
-    }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
@@ -496,18 +518,63 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn add_recent_document(&self, _path: &Path) {}
 }
 
-pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
-    let mut last_err = None;
-    for mut command in open::commands(uri) {
-        if let Some(token) = activation_token {
-            command.env("XDG_ACTIVATION_TOKEN", token);
-        }
-        match command.spawn() {
-            Ok(_) => return,
-            Err(err) => last_err = Some(err),
-        }
+pub(super) fn open_uri_internal(
+    executor: BackgroundExecutor,
+    uri: &str,
+    activation_token: Option<String>,
+) {
+    if let Some(uri) = url::Url::parse(uri).log_err() {
+        executor
+            .spawn(async move {
+                match OpenUriRequest::default()
+                    .activation_token(activation_token.clone().map(ActivationToken::from))
+                    .send_uri(&uri)
+                    .await
+                {
+                    Ok(_) => return,
+                    Err(e) => log::error!("Failed to open with dbus: {}", e),
+                }
+
+                for mut command in open::commands(uri.to_string()) {
+                    if let Some(token) = activation_token.as_ref() {
+                        command.env("XDG_ACTIVATION_TOKEN", token);
+                    }
+                    match command.spawn() {
+                        Ok(_) => return,
+                        Err(e) => {
+                            log::error!("Failed to open with {:?}: {}", command.get_program(), e)
+                        }
+                    }
+                }
+            })
+            .detach();
     }
-    log::error!("failed to open uri: {uri:?}, last error: {last_err:?}");
+}
+
+pub(super) fn reveal_path_internal(
+    executor: BackgroundExecutor,
+    path: PathBuf,
+    activation_token: Option<String>,
+) {
+    executor
+        .spawn(async move {
+            if let Some(dir) = File::open(path.clone()).log_err() {
+                match OpenDirectoryRequest::default()
+                    .activation_token(activation_token.map(ActivationToken::from))
+                    .send(&dir.as_fd())
+                    .await
+                {
+                    Ok(_) => return,
+                    Err(e) => log::error!("Failed to open with dbus: {}", e),
+                }
+                if path.is_dir() {
+                    open::that_detached(path).log_err();
+                } else {
+                    open::that_detached(path.parent().unwrap_or(Path::new(""))).log_err();
+                }
+            }
+        })
+        .detach();
 }
 
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
@@ -515,17 +582,32 @@ pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bo
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
 }
 
-pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {
+pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::State> {
+    let mut locales = Vec::default();
+    if let Some(locale) = std::env::var_os("LC_CTYPE") {
+        locales.push(locale);
+    }
+    locales.push(OsString::from("C"));
+    let mut state: Option<xkb::compose::State> = None;
+    for locale in locales {
+        if let Ok(table) =
+            xkb::compose::Table::new_from_locale(&cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
+        {
+            state = Some(xkb::compose::State::new(
+                &table,
+                xkb::compose::STATE_NO_FLAGS,
+            ));
+            break;
+        }
+    }
+    state
+}
+
+pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<Vec<u8>> {
     let mut file = File::from_raw_fd(fd.as_raw_fd());
-
-    let mut buffer = String::new();
-    file.read_to_string(&mut buffer)?;
-
-    // Normalize the text to unix line endings, otherwise
-    // copying from eg: firefox inserts a lot of blank
-    // lines, and that is super annoying.
-    let result = buffer.replace("\r\n", "\n");
-    Ok(result)
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    Ok(buffer)
 }
 
 impl CursorStyle {
@@ -543,6 +625,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => Shape::NResize,
             CursorStyle::ResizeDown => Shape::SResize,
             CursorStyle::ResizeUpDown => Shape::NsResize,
+            CursorStyle::ResizeUpLeftDownRight => Shape::NwseResize,
+            CursorStyle::ResizeUpRightDownLeft => Shape::NeswResize,
             CursorStyle::ResizeColumn => Shape::ColResize,
             CursorStyle::ResizeRow => Shape::RowResize,
             CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
@@ -570,6 +654,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => "n-resize",
             CursorStyle::ResizeDown => "s-resize",
             CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::ResizeUpLeftDownRight => "nwse-resize",
+            CursorStyle::ResizeUpRightDownLeft => "nesw-resize",
             CursorStyle::ResizeColumn => "col-resize",
             CursorStyle::ResizeRow => "row-resize",
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
@@ -590,19 +676,13 @@ impl Keystroke {
         let key_utf8 = state.key_get_utf8(keycode);
         let key_sym = state.key_get_one_sym(keycode);
 
-        // The logic here tries to replicate the logic in `../mac/events.rs`
-        // "Consumed" modifiers are modifiers that have been used to translate a key, for example
-        // pressing "shift" and "1" on US layout produces the key `!` but "consumes" the shift.
-        // Notes:
-        //  - macOS gets the key character directly ("."), xkb gives us the key name ("period")
-        //  - macOS logic removes consumed shift modifier for symbols: "{", not "shift-{"
-        //  - macOS logic keeps consumed shift modifiers for letters: "shift-a", not "a" or "A"
-
-        let mut handle_consumed_modifiers = true;
         let key = match key_sym {
             Keysym::Return => "enter".to_owned(),
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
+            Keysym::ISO_Left_Tab => "tab".to_owned(),
+            Keysym::KP_Prior => "pageup".to_owned(),
+            Keysym::KP_Next => "pagedown".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -640,29 +720,28 @@ impl Keystroke {
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
 
-            Keysym::ISO_Left_Tab => {
-                handle_consumed_modifiers = false;
-                "tab".to_owned()
-            }
-
             _ => {
-                handle_consumed_modifiers = false;
-                xkb::keysym_get_name(key_sym).to_lowercase()
+                let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                if key_sym.is_keypad_key() {
+                    name.replace("kp_", "")
+                } else {
+                    name
+                }
             }
         };
+
+        if modifiers.shift {
+            // we only include the shift for upper-case letters by convention,
+            // so don't include for numbers and symbols, but do include for
+            // tab/enter, etc.
+            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
+                modifiers.shift = false;
+            }
+        }
 
         // Ignore control characters (and DEL) for the purposes of ime_key
         let ime_key =
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
-
-        if handle_consumed_modifiers {
-            let mod_shift_index = state.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);
-            let is_shift_consumed = state.mod_index_is_consumed(keycode, mod_shift_index);
-
-            if modifiers.shift && is_shift_consumed {
-                modifiers.shift = false;
-            }
-        }
 
         Keystroke {
             modifiers,

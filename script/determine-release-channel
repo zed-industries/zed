@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ -z "${GITHUB_ACTIONS-}" ]; then
+    echo "Error: This script must be run in a GitHub Actions environment"
+    exit 1
+elif [ -z "${GITHUB_REF-}" ]; then
+    # This should be the release tag 'v0.x.x'
+    echo "Error: GITHUB_REF is not set"
+    exit 1
+fi
+
+version=$(script/get-crate-version zed)
+channel=$(cat crates/zed/RELEASE_CHANNEL)
+echo "Publishing version: ${version} on release channel ${channel}"
+echo "RELEASE_CHANNEL=${channel}" >> $GITHUB_ENV
+
+expected_tag_name=""
+case ${channel} in
+stable)
+    expected_tag_name="v${version}";;
+preview)
+    expected_tag_name="v${version}-pre";;
+*)
+    echo "can't publish a release on channel ${channel}"
+    exit 1;;
+esac
+if [[ $GITHUB_REF_NAME != $expected_tag_name ]]; then
+    echo "invalid release tag ${GITHUB_REF_NAME}. expected ${expected_tag_name}"
+    exit 1
+fi

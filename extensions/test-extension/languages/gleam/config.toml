@@ -1,0 +1,12 @@
+name = "Gleam"
+grammar = "gleam"
+path_suffixes = ["gleam"]
+line_comments = ["// ", "/// "]
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+]
+tab_size = 2

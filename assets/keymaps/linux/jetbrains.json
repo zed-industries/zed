@@ -1,0 +1,91 @@
+[
+  {
+    "bindings": {
+      "ctrl-shift-[": "pane::ActivatePrevItem",
+      "ctrl-shift-]": "pane::ActivateNextItem"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl->": "zed::IncreaseBufferFontSize",
+      "ctrl-<": "zed::DecreaseBufferFontSize",
+      "ctrl-shift-j": "editor::JoinLines",
+      "ctrl-d": "editor::DuplicateLineDown",
+      "ctrl-y": "editor::DeleteLine",
+      "ctrl-m": "editor::ScrollCursorCenter",
+      "ctrl-pagedown": "editor::MovePageDown",
+      "ctrl-pageup": "editor::MovePageUp",
+      // "ctrl-alt-shift-b": "editor::SelectToPreviousWordStart",
+      "ctrl-alt-enter": "editor::NewlineAbove",
+      "shift-enter": "editor::NewlineBelow",
+      // "ctrl--": "editor::Fold", // TODO: `ctrl-numpad--` (numpad not implemented)
+      // "ctrl-+": "editor::UnfoldLines", // TODO: `ctrl-numpad+` (numpad not implemented)
+      "alt-shift-g": "editor::SplitSelectionIntoLines",
+      "alt-j": ["editor::SelectNext", { "replace_newest": false }],
+      "alt-shift-j": ["editor::SelectPrevious", { "replace_newest": false }],
+      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": true }],
+      "alt-up": "editor::SelectLargerSyntaxNode",
+      "alt-down": "editor::SelectSmallerSyntaxNode",
+      "shift-alt-up": "editor::MoveLineUp",
+      "shift-alt-down": "editor::MoveLineDown",
+      "ctrl-alt-l": "editor::Format",
+      "shift-f6": "editor::Rename",
+      "ctrl-alt-left": "pane::GoBack",
+      "ctrl-alt-right": "pane::GoForward",
+      "alt-f7": "editor::FindAllReferences",
+      "ctrl-alt-f7": "editor::FindAllReferences",
+      // "ctrl-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
+      // "ctrl-alt-b": "editor::GoToDefinitionSplit", // Conflicts with workspace::ToggleLeftDock
+      "ctrl-shift-b": "editor::GoToTypeDefinition",
+      "ctrl-alt-shift-b": "editor::GoToTypeDefinitionSplit",
+      "f2": "editor::GoToDiagnostic",
+      "shift-f2": "editor::GoToPrevDiagnostic",
+      "ctrl-alt-shift-down": "editor::GoToHunk",
+      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "ctrl-home": "editor::MoveToBeginning",
+      "ctrl-end": "editor::MoveToEnd",
+      "ctrl-shift-home": "editor::SelectToBeginning",
+      "ctrl-shift-end": "editor::SelectToEnd"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "ctrl-f12": "outline::Toggle",
+      "alt-7": "outline::Toggle",
+      "ctrl-shift-n": "file_finder::Toggle",
+      "ctrl-g": "go_to_line::Toggle",
+      "alt-enter": "editor::ToggleCodeActions"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-shift-n": "file_finder::Toggle",
+      "ctrl-shift-a": "command_palette::Toggle",
+      "shift shift": "command_palette::Toggle",
+      "ctrl-alt-shift-n": "project_symbols::Toggle",
+      "alt-1": "workspace::ToggleLeftDock",
+      "ctrl-e": "tab_switcher::Toggle",
+      "alt-6": "diagnostics::Deploy"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "ctrl-alt-left": "pane::GoBack",
+      "ctrl-alt-right": "pane::GoForward"
+    }
+  },
+  {
+    "context": "ProjectPanel",
+    "bindings": {
+      "enter": "project_panel::Open",
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
+      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "shift-f6": "project_panel::Rename"
+    }
+  }
+]

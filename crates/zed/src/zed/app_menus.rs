@@ -2,21 +2,21 @@ use collab_ui::collab_panel;
 use gpui::{Menu, MenuItem, OsAction};
 use terminal_view::terminal_panel;
 
-pub fn app_menus() -> Vec<Menu<'static>> {
+pub fn app_menus() -> Vec<Menu> {
     use zed_actions::Quit;
 
     vec![
         Menu {
-            name: "Zed",
+            name: "Zed".into(),
             items: vec![
-                MenuItem::action("About Zed…", super::About),
+                MenuItem::action("About Zed…", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
-                    name: "Preferences",
+                    name: "Preferences".into(),
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", super::OpenKeymap),
+                        MenuItem::action("Open Key Bindings", zed_actions::OpenKeymap),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
                         MenuItem::action("Open Local Settings", super::OpenLocalSettings),
@@ -33,7 +33,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
-            name: "File",
+            name: "File".into(),
             items: vec![
                 MenuItem::action("New", workspace::NewFile),
                 MenuItem::action("New Window", workspace::NewWindow),
@@ -58,7 +58,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
-            name: "Edit",
+            name: "Edit".into(),
             items: vec![
                 MenuItem::os_action("Undo", editor::actions::Undo, OsAction::Undo),
                 MenuItem::os_action("Redo", editor::actions::Redo, OsAction::Redo),
@@ -77,7 +77,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
-            name: "Selection",
+            name: "Selection".into(),
             items: vec![
                 MenuItem::os_action(
                     "Select All",
@@ -102,18 +102,18 @@ pub fn app_menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
-            name: "View",
+            name: "View".into(),
             items: vec![
-                MenuItem::action("Zoom In", super::IncreaseBufferFontSize),
-                MenuItem::action("Zoom Out", super::DecreaseBufferFontSize),
-                MenuItem::action("Reset Zoom", super::ResetBufferFontSize),
+                MenuItem::action("Zoom In", zed_actions::IncreaseBufferFontSize),
+                MenuItem::action("Zoom Out", zed_actions::DecreaseBufferFontSize),
+                MenuItem::action("Reset Zoom", zed_actions::ResetBufferFontSize),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
                 MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
                 MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
                 MenuItem::action("Close All Docks", workspace::CloseAllDocks),
                 MenuItem::submenu(Menu {
-                    name: "Editor Layout",
+                    name: "Editor Layout".into(),
                     items: vec![
                         MenuItem::action("Split Up", workspace::SplitUp),
                         MenuItem::action("Split Down", workspace::SplitDown),
@@ -132,19 +132,20 @@ pub fn app_menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
-            name: "Go",
+            name: "Go".into(),
             items: vec![
                 MenuItem::action("Back", workspace::GoBack),
                 MenuItem::action("Forward", workspace::GoForward),
                 MenuItem::separator(),
                 MenuItem::action("Command Palette...", command_palette::Toggle),
                 MenuItem::separator(),
-                MenuItem::action("Go to File...", file_finder::Toggle::default()),
+                MenuItem::action("Go to File...", workspace::ToggleFileFinder::default()),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
-                MenuItem::action("Go to Symbol in Editor...", outline::Toggle),
-                MenuItem::action("Go to Line/Column...", go_to_line::Toggle),
+                MenuItem::action("Go to Symbol in Editor...", editor::actions::ToggleOutline),
+                MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
                 MenuItem::separator(),
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
+                MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
                 MenuItem::action("Find All References", editor::actions::FindAllReferences),
                 MenuItem::separator(),
@@ -153,7 +154,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
-            name: "Window",
+            name: "Window".into(),
             items: vec![
                 MenuItem::action("Minimize", super::Minimize),
                 MenuItem::action("Zoom", super::Zoom),
@@ -161,10 +162,10 @@ pub fn app_menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
-            name: "Help",
+            name: "Help".into(),
             items: vec![
-                MenuItem::action("View Telemetry", super::OpenTelemetryLog),
-                MenuItem::action("View Dependency Licenses", super::OpenLicenses),
+                MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
+                MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::action("Give Feedback...", feedback::GiveFeedback),
                 MenuItem::separator(),

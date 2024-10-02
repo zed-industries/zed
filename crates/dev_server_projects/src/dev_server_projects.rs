@@ -20,7 +20,7 @@ pub struct Store {
 pub struct DevServerProject {
     pub id: DevServerProjectId,
     pub project_id: Option<ProjectId>,
-    pub path: SharedString,
+    pub paths: Vec<SharedString>,
     pub dev_server_id: DevServerId,
 }
 
@@ -28,8 +28,8 @@ impl From<proto::DevServerProject> for DevServerProject {
     fn from(project: proto::DevServerProject) -> Self {
         Self {
             id: DevServerProjectId(project.id),
-            project_id: project.project_id.map(|id| ProjectId(id)),
-            path: project.path.into(),
+            project_id: project.project_id.map(ProjectId),
+            paths: project.paths.into_iter().map(|path| path.into()).collect(),
             dev_server_id: DevServerId(project.dev_server_id),
         }
     }
@@ -85,7 +85,7 @@ impl Store {
             .filter(|project| project.dev_server_id == id)
             .cloned()
             .collect();
-        projects.sort_by_key(|p| (p.path.clone(), p.id));
+        projects.sort_by_key(|p| (p.paths.clone(), p.id));
         projects
     }
 
@@ -108,7 +108,7 @@ impl Store {
     pub fn dev_server_projects(&self) -> Vec<DevServerProject> {
         let mut projects: Vec<DevServerProject> =
             self.dev_server_projects.values().cloned().collect();
-        projects.sort_by_key(|p| (p.path.clone(), p.id));
+        projects.sort_by_key(|p| (p.paths.clone(), p.id));
         projects
     }
 
@@ -124,7 +124,6 @@ impl Store {
     async fn handle_dev_server_projects_update(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DevServerProjectsUpdate>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
