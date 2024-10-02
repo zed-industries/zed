@@ -26,7 +26,7 @@ impl Drop for Cursor {
 impl Cursor {
     pub fn new(connection: &Connection, globals: &Globals, size: u32, scale: u32) -> Self {
         Self {
-            theme: CursorTheme::load(&connection, globals.shm.clone(), size).log_err(),
+            theme: CursorTheme::load(&connection, globals.shm.clone(), size * scale).log_err(),
             theme_name: None,
             surface: globals.compositor.create_surface(&globals.qh, ()),
             shm: globals.shm.clone(),
@@ -60,6 +60,17 @@ impl Cursor {
 
     pub fn set_size(&mut self, size: u32) {
         self.size = size;
+        self.reload_theme();
+    }
+
+    pub fn set_scale(&mut self, scale: u32) {
+        self.scale = scale;
+        self.reload_theme();
+        self.surface.set_buffer_scale(self.scale as i32);
+        self.surface.commit();
+    }
+
+    fn reload_theme(&mut self) {
         self.theme = self
             .theme_name
             .as_ref()
@@ -68,11 +79,14 @@ impl Cursor {
                     &self.connection,
                     self.shm.clone(),
                     name.as_str(),
-                    self.size,
+                    self.size * self.scale,
                 )
                 .log_err()
             })
-            .or_else(|| CursorTheme::load(&self.connection, self.shm.clone(), self.size).log_err());
+            .or_else(|| {
+                CursorTheme::load(&self.connection, self.shm.clone(), self.size * self.scale)
+                    .log_err()
+            });
     }
 
     pub fn set_icon(&mut self, wl_pointer: &WlPointer, serial_id: u32, mut cursor_icon_name: &str) {

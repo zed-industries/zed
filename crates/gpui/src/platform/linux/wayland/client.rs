@@ -478,7 +478,7 @@ impl WaylandClient {
             .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
         // FIXME: Determine the scaling factor dynamically by the compositor
-        let mut cursor = Cursor::new(&conn, &globals, 24, 2);
+        let mut cursor = Cursor::new(&conn, &globals, 24, 1);
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
@@ -905,7 +905,12 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientStatePtr {
         let outputs = state.outputs.clone();
         drop(state);
 
-        window.handle_surface_event(event, outputs);
+        let scale = window.handle_surface_event(event, outputs);
+        dbg!(scale);
+        if let Some(scale) = scale {
+            let mut state = client.borrow_mut();
+            state.cursor.set_scale(scale as u32);
+        }
     }
 }
 
@@ -940,6 +945,8 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
             }
             wl_output::Event::Done => {
                 if let Some(complete) = in_progress_output.complete() {
+                    dbg!(&state.outputs);
+                    dbg!(&complete);
                     state.outputs.insert(output.id(), complete);
                 }
                 state.in_progress_outputs.remove(&output.id());

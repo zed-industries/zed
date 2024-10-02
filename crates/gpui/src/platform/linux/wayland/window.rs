@@ -547,7 +547,8 @@ impl WaylandWindowStatePtr {
         &self,
         event: wl_surface::Event,
         outputs: HashMap<ObjectId, Output>,
-    ) {
+    ) -> Option<i32> {
+        dbg!("here");
         let mut state = self.state.borrow_mut();
 
         match event {
@@ -555,10 +556,14 @@ impl WaylandWindowStatePtr {
                 let id = output.id();
 
                 let Some(output) = outputs.get(&id) else {
-                    return;
+                    return None;
                 };
+                dbg!(&output);
+                dbg!(&outputs);
 
                 state.outputs.insert(id, output.clone());
+
+                dbg!(&outputs);
 
                 let scale = primary_output_scale(&mut state);
 
@@ -567,6 +572,8 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
+                    dbg!("SCALE");
+                    return Some(scale);
                 }
             }
             wl_surface::Event::Leave { output } => {
@@ -579,6 +586,8 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
+                    dbg!("SCALE");
+                    return Some(scale);
                 }
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
@@ -587,10 +596,14 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(factor);
                     drop(state);
                     self.rescale(factor as f32);
+                    dbg!("SCALE");
+                    return Some(factor);
                 }
             }
             _ => {}
         }
+
+        return None;
     }
 
     pub fn handle_ime(&self, ime: ImeInput) {
@@ -736,6 +749,7 @@ fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {
     let mut scale = 1;
     let mut current_output = state.display.take();
     for (id, output) in state.outputs.iter() {
+        dbg!(output);
         if let Some((_, output_data)) = &current_output {
             if output.scale > output_data.scale {
                 current_output = Some((id.clone(), output.clone()));
