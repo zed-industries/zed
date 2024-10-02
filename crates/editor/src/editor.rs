@@ -11257,7 +11257,7 @@ impl Editor {
         None
     }
 
-    fn reveal_target<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn language::LocalFile> {
+    fn target_file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn language::LocalFile> {
         self.active_excerpt(cx)?
             .1
             .read(cx)
@@ -11266,27 +11266,23 @@ impl Editor {
     }
 
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
-        if let Some(target) = self.reveal_target(cx) {
+        if let Some(target) = self.target_file(cx) {
             cx.reveal_path(&target.abs_path(cx));
         }
     }
 
     pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                if let Some(path) = file.abs_path(cx).to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
-                }
+        if let Some(file) = self.target_file(cx) {
+            if let Some(path) = file.abs_path(cx).to_str() {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
     }
 
     pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                if let Some(path) = file.path().to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
-                }
+        if let Some(file) = self.target_file(cx) {
+            if let Some(path) = file.path().to_str() {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
     }
@@ -11497,12 +11493,10 @@ impl Editor {
     }
 
     pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                if let Some(path) = file.path().to_str() {
-                    let selection = self.selections.newest::<Point>(cx).start.row + 1;
-                    cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
-                }
+        if let Some(file) = self.target_file(cx) {
+            if let Some(path) = file.path().to_str() {
+                let selection = self.selections.newest::<Point>(cx).start.row + 1;
+                cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
             }
         }
     }

@@ -158,7 +158,7 @@ pub fn deploy_context_menu(
         }
 
         let focus = cx.focused();
-        let has_reveal_target = editor.reveal_target(cx).is_some();
+        let has_reveal_target = editor.target_file(cx).is_some();
         let reveal_in_finder_label = if cfg!(target_os = "macos") {
             "Reveal in Finder"
         } else {
