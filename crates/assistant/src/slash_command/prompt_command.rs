@@ -10,19 +10,17 @@ use workspace::Workspace;
 
 pub(crate) struct PromptSlashCommand;
 
-const COMMAND_DESCRIPTION: &str = "Insert prompt from library";
-
 impl SlashCommand for PromptSlashCommand {
     fn name(&self) -> String {
         "prompt".into()
     }
 
     fn description(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        "Insert prompt from library".into()
     }
 
     fn menu_text(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

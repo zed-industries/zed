@@ -104,19 +104,17 @@ impl FileSlashCommand {
     }
 }
 
-const COMMAND_DESCRIPTION: &str = "Insert file";
-
 impl SlashCommand for FileSlashCommand {
     fn name(&self) -> String {
         "file".into()
     }
 
     fn description(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        "Insert file".into()
     }
 
     fn menu_text(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

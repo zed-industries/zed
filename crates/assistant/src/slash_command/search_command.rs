@@ -24,8 +24,6 @@ impl FeatureFlag for SearchSlashCommandFeatureFlag {
 
 pub(crate) struct SearchSlashCommand;
 
-const COMMAND_DESCRIPTION: &str = "Search your project semantically";
-
 impl SlashCommand for SearchSlashCommand {
     fn name(&self) -> String {
         "search".into()
@@ -36,11 +34,11 @@ impl SlashCommand for SearchSlashCommand {
     }
 
     fn description(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        "Search your project semantically".into()
     }
 
     fn menu_text(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

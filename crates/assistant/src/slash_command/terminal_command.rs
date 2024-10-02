@@ -17,8 +17,6 @@ use super::create_label_for_command;
 
 pub(crate) struct TerminalSlashCommand;
 
-const COMMAND_DESCRIPTION: &str = "Insert terminal output";
-
 const LINE_COUNT_ARG: &str = "--line-count";
 
 impl SlashCommand for TerminalSlashCommand {
@@ -31,11 +29,11 @@ impl SlashCommand for TerminalSlashCommand {
     }
 
     fn description(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        "Insert terminal output".into()
     }
 
     fn menu_text(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

@@ -98,19 +98,17 @@ impl FetchSlashCommand {
     }
 }
 
-const COMMAND_DESCRIPTION: &str = "Insert fecthed URL contents";
-
 impl SlashCommand for FetchSlashCommand {
     fn name(&self) -> String {
         "fetch".into()
     }
 
     fn description(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        "Insert fetched URL contents".into()
     }
 
     fn menu_text(&self) -> String {
-        COMMAND_DESCRIPTION.into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
