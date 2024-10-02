@@ -27,6 +27,11 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+//TODO: Maybe replace with a call to check-ref-format
+fn normalize_new_branch_name(name: &String) -> String {
+    name.trim().replace(' ', "-")
+}
+
 pub struct BranchList {
     pub picker: View<Picker<BranchListDelegate>>,
     rem_width: f32,
@@ -108,6 +113,23 @@ impl BranchListDelegate {
             last_query: Default::default(),
             branch_name_trailoff_after,
         })
+    }
+
+    fn create_branch(&self, name: &String, cx: &mut WindowContext) -> Result<()> {
+        let project = self.workspace.read(cx).project().read(cx);
+        let new_branch = normalize_new_branch_name(&name);
+        let repo = project
+            .get_first_worktree_root_repo(cx)
+            .context("failed to get root repository for first worktree")?;
+        let status = repo.create_branch(&new_branch);
+        if status.is_err() {
+            status?;
+        }
+        let status = repo.change_branch(&new_branch);
+        if status.is_err() {
+            status?;
+        }
+        Ok(())
     }
 
     fn display_error_toast(&self, message: String, cx: &mut WindowContext<'_>) {
@@ -199,6 +221,19 @@ impl PickerDelegate for BranchListDelegate {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
+                        // If there are no matches lets propose creating a branch
+                        if !query.is_empty() {
+                            let create_branch = StringMatch {
+                                candidate_id: usize::MAX,
+                                string: format!(
+                                    "Create branch '{}'",
+                                    normalize_new_branch_name(&query)
+                                ),
+                                positions: Vec::new(),
+                                score: 0.0,
+                            };
+                            delegate.matches.push(create_branch);
+                        }
                         delegate.selected_index = 0;
                     } else {
                         delegate.selected_index =
@@ -212,16 +247,29 @@ impl PickerDelegate for BranchListDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         let current_pick = self.selected_index();
-        let Some(current_pick) = self
+        let Some((current_pick, candidate_id)) = self
             .matches
             .get(current_pick)
-            .map(|pick| pick.string.clone())
+            .map(|pick| (pick.string.clone(), pick.candidate_id.clone()))
         else {
             return;
         };
         cx.spawn(|picker, mut cx| async move {
             picker
                 .update(&mut cx, |this, cx| {
+                    // If the user has selected the "Create branch" option, create a new branch, maybe we need a better sentinel
+                    if candidate_id == usize::MAX {
+                        let new_branch_name = this.delegate.last_query.clone();
+                        let normalized_new_branch_name = normalize_new_branch_name(&new_branch_name);
+                        let status = this.delegate.create_branch(&normalized_new_branch_name, cx);
+                        if status.is_err() {
+                            this.delegate.display_error_toast(format!("Failed to create branch '{normalized_new_branch_name}', check for conflicts or unstashed files"), cx);
+                            status?;
+                        }
+
+                        cx.emit(DismissEvent);
+                        return Ok::<(), anyhow::Error>(());
+                    }
                     let project = this.delegate.workspace.read(cx).project().read(cx);
                     let repo = project
                         .get_first_worktree_root_repo(cx)
@@ -299,22 +347,14 @@ impl PickerDelegate for BranchListDelegate {
                 cx.listener(|_, _, cx| {
                     cx.spawn(|picker, mut cx| async move {
                                         picker.update(&mut cx, |this, cx| {
-                                            let project = this.delegate.workspace.read(cx).project().read(cx);
-                                            let current_pick = &this.delegate.last_query;
-                                            let repo = project
-                                                .get_first_worktree_root_repo(cx)
-                                                .context("failed to get root repository for first worktree")?;
-                                            let status = repo
-                                                .create_branch(&current_pick);
+                                            let new_branch_name = this.delegate.last_query.clone();
+                                            let normalized_new_branch_name = normalize_new_branch_name(&new_branch_name);
+                                            let status = this.delegate.create_branch(&normalized_new_branch_name, cx);
                                             if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                                this.delegate.display_error_toast(format!("Failed to create branch '{normalized_new_branch_name}', check for conflicts or unstashed files"), cx);
                                                 status?;
                                             }
-                                            let status = repo.change_branch(&current_pick);
-                                            if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                                status?;
-                                            }
+
                                             this.cancel(&Default::default(), cx);
                                             Ok::<(), anyhow::Error>(())
                                 })
