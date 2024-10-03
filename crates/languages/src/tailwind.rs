@@ -46,6 +46,10 @@ impl LspAdapter for TailwindLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
+    fn show_completion_colors(&self) -> bool {
+        true
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
