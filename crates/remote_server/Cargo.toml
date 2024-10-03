@@ -40,7 +40,6 @@ serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
-thiserror.workspace = true
 util.workspace = true
 worktree.workspace = true
 
