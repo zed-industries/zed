@@ -352,6 +352,7 @@ impl SshClientDelegate {
         if release_channel == ReleaseChannel::Dev
             && platform.arch == std::env::consts::ARCH
             && platform.os == std::env::consts::OS
+            && false
         {
             use smol::process::{Command, Stdio};
 

@@ -18,6 +18,7 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 [dependencies]
 anyhow.workspace = true
 async-recursion = "0.3"
+async-tls = "0.13"
 async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
@@ -34,8 +35,6 @@ postage.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
-rustls.workspace = true
-rustls-native-certs.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

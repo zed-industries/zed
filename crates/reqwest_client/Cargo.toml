@@ -1,5 +1,5 @@
 [package]
-name = "http_client"
+name = "reqwest_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,18 +12,20 @@ workspace = true
 test-support = []
 
 [lib]
-path = "src/http_client.rs"
+path = "src/reqwest_client.rs"
 doctest = true
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
 
 [dependencies]
 anyhow.workspace = true
-derive_more.workspace = true
+bytes = "1.0"
 futures.workspace = true
-http = "1.1"
-log.workspace = true
-rustls-native-certs.workspace = true
-rustls.workspace = true
+http_client.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 smol.workspace = true
-url.workspace = true
+tokio.workspace = true
+
+reqwest = { workspace = true, features = ["rustls-tls-manual-roots", "stream"] }

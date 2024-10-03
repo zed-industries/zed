@@ -1217,13 +1217,20 @@ impl Project {
         server.ssh_connection_string.is_some()
     }
 
-    pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
+    pub fn ssh_connection_string(&self, cx: &AppContext) -> Option<SharedString> {
+        if let Some(ssh_state) = &self.ssh_client {
+            return Some(ssh_state.connection_string().into());
+        }
         let dev_server_id = self.dev_server_project_id()?;
         dev_server_projects::Store::global(cx)
             .read(cx)
             .dev_server_for_project(dev_server_id)?
             .ssh_connection_string
             .clone()
+    }
+
+    pub fn ssh_is_connected(&self) -> Option<bool> {
+        Some(!self.ssh_client.as_ref()?.is_reconnect_underway())
     }
 
     pub fn replica_id(&self) -> ReplicaId {

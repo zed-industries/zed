@@ -73,7 +73,7 @@ pub use lsp::DiagnosticSeverity;
 /// a diff against the contents of its file.
 pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
-/// Indicate whether a [Buffer] has permissions to edit.
+/// Indicate whether a [`Buffer`] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Capability {
     /// The buffer is a mutable replica.
@@ -211,7 +211,7 @@ pub struct Diagnostic {
     ///
     /// When a language server produces a diagnostic with
     /// one or more associated diagnostics, those diagnostics are all
-    /// assigned a single group id.
+    /// assigned a single group ID.
     pub group_id: usize,
     /// Whether this diagnostic is the primary diagnostic for its group.
     ///
@@ -718,7 +718,7 @@ impl Buffer {
         self
     }
 
-    /// Returns the [Capability] of this buffer.
+    /// Returns the [`Capability`] of this buffer.
     pub fn capability(&self) -> Capability {
         self.capability
     }
@@ -728,7 +728,7 @@ impl Buffer {
         self.capability == Capability::ReadOnly
     }
 
-    /// Builds a [Buffer] with the given underlying [TextBuffer], diff base, [File] and [Capability].
+    /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
     pub fn build(
         buffer: TextBuffer,
         diff_base: Option<String>,
@@ -818,6 +818,9 @@ impl Buffer {
             if let Some(language_registry) = self.language_registry() {
                 branch.set_language_registry(language_registry);
             }
+
+            // Reparse the branch buffer so that we get syntax highlighting immediately.
+            branch.reparse(cx);
 
             branch
         })
@@ -941,7 +944,7 @@ impl Buffer {
         self.syntax_map.lock().language_registry()
     }
 
-    /// Assign the buffer a new [Capability].
+    /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
         cx.emit(BufferEvent::CapabilityChanged)
@@ -1032,7 +1035,7 @@ impl Buffer {
         cx.notify();
     }
 
-    /// Updates the [File] backing this buffer. This should be called when
+    /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
         let mut file_changed = false;
@@ -1071,7 +1074,7 @@ impl Buffer {
         }
     }
 
-    /// Returns the current diff base, see [Buffer::set_diff_base].
+    /// Returns the current diff base, see [`Buffer::set_diff_base`].
     pub fn diff_base(&self) -> Option<&Rope> {
         match self.diff_base.as_ref()? {
             BufferDiffBase::Git(rope) | BufferDiffBase::PastBufferVersion { rope, .. } => {
@@ -1142,12 +1145,12 @@ impl Buffer {
         }))
     }
 
-    /// Returns the primary [Language] assigned to this [Buffer].
+    /// Returns the primary [`Language`] assigned to this [`Buffer`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
 
-    /// Returns the [Language] at the given location.
+    /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
         self.syntax_map
@@ -2730,6 +2733,7 @@ impl BufferSnapshot {
             .collect();
         (captures, highlight_maps)
     }
+
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
@@ -2781,12 +2785,12 @@ impl BufferSnapshot {
             .last()
     }
 
-    /// Returns the main [Language]
+    /// Returns the main [`Language`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
 
-    /// Returns the [Language] at the given location.
+    /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
         self.syntax_layer_at(position)
             .map(|info| info.language)
@@ -2806,7 +2810,7 @@ impl BufferSnapshot {
         CharClassifier::new(self.language_scope_at(point))
     }
 
-    /// Returns the [LanguageScope] at the given location.
+    /// Returns the [`LanguageScope`] at the given location.
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
         let mut scope = None;
@@ -2961,7 +2965,7 @@ impl BufferSnapshot {
 
     /// Returns the outline for the buffer.
     ///
-    /// This method allows passing an optional [SyntaxTheme] to
+    /// This method allows passing an optional [`SyntaxTheme`] to
     /// syntax-highlight the returned symbols.
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         self.outline_items_containing(0..self.len(), true, theme)
@@ -2970,7 +2974,7 @@ impl BufferSnapshot {
 
     /// Returns all the symbols that contain the given position.
     ///
-    /// This method allows passing an optional [SyntaxTheme] to
+    /// This method allows passing an optional [`SyntaxTheme`] to
     /// syntax-highlight the returned symbols.
     pub fn symbols_containing<T: ToOffset>(
         &self,
@@ -3213,7 +3217,7 @@ impl BufferSnapshot {
     }
 
     /// For each grammar in the language, runs the provided
-    /// [tree_sitter::Query] against the given range.
+    /// [`tree_sitter::Query`] against the given range.
     pub fn matches(
         &self,
         range: Range<usize>,
@@ -3774,7 +3778,7 @@ impl BufferSnapshot {
             })
     }
 
-    /// Whether the buffer contains any git changes.
+    /// Whether the buffer contains any Git changes.
     pub fn has_git_diff(&self) -> bool {
         !self.git_diff.is_empty()
     }
@@ -3856,7 +3860,7 @@ impl BufferSnapshot {
     }
 
     /// Returns all the diagnostic groups associated with the given
-    /// language server id. If no language server id is provided,
+    /// language server ID. If no language server ID is provided,
     /// all diagnostics groups are returned.
     pub fn diagnostic_groups(
         &self,
@@ -4239,7 +4243,7 @@ impl Default for Diagnostic {
 }
 
 impl IndentSize {
-    /// Returns an [IndentSize] representing the given spaces.
+    /// Returns an [`IndentSize`] representing the given spaces.
     pub fn spaces(len: u32) -> Self {
         Self {
             len,
@@ -4247,7 +4251,7 @@ impl IndentSize {
         }
     }
 
-    /// Returns an [IndentSize] representing a tab.
+    /// Returns an [`IndentSize`] representing a tab.
     pub fn tab() -> Self {
         Self {
             len: 1,
@@ -4255,12 +4259,12 @@ impl IndentSize {
         }
     }
 
-    /// An iterator over the characters represented by this [IndentSize].
+    /// An iterator over the characters represented by this [`IndentSize`].
     pub fn chars(&self) -> impl Iterator<Item = char> {
         iter::repeat(self.char()).take(self.len as usize)
     }
 
-    /// The character representation of this [IndentSize].
+    /// The character representation of this [`IndentSize`].
     pub fn char(&self) -> char {
         match self.kind {
             IndentKind::Space => ' ',
@@ -4268,7 +4272,7 @@ impl IndentSize {
         }
     }
 
-    /// Consumes the current [IndentSize] and returns a new one that has
+    /// Consumes the current [`IndentSize`] and returns a new one that has
     /// been shrunk or enlarged by the given size along the given direction.
     pub fn with_delta(mut self, direction: Ordering, size: IndentSize) -> Self {
         match direction {

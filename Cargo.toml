@@ -52,7 +52,6 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
-    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -88,6 +87,7 @@ members = [
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
+    "crates/reqwest_client",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -122,6 +122,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
+    "crates/ureq_client",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -175,6 +176,7 @@ members = [
 default-members = ["crates/zed"]
 
 [workspace.dependencies]
+
 #
 # Workspace member crates
 #
@@ -220,7 +222,6 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
-handlebars = "4.3"
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
@@ -228,7 +229,6 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
-isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
@@ -265,6 +265,7 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
+reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -299,6 +300,7 @@ title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
+ureq_client = { path = "crates/ureq_client" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
@@ -318,6 +320,7 @@ any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
 ashpd = "0.9.1"
+async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "1.6"
@@ -325,7 +328,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.23"
+async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
@@ -356,18 +359,15 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.19", default-features = false }
 globset = "0.4"
+handlebars = "4.3"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
-hyper = "0.14"
 html5ever = "0.27.0"
+hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
-# We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "text-decoding",
-] }
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
@@ -382,23 +382,25 @@ ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 pathdiff = "0.2"
-profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
+profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
+protols-tree-sitter-proto = { git = "https://github.com/zed-industries/tree-sitter-proto", rev = "0848bd30a64be48772e15fbb9d5ba8c0cc5772ad" }
 pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29" }
 rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-rustls = "0.20.3"
+rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
@@ -452,15 +454,14 @@ tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.23"
 tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "4cfa6aad6b75052a5077c80fd934757d9267d81b" }
-protols-tree-sitter-proto = { git = "https://github.com/zed-industries/tree-sitter-proto", rev = "0848bd30a64be48772e15fbb9d5ba8c0cc5772ad" }
 tree-sitter-python = "0.23"
 tree-sitter-regex = "0.23"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-typescript = "0.23"
-tree-sitter-yaml =  { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
-unindent = "0.1.7"
+tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
+unindent = "0.1.7"
 unicode-segmentation = "1.10"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
