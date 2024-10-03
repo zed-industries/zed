@@ -1,4 +1,5 @@
-/// Please see: [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional documentation.
+//! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
+
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, sync::Arc, time::Duration};
