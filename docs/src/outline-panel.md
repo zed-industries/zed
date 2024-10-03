@@ -1,6 +1,6 @@
 # Outline Panel
 
-In addition to the modal outline (`cmd-shift-o`), Zed offers an outline panel. The outline panel can be deployed via `cmd-shift-b`, or via the `Outline Panel` button in the status bar.
+In addition to the modal outline (`cmd-shift-o`), Zed offers an outline panel. The outline panel can be deployed via `cmd-shift-b` (`outline panel: toggle focus` via the command palette), or by clicking the `Outline Panel` button in the status bar.
 
 When viewing a "singleton" buffer, the outline panel works similarly to that of the outline modal - it displays the outline of the current buffer's symbols, as reported by tree-sitter. Clicking on an entry allows you to jump to the associated section in the file. The outline view will also automatically scroll to the section associated with the current cursor position within the file.
 
