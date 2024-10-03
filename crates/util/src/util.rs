@@ -381,10 +381,7 @@ where
     #[cfg(not(target_os = "windows"))]
     let file = caller.file();
     #[cfg(target_os = "windows")]
-    let file = caller
-        .file()
-        .trim_start_matches("\\\\?\\")
-        .replace('\\', "/");
+    let file = caller.file().replace('\\', "/");
     // In this codebase, the first segment of the file path is
     // the 'crates' folder, followed by the crate name.
     let target = file.split('/').nth(1);
