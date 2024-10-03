@@ -342,15 +342,6 @@ pub struct Completion {
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut WindowContext) -> bool>>,
 }
 
-impl Completion {
-    pub fn color(&self) -> Option<Hsla> {
-        match self.lsp_completion.kind {
-            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
-            _ => None,
-        }
-    }
-}
-
 impl std::fmt::Debug for Completion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Completion")
@@ -4456,6 +4447,16 @@ impl Completion {
     /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
         self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+    }
+
+    /// Returns the corresponding color for this completion.
+    ///
+    /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
+    pub fn color(&self) -> Option<Hsla> {
+        match self.lsp_completion.kind {
+            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
+            _ => None,
+        }
     }
 }
 
