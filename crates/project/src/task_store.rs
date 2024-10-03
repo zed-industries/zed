@@ -1,18 +1,20 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
+use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Model, ModelContext, Task, WeakModel};
-use language::{proto::serialize_anchor, Location};
+use language::{proto::serialize_anchor, ContextProvider as _, Location};
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
-use task::{TaskContext, TaskVariables, VariableName};
+use settings::WorktreeId;
+use task::{TaskContext, TaskTemplate, TaskVariables, VariableName};
 use util::{debug_panic, ResultExt};
 
 use crate::{
-    buffer_store::BufferStore, combine_task_variables, worktree_store::WorktreeStore,
-    BasicContextProvider, Inventory, ProjectEnvironment,
+    buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
+    ProjectEnvironment, TaskSourceKind,
 };
 
 use super::deserialize_location;
@@ -127,7 +129,7 @@ impl TaskStore {
         &self,
         captured_variables: TaskVariables,
         location: Location,
-        cx: &mut ModelContext<TaskStore>,
+        cx: &AppContext,
     ) -> Task<Option<TaskContext>> {
         match self {
             TaskStore::Local {
@@ -182,6 +184,27 @@ impl TaskStore {
             debug_panic!("called unshared on a non-local task store");
         }
     }
+
+    pub fn list_tasks(
+        &self,
+        worktree: Option<WorktreeId>,
+        location: Option<Location>,
+        cx: &AppContext,
+    ) -> Task<anyhow::Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
+        let (file, language) = location
+            .map(|location| {
+                let buffer = location.buffer.read(cx);
+                (
+                    buffer.file().cloned(),
+                    buffer.language_at(location.range.start),
+                )
+            })
+            .unwrap_or_default();
+        Task::ready(Ok(self.task_inventory().map_or_else(
+            || Vec::new(),
+            |inventory| inventory.read(cx).list_tasks(file, language, worktree, cx),
+        )))
+    }
 }
 
 fn local_task_context_for_location(
@@ -189,14 +212,14 @@ fn local_task_context_for_location(
     environment: Model<ProjectEnvironment>,
     captured_variables: TaskVariables,
     location: Location,
-    cx: &mut ModelContext<TaskStore>,
+    cx: &AppContext,
 ) -> Task<Option<TaskContext>> {
     let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
     let worktree_abs_path = worktree_id
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
         .map(|worktree| worktree.read(cx).abs_path());
 
-    cx.spawn(|_, mut cx| async move {
+    cx.spawn(|mut cx| async move {
         let worktree_abs_path = worktree_abs_path.clone();
         let project_env = environment
             .update(&mut cx, |environment, cx| {
@@ -232,7 +255,7 @@ fn local_task_context_for_location(
 fn remote_task_context_for_location(
     upstream_client: &AnyProtoClient,
     location: Location,
-    cx: &mut ModelContext<TaskStore>,
+    cx: &AppContext,
 ) -> Task<Option<TaskContext>> {
     let context_task = upstream_client.request(proto::TaskContextForLocation {
         project_id: SSH_PROJECT_ID,
@@ -242,7 +265,7 @@ fn remote_task_context_for_location(
             end: Some(serialize_anchor(&location.range.end)),
         }),
     });
-    cx.spawn(|_, _| async move {
+    cx.spawn(|_| async move {
         let task_context = context_task.await.log_err()?;
         Some(TaskContext {
             cwd: task_context.cwd.map(PathBuf::from),
@@ -262,4 +285,30 @@ fn remote_task_context_for_location(
             project_env: task_context.project_env.into_iter().collect(),
         })
     })
+}
+
+fn combine_task_variables(
+    mut captured_variables: TaskVariables,
+    location: Location,
+    project_env: Option<&HashMap<String, String>>,
+    baseline: BasicContextProvider,
+    cx: &mut AppContext,
+) -> anyhow::Result<TaskVariables> {
+    let language_context_provider = location
+        .buffer
+        .read(cx)
+        .language()
+        .and_then(|language| language.context_provider());
+    let baseline = baseline
+        .build_context(&captured_variables, &location, project_env, cx)
+        .context("building basic default context")?;
+    captured_variables.extend(baseline);
+    if let Some(provider) = language_context_provider {
+        captured_variables.extend(
+            provider
+                .build_context(&captured_variables, &location, project_env, cx)
+                .context("building provider context")?,
+        );
+    }
+    Ok(captured_variables)
 }

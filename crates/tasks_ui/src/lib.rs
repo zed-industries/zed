@@ -18,10 +18,14 @@ pub fn init(cx: &mut AppContext) {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
-                    if let Some((task_source_kind, mut last_scheduled_task)) =
-                        workspace.project().update(cx, |project, cx| {
-                            project
-                                .task_inventory(cx)?
+                    if let Some((task_source_kind, mut last_scheduled_task)) = workspace
+                        .project()
+                        .read(cx)
+                        .task_store()
+                        .read(cx)
+                        .task_inventory()
+                        .and_then(|inventory| {
+                            inventory
                                 .read(cx)
                                 .last_scheduled_task(action.task_id.as_ref())
                         })
@@ -86,7 +90,7 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
 }
 
 fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {
-    let project = workspace.project().clone();
+    let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
     let context_task = task_context(workspace, cx);
     cx.spawn(|workspace, mut cx| async move {
@@ -99,7 +103,7 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
                         || project.is_via_ssh()
                 }) {
                     workspace.toggle_modal(cx, |cx| {
-                        TasksModal::new(project, task_context, workspace_handle, cx)
+                        TasksModal::new(task_store.clone(), task_context, workspace_handle, cx)
                     })
                 }
             })
@@ -118,9 +122,12 @@ fn spawn_task_with_name(
         let tasks = workspace
             .update(&mut cx, |workspace, cx| {
                 let (worktree, location) = active_item_selection_properties(workspace, cx);
-                workspace.project().update(cx, |project, cx| {
-                    project.task_templates(worktree, location, cx)
-                })
+                workspace
+                    .project()
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .list_tasks(worktree, location, cx)
             })?
             .await?;
 

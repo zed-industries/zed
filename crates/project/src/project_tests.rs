@@ -216,7 +216,10 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .expect("should have one global task");
     project.update(cx, |project, cx| {
         project
-            .task_inventory(cx)
+            .task_store
+            .read(cx)
+            .task_inventory()
+            .cloned()
             .unwrap()
             .update(cx, |inventory, _| {
                 inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
@@ -242,7 +245,10 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     cx.update(|cx| {
         project.update(cx, |project, cx| {
             project
-                .task_inventory(cx)
+                .task_store
+                .read(cx)
+                .task_inventory()
+                .cloned()
                 .unwrap()
                 .update(cx, |inventory, cx| {
                     inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
@@ -5428,7 +5434,9 @@ fn get_all_tasks(
 ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
     let resolved_tasks = project.update(cx, |project, cx| {
         project
-            .task_inventory(cx)
+            .task_store
+            .read(cx)
+            .task_inventory()
             .unwrap()
             .read(cx)
             .used_and_current_resolved_tasks(worktree_id, None, task_context, cx)

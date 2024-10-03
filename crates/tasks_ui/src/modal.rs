@@ -8,7 +8,7 @@ use gpui::{
     View, ViewContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
-use project::{Project, TaskSourceKind};
+use project::{task_store::TaskStore, TaskSourceKind};
 use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -63,7 +63,7 @@ impl_actions!(task, [Rerun, Spawn]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
-    project: Model<Project>,
+    task_store: Model<TaskStore>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     last_used_candidate_index: Option<usize>,
     divider_index: Option<usize>,
@@ -77,12 +77,12 @@ pub(crate) struct TasksModalDelegate {
 
 impl TasksModalDelegate {
     fn new(
-        project: Model<Project>,
+        task_store: Model<TaskStore>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
     ) -> Self {
         Self {
-            project,
+            task_store,
             workspace,
             candidates: None,
             matches: Vec::new(),
@@ -124,13 +124,11 @@ impl TasksModalDelegate {
         // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
         // the original list without a removed entry.
         candidates.remove(ix);
-        self.project.update(cx, |project, cx| {
-            if let Some(inventory) = project.task_inventory(cx) {
-                inventory.update(cx, |inventory, _| {
-                    inventory.delete_previously_used(&task.id);
-                })
-            }
-        });
+        if let Some(inventory) = self.task_store.read(cx).task_inventory().cloned() {
+            inventory.update(cx, |inventory, _| {
+                inventory.delete_previously_used(&task.id);
+            })
+        };
     }
 }
 
@@ -141,14 +139,14 @@ pub(crate) struct TasksModal {
 
 impl TasksModal {
     pub(crate) fn new(
-        project: Model<Project>,
+        task_store: Model<TaskStore>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(project, task_context, workspace),
+                TasksModalDelegate::new(task_store, task_context, workspace),
                 cx,
             )
         });
@@ -220,8 +218,12 @@ impl PickerDelegate for TasksModalDelegate {
                             else {
                                 return Task::ready(Ok(Vec::new()));
                             };
-                            let Some(task_inventory) =
-                                picker.delegate.project.read(cx).task_inventory(cx)
+                            let Some(task_inventory) = picker
+                                .delegate
+                                .task_store
+                                .read(cx)
+                                .task_inventory()
+                                .cloned()
                             else {
                                 return Task::ready(Ok(Vec::new()));
                             };
@@ -473,9 +475,9 @@ impl PickerDelegate for TasksModalDelegate {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
         let current_modifiers = cx.modifiers();
         let left_button = if self
-            .project
+            .task_store
             .read(cx)
-            .task_inventory(cx)?
+            .task_inventory()?
             .read(cx)
             .last_scheduled_task(None)
             .is_some()
@@ -1016,7 +1018,7 @@ mod tests {
                 .unwrap()
         });
         project.update(cx, |project, cx| {
-            if let Some(task_inventory) = project.task_inventory(cx) {
+            if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
                 task_inventory.update(cx, |inventory, _| {
                     let (kind, task) = scheduled_task;
                     inventory.task_scheduled(kind, task);

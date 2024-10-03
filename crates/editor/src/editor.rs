@@ -1879,7 +1879,13 @@ impl Editor {
                         }
                     }
                 }));
-                if let Some(task_inventory) = project.read(cx).task_inventory(cx) {
+                if let Some(task_inventory) = project
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .cloned()
+                {
                     project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
                         editor.tasks_update_task = Some(editor.refresh_runnables(cx));
                     }));
@@ -4688,13 +4694,15 @@ impl Editor {
                                         value.clone(),
                                     );
                                 }
-                                project.update(cx, |project, cx| {
-                                    project.task_context_for_location(
+                                project
+                                    .read(cx)
+                                    .task_store()
+                                    .read(cx)
+                                    .task_context_for_location(
                                         captured_task_variables,
                                         location,
                                         cx,
                                     )
-                                })
                             });
 
                     Some(cx.spawn(|editor, mut cx| async move {
@@ -9098,7 +9106,11 @@ impl Editor {
                 .map(|file| (file.worktree_id(cx), file.clone()))
                 .unzip();
 
-            (project.task_inventory(cx), worktree_id, file)
+            (
+                project.task_store().read(cx).task_inventory().cloned(),
+                worktree_id,
+                file,
+            )
         });
 
         let tags = mem::take(&mut runnable.tags);

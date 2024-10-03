@@ -44,10 +44,10 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind,
-    proto::{deserialize_anchor, serialize_anchor, split_operations},
-    Buffer, BufferEvent, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry,
-    Documentation, File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    proto::{deserialize_anchor, split_operations},
+    Buffer, BufferEvent, CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation,
+    File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16,
+    Transaction, Unclipped,
 };
 use lsp::{
     CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
@@ -73,7 +73,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::{TaskContext, TaskTemplate, TaskVariables};
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
@@ -1291,8 +1290,8 @@ impl Project {
         }
     }
 
-    pub fn task_inventory(&self, cx: &AppContext) -> Option<Model<Inventory>> {
-        self.task_store.read(cx).task_inventory().cloned()
+    pub fn task_store(&self) -> &Model<TaskStore> {
+        &self.task_store
     }
 
     pub fn snippets(&self) -> &Model<SnippetProvider> {
@@ -2166,7 +2165,7 @@ impl Project {
             return;
         }
 
-        if let Some(inventory) = self.task_inventory(cx) {
+        if let Some(inventory) = self.task_store.read(cx).task_inventory().cloned() {
             inventory.update(cx, |inventory, _| {
                 inventory.remove_worktree_sources(id_to_remove);
             });
@@ -3814,136 +3813,6 @@ impl Project {
             .read(cx)
             .language_server_for_buffer(buffer, server_id, cx)
     }
-
-    pub fn task_context_for_location(
-        &self,
-        captured_variables: TaskVariables,
-        location: Location,
-        cx: &mut ModelContext<'_, Project>,
-    ) -> Task<Option<TaskContext>> {
-        if self.is_local() {
-            let in_worktree = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
-            let worktree_abs_path = in_worktree
-                .and_then(|worktree_id| self.worktree_for_id(worktree_id, cx))
-                .map(|worktree| worktree.read(cx).abs_path());
-            let worktree_store = self.worktree_store.clone();
-
-            cx.spawn(|project, mut cx| async move {
-                let project_env = project
-                    .update(&mut cx, |project, cx| {
-                        let worktree_abs_path = worktree_abs_path.clone();
-                        project.environment.update(cx, |environment, cx| {
-                            environment.get_environment(in_worktree, worktree_abs_path, cx)
-                        })
-                    })
-                    .ok()?
-                    .await;
-
-                let mut task_variables = cx
-                    .update(|cx| {
-                        combine_task_variables(
-                            captured_variables,
-                            location,
-                            project_env.as_ref(),
-                            BasicContextProvider::new(worktree_store),
-                            cx,
-                        )
-                        .log_err()
-                    })
-                    .ok()
-                    .flatten()?;
-                // Remove all custom entries starting with _, as they're not intended for use by the end user.
-                task_variables.sweep();
-
-                Some(TaskContext {
-                    project_env: project_env.unwrap_or_default(),
-                    cwd: worktree_abs_path.map(|p| p.to_path_buf()),
-                    task_variables,
-                })
-            })
-        } else if let Some(project_id) = self
-            .remote_id()
-            .filter(|_| self.ssh_connection_string(cx).is_some())
-        {
-            let task_context = self.client().request(proto::TaskContextForLocation {
-                project_id,
-                location: Some(proto::Location {
-                    buffer_id: location.buffer.read(cx).remote_id().into(),
-                    start: Some(serialize_anchor(&location.range.start)),
-                    end: Some(serialize_anchor(&location.range.end)),
-                }),
-            });
-            cx.background_executor().spawn(async move {
-                let task_context = task_context.await.log_err()?;
-                Some(TaskContext {
-                    project_env: task_context.project_env.into_iter().collect(),
-                    cwd: task_context.cwd.map(PathBuf::from),
-                    task_variables: task_context
-                        .task_variables
-                        .into_iter()
-                        .filter_map(
-                            |(variable_name, variable_value)| match variable_name.parse() {
-                                Ok(variable_name) => Some((variable_name, variable_value)),
-                                Err(()) => {
-                                    log::error!("Unknown variable name: {variable_name}");
-                                    None
-                                }
-                            },
-                        )
-                        .collect(),
-                })
-            })
-        } else {
-            Task::ready(None)
-        }
-    }
-
-    pub fn task_templates(
-        &self,
-        worktree: Option<WorktreeId>,
-        location: Option<Location>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
-        let (file, language) = location
-            .map(|location| {
-                let buffer = location.buffer.read(cx);
-                (
-                    buffer.file().cloned(),
-                    buffer.language_at(location.range.start),
-                )
-            })
-            .unwrap_or_default();
-        Task::ready(Ok(self.task_inventory(cx).map_or_else(
-            || Vec::new(),
-            |inventory| inventory.read(cx).list_tasks(file, language, worktree, cx),
-        )))
-    }
-}
-
-fn combine_task_variables(
-    mut captured_variables: TaskVariables,
-    location: Location,
-    project_env: Option<&HashMap<String, String>>,
-    baseline: BasicContextProvider,
-    cx: &mut AppContext,
-) -> anyhow::Result<TaskVariables> {
-    let language_context_provider = location
-        .buffer
-        .read(cx)
-        .language()
-        .and_then(|language| language.context_provider());
-    let baseline = baseline
-        .build_context(&captured_variables, &location, project_env, cx)
-        .context("building basic default context")?;
-    captured_variables.extend(baseline);
-    if let Some(provider) = language_context_provider {
-        captured_variables.extend(
-            provider
-                .build_context(&captured_variables, &location, project_env, cx)
-                .context("building provider context")?,
-        );
-    }
-    Ok(captured_variables)
 }
 
 fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
