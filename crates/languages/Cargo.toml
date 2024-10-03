@@ -21,7 +21,6 @@ load-grammars = [
     "tree-sitter-jsdoc",
     "tree-sitter-json",
     "tree-sitter-md",
-    "protols-tree-sitter-proto",
     "tree-sitter-python",
     "tree-sitter-regex",
     "tree-sitter-rust",
@@ -46,7 +45,6 @@ lsp.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
-protols-tree-sitter-proto = { workspace = true, optional = true }
 regex.workspace = true
 rope.workspace = true
 rust-embed.workspace = true
