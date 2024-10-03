@@ -39,7 +39,11 @@ pub enum TaskStore {
 }
 
 impl TaskStore {
-    pub async fn handle_task_context_for_location(
+    pub fn init(client: &AnyProtoClient) {
+        client.add_model_request_handler(Self::handle_task_context_for_location);
+    }
+
+    async fn handle_task_context_for_location(
         store: Model<Self>,
         envelope: TypedEnvelope<proto::TaskContextForLocation>,
         mut cx: AsyncAppContext,

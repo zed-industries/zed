@@ -92,23 +92,24 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
 fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
-    let context_task = task_context(workspace, cx);
-    cx.spawn(|workspace, mut cx| async move {
-        let task_context = context_task.await;
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                if workspace.project().update(cx, |project, cx| {
-                    project.is_local()
-                        || project.ssh_connection_string(cx).is_some()
-                        || project.is_via_ssh()
-                }) {
+    let can_open_modal = workspace.project().update(cx, |project, cx| {
+        project.is_local() || project.ssh_connection_string(cx).is_some() || project.is_via_ssh()
+    });
+    if can_open_modal {
+        let context_task = task_context(workspace, cx);
+        cx.spawn(|workspace, mut cx| async move {
+            let task_context = context_task.await;
+            workspace
+                .update(&mut cx, |workspace, cx| {
                     workspace.toggle_modal(cx, |cx| {
                         TasksModal::new(task_store.clone(), task_context, workspace_handle, cx)
                     })
-                }
-            })
-            .ok();
-    })
+                })
+                .ok();
+        })
+    } else {
+        AsyncTask::ready(())
+    }
 }
 
 fn spawn_task_with_name(

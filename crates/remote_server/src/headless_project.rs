@@ -139,6 +139,7 @@ impl HeadlessProject {
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
         LspStore::init(&client);
+        TaskStore::init(&client);
 
         HeadlessProject {
             session: client,
