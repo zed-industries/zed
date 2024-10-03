@@ -35,6 +35,9 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
     Deserialize,
     JsonSchema,
 )]
+
+/// Specifies the density of the UI.
+/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
     /// A denser UI with tighter spacing and smaller elements.
@@ -50,6 +53,8 @@ pub enum UiDensity {
 }
 
 impl UiDensity {
+    /// The spacing ratio of a given density.
+    /// TODO: Standardize usage throughout the app or remove
     pub fn spacing_ratio(self) -> f32 {
         match self {
             UiDensity::Compact => 0.75,
@@ -80,17 +85,43 @@ impl From<UiDensity> for String {
     }
 }
 
+/// Customizable settings for the UI and theme system.
 #[derive(Clone)]
 pub struct ThemeSettings {
+    /// The UI font size. Determines the size of text in the UI,
+    /// as well as the size of a [gpui::Rems] unit.
+    ///
+    /// Changing this will impact the size of all UI elements.
     pub ui_font_size: Pixels,
+    /// The font used for UI elements.
     pub ui_font: Font,
-    pub buffer_font: Font,
+    /// The font size used for buffers, and the terminal.
+    ///
+    /// The terminal font size can be overridden using it's own setting.
     pub buffer_font_size: Pixels,
+    /// The font used for buffers, and the terminal.
+    ///
+    /// The terminal font family can be overridden using it's own setting.
+    pub buffer_font: Font,
+    /// The line height for buffers, and the terminal.
+    ///
+    /// Changing this may affect the spacing of some UI elements.
+    ///
+    /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
+    /// The current theme selection.
+    /// TODO: Document this further
     pub theme_selection: Option<ThemeSelection>,
+    /// The active theme.
     pub active_theme: Arc<Theme>,
+    /// Manual overrides for the active theme.
+    ///
+    /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
+    /// The density of the UI.
+    /// Note: This setting is still experimental. See [this tracking issue](
     pub ui_density: UiDensity,
+    /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
 }
 
