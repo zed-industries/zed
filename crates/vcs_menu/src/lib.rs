@@ -242,28 +242,23 @@ impl PickerDelegate for BranchListDelegate {
                             .get_first_worktree_root_repo(cx)
                             .context("failed to get root repository for first worktree")?;
 
-                        match branch {
-                            BranchEntry::Branch(branch) => {
-                                let branch_name = &branch.string;
-
-                                let status = repo.change_branch(branch_name);
-                                if status.is_err() {
-                                    this.delegate.display_error_toast(format!("Failed to checkout branch '{branch_name}', check for conflicts or unstashed files"), cx);
-                                    status?;
-                                }
-                            }
+                        let branch_to_checkout = match branch {
+                            BranchEntry::Branch(branch) => branch.string,
                             BranchEntry::NewBranch { name: branch_name } => {
                                 let status = repo.create_branch(&branch_name);
                                 if status.is_err() {
                                     this.delegate.display_error_toast(format!("Failed to create branch '{branch_name}', check for conflicts or unstashed files"), cx);
                                     status?;
                                 }
-                                let status = repo.change_branch(&branch_name);
-                                if status.is_err() {
-                                    this.delegate.display_error_toast(format!("Failed to checkout branch '{branch_name}', check for conflicts or unstashed files"), cx);
-                                    status?;
-                                }
-                            },
+
+                                branch_name
+                            }
+                        };
+
+                        let status = repo.change_branch(&branch_to_checkout);
+                        if status.is_err() {
+                            this.delegate.display_error_toast(format!("Failed to checkout branch '{branch_to_checkout}', check for conflicts or unstashed files"), cx);
+                            status?;
                         }
 
                         cx.emit(DismissEvent);
