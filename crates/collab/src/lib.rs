@@ -170,8 +170,6 @@ pub struct Config {
     pub anthropic_api_key: Option<Arc<str>>,
     pub anthropic_staff_api_key: Option<Arc<str>>,
     pub llm_closed_beta_model_name: Option<Arc<str>>,
-    pub runpod_api_key: Option<Arc<str>>,
-    pub runpod_api_summary_url: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
@@ -235,8 +233,6 @@ impl Config {
             stripe_api_key: None,
             stripe_price_id: None,
             supermaven_admin_api_key: None,
-            runpod_api_key: None,
-            runpod_api_summary_url: None,
             user_backfiller_github_access_token: None,
         }
     }

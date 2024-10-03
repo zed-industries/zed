@@ -57,7 +57,6 @@ http_client.workspace = true
 image_viewer.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
-isahc.workspace = true
 isahc_http_client.workspace = true
 journal.workspace = true
 language.workspace = true

@@ -379,15 +379,16 @@ pub struct FeaturesContent {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
-    /// Do not soft wrap.
+    /// Prefer a single line generally, unless an overly long line is encountered.
     None,
+    /// Deprecated: use None instead. Left to avoid breakin existing users' configs.
     /// Prefer a single line generally, unless an overly long line is encountered.
     PreferLine,
-    /// Soft wrap lines that exceed the editor width
+    /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length
+    /// Soft wrap lines at the preferred line length.
     PreferredLineLength,
-    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
     Bounded,
 }
 

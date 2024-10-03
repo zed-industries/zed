@@ -13,9 +13,10 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView, Hsla,
-    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _, WindowContext,
+    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusHandle,
+    FocusableView, Hsla, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
+    Render, ScrollHandle, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext as _, WindowContext,
 };
 use project::{
     search::SearchQuery,
@@ -142,6 +143,8 @@ impl Render for BufferSearchBar {
             return div().id("search_bar");
         }
 
+        let focus_handle = self.focus_handle(cx);
+
         let narrow_mode =
             self.scroll_handle.bounds().size.width / cx.rem_size() < 340. / BASE_REM_SIZE_IN_PX;
         let hide_inline_icons = self.editor_needed_width
@@ -217,6 +220,7 @@ impl Render for BufferSearchBar {
                         div.children(supported_options.case.then(|| {
                             self.render_search_option_button(
                                 SearchOptions::CASE_SENSITIVE,
+                                focus_handle.clone(),
                                 cx.listener(|this, _, cx| {
                                     this.toggle_case_sensitive(&ToggleCaseSensitive, cx)
                                 }),
@@ -225,6 +229,7 @@ impl Render for BufferSearchBar {
                         .children(supported_options.word.then(|| {
                             self.render_search_option_button(
                                 SearchOptions::WHOLE_WORD,
+                                focus_handle.clone(),
                                 cx.listener(|this, _, cx| {
                                     this.toggle_whole_word(&ToggleWholeWord, cx)
                                 }),
@@ -233,6 +238,7 @@ impl Render for BufferSearchBar {
                         .children(supported_options.regex.then(|| {
                             self.render_search_option_button(
                                 SearchOptions::REGEX,
+                                focus_handle.clone(),
                                 cx.listener(|this, _, cx| this.toggle_regex(&ToggleRegex, cx)),
                             )
                         }))
@@ -250,7 +256,17 @@ impl Render for BufferSearchBar {
                         }))
                         .selected(self.replace_enabled)
                         .size(ButtonSize::Compact)
-                        .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx)),
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                Tooltip::for_action_in(
+                                    "Toggle replace",
+                                    &ToggleReplace,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        }),
                 )
             })
             .when(supported_options.selection, |this| {
@@ -268,8 +284,16 @@ impl Render for BufferSearchBar {
                     }))
                     .selected(self.selection_search_enabled)
                     .size(ButtonSize::Compact)
-                    .tooltip(|cx| {
-                        Tooltip::for_action("Toggle search selection", &ToggleSelection, cx)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Search Selection",
+                                &ToggleSelection,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
                     }),
                 )
             })
@@ -280,21 +304,31 @@ impl Render for BufferSearchBar {
                         IconButton::new("select-all", ui::IconName::SelectAll)
                             .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
                             .size(ButtonSize::Compact)
-                            .tooltip(|cx| {
-                                Tooltip::for_action("Select all matches", &SelectAllMatches, cx)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Select All Matches",
+                                        &SelectAllMatches,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
                             }),
                     )
                     .child(render_nav_button(
                         ui::IconName::ChevronLeft,
                         self.active_match_index.is_some(),
-                        "Select previous match",
+                        "Select Previous Match",
                         &SelectPrevMatch,
+                        focus_handle.clone(),
                     ))
                     .child(render_nav_button(
                         ui::IconName::ChevronRight,
                         self.active_match_index.is_some(),
-                        "Select next match",
+                        "Select Next Match",
                         &SelectNextMatch,
+                        focus_handle.clone(),
                     ))
                     .when(!narrow_mode, |this| {
                         this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
@@ -335,8 +369,16 @@ impl Render for BufferSearchBar {
                         .flex_none()
                         .child(
                             IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
-                                .tooltip(move |cx| {
-                                    Tooltip::for_action("Replace next", &ReplaceNext, cx)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |cx| {
+                                        Tooltip::for_action_in(
+                                            "Replace Next Match",
+                                            &ReplaceNext,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
                                 })
                                 .on_click(
                                     cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
@@ -344,8 +386,16 @@ impl Render for BufferSearchBar {
                         )
                         .child(
                             IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
-                                .tooltip(move |cx| {
-                                    Tooltip::for_action("Replace all", &ReplaceAll, cx)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |cx| {
+                                        Tooltip::for_action_in(
+                                            "Replace All Matches",
+                                            &ReplaceAll,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
                                 })
                                 .on_click(
                                     cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx)),
@@ -392,7 +442,7 @@ impl Render for BufferSearchBar {
                         div.child(
                             IconButton::new(SharedString::from("Close"), IconName::Close)
                                 .tooltip(move |cx| {
-                                    Tooltip::for_action("Close search bar", &Dismiss, cx)
+                                    Tooltip::for_action("Close Search Bar", &Dismiss, cx)
                                 })
                                 .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                     this.dismiss(&Dismiss, cx)
@@ -719,10 +769,11 @@ impl BufferSearchBar {
     fn render_search_option_button(
         &self,
         option: SearchOptions,
+        focus_handle: FocusHandle,
         action: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> impl IntoElement {
         let is_active = self.search_options.contains(option);
-        option.as_button(is_active, action)
+        option.as_button(is_active, focus_handle, action)
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
@@ -1122,6 +1173,7 @@ impl BufferSearchBar {
         });
         cx.focus(handle);
     }
+
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if self.active_searchable_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
@@ -1134,6 +1186,7 @@ impl BufferSearchBar {
             cx.notify();
         }
     }
+
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
         let mut should_propagate = true;
         if !self.dismissed && self.active_search.is_some() {
@@ -1161,6 +1214,7 @@ impl BufferSearchBar {
             cx.stop_propagation();
         }
     }
+
     pub fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {

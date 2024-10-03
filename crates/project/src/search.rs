@@ -147,30 +147,6 @@ impl SearchQuery {
         })
     }
 
-    pub fn from_proto_v1(message: proto::SearchProject) -> Result<Self> {
-        if message.regex {
-            Self::regex(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None,
-            )
-        } else {
-            Self::text(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None,
-            )
-        }
-    }
-
     pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
         if message.regex {
             Self::regex(
@@ -194,6 +170,7 @@ impl SearchQuery {
             )
         }
     }
+
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
@@ -207,18 +184,6 @@ impl SearchQuery {
                 *replacement = Some(new_replacement);
                 self
             }
-        }
-    }
-    pub fn to_protov1(&self, project_id: u64) -> proto::SearchProject {
-        proto::SearchProject {
-            project_id,
-            query: self.as_str().to_string(),
-            regex: self.is_regex(),
-            whole_word: self.whole_word(),
-            case_sensitive: self.case_sensitive(),
-            include_ignored: self.include_ignored(),
-            files_to_include: self.files_to_include().sources().join(","),
-            files_to_exclude: self.files_to_exclude().sources().join(","),
         }
     }
 

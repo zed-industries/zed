@@ -32,6 +32,7 @@ macro_rules! id_type {
             #[allow(unused)]
             #[allow(missing_docs)]
             pub fn from_proto(value: u64) -> Self {
+                debug_assert!(value != 0);
                 Self(value as i32)
             }
 
