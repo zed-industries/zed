@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{btree_map, BTreeMap, HashMap, VecDeque};
+use collections::{btree_map, BTreeMap, HashMap, HashSet, VecDeque};
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
@@ -16,12 +16,13 @@ use futures::{
 use gpui::{AppContext, Context, Model, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
+use settings::SettingsStore;
 use task::{
     static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix};
+use util::{post_inc, NumericPrefixWithSuffix, ResultExt};
 use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
@@ -47,7 +48,7 @@ pub enum TaskSourceKind {
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
-        abs_path: PathBuf,
+        local_path: PathBuf,
         id_base: Cow<'static, str>,
     },
     /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
@@ -57,18 +58,23 @@ pub enum TaskSourceKind {
     },
     /// Languages-specific tasks coming from extensions.
     Language { name: Arc<str> },
-    // TODO kb remote kind, which we'll re-set, needs project_id and more
+    /// Tasks, synchronized from the remote server.
+    Remote,
 }
 
 impl TaskSourceKind {
-    pub fn abs_path(&self) -> Option<&Path> {
+    #[cfg(test)]
+    pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::AbsPath { abs_path, .. } | Self::Worktree { abs_path, .. } => Some(abs_path),
-            Self::UserInput | Self::Language { .. } => None,
+            Self::AbsPath { abs_path: path, .. }
+            | Self::Worktree {
+                local_path: path, ..
+            } => Some(path),
+            Self::UserInput | Self::Language { .. } | Self::Remote => None,
         }
     }
 
-    pub fn worktree(&self) -> Option<WorktreeId> {
+    fn worktree(&self) -> Option<WorktreeId> {
         match self {
             Self::Worktree { id, .. } => Some(*id),
             _ => None,
@@ -84,11 +90,12 @@ impl TaskSourceKind {
             TaskSourceKind::Worktree {
                 id,
                 id_base,
-                abs_path,
+                local_path: abs_path,
             } => {
                 format!("{id_base}_{id}_{}", abs_path.display())
             }
             TaskSourceKind::Language { name } => format!("language_{name}"),
+            Self::Remote => "remote".to_string(),
         }
     }
 }
@@ -130,7 +137,7 @@ impl Inventory {
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
+            .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
 
         self.sources
             .iter()
@@ -146,8 +153,9 @@ impl Inventory {
                     .into_iter()
                     .map(|task| (&source.kind, task))
             })
-            .chain(language_tasks)
             .map(|(task_source_kind, task)| (task_source_kind.clone(), task))
+            .chain(self.templates_from_settings(worktree, cx))
+            .chain(language_tasks)
             .collect()
     }
 
@@ -165,8 +173,6 @@ impl Inventory {
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
     )> {
-        // TODO kb remove entirely: currently, used in the prod code for in modal.rs only, when opening it.
-        // Instead, add a remote provider (impl ContextProvider for RemoteProvider) that will sync itself over time.
         let language = location
             .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
@@ -180,7 +186,7 @@ impl Inventory {
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
+            .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
 
         let mut lru_score = 0_u32;
         let mut task_usage = self
@@ -217,8 +223,9 @@ impl Inventory {
                     .tasks_to_schedule()
                     .0
                     .into_iter()
-                    .map(|task| (&source.kind, task))
+                    .map(|task| (source.kind.clone(), task))
             })
+            .chain(self.templates_from_settings(worktree, cx))
             .chain(language_tasks)
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
@@ -229,7 +236,7 @@ impl Inventory {
                     .remove(&task.id)
                     .map(|(_, _, lru_score)| lru_score)
                     .unwrap_or(not_used_score);
-                (kind.clone(), task, lru_score)
+                (kind, task, lru_score)
             })
             .collect::<Vec<_>>();
         let previously_spawned_tasks = task_usage
@@ -333,6 +340,93 @@ impl Inventory {
     pub fn delete_previously_used(&mut self, id: &TaskId) {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
+
+    // TODO kb this should be summarized at a SettingsStore level instead, can be very slow now and is used to test things
+    fn templates_from_settings(
+        &self,
+        worktree: Option<WorktreeId>,
+        cx: &AppContext,
+    ) -> impl Iterator<Item = (TaskSourceKind, TaskTemplate)> {
+        let raw_templates = cx.global::<SettingsStore>().get_task_templates(worktree);
+        let mut templates = Vec::with_capacity(
+            raw_templates.global_local.len()
+                + raw_templates.global_remote.len()
+                + raw_templates.worktree.len(),
+        );
+        let mut unique_labels = HashSet::default();
+
+        let mut bad_templates = 0;
+        // Most-specific tasks override least-specific ones in case of label conflicts.
+        if let Some(worktree) = worktree {
+            for (directory_path, worktree_template) in raw_templates.worktree {
+                if let Some(template) =
+                    serde_json::from_value::<TaskTemplate>(worktree_template.clone()).log_err()
+                {
+                    if unique_labels.insert(template.label.clone()) {
+                        templates.push((
+                            TaskSourceKind::Worktree {
+                                id: worktree,
+                                local_path: directory_path.to_path_buf(),
+                                id_base: Cow::Owned(
+                                    format!("local tasks for worktree {worktree} at path {directory_path:?}"),
+                                ),
+                            },
+                            template,
+                        ));
+                    }
+                } else {
+                    bad_templates += 1;
+                }
+            }
+            // TODO kb pop-ups instead?
+            if bad_templates > 0 {
+                log::error!("Failed to parse {bad_templates} worktree templates");
+            }
+        }
+
+        bad_templates = 0;
+        for global_remote_template in raw_templates.global_remote {
+            if let Some(template) =
+                serde_json::from_value::<TaskTemplate>(global_remote_template.clone()).log_err()
+            {
+                if unique_labels.insert(template.label.clone()) {
+                    templates.push((TaskSourceKind::Remote, template));
+                }
+            } else {
+                bad_templates += 1;
+            }
+        }
+        if bad_templates > 0 {
+            log::error!("Failed to parse {bad_templates} remote templates");
+        }
+
+        bad_templates = 0;
+        let local_tasks_file = paths::tasks_file();
+        for global_template in raw_templates.global_local {
+            if let Some(template) =
+                serde_json::from_value::<TaskTemplate>(global_template.clone()).log_err()
+            {
+                if unique_labels.insert(template.label.clone()) {
+                    templates.push((
+                        TaskSourceKind::AbsPath {
+                            abs_path: local_tasks_file.clone(),
+                            id_base: Cow::Owned(format!(
+                                "local absolute tasks at path {local_tasks_file:?}",
+                            )),
+                        },
+                        template,
+                    ));
+                }
+            } else {
+                bad_templates += 1;
+            }
+        }
+        if bad_templates > 0 {
+            log::error!("Failed to parse {bad_templates} global templates");
+        }
+
+        templates.into_iter()
+    }
 }
 
 impl Inventory {
@@ -346,10 +440,10 @@ impl Inventory {
         create_source: impl FnOnce(UnboundedSender<()>, &mut AppContext) -> StaticSource,
         cx: &mut gpui::ModelContext<Self>,
     ) {
-        let abs_path = kind.abs_path();
-        if abs_path.is_some() {
-            if let Some(a) = self.sources.iter().find(|s| s.kind.abs_path() == abs_path) {
-                log::debug!("Source for path {abs_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
+        let source_path = kind.path();
+        if source_path.is_some() {
+            if let Some(a) = self.sources.iter().find(|s| s.kind.path() == source_path) {
+                log::debug!("Source for path {source_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
                 return;
             }
         }
@@ -364,8 +458,8 @@ impl Inventory {
     ///
     /// Now, entry for this path can be re-added again.
     #[cfg(test)]
-    pub fn remove_local_static_source(&mut self, abs_path: &Path) {
-        self.sources.retain(|s| s.kind.abs_path() != Some(abs_path));
+    pub fn remove_local_static_source(&mut self, path: &Path) {
+        self.sources.retain(|s| s.kind.path() != Some(path));
     }
 }
 
@@ -397,7 +491,8 @@ fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
         TaskSourceKind::Language { .. } => 1,
         TaskSourceKind::UserInput => 2,
         TaskSourceKind::Worktree { .. } => 3,
-        TaskSourceKind::AbsPath { .. } => 4,
+        TaskSourceKind::Remote { .. } => 4,
+        TaskSourceKind::AbsPath { .. } => 5,
     }
 }
 
@@ -841,7 +936,7 @@ mod tests {
             inventory.add_source(
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    abs_path: worktree_path_1.to_path_buf(),
+                    local_path: worktree_path_1.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 |tx, cx| {
@@ -856,7 +951,7 @@ mod tests {
             inventory.add_source(
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    abs_path: worktree_path_2.to_path_buf(),
+                    local_path: worktree_path_2.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 |tx, cx| {
@@ -906,7 +1001,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    abs_path: worktree_path_1.to_path_buf(),
+                    local_path: worktree_path_1.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 common_name.to_string(),
@@ -914,7 +1009,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    abs_path: worktree_path_1.to_path_buf(),
+                    local_path: worktree_path_1.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 "worktree_1".to_string(),
@@ -924,7 +1019,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    abs_path: worktree_path_2.to_path_buf(),
+                    local_path: worktree_path_2.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 common_name.to_string(),
@@ -932,7 +1027,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    abs_path: worktree_path_2.to_path_buf(),
+                    local_path: worktree_path_2.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 "worktree_2".to_string(),

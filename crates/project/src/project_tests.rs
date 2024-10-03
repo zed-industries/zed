@@ -140,7 +140,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     });
     let global_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
-        abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+        local_path: PathBuf::from("/the-root/.zed/tasks.json"),
         id_base: "local_tasks_for_worktree".into(),
     };
 
@@ -198,7 +198,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    local_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),
@@ -283,7 +283,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+                    local_path: PathBuf::from("/the-root/.zed/tasks.json"),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),
@@ -300,7 +300,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    local_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),

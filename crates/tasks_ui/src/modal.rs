@@ -369,6 +369,7 @@ impl PickerDelegate for TasksModalDelegate {
         let icon = match source_kind {
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
+            TaskSourceKind::Remote => Some(Icon::new(IconName::Server)),
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
             TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_type_icon(&name.to_lowercase())

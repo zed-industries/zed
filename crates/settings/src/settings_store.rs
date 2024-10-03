@@ -159,10 +159,10 @@ pub struct SettingsLocation<'a> {
 
 /// A set of task templates, applicable in the current project.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TasksCollection<'a> {
+pub struct RawTaskTemplates<'a> {
     pub global_local: &'a [serde_json::Value],
     pub global_remote: &'a [serde_json::Value],
-    pub worktree: Vec<&'a serde_json::Value>,
+    pub worktree: Vec<(&'a Arc<Path>, &'a serde_json::Value)>,
 }
 
 /// A set of strongly-typed setting values defined via multiple config files.
@@ -338,23 +338,27 @@ impl SettingsStore {
     /// Returns every user task defined globally (locally, or remotely, if applicable).
     /// If a path is provided, local, worktree-specific tasks will be returned as well.
     /// No deduplication or sorting is performed.
-    pub fn get_tasks(&self, path: Option<SettingsLocation>) -> TasksCollection<'_> {
-        TasksCollection {
+    pub fn get_task_templates(&self, worktree: Option<WorktreeId>) -> RawTaskTemplates<'_> {
+        RawTaskTemplates {
             global_local: &self.raw_user_tasks,
             global_remote: &self.raw_remote_tasks,
-            worktree: path
+            worktree: worktree
                 .into_iter()
                 // Right now, local tasks may only come either from VSCode or Zed local setting files, so take them both.
-                .flat_map(|location| self.all_settings_for_worktree(location.worktree_id))
-                .filter_map(|(_, settings)| settings.get(&LocalSettingsKind::Tasks)?.as_array())
-                .flat_map(|local_tasks| local_tasks.iter())
+                .flat_map(|worktree| self.all_settings_for_worktree(worktree))
+                .filter_map(|((_, directory_path), settings)| {
+                    Some(directory_path).zip(settings.get(&LocalSettingsKind::Tasks)?.as_array())
+                })
+                .flat_map(|(directory_path, local_tasks)| {
+                    local_tasks.iter().map(move |task| (directory_path, task))
+                })
                 .collect(),
         }
     }
 
     fn all_settings_for_worktree(
         &self,
-        worktree_id: WorktreeId,
+        worktree: WorktreeId,
     ) -> impl Iterator<
         Item = (
             &(WorktreeId, Arc<Path>),
@@ -362,9 +366,9 @@ impl SettingsStore {
         ),
     > {
         self.raw_local_settings.range(
-            (worktree_id, Path::new("").into())
+            (worktree, Path::new("").into())
                 ..(
-                    WorktreeId::from_usize(worktree_id.to_usize() + 1),
+                    WorktreeId::from_usize(worktree.to_usize() + 1),
                     Path::new("").into(),
                 ),
         )

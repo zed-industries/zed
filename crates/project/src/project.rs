@@ -467,7 +467,6 @@ impl Hover {
     }
 }
 
-// TODO kb task store event subscriptions?
 enum EntitySubscription {
     Project(PendingEntitySubscription<Project>),
     BufferStore(PendingEntitySubscription<BufferStore>),
