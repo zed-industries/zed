@@ -1230,10 +1230,15 @@ impl CompletionsMenu {
                                 None
                             };
 
-                        let color = if show_colors {
-                            completion.color().unwrap_or(gpui::transparent_black())
+                        let color_swatch = if show_colors {
+                            Some(
+                                div()
+                                    .size_4()
+                                    .bg(completion.color().unwrap_or(gpui::transparent_black()))
+                                    .rounded(px(2.)),
+                            )
                         } else {
-                            gpui::transparent_black()
+                            None
                         };
 
                         div().min_w(px(220.)).max_w(px(540.)).child(
@@ -1251,7 +1256,7 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
-                                .start_slot(div().size_4().bg(color).rounded(px(2.)))
+                                .start_slot::<Div>(color_swatch)
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Label>(documentation_label),
                         )
