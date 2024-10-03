@@ -6,21 +6,26 @@ When viewing a "singleton" buffer, the outline panel works similarly to that of 
 
 ![Using the outline panel in a singleton buffer](https://zed.dev/img/outline-panel/singleton.png)
 
+## Usage with multibuffers
+
 The outline panel truly excels when used with multi-buffers. Here are some examples of its versatility:
 
-1. Project Search Results:
+### Project Search Results
 
 Get an overview of search results across your project.
+
 ![Using the outline panel in a project search multi-buffer](https://zed.dev/img/outline-panel/project-search.png)
 
-2. Project Diagnostics:
+### Project Diagnostics
 
 View a summary of all errors and warnings reported by the language server.
+
 ![Using the outline panel while viewing project diagnostics multi-buffer](https://zed.dev/img/outline-panel/project-diagnostics.png)
 
-3. Find All References:
+### Find All References
 
 Quickly navigate through all references when using the `editor: find all references` action.
+
 ![Using the outline panel while viewing `find all references` multi-buffer](https://zed.dev/img/outline-panel/find-all-references.png)
 
 The outline view provides a great way to quickly navigate to specific parts of your code and helps you maintain context when working with large result sets in multi-buffers.
