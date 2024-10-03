@@ -18,6 +18,7 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self},
+    vi_mode::ViMotion,
     vte::ansi::{
         ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
     },
@@ -139,6 +140,9 @@ enum InternalEvent {
     // Adjusted mouse position, should open
     FindHyperlink(Point<Pixels>, bool),
     Copy,
+    // Vi mode events
+    ToggleViMode,
+    ViMotion(ViMotion),
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -447,6 +451,7 @@ impl TerminalBuilder {
             hovered_word: false,
             url_regex,
             word_regex,
+            vi_mode: false,
         };
 
         Ok(TerminalBuilder {
@@ -602,6 +607,7 @@ pub struct Terminal {
     url_regex: RegexSearch,
     word_regex: RegexSearch,
     task: Option<TaskState>,
+    vi_mode: bool,
 }
 
 pub struct TaskState {
@@ -810,6 +816,12 @@ impl Terminal {
             InternalEvent::ScrollToAlacPoint(point) => {
                 term.scroll_to_point(*point);
                 self.refresh_hovered_word();
+            }
+            InternalEvent::ToggleViMode => {
+                term.toggle_vi_mode();
+            }
+            InternalEvent::ViMotion(motion) => {
+                term.vi_motion(*motion);
             }
             InternalEvent::FindHyperlink(position, open) => {
                 let prev_hovered_word = self.last_content.last_hovered_word.take();
@@ -1092,7 +1104,83 @@ impl Terminal {
         self.write_bytes_to_pty(input);
     }
 
+    pub fn toggle_vi_mode(&mut self) {
+        self.vi_mode = !self.vi_mode;
+        self.events.push_back(InternalEvent::ToggleViMode);
+    }
+
+    pub fn vi_motion(&mut self, keystroke: &Keystroke) {
+        let motion: Option<ViMotion> = match keystroke.key.as_str() {
+            "h" => Some(ViMotion::Left),
+            "j" => Some(ViMotion::Down),
+            "k" => Some(ViMotion::Up),
+            "l" => Some(ViMotion::Right),
+            "w" => Some(ViMotion::WordRight),
+            "b" => Some(ViMotion::WordLeft),
+            "e" => Some(ViMotion::WordRightEnd),
+            "%" => Some(ViMotion::Bracket),
+            "$" => Some(ViMotion::Last),
+            "0" => Some(ViMotion::First),
+            "^" => Some(ViMotion::FirstOccupied),
+            _ => None,
+        };
+
+        if keystroke.key.as_str() == "v" {
+            let point = self.last_content.cursor.point;
+            let selection_type = SelectionType::Simple;
+            let side = AlacDirection::Right;
+            let selection = Selection::new(selection_type, point, side);
+            self.events
+                .push_back(InternalEvent::SetSelection(Some((selection, point))));
+            return;
+        }
+
+        if keystroke.key.as_str() == "escape" {
+            self.events.push_back(InternalEvent::SetSelection(None));
+            return;
+        }
+
+        if keystroke.key.as_str() == "y" {
+            self.events.push_back(InternalEvent::Copy);
+            self.events.push_back(InternalEvent::SetSelection(None));
+            return;
+        }
+
+        if keystroke.key.as_str() == "i" {
+            if self.vi_mode {
+                self.scroll_to_bottom();
+                self.toggle_vi_mode();
+            }
+            return;
+        }
+
+        if let Some(motion) = motion {
+            let cursor = self.last_content.cursor.point;
+            let cursor_pos = Point {
+                x: Pixels::from(cursor.column.0 as f32 * self.last_content.size.cell_width),
+                y: Pixels::from(cursor.line.0 as f32 * self.last_content.size.line_height),
+            };
+            self.events
+                .push_back(InternalEvent::UpdateSelection(cursor_pos));
+            self.events.push_back(InternalEvent::ViMotion(motion));
+        }
+    }
+
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+        if keystroke.modifiers.control
+            && keystroke.modifiers.shift
+            && keystroke.key.as_str() == "space"
+        {
+            self.toggle_vi_mode();
+            return true;
+        }
+
+        if self.vi_mode {
+            self.vi_motion(keystroke);
+            return true;
+        }
+
+        // Keep default terminal behavior
         let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
         if let Some(esc) = esc {
             self.input(esc);
