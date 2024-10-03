@@ -4,6 +4,7 @@ use story::Story;
 
 use crate::{default_color_scales, ColorScaleStep};
 
+/// The story showcasing all the default color scales
 pub struct ColorsStory;
 
 impl Render for ColorsStory {
