@@ -157,13 +157,21 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
+/// A set of task templates, applicable in the current project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TasksCollection<'a> {
+    pub global_local: &'a [serde_json::Value],
+    pub global_remote: &'a [serde_json::Value],
+    pub worktree: Vec<&'a serde_json::Value>,
+}
+
 /// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
-    raw_user_tasks: serde_json::Value,
-    raw_remote_user_tasks: Option<serde_json::Value>,
+    raw_user_tasks: Vec<serde_json::Value>,
+    raw_remote_tasks: Vec<serde_json::Value>,
     raw_extension_settings: serde_json::Value,
     raw_local_settings:
         BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
@@ -221,8 +229,8 @@ impl SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
-            raw_user_tasks: serde_json::json!({}),
-            raw_remote_user_tasks: None,
+            raw_user_tasks: Vec::new(),
+            raw_remote_tasks: Vec::new(),
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
@@ -327,8 +335,43 @@ impl SettingsStore {
         &self.raw_user_settings
     }
 
+    /// Returns every user task defined globally (locally, or remotely, if applicable).
+    /// If a path is provided, local, worktree-specific tasks will be returned as well.
+    /// No deduplication or sorting is performed.
+    pub fn get_tasks(&self, path: Option<SettingsLocation>) -> TasksCollection<'_> {
+        TasksCollection {
+            global_local: &self.raw_user_tasks,
+            global_remote: &self.raw_remote_tasks,
+            worktree: path
+                .into_iter()
+                // Right now, local tasks may only come either from VSCode or Zed local setting files, so take them both.
+                .flat_map(|location| self.all_settings_for_worktree(location.worktree_id))
+                .filter_map(|(_, settings)| settings.get(&LocalSettingsKind::Tasks)?.as_array())
+                .flat_map(|local_tasks| local_tasks.iter())
+                .collect(),
+        }
+    }
+
+    fn all_settings_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> impl Iterator<
+        Item = (
+            &(WorktreeId, Arc<Path>),
+            &HashMap<LocalSettingsKind, serde_json::Value>,
+        ),
+    > {
+        self.raw_local_settings.range(
+            (worktree_id, Path::new("").into())
+                ..(
+                    WorktreeId::from_usize(worktree_id.to_usize() + 1),
+                    Path::new("").into(),
+                ),
+        )
+    }
+
     /// Get the user's tasks as a raw JSON value.
-    pub fn raw_user_tasks(&self) -> &serde_json::Value {
+    pub fn raw_user_tasks(&self) -> &[serde_json::Value] {
         &self.raw_user_tasks
     }
 
@@ -536,21 +579,19 @@ impl SettingsStore {
         &mut self,
         user_tasks_content: &str,
         remote: bool,
-        cx: &mut AppContext,
+        _cx: &mut AppContext,
     ) -> Result<()> {
-        let tasks: serde_json::Value = if user_tasks_content.is_empty() {
-            parse_json_with_comments("{}")?
+        let tasks: Vec<serde_json::Value> = if user_tasks_content.is_empty() {
+            parse_json_with_comments("[]")?
         } else {
             parse_json_with_comments(user_tasks_content)?
         };
 
-        anyhow::ensure!(tasks.is_object(), "tasks must be an object");
         if remote {
-            self.raw_remote_user_tasks = Some(tasks);
+            self.raw_remote_tasks = tasks;
         } else {
             self.raw_user_tasks = tasks;
         }
-        self.recompute_tasks(None, cx)?;
         Ok(())
     }
 
@@ -576,9 +617,7 @@ impl SettingsStore {
             LocalSettingsKind::Settings | LocalSettingsKind::Editorconfig => {
                 self.recompute_values(Some((root_id, &directory_path)), cx)?;
             }
-            LocalSettingsKind::Tasks => {
-                self.recompute_tasks(Some((root_id, &directory_path)), cx)?;
-            }
+            LocalSettingsKind::Tasks => {}
         }
         Ok(())
     }
@@ -610,14 +649,7 @@ impl SettingsStore {
         &self,
         root_id: WorktreeId,
     ) -> impl '_ + Iterator<Item = (Arc<Path>, LocalSettingsKind, String)> {
-        self.raw_local_settings
-            .range(
-                (root_id, Path::new("").into())
-                    ..(
-                        WorktreeId::from_usize(root_id.to_usize() + 1),
-                        Path::new("").into(),
-                    ),
-            )
+        self.all_settings_for_worktree(root_id)
             .flat_map(|((_, path), content)| {
                 content.iter().filter_map(|(&kind, raw_content)| {
                     let parsed_content = serde_json::to_string(raw_content).log_err()?;
@@ -854,14 +886,6 @@ impl SettingsStore {
             }
         }
         Ok(())
-    }
-
-    fn recompute_tasks(
-        &mut self,
-        changed_local_path: Option<(WorktreeId, &Path)>,
-        cx: &mut AppContext,
-    ) -> Result<()> {
-        todo!("TODO kb merge the tasks and set them into the global")
     }
 }
 

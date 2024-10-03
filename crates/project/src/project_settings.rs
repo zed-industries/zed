@@ -353,7 +353,7 @@ impl SettingsObserver {
             .log_err();
         }
 
-        let mut tasks = settings_store.raw_user_tasks().clone();
+        let mut tasks = settings_store.raw_user_tasks().to_vec();
         if let Some(content) = serde_json::to_string(&tasks).log_err() {
             ssh.send(proto::UpdateUserSettings {
                 project_id: 0,
@@ -381,8 +381,8 @@ impl SettingsObserver {
             }
 
             let new_tasks = cx.global::<SettingsStore>().raw_user_tasks();
-            if &tasks != new_tasks {
-                tasks = new_tasks.clone();
+            if tasks != new_tasks {
+                tasks = new_tasks.to_vec();
             }
             if let Some(content) = serde_json::to_string(&new_tasks).log_err() {
                 if let Some(ssh) = weak_client.upgrade() {
