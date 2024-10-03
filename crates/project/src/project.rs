@@ -20,7 +20,7 @@ mod environment;
 pub mod search_history;
 mod yarn;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
@@ -43,11 +43,10 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::InlayHintKind,
-    proto::{deserialize_anchor, split_operations},
-    Buffer, BufferEvent, CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation,
-    File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16,
-    Transaction, Unclipped,
+    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
+    CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation, File as _, Language,
+    LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use lsp::{
     CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
@@ -4048,35 +4047,6 @@ impl std::fmt::Display for NoRepositoryError {
 }
 
 impl std::error::Error for NoRepositoryError {}
-
-pub fn deserialize_location(
-    buffer_store: &Model<BufferStore>,
-    location: proto::Location,
-    cx: &mut AppContext,
-) -> Task<Result<Location>> {
-    let buffer_id = match BufferId::new(location.buffer_id) {
-        Ok(id) => id,
-        Err(e) => return Task::ready(Err(e)),
-    };
-    let buffer_task = buffer_store.update(cx, |buffer_store, cx| {
-        buffer_store.wait_for_remote_buffer(buffer_id, cx)
-    });
-    cx.spawn(|_| async move {
-        let buffer = buffer_task.await?;
-        let start = location
-            .start
-            .and_then(deserialize_anchor)
-            .context("missing task context location start")?;
-        let end = location
-            .end
-            .and_then(deserialize_anchor)
-            .context("missing task context location end")?;
-        Ok(Location {
-            buffer,
-            range: start..end,
-        })
-    })
-}
 
 pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {

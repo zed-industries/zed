@@ -3,20 +3,22 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Model, ModelContext, Task, WeakModel};
-use language::{proto::serialize_anchor, ContextProvider as _, Location};
+use language::{
+    proto::{deserialize_anchor, serialize_anchor},
+    ContextProvider as _, Location,
+};
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
 use task::{TaskContext, TaskVariables, VariableName};
+use text::BufferId;
 use util::{debug_panic, ResultExt};
 
 use crate::{
     buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
     ProjectEnvironment,
 };
-
-use super::deserialize_location;
 
 /// TODO kb docs
 ///
@@ -52,19 +54,53 @@ impl TaskStore {
             .payload
             .location
             .context("no location given for task context handling")?;
-        let buffer_store = store.update(&mut cx, |store, _| match store {
-            TaskStore::Local { buffer_store, .. } => Ok(buffer_store.clone()),
-            TaskStore::Remote { buffer_store, .. } => Ok(buffer_store.clone()),
-            TaskStore::Empty => {
-                anyhow::bail!("empty task store cannot handle task context requests")
-            }
+        let (buffer_store, is_remote) = store.update(&mut cx, |store, _| {
+            let (store, is_remote) = match store {
+                TaskStore::Local { buffer_store, .. } => (buffer_store.clone(), false),
+                TaskStore::Remote { buffer_store, .. } => (buffer_store.clone(), true),
+                TaskStore::Empty => {
+                    anyhow::bail!("empty task store cannot handle task context requests")
+                }
+            };
+            Ok((store, is_remote))
         })??;
         let buffer_store = buffer_store
             .upgrade()
             .context("no buffer store when handling task context request")?;
-        let location = cx
-            .update(|cx| deserialize_location(&buffer_store, location, cx))?
+
+        let buffer_id = BufferId::new(location.buffer_id).with_context(|| {
+            format!(
+                "cannot handle task context request for invalid buffer id: {}",
+                location.buffer_id
+            )
+        })?;
+
+        let start = location
+            .start
+            .and_then(deserialize_anchor)
+            .context("missing task context location start")?;
+        let end = location
+            .end
+            .and_then(deserialize_anchor)
+            .context("missing task context location end")?;
+        let buffer = buffer_store
+            .update(&mut cx, |buffer_store, cx| {
+                if is_remote {
+                    buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                } else {
+                    Task::ready(
+                        buffer_store
+                            .get(buffer_id)
+                            .with_context(|| format!("no local buffer with id {buffer_id}")),
+                    )
+                }
+            })?
             .await?;
+
+        let location = Location {
+            buffer,
+            range: start..end,
+        };
         let context_task = store.update(&mut cx, |store, cx| {
             // TODO kb why not send the original task variables from the client?
             let captured_variables = {
