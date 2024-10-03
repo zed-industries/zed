@@ -1,4 +1,5 @@
 pub mod buffer_store;
+mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
@@ -36,7 +37,7 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Model,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Hsla, Model,
     ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
@@ -47,7 +48,9 @@ use language::{
     Documentation, File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset,
     ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
+use lsp::{
+    CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
+};
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
@@ -4444,6 +4447,16 @@ impl Completion {
     /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
         self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+    }
+
+    /// Returns the corresponding color for this completion.
+    ///
+    /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
+    pub fn color(&self) -> Option<Hsla> {
+        match self.lsp_completion.kind {
+            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
+            _ => None,
+        }
     }
 }
 
