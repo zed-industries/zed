@@ -79,7 +79,7 @@ impl ThemeRegistry {
         //
         // These themes will get overwritten when `load_user_themes` is called
         // when Zed starts, so the One variants used will be the ones ported from Zed1.
-        registry.insert_theme_families([crate::one_themes::one_family()]);
+        registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
 
         registry
     }

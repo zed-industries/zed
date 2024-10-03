@@ -1,4 +1,4 @@
-use crate::one_themes::one_dark;
+use crate::fallback_themes::zed_default_dark;
 use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -629,7 +629,7 @@ impl settings::Settings for ThemeSettings {
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
-                .or(themes.get(&one_dark().name))
+                .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),

@@ -9,8 +9,8 @@
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
 mod default_colors;
+mod fallback_themes;
 mod font_family_cache;
-mod one_themes;
 mod registry;
 mod scale;
 mod schema;
@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use ::settings::{Settings, SettingsStore};
 pub use default_colors::*;
+use fallback_themes::{zed_default_dark, zed_default_themes};
 pub use font_family_cache::*;
-use one_themes::{one_dark, one_family};
 pub use registry::*;
 pub use scale::*;
 pub use schema::*;
@@ -142,7 +142,7 @@ impl ThemeFamily {}
 
 impl Default for ThemeFamily {
     fn default() -> Self {
-        one_family()
+        zed_default_themes()
     }
 }
 
@@ -217,7 +217,7 @@ impl Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        one_dark()
+        zed_default_dark()
     }
 }
 
