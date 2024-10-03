@@ -27,7 +27,6 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
-use color_extractor::ColorExtractor;
 use debounced_delay::DebouncedDelay;
 pub use environment::ProjectEnvironment;
 use futures::{
@@ -346,7 +345,7 @@ pub struct Completion {
 impl Completion {
     pub fn color(&self) -> Option<Hsla> {
         match self.lsp_completion.kind {
-            Some(CompletionItemKind::COLOR) => ColorExtractor::extract(&self.lsp_completion),
+            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
             _ => None,
         }
     }
