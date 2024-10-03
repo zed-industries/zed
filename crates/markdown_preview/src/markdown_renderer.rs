@@ -6,7 +6,7 @@ use crate::markdown_elements::{
 };
 use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
+    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
     ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use settings::Settings;
@@ -17,7 +17,7 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
+    h_flex, relative, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
     StatefulInteractiveElement, Tooltip,
 };
 use workspace::Workspace;
@@ -231,13 +231,60 @@ fn render_markdown_list_item(
     cx.with_common_p(item).into_any()
 }
 
+fn calculate_content_length(paragraphs: &Vec<MarkdownParagraph>) -> usize {
+    paragraphs
+        .iter()
+        .map(|paragraph| match paragraph {
+            MarkdownParagraph::MarkdownText(text) => text.contents.len(),
+            // TODO: Scale column width based on image size
+            MarkdownParagraph::MarkdownImage(_) => 1,
+        })
+        .sum()
+}
+
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
-    let header = render_markdown_table_row(&parsed.header, &parsed.column_alignments, true, cx);
+    let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
+
+    for (index, cell) in parsed.header.children.iter().enumerate() {
+        let length = calculate_content_length(&cell);
+        max_lengths[index] = length;
+    }
+
+    for row in &parsed.body {
+        for (index, cell) in row.children.iter().enumerate() {
+            let length = calculate_content_length(&cell);
+            if length > max_lengths[index] {
+                max_lengths[index] = length;
+            }
+        }
+    }
+
+    let total_max_length: usize = max_lengths.iter().sum();
+    let max_column_widths: Vec<f32> = max_lengths
+        .iter()
+        .map(|&length| length as f32 / total_max_length as f32)
+        .collect();
+
+    let header = render_markdown_table_row(
+        &parsed.header,
+        &parsed.column_alignments,
+        &max_column_widths,
+        true,
+        cx,
+    );
 
     let body: Vec<AnyElement> = parsed
         .body
         .iter()
-        .map(|row| render_markdown_table_row(row, &parsed.column_alignments, false, cx))
+        .map(|row| {
+            render_markdown_table_row(
+                row,
+                &parsed.column_alignments,
+                &max_column_widths,
+                false,
+                cx,
+            )
+        })
         .collect();
 
     cx.with_common_p(v_flex())
@@ -250,14 +297,15 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 fn render_markdown_table_row(
     parsed: &ParsedMarkdownTableRow,
     alignments: &Vec<ParsedMarkdownTableAlignment>,
+    max_column_widths: &Vec<f32>,
     is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = vec![];
 
-    for cell in &parsed.children {
+    for (index, cell) in parsed.children.iter().enumerate() {
         let alignment = alignments
-            .get(items.len())
+            .get(index)
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
@@ -268,9 +316,9 @@ fn render_markdown_table_row(
             ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
             ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
         };
-
+        let max_width = max_column_widths.get(index).unwrap_or(&0.0);
         let mut cell = container
-            .w_full()
+            .w(Length::Definite(relative(*max_width)))
             .h_full()
             .children(contents)
             .px_2()
