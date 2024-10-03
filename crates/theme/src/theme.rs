@@ -9,7 +9,6 @@
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
 mod default_colors;
-mod default_theme;
 mod font_family_cache;
 mod one_themes;
 /// A prelude for working with the theme system.
@@ -26,8 +25,8 @@ use std::sync::Arc;
 
 use ::settings::{Settings, SettingsStore};
 pub use default_colors::*;
-pub use default_theme::*;
 pub use font_family_cache::*;
+use one_themes::{one_dark, one_family};
 pub use registry::*;
 pub use scale::*;
 pub use schema::*;
@@ -145,6 +144,12 @@ pub struct ThemeFamily {
 
 impl ThemeFamily {}
 
+impl Default for ThemeFamily {
+    fn default() -> Self {
+        one_family()
+    }
+}
+
 /// A theme is the primary mechanism for defining the appearance of the UI.
 #[derive(Clone)]
 pub struct Theme {
@@ -211,6 +216,12 @@ impl Theme {
     #[inline(always)]
     pub fn window_background_appearance(&self) -> WindowBackgroundAppearance {
         self.styles.window_background_appearance
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        one_dark()
     }
 }
 
