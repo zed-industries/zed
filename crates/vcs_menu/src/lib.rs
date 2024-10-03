@@ -247,7 +247,7 @@ impl PickerDelegate for BranchListDelegate {
         let Some((current_pick, candidate_id)) = self
             .matches
             .get(current_pick)
-            .map(|pick| (pick.string.clone(), pick.candidate_id.clone()))
+            .map(|pick| (pick.string.clone(), pick.candidate_id))
         else {
             return;
         };
