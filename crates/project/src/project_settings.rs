@@ -10,7 +10,10 @@ use paths::{
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{InvalidSettingsError, LocalSettingsKind, Settings, SettingsSources, SettingsStore};
+use settings::{
+    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsSources,
+    SettingsStore,
+};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -472,7 +475,7 @@ impl SettingsObserver {
                                 let content = fs.load(&abs_path).await?;
                                 if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
                                     let vscode_tasks =
-                                        serde_json::from_str::<VsCodeTaskFile>(&content)
+                                        parse_json_with_comments::<VsCodeTaskFile>(&content)
                                             .with_context(|| {
                                                 format!("parsing VSCode tasks, file {abs_path:?}")
                                             })?;
