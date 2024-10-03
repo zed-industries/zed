@@ -151,7 +151,7 @@ impl Render for FileFinder {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .key_context("FileFinder")
-            .w(rems(34.))
+            .w(rems(FileFinderSettings::get_global(cx).window_width))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
             .child(self.picker.clone())
