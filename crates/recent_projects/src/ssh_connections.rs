@@ -6,9 +6,9 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::AppContext;
 use gpui::{
-    percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
-    EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
-    Transformation, View,
+    percentage, px, Action, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext,
+    DismissEvent, EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion,
+    SharedString, Task, Transformation, View,
 };
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
@@ -16,9 +16,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    h_flex, v_flex, Color, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext,
-    WindowContext,
+    div, h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, FluentBuilder as _, Icon,
+    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, Styled,
+    StyledExt as _, Tooltip, ViewContext, VisualContext, WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -140,47 +140,83 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let header_color = theme.colors().element_background;
+        let body_color = theme.colors().background;
         v_flex()
             .key_context("PasswordPrompt")
-            .p_4()
-            .size_full()
+            .justify_start()
             .child(
                 h_flex()
-                    .gap_2()
-                    .child(if self.error_message.is_some() {
-                        Icon::new(IconName::XCircle)
-                            .size(IconSize::Medium)
-                            .color(Color::Error)
-                            .into_any_element()
-                    } else {
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Medium)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
-                            .into_any_element()
-                    })
+                    .p_1()
+                    .border_1()
+                    .rounded_t_3xl()
+                    .border_color(theme.colors().border_variant)
+                    .bg(header_color)
+                    .justify_between()
                     .child(
-                        Label::new(format!("ssh {}…", self.connection_string))
-                            .size(ui::LabelSize::Large),
-                    ),
+                        IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
+                            .icon_size(IconSize::XSmall)
+                            .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
+                            .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+                            .child(
+                                Label::new(self.connection_string.clone())
+                                    .size(ui::LabelSize::Small)
+                                    .single_line(),
+                            ),
+                    )
+                    .child(div()),
             )
-            .when_some(self.error_message.as_ref(), |el, error| {
-                el.child(Label::new(error.clone()))
-            })
-            .when(
-                self.error_message.is_none() && self.status_message.is_some(),
-                |el| el.child(Label::new(self.status_message.clone().unwrap())),
+            .child(
+                v_flex()
+                    .p_4()
+                    .bg(body_color)
+                    .size_full()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(if self.error_message.is_some() {
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::Medium)
+                                    .color(Color::Error)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::Medium)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    )
+                                    .into_any_element()
+                            })
+                            .child(
+                                Label::new(format!("ssh {}…", self.connection_string))
+                                    .size(ui::LabelSize::Large),
+                            ),
+                    )
+                    .when_some(self.error_message.as_ref(), |el, error| {
+                        el.child(Label::new(error.clone()))
+                    })
+                    .when(
+                        self.error_message.is_none() && self.status_message.is_some(),
+                        |el| el.child(Label::new(self.status_message.clone().unwrap())),
+                    )
+                    .when_some(self.prompt.as_ref(), |el, prompt| {
+                        el.child(Label::new(prompt.0.clone()))
+                            .child(self.editor.clone())
+                    }),
             )
-            .when_some(self.prompt.as_ref(), |el, prompt| {
-                el.child(Label::new(prompt.0.clone()))
-                    .child(self.editor.clone())
-            })
     }
 }
 
@@ -204,7 +240,6 @@ impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
         v_flex()
             .elevation_3(cx)
-            .p_4()
             .gap_2()
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))

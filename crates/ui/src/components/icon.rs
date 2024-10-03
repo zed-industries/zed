@@ -274,6 +274,7 @@ pub enum IconName {
     Tab,
     Terminal,
     Trash,
+    TrashAlt,
     TriangleRight,
     Undo,
     Unpin,
