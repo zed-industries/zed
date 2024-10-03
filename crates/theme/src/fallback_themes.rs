@@ -7,21 +7,21 @@ use crate::{
     SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles,
 };
 
-// Note: This theme family is not the one you see in Zed at the moment.
-// This is a from-scratch rebuild that Nate started work on. We currently
-// only use this in the tests, and the One family from the `themes/` directory
-// is what gets loaded into Zed when running it.
-pub fn one_family() -> ThemeFamily {
+/// The default theme family for Zed.
+///
+/// This is used to construct the default theme fallback values, as well as to
+/// have a theme available at compile time for tests.
+pub fn zed_default_themes() -> ThemeFamily {
     ThemeFamily {
-        id: "one".to_string(),
-        name: "One".into(),
+        id: "zed-default".to_string(),
+        name: "Zed Default".into(),
         author: "".into(),
-        themes: vec![one_dark()],
+        themes: vec![zed_default_dark()],
         scales: default_color_scales(),
     }
 }
 
-pub(crate) fn one_dark() -> Theme {
+pub(crate) fn zed_default_dark() -> Theme {
     let bg = hsla(215. / 360., 12. / 100., 15. / 100., 1.);
     let editor = hsla(220. / 360., 12. / 100., 18. / 100., 1.);
     let elevated_surface = hsla(225. / 360., 12. / 100., 17. / 100., 1.);

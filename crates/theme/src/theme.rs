@@ -9,13 +9,8 @@
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
 mod default_colors;
-mod default_theme;
+mod fallback_themes;
 mod font_family_cache;
-mod one_themes;
-/// A prelude for working with the theme system.
-///
-/// TODO: remove this. This only publishes default colors.
-pub mod prelude;
 mod registry;
 mod scale;
 mod schema;
@@ -26,7 +21,6 @@ use std::sync::Arc;
 
 use ::settings::{Settings, SettingsStore};
 pub use default_colors::*;
-pub use default_theme::*;
 pub use font_family_cache::*;
 pub use registry::*;
 pub use scale::*;

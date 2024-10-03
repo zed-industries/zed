@@ -11655,7 +11655,6 @@ dependencies = [
  "serde_json_lenient",
  "serde_repr",
  "settings",
- "story",
  "util",
  "uuid",
 ]
