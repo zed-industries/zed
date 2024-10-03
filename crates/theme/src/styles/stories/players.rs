@@ -3,6 +3,7 @@ use story::Story;
 
 use crate::{ActiveTheme, PlayerColors};
 
+/// The story showcasing the player colors
 pub struct PlayerStory;
 
 impl Render for PlayerStory {
