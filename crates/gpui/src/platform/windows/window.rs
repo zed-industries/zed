@@ -52,13 +52,12 @@ pub struct WindowsWindowState {
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
+    init_bounds: Option<Bounds<Pixels>>,
     hwnd: HWND,
 }
 
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
-    init_bounds: Bounds<Pixels>,
-    init_once: Once,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -99,6 +98,7 @@ impl WindowsWindowState {
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
+        let init_bounds = None;
 
         Ok(Self {
             origin,
@@ -116,6 +116,7 @@ impl WindowsWindowState {
             nc_button_pressed,
             display,
             fullscreen,
+            init_bounds,
             hwnd,
         })
     }
@@ -224,8 +225,6 @@ impl WindowsWindowStatePtr {
         Ok(Rc::new(Self {
             state,
             hwnd,
-            init_bounds: context.init_bounds,
-            init_once: Once::new(),
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
@@ -236,29 +235,35 @@ impl WindowsWindowStatePtr {
         }))
     }
 
-    fn set_window_placement(&self) -> Result<()> {
-        self.init_once.call_once(|| unsafe {
+    fn init_window_bounds(&self) -> Result<()> {
+        let Some(init_bounds) = self.state.borrow_mut().init_bounds.take() else {
+            return Ok(());
+        };
+        self.set_window_placement(init_bounds)?;
+        Ok(())
+    }
+
+    fn set_window_placement(&self, placement_bounds: Bounds<Pixels>) -> Result<()> {
+        unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            GetWindowPlacement(self.hwnd, &mut placement).log_err();
-            println!("{:#?}", placement);
-            placement.showCmd = SW_SHOWNORMAL.0 as u32;
+            GetWindowPlacement(self.hwnd, &mut placement)?;
             // the bounds may be not inside the display
             let display = self.state.borrow().display;
-            let bounds = if display.check_given_bounds(self.init_bounds) {
-                self.init_bounds
+            let bounds = if display.check_given_bounds(placement_bounds) {
+                placement_bounds
             } else {
                 display.default_bounds()
             };
             let mut lock = self.state.borrow_mut();
             let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.update(self.hwnd).log_err();
+            lock.border_offset.update(self.hwnd)?;
             placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
             drop(lock);
-            SetWindowPlacement(self.hwnd, &placement).log_err();
-        });
+            SetWindowPlacement(self.hwnd, &placement)?;
+        }
         Ok(())
     }
 }
@@ -287,7 +292,6 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
-    init_bounds: Bounds<Pixels>,
 }
 
 impl WindowsWindow {
@@ -346,7 +350,6 @@ impl WindowsWindow {
             windows_version,
             validation_number,
             main_receiver,
-            init_bounds: params.bounds,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -368,27 +371,13 @@ impl WindowsWindow {
         // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
         // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
-        let raw_hwnd = creation_result?;
+        let _ = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
-        unsafe {
-            let mut placement = WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                ..Default::default()
-            };
-            GetWindowPlacement(raw_hwnd, &mut placement)?;
-            // the bounds may be not inside the display
-            let bounds = if display.check_given_bounds(params.bounds) {
-                params.bounds
-            } else {
-                display.default_bounds()
-            };
-            let mut lock = state_ptr.state.borrow_mut();
-            let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.update(raw_hwnd)?;
-            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
-            drop(lock);
-            SetWindowPlacement(raw_hwnd, &placement)?;
+        if params.show {
+            state_ptr.set_window_placement(params.bounds)?;
+        } else {
+            state_ptr.state.borrow_mut().init_bounds = Some(params.bounds);
         }
 
         Ok(Self(state_ptr))
@@ -568,7 +557,7 @@ impl PlatformWindow for WindowsWindow {
         self.0
             .executor
             .spawn(async move {
-                this.set_window_placement().log_err();
+                this.init_window_bounds().log_err();
                 unsafe { SetActiveWindow(hwnd).log_err() };
                 unsafe { SetFocus(hwnd).log_err() };
                 // todo(windows)
