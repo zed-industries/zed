@@ -22,6 +22,7 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
+- [Outline Panel](./outline-panel.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
