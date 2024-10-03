@@ -605,7 +605,7 @@ impl Editor {
                                                                 move |menu, _| {
                                                                     menu.context(focus.clone())
                                                                         .action(
-                                                                            "Discard All Changes in File",
+                                                                            "Discard All Hunks",
                                                                             RevertFile
                                                                                 .boxed_clone(),
                                                                         )
