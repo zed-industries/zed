@@ -37,10 +37,6 @@ impl LspAdapter for CssLspAdapter {
         LanguageServerName("vscode-css-language-server".into())
     }
 
-    fn show_completion_colors(&self) -> bool {
-        true
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
