@@ -58,8 +58,8 @@ pub enum TaskSourceKind {
     },
     /// Languages-specific tasks coming from extensions.
     Language { name: Arc<str> },
-    /// Tasks, synchronized from the remote server.
-    Remote,
+    /// Global tasks, synchronized from the remote server.
+    RemoteGlobal,
 }
 
 impl TaskSourceKind {
@@ -70,7 +70,7 @@ impl TaskSourceKind {
             | Self::Worktree {
                 local_path: path, ..
             } => Some(path),
-            Self::UserInput | Self::Language { .. } | Self::Remote => None,
+            Self::UserInput | Self::Language { .. } | Self::RemoteGlobal => None,
         }
     }
 
@@ -95,7 +95,7 @@ impl TaskSourceKind {
                 format!("{id_base}_{id}_{}", abs_path.display())
             }
             TaskSourceKind::Language { name } => format!("language_{name}"),
-            Self::Remote => "remote".to_string(),
+            Self::RemoteGlobal => "remote global".to_string(),
         }
     }
 }
@@ -390,7 +390,7 @@ impl Inventory {
                 serde_json::from_value::<TaskTemplate>(global_remote_template.clone()).log_err()
             {
                 if unique_labels.insert(template.label.clone()) {
-                    templates.push((TaskSourceKind::Remote, template));
+                    templates.push((TaskSourceKind::RemoteGlobal, template));
                 }
             } else {
                 bad_templates += 1;
@@ -491,7 +491,7 @@ fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
         TaskSourceKind::Language { .. } => 1,
         TaskSourceKind::UserInput => 2,
         TaskSourceKind::Worktree { .. } => 3,
-        TaskSourceKind::Remote { .. } => 4,
+        TaskSourceKind::RemoteGlobal { .. } => 4,
         TaskSourceKind::AbsPath { .. } => 5,
     }
 }
