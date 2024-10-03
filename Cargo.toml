@@ -388,7 +388,6 @@ profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
-protols-tree-sitter-proto = { git = "https://github.com/zed-industries/tree-sitter-proto", rev = "0848bd30a64be48772e15fbb9d5ba8c0cc5772ad" }
 pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"

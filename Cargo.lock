@@ -6386,7 +6386,6 @@ dependencies = [
  "node_runtime",
  "paths",
  "project",
- "protols-tree-sitter-proto",
  "regex",
  "rope",
  "rust-embed",
@@ -8643,15 +8642,6 @@ name = "protobuf"
 version = "2.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "106dd99e98437432fed6519dedecfade6a06a73bb7b2a1e019fdd2bee5778d94"
-
-[[package]]
-name = "protols-tree-sitter-proto"
-version = "0.2.0"
-source = "git+https://github.com/zed-industries/tree-sitter-proto?rev=0848bd30a64be48772e15fbb9d5ba8c0cc5772ad#0848bd30a64be48772e15fbb9d5ba8c0cc5772ad"
-dependencies = [
- "cc",
- "tree-sitter-language",
-]
 
 [[package]]
 name = "psm"
