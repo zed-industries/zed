@@ -57,6 +57,8 @@ pub struct WindowsWindowState {
 
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
+    init_bounds: Bounds<Pixels>,
+    init_once: Once,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -222,6 +224,8 @@ impl WindowsWindowStatePtr {
         Ok(Rc::new(Self {
             state,
             hwnd,
+            init_bounds: context.init_bounds,
+            init_once: Once::new(),
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
@@ -230,6 +234,36 @@ impl WindowsWindowStatePtr {
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
         }))
+    }
+
+    fn set_window_placement(&self) -> Result<()> {
+        self.init_once.call_once(|| unsafe {
+            let mut placement = WINDOWPLACEMENT {
+                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            };
+            GetWindowPlacement(self.hwnd, &mut placement).log_err();
+            println!("{:#?}", placement);
+            placement.showCmd = SW_SHOWNORMAL.0 as u32;
+            // the bounds may be not inside the display
+            let display = self.state.borrow().display;
+            let bounds = if display.check_given_bounds(self.init_bounds) {
+                self.init_bounds
+            } else {
+                display.default_bounds()
+            };
+            let mut lock = self.state.borrow_mut();
+            let bounds = bounds.to_device_pixels(lock.scale_factor);
+            lock.border_offset.update(self.hwnd).log_err();
+            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
+            drop(lock);
+            SetWindowPlacement(self.hwnd, &placement).log_err();
+            UpdateWindow(self.hwnd)
+                .ok()
+                .context("Update window")
+                .log_err();
+        });
+        Ok(())
     }
 }
 
@@ -257,6 +291,7 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
+    init_bounds: Bounds<Pixels>,
 }
 
 impl WindowsWindow {
@@ -318,6 +353,7 @@ impl WindowsWindow {
             windows_version,
             validation_number,
             main_receiver,
+            init_bounds: params.bounds,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -541,11 +577,18 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { SetActiveWindow(hwnd).log_err() };
-        unsafe { SetFocus(hwnd).log_err() };
-        // todo(windows)
-        // crate `windows 0.56` reports true as Err
-        unsafe { SetForegroundWindow(hwnd).as_bool() };
+        let this = self.0.clone();
+        self.0
+            .executor
+            .spawn(async move {
+                this.set_window_placement().log_err();
+                unsafe { SetActiveWindow(hwnd).log_err() };
+                unsafe { SetFocus(hwnd).log_err() };
+                // todo(windows)
+                // crate `windows 0.56` reports true as Err
+                unsafe { SetForegroundWindow(hwnd).as_bool() };
+            })
+            .detach();
     }
 
     fn is_active(&self) -> bool {
