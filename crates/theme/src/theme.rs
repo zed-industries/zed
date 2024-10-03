@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 use ::settings::{Settings, SettingsStore};
 pub use default_colors::*;
-use fallback_themes::{zed_default_dark, zed_default_themes};
 pub use font_family_cache::*;
 pub use registry::*;
 pub use scale::*;
@@ -140,12 +139,6 @@ pub struct ThemeFamily {
 
 impl ThemeFamily {}
 
-impl Default for ThemeFamily {
-    fn default() -> Self {
-        zed_default_themes()
-    }
-}
-
 /// A theme is the primary mechanism for defining the appearance of the UI.
 #[derive(Clone)]
 pub struct Theme {
@@ -212,12 +205,6 @@ impl Theme {
     #[inline(always)]
     pub fn window_background_appearance(&self) -> WindowBackgroundAppearance {
         self.styles.window_background_appearance
-    }
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        zed_default_dark()
     }
 }
 
