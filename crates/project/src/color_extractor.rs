@@ -1,33 +1,34 @@
+use std::sync::LazyLock;
+
 use gpui::{Hsla, Rgba};
 use lsp::{CompletionItem, Documentation};
 use regex::{Regex, RegexBuilder};
-use std::sync::LazyLock;
 
 const HEX: &'static str = r#"(#(?:[\da-fA-F]{3}){1,2})"#;
 const RGB_OR_HSL: &'static str = r#"(rgba?|hsla?)\(\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*(?:,\s*(1|0?\.\d+))?\s*\)"#;
 
-static RELAXED_HEX_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+static RELAXED_HEX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     RegexBuilder::new(HEX)
         .case_insensitive(false)
         .build()
         .expect("Failed to create RELAXED_HEX_REGEX")
 });
 
-static STRICT_HEX_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+static STRICT_HEX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     RegexBuilder::new(&format!("^{HEX}$"))
         .case_insensitive(true)
         .build()
         .expect("Failed to create STRICT_HEX_REGEX")
 });
 
-static RELAXED_RGB_OR_HSL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+static RELAXED_RGB_OR_HSL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     RegexBuilder::new(RGB_OR_HSL)
         .case_insensitive(false)
         .build()
         .expect("Failed to create RELAXED_RGB_OR_HSL_REGEX")
 });
 
-static STRICT_RGB_OR_HSL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+static STRICT_RGB_OR_HSL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     RegexBuilder::new(&format!("^{RGB_OR_HSL}$"))
         .case_insensitive(true)
         .build()
@@ -36,34 +37,37 @@ static STRICT_RGB_OR_HSL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
 
 /// Extracts a color from an LSP [`CompletionItem`].
 ///
-/// It's a Rust port of the `ColorExtractor` class from the `vscode` repository:
-/// https://github.com/microsoft/vscode/blob/a6870fcb6d79093738c17e8319b760cf1c41764a/src/vs/editor/contrib/suggest/browser/suggestWidgetRenderer.ts#L34-L61
+/// Adapted from https://github.com/microsoft/vscode/blob/a6870fcb6d79093738c17e8319b760cf1c41764a/src/vs/editor/contrib/suggest/browser/suggestWidgetRenderer.ts#L34-L61
 pub fn extract_color(item: &CompletionItem) -> Option<Hsla> {
-    let hex = &STRICT_HEX_REGEX;
-    let rgb = &STRICT_RGB_OR_HSL_REGEX;
-
     // Try to extract from entire `label` field.
-    parse(&item.label, &hex, &rgb)
+    parse(&item.label, ParseMode::Strict)
         // Try to extract from entire `detail` field.
         .or_else(|| {
             item.detail
                 .as_ref()
-                .and_then(|detail| parse(detail, &hex, &rgb))
+                .and_then(|detail| parse(detail, ParseMode::Strict))
         })
         // Try to extract from beginning or end of `documentation` field.
-        .or_else(|| {
-            let hex = &RELAXED_HEX_REGEX;
-            let rgb = &RELAXED_RGB_OR_HSL_REGEX;
-
-            match item.documentation {
-                Some(Documentation::String(ref str)) => parse(str, &hex, &rgb),
-                Some(Documentation::MarkupContent(ref markup)) => parse(&markup.value, &hex, &rgb),
-                None => None,
+        .or_else(|| match item.documentation {
+            Some(Documentation::String(ref str)) => parse(str, ParseMode::Relaxed),
+            Some(Documentation::MarkupContent(ref markup)) => {
+                parse(&markup.value, ParseMode::Relaxed)
             }
+            None => None,
         })
 }
 
-fn parse(str: &str, hex: &Regex, rgb: &Regex) -> Option<Hsla> {
+enum ParseMode {
+    Strict,
+    Relaxed,
+}
+
+fn parse(str: &str, mode: ParseMode) -> Option<Hsla> {
+    let (hex, rgb) = match mode {
+        ParseMode::Strict => (&STRICT_HEX_REGEX, &STRICT_RGB_OR_HSL_REGEX),
+        ParseMode::Relaxed => (&RELAXED_HEX_REGEX, &RELAXED_RGB_OR_HSL_REGEX),
+    };
+
     if let Some(captures) = hex.captures(str) {
         let rmatch = captures.get(0)?;
 
@@ -86,14 +90,14 @@ fn parse(str: &str, hex: &Regex, rgb: &Regex) -> Option<Hsla> {
         }
 
         let typ = captures.get(1)?.as_str();
-        let rh = captures.get(2)?.as_str();
-        let gs = captures.get(3)?.as_str();
-        let bl = captures.get(4)?.as_str();
-        let a = captures.get(5).map(|c| c.as_str());
+        let r_or_h = captures.get(2)?.as_str();
+        let g_or_s = captures.get(3)?.as_str();
+        let b_or_l = captures.get(4)?.as_str();
+        let a = captures.get(5).map(|a| a.as_str());
 
         return match (typ, a) {
-            ("rgb", None) | ("rgba", Some(_)) => from_rgb(rh, gs, bl, a),
-            ("hsl", None) | ("hsla", Some(_)) => from_hsl(rh, gs, bl, a),
+            ("rgb", None) | ("rgba", Some(_)) => from_rgb(r_or_h, g_or_s, b_or_l, a),
+            ("hsl", None) | ("hsla", Some(_)) => from_hsl(r_or_h, g_or_s, b_or_l, a),
             _ => None,
         };
     }
@@ -101,32 +105,32 @@ fn parse(str: &str, hex: &Regex, rgb: &Regex) -> Option<Hsla> {
     return None;
 }
 
-fn from_hex(hex: &str) -> Option<Hsla> {
-    return Rgba::try_from(hex).map(|color| color.into()).ok();
-}
-
-fn parse_field(field: &str, max: f32) -> Option<f32> {
-    if let Some(field) = field.strip_suffix("%") {
-        field.parse::<f32>().map(|v| v / 100.).ok()
+fn parse_component(value: &str, max: f32) -> Option<f32> {
+    if let Some(field) = value.strip_suffix("%") {
+        field.parse::<f32>().map(|value| value / 100.).ok()
     } else {
-        field.parse::<f32>().map(|v| v / max).ok()
+        value.parse::<f32>().map(|value| value / max).ok()
     }
 }
 
+fn from_hex(hex: &str) -> Option<Hsla> {
+    Rgba::try_from(hex).map(Hsla::from).ok()
+}
+
 fn from_rgb(r: &str, g: &str, b: &str, a: Option<&str>) -> Option<Hsla> {
-    let r = parse_field(r, 255.)?;
-    let g = parse_field(g, 255.)?;
-    let b = parse_field(b, 255.)?;
-    let a = a.and_then(|a| parse_field(a, 1.0)).unwrap_or(1.0);
+    let r = parse_component(r, 255.)?;
+    let g = parse_component(g, 255.)?;
+    let b = parse_component(b, 255.)?;
+    let a = a.and_then(|a| parse_component(a, 1.0)).unwrap_or(1.0);
 
     Some(Rgba { r, g, b, a }.into())
 }
 
 fn from_hsl(h: &str, s: &str, l: &str, a: Option<&str>) -> Option<Hsla> {
-    let h = parse_field(h, 360.)?;
-    let s = parse_field(s, 100.)?;
-    let l = parse_field(l, 100.)?;
-    let a = a.and_then(|a| parse_field(a, 1.0)).unwrap_or(1.0);
+    let h = parse_component(h, 360.)?;
+    let s = parse_component(s, 100.)?;
+    let l = parse_component(l, 100.)?;
+    let a = a.and_then(|a| parse_component(a, 1.0)).unwrap_or(1.0);
 
     Some(Hsla { h, s, l, a })
 }
