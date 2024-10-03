@@ -142,45 +142,19 @@ impl SshPrompt {
 impl Render for SshPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let header_color = theme.colors().element_background;
-        let body_color = theme.colors().background;
         v_flex()
+            .w_full()
             .key_context("PasswordPrompt")
             .justify_start()
             .child(
-                h_flex()
-                    .p_1()
-                    .border_1()
-                    .rounded_t_3xl()
-                    .border_color(theme.colors().border_variant)
-                    .bg(header_color)
-                    .justify_between()
-                    .child(
-                        IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
-                            .icon_size(IconSize::XSmall)
-                            .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
-                            .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
-                            .child(
-                                Label::new(self.connection_string.clone())
-                                    .size(ui::LabelSize::Small)
-                                    .single_line(),
-                            ),
-                    )
-                    .child(div()),
-            )
-            .child(
                 v_flex()
                     .p_4()
-                    .bg(body_color)
                     .size_full()
                     .child(
                         h_flex()
                             .gap_2()
+                            .justify_between()
+                            .child(h_flex().w_full())
                             .child(if self.error_message.is_some() {
                                 Icon::new(IconName::XCircle)
                                     .size(IconSize::Medium)
@@ -200,10 +174,11 @@ impl Render for SshPrompt {
                                     )
                                     .into_any_element()
                             })
-                            .child(
-                                Label::new(format!("ssh {}…", self.connection_string))
-                                    .size(ui::LabelSize::Large),
-                            ),
+                            .child(Label::new(format!(
+                                "Connecting to {}…",
+                                self.connection_string
+                            )))
+                            .child(h_flex().w_full()),
                     )
                     .when_some(self.error_message.as_ref(), |el, error| {
                         el.child(Label::new(error.clone()))
@@ -238,13 +213,41 @@ impl SshConnectionModal {
 
 impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+        let connection_string = self.prompt.read(cx).connection_string.clone();
+        let theme = cx.theme();
+        let header_color = theme.colors().element_background;
+        let body_color = theme.colors().background;
         v_flex()
             .elevation_3(cx)
-            .gap_2()
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .w(px(400.))
-            .child(self.prompt.clone())
+            .child(
+                h_flex()
+                    .p_1()
+                    .border_b_1()
+                    .border_color(theme.colors().border)
+                    .bg(header_color)
+                    .justify_between()
+                    .child(
+                        IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
+                            .icon_size(IconSize::XSmall)
+                            .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
+                            .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+                            .child(
+                                Label::new(connection_string)
+                                    .size(ui::LabelSize::Small)
+                                    .single_line(),
+                            ),
+                    )
+                    .child(div()),
+            )
+            .child(h_flex().bg(body_color).w_full().child(self.prompt.clone()))
     }
 }
 

@@ -20,8 +20,6 @@ use gpui::{
     EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation, View,
     ViewContext,
 };
-use markdown::Markdown;
-use markdown::MarkdownStyle;
 use project::terminals::wrap_for_ssh;
 use project::terminals::SshCommand;
 use rpc::proto::RegenerateDevServerTokenResponse;
@@ -37,10 +35,7 @@ use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::ElevationIndex;
 use ui::Section;
-use ui::{
-    prelude::*, Indicator, List, ListHeader, ListItem, Modal, ModalFooter, ModalHeader,
-    RadioWithLabel, Tooltip,
-};
+use ui::{prelude::*, Indicator, List, ListItem, Modal, ModalFooter, ModalHeader, Tooltip};
 use ui_input::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::OpenOptions;
@@ -65,7 +60,6 @@ pub struct DevServerProjects {
     workspace: WeakView<Workspace>,
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
-    markdown: View<Markdown>,
     _dev_server_subscription: Subscription,
 }
 
@@ -135,26 +129,6 @@ impl DevServerProjects {
             ..Default::default()
         });
 
-        let markdown_style = MarkdownStyle {
-            base_text_style: base_style,
-            code_block: gpui::StyleRefinement {
-                text: Some(gpui::TextStyleRefinement {
-                    font_family: Some("Zed Plex Mono".into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            link: gpui::TextStyleRefinement {
-                color: Some(Color::Accent.color(cx)),
-                ..Default::default()
-            },
-            syntax: cx.theme().syntax().clone(),
-            selection_background_color: cx.theme().players().local().selection,
-            ..Default::default()
-        };
-        let markdown =
-            cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx, None));
-
         Self {
             mode: Mode::Default(None),
             focus_handle,
@@ -162,7 +136,6 @@ impl DevServerProjects {
             dev_server_store,
             project_path_input,
             dev_server_name_input,
-            markdown,
             workspace,
             _dev_server_subscription: subscription,
         }
@@ -937,7 +910,7 @@ impl DevServerProjects {
                             .visible_on_hover("ssh-server")
                             .gap_1()
                             .child({
-                                IconButton::new("remove-dev-server", IconName::Copy)
+                                IconButton::new("copy-dev-server-address", IconName::Copy)
                                     .icon_size(IconSize::Small)
                                     .on_click(cx.listener(move |this, _, cx| {
                                         this.update_settings_file(cx, move |servers, cx| {
@@ -1183,10 +1156,6 @@ impl DevServerProjects {
             kind = NewServerKind::DirectSSH;
         }
 
-        let status = dev_server_id
-            .map(|id| self.dev_server_store.read(cx).dev_server_status(id))
-            .unwrap_or_default();
-
         let name = self.dev_server_name_input.update(cx, |input, cx| {
             input.editor().update(cx, |editor, cx| {
                 if editor.text(cx).is_empty() {
@@ -1195,12 +1164,6 @@ impl DevServerProjects {
                 editor.text(cx)
             })
         });
-
-        const MANUAL_SETUP_MESSAGE: &str =
-            "Generate a token for this server and follow the steps to set Zed up on that machine.";
-        const SSH_SETUP_MESSAGE: &str =
-            "Enter the command you use to SSH into this server.\nFor example: `ssh me@my.server` or `ssh me@secret-box:2222`.";
-
         let theme = cx.theme();
         v_flex()
             .id("create-dev-server")
@@ -1263,262 +1226,43 @@ impl DevServerProjects {
                             ),
                     ),
             )
-            // .when_some(access_token.clone(), {
-            //     |el, access_token| {
-            //         el.child(self.render_dev_server_token_creating(
-            //             access_token,
-            //             name,
-            //             kind,
-            //             status,
-            //             creating,
-            //             cx,
-            //         ))
-            //     }
-            // })
-            .child(h_flex().bg(theme.colors().editor_background).map(|this| {
-                if let Some(ssh_prompt) = ssh_prompt {
-                    this.child(ssh_prompt)
-                } else {
-                    let color = Color::Muted.color(cx);
-                    this.child(
-                        h_flex()
-                            .p_2()
-                            .w_full()
-                            .content_center()
-                            .gap_2()
-                            .child(h_flex().w_full())
-                            .child(
-                                div()
-                                    .p_1()
-                                    .rounded_lg()
-                                    .bg(Color::Muted.color(cx))
-                                    .with_animation(
-                                        "pulse-ssh-waiting-for-connection",
-                                        Animation::new(Duration::from_secs(2))
-                                            .repeat()
-                                            .with_easing(pulsating_between(0.2, 0.5)),
-                                        move |this, progress| this.bg(color.opacity(progress)),
-                                    ),
+            .child(
+                h_flex()
+                    .bg(theme.colors().editor_background)
+                    .w_full()
+                    .map(|this| {
+                        if let Some(ssh_prompt) = ssh_prompt {
+                            this.child(h_flex().w_full().child(ssh_prompt))
+                        } else {
+                            let color = Color::Muted.color(cx);
+                            this.child(
+                                h_flex()
+                                    .p_2()
+                                    .w_full()
+                                    .content_center()
+                                    .gap_2()
+                                    .child(h_flex().w_full())
+                                    .child(
+                                        div()
+                                            .p_1()
+                                            .rounded_lg()
+                                            .bg(Color::Muted.color(cx))
+                                            .with_animation(
+                                                "pulse-ssh-waiting-for-connection",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.2, 0.5)),
+                                                move |this, progress| {
+                                                    this.bg(color.opacity(progress))
+                                                },
+                                            ),
+                                    )
+                                    .child(Label::new("Waiting for connection…"))
+                                    .child(h_flex().w_full()),
                             )
-                            .child(Label::new("Waiting for connection…"))
-                            .child(h_flex().w_full()),
-                    )
-                }
-            }))
-        // Modal::new("create-dev-server", Some(self.scroll_handle.clone()))
-        //     .header(
-        //         ModalHeader::new()
-        //             .headline("Connect New Dev Server")
-        //             .show_back_button(true)
-        //             .child(
-        //                 h_flex()
-        //                     .border_b_1()
-        //                     .p_1()
-        //                     .border_color(Color::Accent.color(cx))
-        //                     .w_full(),
-        //             ),
-        //     )
-        //     .section(
-        //         Section::new()
-        //             .header(if kind == NewServerKind::Manual {
-        //                 "Server Name".into()
-        //             } else {
-        //                 "SSH arguments".into()
-        //             })
-        //             .child(
-        //                 div()
-        //                     .max_w(rems(16.))
-        //                     .child(self.dev_server_name_input.clone()),
-        //             ),
-        //     )
-        //     .section(
-        //         Section::new_contained()
-        //             .header("Connection Method".into())
-        //             .child(
-        //                 v_flex()
-        //                     .w_full()
-        //                     .px_2()
-        //                     .gap_y(Spacing::Large.rems(cx))
-        //                     .when(ssh_prompt.is_none(), |el| {
-        //                         el.child(
-        //                             v_flex()
-        //                                 .when(use_direct_ssh, |el| {
-        //                                     el.child(RadioWithLabel::new(
-        //                                         "use-server-name-in-ssh",
-        //                                         Label::new("Connect via SSH (default)"),
-        //                                         NewServerKind::DirectSSH == kind,
-        //                                         cx.listener({
-        //                                             move |this, _, cx| {
-        //                                                 if let Mode::CreateDevServer(
-        //                                                     CreateDevServer { kind, .. },
-        //                                                 ) = &mut this.mode
-        //                                                 {
-        //                                                     *kind = NewServerKind::DirectSSH;
-        //                                                 }
-        //                                                 cx.notify()
-        //                                             }
-        //                                         }),
-        //                                     ))
-        //                                 })
-        //                                 .when(!use_direct_ssh, |el| {
-        //                                     el.child(RadioWithLabel::new(
-        //                                         "use-server-name-in-ssh",
-        //                                         Label::new("Configure over SSH (default)"),
-        //                                         kind == NewServerKind::LegacySSH,
-        //                                         cx.listener({
-        //                                             move |this, _, cx| {
-        //                                                 if let Mode::CreateDevServer(
-        //                                                     CreateDevServer { kind, .. },
-        //                                                 ) = &mut this.mode
-        //                                                 {
-        //                                                     *kind = NewServerKind::LegacySSH;
-        //                                                 }
-        //                                                 cx.notify()
-        //                                             }
-        //                                         }),
-        //                                     ))
-        //                                 })
-        //                                 .child(RadioWithLabel::new(
-        //                                     "use-server-name-in-ssh",
-        //                                     Label::new("Configure manually"),
-        //                                     kind == NewServerKind::Manual,
-        //                                     cx.listener({
-        //                                         move |this, _, cx| {
-        //                                             if let Mode::CreateDevServer(
-        //                                                 CreateDevServer { kind, .. },
-        //                                             ) = &mut this.mode
-        //                                             {
-        //                                                 *kind = NewServerKind::Manual;
-        //                                             }
-        //                                             cx.notify()
-        //                                         }
-        //                                     }),
-        //                                 )),
-        //                         )
-        //                     })
-        //                     .when(dev_server_id.is_none() && ssh_prompt.is_none(), |el| {
-        //                         el.child(
-        //                             if kind == NewServerKind::Manual {
-        //                                 Label::new(MANUAL_SETUP_MESSAGE)
-        //                             } else {
-        //                                 Label::new(SSH_SETUP_MESSAGE)
-        //                             }
-        //                             .size(LabelSize::Small)
-        //                             .color(Color::Muted),
-        //                         )
-        //                     })
-        //                     .when_some(ssh_prompt, |el, ssh_prompt| el.child(ssh_prompt))
-        //                     .when(dev_server_id.is_some() && access_token.is_none(), |el| {
-        //                         el.child(
-        //                             if kind == NewServerKind::Manual {
-        //                                 Label::new(
-        //                                     "Note: updating the dev server generate a new token",
-        //                                 )
-        //                             } else {
-        //                                 Label::new(SSH_SETUP_MESSAGE)
-        //                             }
-        //                             .size(LabelSize::Small)
-        //                             .color(Color::Muted),
-        //                         )
-        //                     })
-        //                     .when_some(access_token.clone(), {
-        //                         |el, access_token| {
-        //                             el.child(self.render_dev_server_token_creating(
-        //                                 access_token,
-        //                                 name,
-        //                                 kind,
-        //                                 status,
-        //                                 creating,
-        //                                 cx,
-        //                             ))
-        //                         }
-        //                     }),
-        //             ),
-        //     )
-        //     .footer(
-        //         ModalFooter::new().end_slot(if status == DevServerStatus::Online {
-        //             Button::new("create-dev-server", "Done")
-        //                 .style(ButtonStyle::Filled)
-        //                 .layer(ElevationIndex::ModalSurface)
-        //                 .on_click(cx.listener(move |this, _, cx| {
-        //                     cx.focus(&this.focus_handle);
-        //                     this.mode = Mode::Default(None);
-        //                     cx.notify();
-        //                 }))
-        //         } else {
-        //             Button::new(
-        //                 "create-dev-server",
-        //                 if kind == NewServerKind::Manual {
-        //                     if dev_server_id.is_some() {
-        //                         "Update"
-        //                     } else {
-        //                         "Create"
-        //                     }
-        //                 } else if dev_server_id.is_some() {
-        //                     "Reconnect"
-        //                 } else {
-        //                     "Connect"
-        //                 },
-        //             )
-        //             .style(ButtonStyle::Filled)
-        //             .layer(ElevationIndex::ModalSurface)
-        //             .disabled(creating && dev_server_id.is_none())
-        //             .on_click(cx.listener({
-        //                 let access_token = access_token.clone();
-        //                 move |this, _, cx| {
-        //                     if kind == NewServerKind::DirectSSH {
-        //                         this.create_ssh_server(cx);
-        //                         return;
-        //                     }
-        //                     this.create_or_update_dev_server(
-        //                         kind,
-        //                         dev_server_id,
-        //                         access_token.clone(),
-        //                         cx,
-        //                     );
-        //                 }
-        //             }))
-        //         }),
-        //     )
-    }
-
-    fn render_dev_server_token_creating(
-        &self,
-        access_token: String,
-        dev_server_name: String,
-        kind: NewServerKind,
-        status: DevServerStatus,
-        creating: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Div {
-        self.markdown.update(cx, |markdown, cx| {
-            if kind == NewServerKind::Manual {
-                markdown.reset(format!("Please log into '{}'. If you don't yet have Zed installed, run:\n```\ncurl https://zed.dev/install.sh | bash\n```\nThen, to start Zed in headless mode:\n```\nzed --dev-server-token {}\n```", dev_server_name, access_token), cx);
-            } else {
-                markdown.reset("Please wait while we connect over SSH.\n\nIf you run into problems, please [file a bug](https://github.com/zed-industries/zed), and in the meantime try using the manual setup.".to_string(), cx);
-            }
-        });
-
-        v_flex()
-            .pl_2()
-            .pt_2()
-            .gap_2()
-            .child(v_flex().w_full().text_sm().child(self.markdown.clone()))
-            .map(|el| {
-                if status == DevServerStatus::Offline && kind != NewServerKind::Manual && !creating
-                {
-                    el.child(
-                        h_flex()
-                            .gap_2()
-                            .child(Icon::new(IconName::Disconnected).size(IconSize::Medium))
-                            .child(Label::new("Not connected")),
-                    )
-                } else if status == DevServerStatus::Offline {
-                    el.child(Self::render_loading_spinner("Waiting for connection…"))
-                } else {
-                    el.child(Label::new("🎊 Connection established!"))
-                }
-            })
+                        }
+                    }),
+            )
     }
 
     fn render_loading_spinner(label: impl Into<SharedString>) -> Div {
