@@ -258,10 +258,6 @@ impl WindowsWindowStatePtr {
             placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
             drop(lock);
             SetWindowPlacement(self.hwnd, &placement).log_err();
-            UpdateWindow(self.hwnd)
-                .ok()
-                .context("Update window")
-                .log_err();
         });
         Ok(())
     }
@@ -330,9 +326,6 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
-        if !params.show {
-            dwstyle |= WS_MINIMIZE;
-        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -396,12 +389,6 @@ impl WindowsWindow {
             placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
             drop(lock);
             SetWindowPlacement(raw_hwnd, &placement)?;
-        }
-
-        if params.show {
-            unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
-        } else {
-            unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? };
         }
 
         Ok(Self(state_ptr))
