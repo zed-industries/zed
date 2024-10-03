@@ -13,7 +13,7 @@ use crate::{
 /// have a theme available at compile time for tests.
 pub fn zed_default_themes() -> ThemeFamily {
     ThemeFamily {
-        id: "zed default".to_string(),
+        id: "zed-default".to_string(),
         name: "Zed Default".into(),
         author: "".into(),
         themes: vec![zed_default_dark()],
