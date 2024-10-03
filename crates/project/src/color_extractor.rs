@@ -110,11 +110,8 @@ impl ColorExtractor {
     }
 
     fn parse_field(field: &str, max: f32) -> Option<f32> {
-        if field.ends_with("%") {
-            field[..field.len() - 1]
-                .parse::<f32>()
-                .map(|v| v / 100.)
-                .ok()
+        if let Some(field) = field.strip_suffix("%") {
+            field.parse::<f32>().map(|v| v / 100.).ok()
         } else {
             field.parse::<f32>().map(|v| v / max).ok()
         }
