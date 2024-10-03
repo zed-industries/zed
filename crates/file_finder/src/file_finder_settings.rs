@@ -2,11 +2,13 @@ use anyhow::Result;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use std::cmp;
+use ui::Pixels;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
-    pub window_width: f32,
+    pub window_width: FileFinderWidth,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -17,8 +19,8 @@ pub struct FileFinderSettingsContent {
     pub file_icons: Option<bool>,
     /// The width of the file finder window in rem.
     ///
-    /// Default: 34
-    pub window_width: Option<f32>,
+    /// Default: "medium"
+    pub window_width: Option<FileFinderWidth>,
 }
 
 impl Settings for FileFinderSettings {
@@ -27,25 +29,41 @@ impl Settings for FileFinderSettings {
     type FileContent = FileFinderSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::AppContext) -> Result<Self> {
-        let defaults = sources.default;
+        sources.json_merge()
+    }
+}
 
-        let mut this = Self {
-            file_icons: defaults.file_icons.unwrap().into(),
-            window_width: defaults.window_width.unwrap().into(),
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FileFinderWidth {
+    Small,
+    #[default]
+    Medium,
+    Large,
+    XLarge,
+}
+
+impl FileFinderWidth {
+    const MIN_WINDOW_WIDTH_PX: f32 = 384.;
+
+    pub fn padding_px(&self) -> Pixels {
+        let padding_val = match self {
+            FileFinderWidth::Small => 1280.,
+            FileFinderWidth::Medium => 1024.,
+            FileFinderWidth::Large => 768.,
+            FileFinderWidth::XLarge => 512.,
         };
 
-        for value in sources.user.into_iter().chain(sources.release_channel) {
-            if let Some(value) = value.file_icons {
-                this.file_icons = value.into();
-            }
+        Pixels(padding_val)
+    }
 
-            if let Some(value) = value.window_width {
-                this.window_width = value.into();
-            }
+    pub fn calc_width(&self, window_width: Pixels) -> Pixels {
+        let min_window_width_px = Pixels(FileFinderWidth::MIN_WINDOW_WIDTH_PX);
 
-            this.window_width = this.window_width.clamp(16., 128.);
-        }
+        let padding_px = self.padding_px();
+        let width_val = window_width - padding_px;
+        let finder_width = cmp::max(min_window_width_px, width_val);
 
-        Ok(this)
+        finder_width
     }
 }

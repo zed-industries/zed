@@ -581,8 +581,18 @@
   "file_finder": {
     // Whether to show file icons in the file finder.
     "file_icons": true,
-    // Width of the file finder window.
-    "window_width": 34
+    // Width of the file finder window. This setting can
+    // take four values.
+    //
+    // 1. Small width:
+    //   "window_width": "small",
+    // 2. Medium width (default):
+    //   "window_width": "medium",
+    // 3. Large width:
+    //   "window_width": "large",
+    // 4. Extra Large width:
+    //   "window_width": "xlarge"
+    "window_width": "medium"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
