@@ -45,6 +45,9 @@ pub(crate) fn zed_pro_moonlight() -> Theme {
     }
 }
 
+/// Returns the Zed Pro theme family.
+///
+/// Note: To be removed until the theme is implemented.
 pub fn zed_pro_family() -> ThemeFamily {
     ThemeFamily {
         id: "zed_pro".to_string(),
