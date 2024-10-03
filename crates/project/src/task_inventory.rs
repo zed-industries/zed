@@ -13,7 +13,7 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
 };
-use gpui::{AppContext, Context, Model, ModelContext, Task};
+use gpui::{AppContext, Context, Model, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
 use task::{
@@ -30,7 +30,7 @@ use crate::worktree_store::WorktreeStore;
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    update_sender: UnboundedSender<()>,
+    _update_sender: UnboundedSender<()>,
     _update_pooler: Task<anyhow::Result<()>>,
 }
 
@@ -108,48 +108,10 @@ impl Inventory {
             Self {
                 sources: Vec::new(),
                 last_scheduled_tasks: VecDeque::new(),
-                update_sender,
+                _update_sender: update_sender,
                 _update_pooler,
             }
         })
-    }
-
-    /// If the task with the same path was not added yet,
-    /// registers a new tasks source to fetch for available tasks later.
-    /// Unless a source is removed, ignores future additions for the same path.
-    pub fn add_source(
-        &mut self,
-        kind: TaskSourceKind,
-        create_source: impl FnOnce(UnboundedSender<()>, &mut AppContext) -> StaticSource,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let abs_path = kind.abs_path();
-        if abs_path.is_some() {
-            if let Some(a) = self.sources.iter().find(|s| s.kind.abs_path() == abs_path) {
-                log::debug!("Source for path {abs_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
-                return;
-            }
-        }
-        let source = create_source(self.update_sender.clone(), cx);
-        let source = SourceInInventory { source, kind };
-        self.sources.push(source);
-        cx.notify();
-    }
-
-    /// If present, removes the local static source entry that has the given path,
-    /// making corresponding task definitions unavailable in the fetch results.
-    ///
-    /// Now, entry for this path can be re-added again.
-    pub fn remove_local_static_source(&mut self, abs_path: &Path) {
-        self.sources.retain(|s| s.kind.abs_path() != Some(abs_path));
-    }
-
-    /// If present, removes the worktree source entry that has the given worktree id,
-    /// making corresponding task definitions unavailable in the fetch results.
-    ///
-    /// Now, entry for this path can be re-added again.
-    pub fn remove_worktree_sources(&mut self, worktree: WorktreeId) {
-        self.sources.retain(|s| s.kind.worktree() != Some(worktree));
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -370,6 +332,40 @@ impl Inventory {
     /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
     pub fn delete_previously_used(&mut self, id: &TaskId) {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
+    }
+}
+
+impl Inventory {
+    /// If the task with the same path was not added yet,
+    /// registers a new tasks source to fetch for available tasks later.
+    /// Unless a source is removed, ignores future additions for the same path.
+    #[cfg(test)] // TODO kb why do we need source-less inventory now?
+    pub fn add_source(
+        &mut self,
+        kind: TaskSourceKind,
+        create_source: impl FnOnce(UnboundedSender<()>, &mut AppContext) -> StaticSource,
+        cx: &mut gpui::ModelContext<Self>,
+    ) {
+        let abs_path = kind.abs_path();
+        if abs_path.is_some() {
+            if let Some(a) = self.sources.iter().find(|s| s.kind.abs_path() == abs_path) {
+                log::debug!("Source for path {abs_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
+                return;
+            }
+        }
+        let source = create_source(self._update_sender.clone(), cx);
+        let source = SourceInInventory { source, kind };
+        self.sources.push(source);
+        cx.notify();
+    }
+
+    /// If present, removes the local static source entry that has the given path,
+    /// making corresponding task definitions unavailable in the fetch results.
+    ///
+    /// Now, entry for this path can be re-added again.
+    #[cfg(test)]
+    pub fn remove_local_static_source(&mut self, abs_path: &Path) {
+        self.sources.retain(|s| s.kind.abs_path() != Some(abs_path));
     }
 }
 

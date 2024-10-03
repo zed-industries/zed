@@ -119,17 +119,31 @@ fn spawn_task_with_name(
         let context_task =
             workspace.update(&mut cx, |workspace, cx| task_context(workspace, cx))?;
         let task_context = context_task.await;
-        let tasks = workspace
-            .update(&mut cx, |workspace, cx| {
-                let (worktree, location) = active_item_selection_properties(workspace, cx);
-                workspace
-                    .project()
-                    .read(cx)
-                    .task_store()
-                    .read(cx)
-                    .list_tasks(worktree, location, cx)
-            })?
-            .await?;
+        let tasks = workspace.update(&mut cx, |workspace, cx| {
+            let Some(task_inventory) = workspace
+                .project()
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+            else {
+                return Vec::new();
+            };
+            let (worktree, location) = active_item_selection_properties(workspace, cx);
+            let (file, language) = location
+                .map(|location| {
+                    let buffer = location.buffer.read(cx);
+                    (
+                        buffer.file().cloned(),
+                        buffer.language_at(location.range.start),
+                    )
+                })
+                .unwrap_or_default();
+            task_inventory
+                .read(cx)
+                .list_tasks(file, language, worktree, cx)
+        })?;
 
         let did_spawn = workspace
             .update(&mut cx, |workspace, cx| {

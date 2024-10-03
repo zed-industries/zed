@@ -8,13 +8,12 @@ use rpc::{
     proto::{self, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
-use settings::WorktreeId;
-use task::{TaskContext, TaskTemplate, TaskVariables, VariableName};
+use task::{TaskContext, TaskVariables, VariableName};
 use util::{debug_panic, ResultExt};
 
 use crate::{
     buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
-    ProjectEnvironment, TaskSourceKind,
+    ProjectEnvironment,
 };
 
 use super::deserialize_location;
@@ -183,27 +182,6 @@ impl TaskStore {
         } else {
             debug_panic!("called unshared on a non-local task store");
         }
-    }
-
-    pub fn list_tasks(
-        &self,
-        worktree: Option<WorktreeId>,
-        location: Option<Location>,
-        cx: &AppContext,
-    ) -> Task<anyhow::Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
-        let (file, language) = location
-            .map(|location| {
-                let buffer = location.buffer.read(cx);
-                (
-                    buffer.file().cloned(),
-                    buffer.language_at(location.range.start),
-                )
-            })
-            .unwrap_or_default();
-        Task::ready(Ok(self.task_inventory().map_or_else(
-            || Vec::new(),
-            |inventory| inventory.read(cx).list_tasks(file, language, worktree, cx),
-        )))
     }
 }
 

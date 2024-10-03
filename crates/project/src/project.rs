@@ -2165,12 +2165,6 @@ impl Project {
             return;
         }
 
-        if let Some(inventory) = self.task_store.read(cx).task_inventory().cloned() {
-            inventory.update(cx, |inventory, _| {
-                inventory.remove_worktree_sources(id_to_remove);
-            });
-        }
-
         cx.notify();
     }
 
