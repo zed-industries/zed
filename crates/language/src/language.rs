@@ -247,6 +247,10 @@ impl CachedLspAdapter {
         self.adapter.name().clone()
     }
 
+    pub fn show_completion_colors(&self) -> bool {
+        self.adapter.show_completion_colors()
+    }
+
     pub async fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -326,6 +330,10 @@ pub trait LspAdapterDelegate: Send + Sync {
 #[async_trait(?Send)]
 pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
+
+    fn show_completion_colors(&self) -> bool {
+        false
+    }
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,

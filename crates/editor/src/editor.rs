@@ -980,6 +980,7 @@ enum ContextMenuOrigin {
 struct CompletionsMenu {
     id: CompletionId,
     sort_completions: bool,
+    show_colors: bool,
     initial_position: Anchor,
     buffer: Model<Buffer>,
     completions: Arc<RwLock<Box<[Completion]>>>,
@@ -1109,6 +1110,7 @@ impl CompletionsMenu {
     ) -> AnyElement {
         let settings = EditorSettings::get_global(cx);
         let show_completion_documentation = settings.show_completion_documentation;
+        let show_colors = self.show_colors;
 
         let widest_completion_ix = self
             .matches
@@ -1228,7 +1230,11 @@ impl CompletionsMenu {
                                 None
                             };
 
-                        let color = completion.color().unwrap_or(gpui::transparent_black());
+                        let color = if show_colors {
+                            completion.color().unwrap_or(gpui::transparent_black())
+                        } else {
+                            gpui::transparent_black()
+                        };
 
                         div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
@@ -2448,6 +2454,17 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn should_show_completion_colors(&self, buffer: &Model<Buffer>, cx: &AppContext) -> bool {
+        let Some(project) = self.project.as_ref() else {
+            return false;
+        };
+
+        project
+            .read(cx)
+            .language_servers_for_buffer(buffer.read(cx), cx)
+            .any(|(adapter, _)| adapter.show_completion_colors())
     }
 
     pub fn set_use_modal_editing(&mut self, to: bool) {
@@ -4302,6 +4319,8 @@ impl Editor {
         let completions = provider.completions(&buffer, buffer_position, completion_context, cx);
         let sort_completions = provider.sort_completions();
 
+        let show_colors = self.should_show_completion_colors(&buffer, cx);
+
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
             async move {
@@ -4313,6 +4332,7 @@ impl Editor {
                     let mut menu = CompletionsMenu {
                         id,
                         sort_completions,
+                        show_colors,
                         initial_position: position,
                         match_candidates: completions
                             .iter()
