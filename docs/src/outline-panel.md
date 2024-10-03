@@ -14,4 +14,4 @@ The outline panel begins to shine when used within the context of a multi-buffer
 
 ![Using the outline panel while viewing `find all references` multi-buffer](https://zed.dev/img/outline-panel/find-all-references.png)
 
-The outline view provides a great way to quickly navigate to specific parts of your code and helps you keep your bearings when working with large amounts of results.
+The outline view provides a great way to quickly navigate to specific parts of your code and helps you keep your bearings when working with large amounts of results in multi-buffers.
