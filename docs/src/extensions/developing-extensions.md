@@ -86,6 +86,8 @@ If you already have a published extension with the same name installed, your dev
 
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
 
+> Note: It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
+
 In your PR, do the following:
 
 1. Add your extension as a Git submodule within the `extensions/` directory

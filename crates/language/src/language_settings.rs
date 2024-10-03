@@ -381,7 +381,7 @@ pub struct FeaturesContent {
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
     None,
-    /// Deprecated: use None instead. Left to avoid breakin existing users' configs.
+    /// Deprecated: use None instead. Left to avoid breaking existing users' configs.
     /// Prefer a single line generally, unless an overly long line is encountered.
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
@@ -661,7 +661,7 @@ pub enum Formatter {
         /// The external program to run.
         command: Arc<str>,
         /// The arguments to pass to the program.
-        arguments: Arc<[String]>,
+        arguments: Option<Arc<[String]>>,
     },
     /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),

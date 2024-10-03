@@ -11,7 +11,7 @@ use gpui::{
     Transformation, View,
 };
 use release_channel::{AppVersion, ReleaseChannel};
-use remote::{SshConnectionOptions, SshPlatform, SshSession};
+use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -376,12 +376,12 @@ pub fn connect_over_ssh(
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
     cx: &mut WindowContext,
-) -> Task<Result<Arc<SshSession>>> {
+) -> Task<Result<Arc<SshRemoteClient>>> {
     let window = cx.window_handle();
     let known_password = connection_options.password.clone();
 
     cx.spawn(|mut cx| async move {
-        remote::SshSession::client(
+        remote::SshRemoteClient::new(
             connection_options,
             Arc::new(SshClientDelegate {
                 window,

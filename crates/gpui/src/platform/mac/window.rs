@@ -3,8 +3,9 @@ use crate::{
     platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
     ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
+    ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -706,7 +707,7 @@ impl MacWindow {
                 }
             }
 
-            if focus {
+            if focus && show {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if show {
                 native_window.orderFront_(nil);
@@ -1119,7 +1120,7 @@ impl PlatformWindow for MacWindow {
         None
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
         unsafe {
             let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
             let _: () = msg_send![input_context, invalidateCharacterCoordinates];

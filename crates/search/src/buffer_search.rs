@@ -27,7 +27,7 @@ use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
 
-use ui::{h_flex, prelude::*, IconButton, IconName, Tooltip, BASE_REM_SIZE_IN_PX};
+use ui::{h_flex, prelude::*, IconButton, IconButtonShape, IconName, Tooltip, BASE_REM_SIZE_IN_PX};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -200,7 +200,7 @@ impl Render for BufferSearchBar {
         };
 
         let search_line = h_flex()
-            .mb_1()
+            .gap_2()
             .child(
                 h_flex()
                     .id("editor-scroll")
@@ -208,7 +208,6 @@ impl Render for BufferSearchBar {
                     .flex_1()
                     .h_8()
                     .px_2()
-                    .mr_2()
                     .py_1()
                     .border_1()
                     .border_color(editor_border)
@@ -244,66 +243,70 @@ impl Render for BufferSearchBar {
                         }))
                     }),
             )
-            .when(supported_options.replacement, |this| {
-                this.child(
-                    IconButton::new("buffer-search-bar-toggle-replace-button", IconName::Replace)
-                        .style(ButtonStyle::Subtle)
-                        .when(self.replace_enabled, |button| {
-                            button.style(ButtonStyle::Filled)
-                        })
-                        .on_click(cx.listener(|this, _: &ClickEvent, cx| {
-                            this.toggle_replace(&ToggleReplace, cx);
-                        }))
-                        .selected(self.replace_enabled)
-                        .size(ButtonSize::Compact)
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |cx| {
-                                Tooltip::for_action_in(
-                                    "Toggle replace",
-                                    &ToggleReplace,
-                                    &focus_handle,
-                                    cx,
-                                )
-                            }
-                        }),
-                )
-            })
-            .when(supported_options.selection, |this| {
-                this.child(
-                    IconButton::new(
-                        "buffer-search-bar-toggle-search-selection-button",
-                        IconName::SearchSelection,
-                    )
-                    .style(ButtonStyle::Subtle)
-                    .when(self.selection_search_enabled, |button| {
-                        button.style(ButtonStyle::Filled)
-                    })
-                    .on_click(cx.listener(|this, _: &ClickEvent, cx| {
-                        this.toggle_selection(&ToggleSelection, cx);
-                    }))
-                    .selected(self.selection_search_enabled)
-                    .size(ButtonSize::Compact)
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Search Selection",
-                                &ToggleSelection,
-                                &focus_handle,
-                                cx,
-                            )
-                        }
-                    }),
-                )
-            })
             .child(
                 h_flex()
                     .flex_none()
+                    .gap_0p5()
+                    .when(supported_options.replacement, |this| {
+                        this.child(
+                            IconButton::new(
+                                "buffer-search-bar-toggle-replace-button",
+                                IconName::Replace,
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .shape(IconButtonShape::Square)
+                            .when(self.replace_enabled, |button| {
+                                button.style(ButtonStyle::Filled)
+                            })
+                            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                                this.toggle_replace(&ToggleReplace, cx);
+                            }))
+                            .selected(self.replace_enabled)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Toggle Replace",
+                                        &ToggleReplace,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            }),
+                        )
+                    })
+                    .when(supported_options.selection, |this| {
+                        this.child(
+                            IconButton::new(
+                                "buffer-search-bar-toggle-search-selection-button",
+                                IconName::SearchSelection,
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .shape(IconButtonShape::Square)
+                            .when(self.selection_search_enabled, |button| {
+                                button.style(ButtonStyle::Filled)
+                            })
+                            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                                this.toggle_selection(&ToggleSelection, cx);
+                            }))
+                            .selected(self.selection_search_enabled)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Toggle Search Selection",
+                                        &ToggleSelection,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            }),
+                        )
+                    })
                     .child(
                         IconButton::new("select-all", ui::IconName::SelectAll)
                             .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
-                            .size(ButtonSize::Compact)
+                            .shape(IconButtonShape::Square)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
@@ -332,11 +335,13 @@ impl Render for BufferSearchBar {
                     ))
                     .when(!narrow_mode, |this| {
                         this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
-                            Label::new(match_text).color(if self.active_match_index.is_some() {
-                                Color::Default
-                            } else {
-                                Color::Disabled
-                            }),
+                            Label::new(match_text).size(LabelSize::Small).color(
+                                if self.active_match_index.is_some() {
+                                    Color::Default
+                                } else {
+                                    Color::Disabled
+                                },
+                            ),
                         ))
                     }),
             );
@@ -367,8 +372,10 @@ impl Render for BufferSearchBar {
                 .child(
                     h_flex()
                         .flex_none()
+                        .gap_0p5()
                         .child(
                             IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
+                                .shape(IconButtonShape::Square)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |cx| {
@@ -386,6 +393,7 @@ impl Render for BufferSearchBar {
                         )
                         .child(
                             IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
+                                .shape(IconButtonShape::Square)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |cx| {
@@ -441,6 +449,7 @@ impl Render for BufferSearchBar {
                     .when(!narrow_mode, |div| {
                         div.child(
                             IconButton::new(SharedString::from("Close"), IconName::Close)
+                                .shape(IconButtonShape::Square)
                                 .tooltip(move |cx| {
                                     Tooltip::for_action("Close Search Bar", &Dismiss, cx)
                                 })

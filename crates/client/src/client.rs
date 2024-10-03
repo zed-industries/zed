@@ -1023,7 +1023,7 @@ impl Client {
         &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> impl Future<Output = Result<Url>> {
+    ) -> impl Future<Output = Result<url::Url>> {
         #[cfg(any(test, feature = "test-support"))]
         let url_override = self.rpc_url.read().clone();
 
@@ -1117,7 +1117,7 @@ impl Client {
             // for us from the RPC URL.
             //
             // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
-            let mut request = rpc_url.into_client_request()?;
+            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
 
             // We then modify the request to add our desired headers.
             let request_headers = request.headers_mut();
@@ -1137,30 +1137,13 @@ impl Client {
 
             match url_scheme {
                 Https => {
-                    let client_config = {
-                        let mut root_store = rustls::RootCertStore::empty();
-
-                        let root_certs = rustls_native_certs::load_native_certs();
-                        for error in root_certs.errors {
-                            log::warn!("error loading native certs: {:?}", error);
-                        }
-                        root_store.add_parsable_certificates(
-                            &root_certs
-                                .certs
-                                .into_iter()
-                                .map(|cert| cert.as_ref().to_owned())
-                                .collect::<Vec<_>>(),
-                        );
-                        rustls::ClientConfig::builder()
-                            .with_safe_defaults()
-                            .with_root_certificates(root_store)
-                            .with_no_client_auth()
-                    };
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some(client_config.into()),
+                            Some(async_tls::TlsConnector::from(
+                                http_client::TLS_CONFIG.clone(),
+                            )),
                         )
                         .await?;
                     Ok(Connection::new(
@@ -1752,7 +1735,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 }
 
 /// prefix for the zed:// url scheme
-pub static ZED_URL_SCHEME: &str = "zed";
+pub const ZED_URL_SCHEME: &str = "zed";
 
 /// Parses the given link into a Zed link.
 ///

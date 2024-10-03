@@ -11,7 +11,7 @@ struct UndoMapEntry {
 impl sum_tree::Item for UndoMapEntry {
     type Summary = UndoMapKey;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.key
     }
 }
