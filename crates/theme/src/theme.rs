@@ -215,7 +215,7 @@ impl Theme {
 }
 
 /// Compounds a color with an alpha value.
-/// TODO: Relace this with a method on Hsla.
+/// TODO: Replace this with a method on Hsla.
 pub fn color_alpha(color: Hsla, alpha: f32) -> Hsla {
     let mut color = color;
     color.a = alpha;
