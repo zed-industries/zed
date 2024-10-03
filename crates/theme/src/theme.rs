@@ -11,10 +11,6 @@
 mod default_colors;
 mod font_family_cache;
 mod one_themes;
-/// A prelude for working with the theme system.
-///
-/// TODO: remove this. This only publishes default colors.
-pub mod prelude;
 mod registry;
 mod scale;
 mod schema;
