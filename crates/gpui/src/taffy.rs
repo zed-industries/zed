@@ -15,12 +15,13 @@ use taffy::{
 type NodeMeasureFn =
     Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>>;
 
+struct NodeContext {
+    measure: NodeMeasureFn,
+}
 pub struct TaffyLayoutEngine {
-    taffy: TaffyTree<()>,
-    styles: FxHashMap<LayoutId, Style>,
+    taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
-    nodes_to_measure: FxHashMap<LayoutId, NodeMeasureFn>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -29,10 +30,8 @@ impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
             taffy: TaffyTree::new(),
-            styles: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
-            nodes_to_measure: FxHashMap::default(),
         }
     }
 
@@ -40,8 +39,6 @@ impl TaffyLayoutEngine {
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
         self.computed_layouts.clear();
-        self.nodes_to_measure.clear();
-        self.styles.clear();
     }
 
     pub fn request_layout(
@@ -67,7 +64,6 @@ impl TaffyLayoutEngine {
                 .into();
             parent_id
         };
-        self.styles.insert(layout_id, style);
         layout_id
     }
 
@@ -82,11 +78,14 @@ impl TaffyLayoutEngine {
 
         let layout_id = self
             .taffy
-            .new_leaf_with_context(taffy_style, ())
+            .new_leaf_with_context(
+                taffy_style,
+                NodeContext {
+                    measure: Box::new(measure),
+                },
+            )
             .expect(EXPECT_MESSAGE)
             .into();
-        self.nodes_to_measure.insert(layout_id, Box::new(measure));
-        self.styles.insert(layout_id, style);
         layout_id
     }
 
@@ -175,8 +174,8 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, node_id, _context, _style| {
-                    let Some(measure) = self.nodes_to_measure.get_mut(&node_id.into()) else {
+                |known_dimensions, available_space, _node_id, node_context, _style| {
+                    let Some(node_context) = node_context else {
                         return taffy::geometry::Size::default();
                     };
 
@@ -185,7 +184,7 @@ impl TaffyLayoutEngine {
                         height: known_dimensions.height.map(Pixels),
                     };
 
-                    measure(known_dimensions, available_space.into(), cx).into()
+                    (node_context.measure)(known_dimensions, available_space.into(), cx).into()
                 },
             )
             .expect(EXPECT_MESSAGE);
