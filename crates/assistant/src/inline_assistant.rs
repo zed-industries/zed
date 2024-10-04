@@ -2948,8 +2948,8 @@ impl CodegenAlternative {
                             if let Some(telemetry) = telemetry {
                                 telemetry.report_assistant_event(AssistantEvent {
                                     conversation_id: None,
-                                    kind: telemetry_events::AssistantKind::Inline,
-                                    phase: telemetry_events::AssistantPhase::Response,
+                                    kind: AssistantKind::Inline,
+                                    phase: AssistantPhase::Response,
                                     model: model_telemetry_id,
                                     model_provider: model_provider_id.to_string(),
                                     response_latency,
