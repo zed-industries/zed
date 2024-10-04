@@ -847,8 +847,9 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Scan Exclusions
 
 - Setting: `file_scan_exclusions`
-- Description: Configure how  Add filename or directory globs that will be excluded by Zed entirely.  They will be skipped during file scans, file searches and hidden from project file tree.
+- Description: Configure how Add filename or directory globs that will be excluded by Zed entirely. They will be skipped during file scans, file searches and hidden from project file tree.
 - Default:
+
 ```json
 "file_scan_exclusions": [
   "**/.git",
