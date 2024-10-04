@@ -27,6 +27,7 @@ use language::{
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use project::lsp_store::FormatTarget;
 use project::{
     lsp_store::FormatTrigger, search::SearchQuery, search::SearchResult, DiagnosticSummary,
     HoverBlockKind, Project, ProjectPath,
@@ -4417,6 +4418,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4450,6 +4452,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4555,6 +4558,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4574,6 +4578,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_a.clone()]),
                 true,
                 FormatTrigger::Manual,
+                FormatTarget::Buffer,
                 cx,
             )
         })

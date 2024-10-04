@@ -237,6 +237,7 @@ gpui::actions!(
         ToggleFold,
         ToggleFoldRecursive,
         Format,
+        FormatSelections,
         GoToDeclaration,
         GoToDeclarationSplit,
         GoToDefinition,

@@ -376,6 +376,13 @@ impl EditorElement {
                 cx.propagate();
             }
         });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.format_selections(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
         register_action(view, cx, Editor::restart_language_server);
         register_action(view, cx, Editor::cancel_language_server_work);
         register_action(view, cx, Editor::show_character_palette);
