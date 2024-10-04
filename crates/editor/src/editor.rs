@@ -9768,13 +9768,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.snapshot(cx).display_snapshot;
-        let point = snapshot
+        let start = snapshot
             .buffer_snapshot
             .clip_point(Point::new(row, column), Bias::Left);
-        let anchor = snapshot.buffer_snapshot.anchor_before(point);
+        let end = start + Point::new(1, 0);
+        let start = snapshot.buffer_snapshot.anchor_before(start);
+        let end = snapshot.buffer_snapshot.anchor_before(end);
+
         self.clear_row_highlights::<T>();
         self.highlight_rows::<T>(
-            anchor..anchor,
+            start..end,
             highlight_color
                 .unwrap_or_else(|| cx.theme().colors().editor_highlighted_line_background),
             true,
