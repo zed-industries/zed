@@ -180,7 +180,7 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, node_id, _context| {
+                |known_dimensions, available_space, node_id, _context, _style| {
                     let Some(measure) = self.nodes_to_measure.get_mut(&node_id.into()) else {
                         return taffy::geometry::Size::default();
                     };
