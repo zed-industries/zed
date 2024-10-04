@@ -72,6 +72,7 @@ pub trait Bm25Scorer {
     }
 }
 
+#[derive(Debug)]
 pub struct TermStats {
     frequency: u32,
     chunk_ids: HashSet<u64>,
@@ -100,6 +101,7 @@ impl ChunkStats {
 ///
 /// This struct contains information about chunks, term statistics,
 /// and the total length of all chunks in the worktree.
+#[derive(Debug)]
 pub struct WorktreeTermStats {
     /// A map of chunk IDs to their corresponding statistics.
     chunks: HashMap<u64, ChunkStats>,

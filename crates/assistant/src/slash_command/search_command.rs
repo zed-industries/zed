@@ -24,13 +24,19 @@ impl FeatureFlag for SearchSlashCommandFeatureFlag {
 
 pub(crate) struct SearchSlashCommand;
 
+pub(crate) enum SearchStyle {
+    Dense,
+    Hybrid,
+    Sparse,
+}
+
 impl SlashCommand for SearchSlashCommand {
     fn name(&self) -> String {
         "search".into()
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
-        create_label_for_command("search", &["--n"], cx)
+        create_label_for_command("search", &["--n", "--style {*hybrid,dense,sparse}"], cx)
     }
 
     fn description(&self) -> String {
@@ -72,23 +78,57 @@ impl SlashCommand for SearchSlashCommand {
         };
 
         let mut limit = None;
-        let mut query = String::new();
-        for part in arguments {
-            if let Some(parameter) = part.strip_prefix("--") {
-                if let Ok(count) = parameter.parse::<usize>() {
-                    limit = Some(count);
+        let mut query = Vec::new();
+        let mut arg_iter = arguments.iter();
+        let mut style = SearchStyle::Hybrid;
+
+        while let Some(arg) = arg_iter.next() {
+            if arg == "--n" {
+                if let Some(count) = arg_iter.next() {
+                    if let Ok(parsed_count) = count.parse::<usize>() {
+                        limit = Some(parsed_count);
+                        continue;
+                    } else {
+                        return Task::ready(Err(anyhow::anyhow!(
+                            "Invalid count for --n parameter; should be a positive integer."
+                        )));
+                    }
+                } else {
+                    return Task::ready(Err(anyhow::anyhow!("Missing count for --n parameter")));
+                }
+            } else if arg == "--style" {
+                if let Some(style_value) = arg_iter.next() {
+                    match style_value.as_str() {
+                        "dense" => style = SearchStyle::Dense,
+                        "sparse" => style = SearchStyle::Sparse,
+                        "hybrid" => style = SearchStyle::Hybrid,
+                        _ => {
+                            return Task::ready(Err(anyhow::anyhow!(
+                                "Invalid style parameter; should be 'dense', 'sparse', or 'hybrid'."
+                            )))
+                        }
+                    }
                     continue;
+                } else {
+                    return Task::ready(Err(anyhow::anyhow!(
+                        "Missing value for --style parameter"
+                    )));
                 }
             }
-
-            query.push_str(part);
-            query.push(' ');
+            query.push(arg.clone());
         }
-        query.pop();
+
+        let query = query.join(" ");
 
         if query.is_empty() {
             return Task::ready(Err(anyhow::anyhow!("missing search query")));
         }
+
+        let search_param = match style {
+            SearchStyle::Dense => 1.0,
+            SearchStyle::Sparse => 0.0,
+            SearchStyle::Hybrid => 0.7,
+        };
 
         let project = workspace.read(cx).project().clone();
         let fs = project.read(cx).fs().clone();
@@ -101,8 +141,7 @@ impl SlashCommand for SearchSlashCommand {
         cx.spawn(|cx| async move {
             let results = project_index
                 .read_with(&cx, |project_index, cx| {
-                    // TODO allow for some kind of control of mixing param (maybe --hybrid vs. --embedding vs. --text?)
-                    project_index.search(vec![query.clone()], limit.unwrap_or(5), 0.7, cx)
+                    project_index.search(vec![query.clone()], limit.unwrap_or(5), search_param, cx)
                 })?
                 .await?;
 

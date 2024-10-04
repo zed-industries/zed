@@ -1,6 +1,7 @@
 use super::{
-    create_label_for_command, search_command::add_search_result_section, SlashCommand,
-    SlashCommandOutput,
+    create_label_for_command,
+    search_command::{add_search_result_section, SearchStyle},
+    SlashCommand, SlashCommandOutput,
 };
 use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
@@ -70,7 +71,7 @@ impl SlashCommand for ProjectSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        _arguments: &[String],
+        arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<Anchor>],
         context_buffer: language::BufferSnapshot,
         workspace: WeakView<Workspace>,
@@ -80,6 +81,33 @@ impl SlashCommand for ProjectSlashCommand {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let current_model = model_registry.active_model();
         let prompt_builder = self.prompt_builder.clone();
+        let mut style = SearchStyle::Hybrid;
+        let mut arg_iter = arguments.iter();
+        if let Some(arg) = arg_iter.next() {
+            if arg == "--style" {
+                if let Some(style_value) = arg_iter.next() {
+                    match style_value.as_str() {
+                        "dense" => style = SearchStyle::Dense,
+                        "sparse" => style = SearchStyle::Sparse,
+                        "hybrid" => style = SearchStyle::Hybrid,
+                        _ => {
+                            return Task::ready(Err(anyhow::anyhow!(
+                                "Invalid style parameter; should be 'dense', 'sparse', or 'hybrid'."
+                            )))
+                        }
+                    }
+                } else {
+                    return Task::ready(Err(anyhow::anyhow!(
+                        "Missing value for --style parameter"
+                    )));
+                }
+            }
+        }
+        let search_param = match style {
+            SearchStyle::Dense => 1.0,
+            SearchStyle::Sparse => 0.0,
+            SearchStyle::Hybrid => 0.7,
+        };
 
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
@@ -117,8 +145,7 @@ impl SlashCommand for ProjectSlashCommand {
 
             let results = project_index
                 .read_with(&cx, |project_index, cx| {
-                    // TODO allow for some kind of control of mixing param (maybe --hybrid vs. --embedding vs. --text?)
-                    project_index.search(search_queries.clone(), 25, 0.7, cx)
+                    project_index.search(search_queries.clone(), 25, search_param, cx)
                 })?
                 .await?;
 

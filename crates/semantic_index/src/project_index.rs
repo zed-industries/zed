@@ -236,6 +236,13 @@ impl ProjectIndex {
         mixing_param: f32,
         cx: &AppContext,
     ) -> Task<Result<Vec<SearchResult>>> {
+        if !(0.0..=1.0).contains(&mixing_param) {
+            return cx.spawn(|_| async move {
+                Err(anyhow!(
+                    "Semantic search mixing param must be between 0 and 1"
+                ))
+            });
+        }
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
         let mut worktree_scan_tasks = Vec::new();
         for worktree_index in self.worktree_indices.values() {
@@ -262,7 +269,8 @@ impl ProjectIndex {
                                 .context("failed to create read transaction")?;
                             let db_entries = db.iter(&txn).context("failed to iterate database")?;
                             for db_entry in db_entries {
-                                let (_key, db_embedded_file) = db_entry?;
+                                let (_key, db_embedded_file) =
+                                    db_entry.context("failed to read embedded file")?;
                                 for chunk in &db_embedded_file.chunks {
                                     chunks_tx
                                         .send((
@@ -303,6 +311,9 @@ impl ProjectIndex {
                     )
                 })
                 .collect();
+            #[cfg(debug_assertions)]
+            let bm25_query_end = std::time::Instant::now();
+
             // Similarity search: Embed query
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
@@ -316,6 +327,8 @@ impl ProjectIndex {
                     "The number of query embeddings does not match the number of queries"
                 ));
             }
+            #[cfg(debug_assertions)]
+            let embedding_query_end = std::time::Instant::now();
 
             let mut results_by_worker = Vec::new();
             for _ in 0..cx.background_executor().num_cpus() {
@@ -349,7 +362,10 @@ impl ProjectIndex {
                                                     bm25_params.k1,
                                                     bm25_params.b,
                                                 )
-                                                .expect("Missing chunk_id from WorktreeTermStats")
+                                                .unwrap_or_else(|| {
+                                                    log::error!("Missing chunk from WorktreeTermStats for chunk_id: {:?}, path: {:?}", chunk.chunk_id, path);
+                                                    0.0
+                                                })
                                         };
                                         mixing_param * embedding_score
                                             + (1. - mixing_param) * bm25_score
@@ -414,10 +430,10 @@ impl ProjectIndex {
                         search_results.len(),
                         search_elapsed
                     );
-                    let embedding_query_elapsed = embedding_query_start.elapsed();
+                    let bm25_query_elapsed = bm25_query_start - bm25_query_end;
+                    log::debug!("tokenizing query took {:?}", bm25_query_elapsed);
+                    let embedding_query_elapsed = embedding_query_start - embedding_query_end;
                     log::debug!("embedding query took {:?}", embedding_query_elapsed);
-                    let bm25_query_elapsed = bm25_query_start.elapsed();
-                    log::debug!("bm25 query took {:?}", bm25_query_elapsed);
                 }
 
                 search_results
