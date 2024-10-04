@@ -216,7 +216,10 @@ impl InlineAssistant {
                     .read(cx)
                     .buffer()
                     .read(cx)
-                    .language(cx)
+                    .all_buffers()
+                    .iter()
+                    .flat_map(|buffer| buffer.read(cx).language())
+                    .last()
                     .map(|language| language.name());
                 telemetry.report_assistant_event(AssistantEvent {
                     conversation_id: None,
@@ -778,7 +781,10 @@ impl InlineAssistant {
                             .read(cx)
                             .buffer()
                             .read(cx)
-                            .language(cx)
+                            .all_buffers()
+                            .iter()
+                            .flat_map(|buffer| buffer.read(cx).language())
+                            .last()
                             .map(|language| language.name())
                     });
                     telemetry.report_assistant_event(AssistantEvent {
@@ -2835,7 +2841,10 @@ impl CodegenAlternative {
         let language_name = self
             .buffer
             .read(cx)
-            .language(cx)
+            .all_buffers()
+            .iter()
+            .flat_map(|buffer| buffer.read(cx).language())
+            .last()
             .map(|language| language.name());
 
         self.diff = Diff::default();

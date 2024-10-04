@@ -382,15 +382,6 @@ impl MultiBuffer {
         }
     }
 
-    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        // Take the last language, since all buffer are guaranteed to be
-        // in the same file and share the same language
-        self.all_buffers()
-            .iter()
-            .flat_map(|b| b.read(cx).language())
-            .last()
-    }
-
     pub fn without_headers(capability: Capability) -> Self {
         Self {
             snapshot: Default::default(),
