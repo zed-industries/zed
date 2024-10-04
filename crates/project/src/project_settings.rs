@@ -336,8 +336,7 @@ impl SettingsObserver {
                     settings_store.set_user_settings(&envelope.payload.content, cx)
                 }
                 proto::update_user_settings::Kind::Tasks => {
-                    // Do not accept remote user's task.json yet
-                    Ok(())
+                    settings_store.set_user_tasks(&envelope.payload.content, cx)
                 }
             }
         })??;
