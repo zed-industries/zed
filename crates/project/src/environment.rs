@@ -70,7 +70,7 @@ impl ProjectEnvironment {
         }
     }
 
-    /// Returns a direnv error for a given worktree_id
+    /// Returns all direnv errors with associated worktree ids
     pub(crate) fn all_direnv_errors(&self) -> impl Iterator<Item = (&WorktreeId, &DirenvError)> {
         self.direnv_errors.iter()
     }
