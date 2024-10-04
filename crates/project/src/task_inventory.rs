@@ -348,11 +348,8 @@ impl Inventory {
         cx: &AppContext,
     ) -> impl Iterator<Item = (TaskSourceKind, TaskTemplate)> {
         let raw_templates = cx.global::<SettingsStore>().get_task_templates(worktree);
-        let mut templates = Vec::with_capacity(
-            raw_templates.global_local.len()
-                + raw_templates.global_remote.len()
-                + raw_templates.worktree.len(),
-        );
+        let mut templates =
+            Vec::with_capacity(raw_templates.global.len() + raw_templates.worktree.len());
         let mut unique_labels = HashSet::default();
 
         let mut bad_templates = 0;
@@ -385,24 +382,8 @@ impl Inventory {
         }
 
         bad_templates = 0;
-        for global_remote_template in raw_templates.global_remote {
-            if let Some(template) =
-                serde_json::from_value::<TaskTemplate>(global_remote_template.clone()).log_err()
-            {
-                if unique_labels.insert(template.label.clone()) {
-                    templates.push((TaskSourceKind::RemoteGlobal, template));
-                }
-            } else {
-                bad_templates += 1;
-            }
-        }
-        if bad_templates > 0 {
-            log::error!("Failed to parse {bad_templates} remote templates");
-        }
-
-        bad_templates = 0;
         let local_tasks_file = paths::tasks_file();
-        for global_template in raw_templates.global_local {
+        for global_template in raw_templates.global {
             if let Some(template) =
                 serde_json::from_value::<TaskTemplate>(global_template.clone()).log_err()
             {

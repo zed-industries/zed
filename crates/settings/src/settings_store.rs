@@ -160,8 +160,7 @@ pub struct SettingsLocation<'a> {
 /// A set of task templates, applicable in the current project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawTaskTemplates<'a> {
-    pub global_local: &'a [serde_json::Value],
-    pub global_remote: &'a [serde_json::Value],
+    pub global: &'a [serde_json::Value],
     pub worktree: Vec<(&'a Arc<Path>, &'a serde_json::Value)>,
 }
 
@@ -171,7 +170,6 @@ pub struct SettingsStore {
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
     raw_user_tasks: Vec<serde_json::Value>,
-    raw_remote_tasks: Vec<serde_json::Value>,
     raw_extension_settings: serde_json::Value,
     raw_local_settings:
         BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
@@ -230,7 +228,6 @@ impl SettingsStore {
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
             raw_user_tasks: Vec::new(),
-            raw_remote_tasks: Vec::new(),
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
@@ -340,8 +337,7 @@ impl SettingsStore {
     /// No deduplication or sorting is performed.
     pub fn get_task_templates(&self, worktree: Option<WorktreeId>) -> RawTaskTemplates<'_> {
         RawTaskTemplates {
-            global_local: &self.raw_user_tasks,
-            global_remote: &self.raw_remote_tasks,
+            global: &self.raw_user_tasks,
             worktree: worktree
                 .into_iter()
                 // Right now, local tasks may only come either from VSCode or Zed local setting files, so take them both.
@@ -579,23 +575,13 @@ impl SettingsStore {
     }
 
     /// Sets the user tasks via a JSON string.
-    pub fn set_user_tasks(
-        &mut self,
-        user_tasks_content: &str,
-        remote: bool,
-        _cx: &mut AppContext,
-    ) -> Result<()> {
+    pub fn set_user_tasks(&mut self, user_tasks_content: &str, _cx: &mut AppContext) -> Result<()> {
         let tasks: Vec<serde_json::Value> = if user_tasks_content.is_empty() {
             parse_json_with_comments("[]")?
         } else {
             parse_json_with_comments(user_tasks_content)?
         };
-
-        if remote {
-            self.raw_remote_tasks = tasks;
-        } else {
-            self.raw_user_tasks = tasks;
-        }
+        self.raw_user_tasks = tasks;
         Ok(())
     }
 
