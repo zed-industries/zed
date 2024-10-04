@@ -2133,13 +2133,20 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
+                        let language_name = this
+                            .buffer
+                            .read(cx)
+                            .language()
+                            .map(|language| language.name());
                         telemetry.report_assistant_event(AssistantEvent {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
                             model: model.telemetry_id(),
+                            model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
+                            language_name,
                         });
                     }
 
