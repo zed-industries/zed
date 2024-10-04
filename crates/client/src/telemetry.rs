@@ -16,8 +16,9 @@ use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event, EventRequestBody,
-    EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent, SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
+    SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -390,6 +391,10 @@ impl Telemetry {
         self.report_event(event)
     }
 
+    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
+        self.report_event(Event::Assistant(event));
+    }
+
     pub fn report_call_event(
         self: &Arc<Self>,
         operation: &'static str,
@@ -536,7 +541,7 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_event(self: &Arc<Self>, event: Event) {
+    fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
         if !state.settings.metrics {

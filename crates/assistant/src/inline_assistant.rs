@@ -50,7 +50,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase, Event};
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
@@ -218,7 +218,7 @@ impl InlineAssistant {
                     .read(cx)
                     .language(cx)
                     .map(|l| l.name());
-                telemetry.report_event(Event::Assistant(AssistantEvent {
+                telemetry.report_assistant_event(AssistantEvent {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,
@@ -227,7 +227,7 @@ impl InlineAssistant {
                     response_latency: None,
                     error_message: None,
                     language_name,
-                }));
+                });
             }
         }
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -781,7 +781,7 @@ impl InlineAssistant {
                             .language(cx)
                             .map(|l| l.name())
                     });
-                    telemetry.report_event(Event::Assistant(AssistantEvent {
+                    telemetry.report_assistant_event(AssistantEvent {
                         conversation_id: None,
                         kind: AssistantKind::Inline,
                         phase: if undo {
@@ -794,7 +794,7 @@ impl InlineAssistant {
                         response_latency: None,
                         error_message: None,
                         language_name,
-                    }));
+                    });
                 }
             }
 
@@ -2944,7 +2944,7 @@ impl CodegenAlternative {
                             let error_message =
                                 result.as_ref().err().map(|error| error.to_string());
                             if let Some(telemetry) = telemetry {
-                                telemetry.report_event(Event::Assistant(AssistantEvent {
+                                telemetry.report_assistant_event(AssistantEvent {
                                     conversation_id: None,
                                     kind: telemetry_events::AssistantKind::Inline,
                                     phase: telemetry_events::AssistantPhase::Response,
@@ -2953,7 +2953,7 @@ impl CodegenAlternative {
                                     response_latency,
                                     error_message,
                                     language_name,
-                                }));
+                                });
                             }
 
                             result?;

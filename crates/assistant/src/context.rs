@@ -46,7 +46,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase, Event};
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -2134,7 +2134,7 @@ impl Context {
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
                         let language_name = this.buffer.read(cx).language().map(|l| l.name());
-                        telemetry.report_event(Event::Assistant(AssistantEvent {
+                        telemetry.report_assistant_event(AssistantEvent {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
@@ -2143,7 +2143,7 @@ impl Context {
                             response_latency,
                             error_message,
                             language_name,
-                        }));
+                        });
                     }
 
                     if let Ok(stop_reason) = result {
