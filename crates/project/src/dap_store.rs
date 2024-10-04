@@ -4,16 +4,17 @@ use collections::{HashMap, HashSet};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::messages::Message;
 use dap::requests::{
-    Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Scopes,
-    SetBreakpoints, SetExpression, SetVariable, StackTrace, StepIn, StepOut, Terminate,
-    TerminateThreads, Variables,
+    Attach, Completions, ConfigurationDone, Continue, Disconnect, Evaluate, Initialize, Launch,
+    Next, Pause, Scopes, SetBreakpoints, SetExpression, SetVariable, StackTrace, StepIn, StepOut,
+    Terminate, TerminateThreads, Variables,
 };
 use dap::{
-    AttachRequestArguments, Capabilities, ConfigurationDoneArguments, ContinueArguments,
-    DisconnectArguments, InitializeRequestArguments, InitializeRequestArgumentsPathFormat,
-    LaunchRequestArguments, NextArguments, PauseArguments, Scope, ScopesArguments,
-    SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments, Source,
-    SourceBreakpoint, StackFrame, StackTraceArguments, StepInArguments, StepOutArguments,
+    AttachRequestArguments, Capabilities, CompletionItem, CompletionsArguments,
+    ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, EvaluateArguments,
+    EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
+    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, NextArguments, PauseArguments,
+    Scope, ScopesArguments, SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments,
+    Source, SourceBreakpoint, StackFrame, StackTraceArguments, StepInArguments, StepOutArguments,
     SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
     VariablesArguments,
 };
@@ -344,7 +345,7 @@ impl DapStore {
         })
     }
 
-    pub fn send_configuration_done(
+    pub fn configuration_done(
         &self,
         client_id: &DebugAdapterClientId,
         cx: &mut ModelContext<Self>,
@@ -507,6 +508,58 @@ impl DapStore {
                 })
                 .await?
                 .variables)
+        })
+    }
+
+    pub fn evaluate(
+        &self,
+        client_id: &DebugAdapterClientId,
+        stack_frame_id: u64,
+        expression: String,
+        context: EvaluateArgumentsContext,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<EvaluateResponse>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Could not found client")));
+        };
+
+        cx.spawn(|_, _| async move {
+            client
+                .request::<Evaluate>(EvaluateArguments {
+                    expression: expression.clone(),
+                    frame_id: Some(stack_frame_id),
+                    context: Some(context),
+                    format: None,
+                    line: None,
+                    column: None,
+                    source: None,
+                })
+                .await
+        })
+    }
+
+    pub fn completions(
+        &self,
+        client_id: &DebugAdapterClientId,
+        stack_frame_id: u64,
+        text: String,
+        completion_column: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<CompletionItem>>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Could not found client")));
+        };
+
+        cx.spawn(|_, _| async move {
+            Ok(client
+                .request::<Completions>(CompletionsArguments {
+                    frame_id: Some(stack_frame_id),
+                    line: None,
+                    text,
+                    column: completion_column,
+                })
+                .await?
+                .targets)
         })
     }
 
@@ -722,6 +775,8 @@ impl DapStore {
             breakpoint_set.insert(breakpoint);
         }
 
+        cx.notify();
+
         self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
             .detach();
     }
@@ -797,6 +852,7 @@ impl DapStore {
         })
     }
 }
+
 type LogMessage = Arc<str>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

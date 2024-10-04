@@ -67,19 +67,24 @@ impl DebugPanelItem {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let capabilities = dap_store.read(cx).capabilities_by_id(&client_id);
-
         let variable_list = cx.new_view(|cx| {
             VariableList::new(
                 dap_store.clone(),
                 &client_id,
                 &thread_state,
-                &capabilities,
                 current_stack_frame_id,
                 cx,
             )
         });
-        let console = cx.new_view(Console::new);
+        let console = cx.new_view(|cx| {
+            Console::new(
+                client_id,
+                current_stack_frame_id,
+                variable_list.clone(),
+                dap_store.clone(),
+                cx,
+            )
+        });
 
         let weakview = cx.view().downgrade();
         let stack_frame_list =
@@ -204,6 +209,10 @@ impl DebugPanelItem {
             self.update_stack_frame_id(stack_frame.id, go_to_stack_frame, cx);
         };
 
+        self.variable_list.update(cx, |variable_list, cx| {
+            variable_list.on_stopped_event(cx);
+        });
+
         cx.notify();
     }
 
@@ -243,20 +252,6 @@ impl DebugPanelItem {
                     console.add_message(&event.output, cx);
                 });
             }
-            // OutputEventCategory::Stderr => {}
-            OutputEventCategory::Stdout => {
-                self.output_editor.update(cx, |editor, cx| {
-                    editor.set_read_only(false);
-                    editor.move_to_end(&editor::actions::MoveToEnd, cx);
-                    editor.insert(format!("{}\n", &event.output.trim_end()).as_str(), cx);
-                    editor.set_read_only(true);
-
-                    cx.notify();
-                });
-            }
-            // OutputEventCategory::Unknown => {}
-            // OutputEventCategory::Important => {}
-            OutputEventCategory::Telemetry => {}
             _ => {
                 self.output_editor.update(cx, |editor, cx| {
                     editor.set_read_only(false);
@@ -326,6 +321,10 @@ impl DebugPanelItem {
         self.variable_list.update(cx, |variable_list, cx| {
             variable_list.update_stack_frame_id(stack_frame_id, cx);
             variable_list.build_entries(true, false, cx);
+        });
+
+        self.console.update(cx, |console, cx| {
+            console.update_current_stack_frame_id(stack_frame_id, cx);
         });
 
         if go_to_stack_frame {

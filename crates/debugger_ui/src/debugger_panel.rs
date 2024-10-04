@@ -6,17 +6,16 @@ use dap::debugger_settings::DebuggerSettings;
 use dap::messages::{Events, Message};
 use dap::requests::{Request, StartDebugging};
 use dap::{
-    Capabilities, ContinuedEvent, ExitedEvent, OutputEvent, Scope, StackFrame, StoppedEvent,
-    TerminatedEvent, ThreadEvent, ThreadEventReason, Variable,
+    Capabilities, ContinuedEvent, ExitedEvent, OutputEvent, StackFrame, StoppedEvent,
+    TerminatedEvent, ThreadEvent, ThreadEventReason,
 };
-use futures::future::try_join_all;
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
     FontWeight, Model, Subscription, Task, View, ViewContext, WeakView,
 };
 use project::dap_store::DapStore;
 use settings::Settings;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::u64;
 use ui::prelude::*;
@@ -42,22 +41,10 @@ pub enum DebugPanelEvent {
 
 actions!(debug_panel, [ToggleFocus]);
 
-#[derive(Debug, Clone)]
-pub struct VariableContainer {
-    pub container_reference: u64,
-    pub variable: Variable,
-    pub depth: usize,
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct ThreadState {
     pub status: ThreadStatus,
     pub stack_frames: Vec<StackFrame>,
-    /// HashMap<stack_frame_id, Vec<Scope>>
-    pub scopes: HashMap<u64, Vec<Scope>>,
-    /// BTreeMap<scope.variables_reference, Vec<VariableContainer>>
-    pub variables: BTreeMap<u64, Vec<VariableContainer>>,
-    pub fetched_variable_ids: HashSet<u64>,
     // we update this value only once we stopped,
     // we will use this to indicated if we should show a warning when debugger thread was exited
     pub stopped: bool,
@@ -287,9 +274,9 @@ impl DebugPanel {
                 .update(cx, |project, cx| project.send_breakpoints(&client_id, cx))
         });
 
-        let configuration_done_task = self.dap_store.update(cx, |store, cx| {
-            store.send_configuration_done(&client_id, cx)
-        });
+        let configuration_done_task = self
+            .dap_store
+            .update(cx, |store, cx| store.configuration_done(&client_id, cx));
 
         cx.background_executor()
             .spawn(async move {
@@ -343,41 +330,6 @@ impl DebugPanel {
 
                 let current_stack_frame = stack_frames.first().unwrap().clone();
 
-                let mut scope_tasks = Vec::new();
-                for stack_frame in stack_frames.clone().into_iter() {
-                    let stack_frame_scopes_task = this.update(&mut cx, |this, cx| {
-                        this.dap_store
-                            .update(cx, |store, cx| store.scopes(&client_id, stack_frame.id, cx))
-                    });
-
-                    scope_tasks.push(async move {
-                        anyhow::Ok((stack_frame.id, stack_frame_scopes_task?.await?))
-                    });
-                }
-
-                let mut stack_frame_tasks = Vec::new();
-                for (stack_frame_id, scopes) in try_join_all(scope_tasks).await? {
-                    let variable_tasks = this.update(&mut cx, |this, cx| {
-                        this.dap_store.update(cx, |store, cx| {
-                            let mut tasks = Vec::new();
-
-                            for scope in scopes {
-                                let variables_task =
-                                    store.variables(&client_id, scope.variables_reference, cx);
-                                tasks.push(
-                                    async move { anyhow::Ok((scope, variables_task.await?)) },
-                                );
-                            }
-
-                            tasks
-                        })
-                    })?;
-
-                    stack_frame_tasks.push(async move {
-                        anyhow::Ok((stack_frame_id, try_join_all(variable_tasks).await?))
-                    });
-                }
-
                 let thread_state = this.update(&mut cx, |this, cx| {
                     this.thread_states
                         .entry((client_id, thread_id))
@@ -385,33 +337,7 @@ impl DebugPanel {
                         .clone()
                 })?;
 
-                for (stack_frame_id, scopes) in try_join_all(stack_frame_tasks).await? {
-                    thread_state.update(&mut cx, |thread_state, _| {
-                        thread_state
-                            .scopes
-                            .insert(stack_frame_id, scopes.iter().map(|s| s.0.clone()).collect());
-
-                        for (scope, variables) in scopes {
-                            thread_state
-                                .fetched_variable_ids
-                                .insert(scope.variables_reference);
-
-                            thread_state.variables.insert(
-                                scope.variables_reference,
-                                variables
-                                    .into_iter()
-                                    .map(|v| VariableContainer {
-                                        container_reference: scope.variables_reference,
-                                        variable: v,
-                                        depth: 1,
-                                    })
-                                    .collect::<Vec<VariableContainer>>(),
-                            );
-                        }
-                    })?;
-                }
-
-                this.update(&mut cx, |this, cx| {
+                let workspace = this.update(&mut cx, |this, cx| {
                     thread_state.update(cx, |thread_state, cx| {
                         thread_state.stack_frames = stack_frames;
                         thread_state.status = ThreadStatus::Stopped;
@@ -455,7 +381,6 @@ impl DebugPanel {
                     let go_to_stack_frame = if let Some(item) = this.pane.read(cx).active_item() {
                         item.downcast::<DebugPanelItem>().map_or(false, |pane| {
                             let pane = pane.read(cx);
-
                             pane.thread_id() == thread_id && pane.client_id() == client_id
                         })
                     } else {
@@ -469,6 +394,14 @@ impl DebugPanel {
                     });
 
                     cx.notify();
+
+                    this.workspace.clone()
+                })?;
+
+                cx.update(|cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.focus_panel::<Self>(cx);
+                    })
                 })
             }
         })
