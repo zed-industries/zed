@@ -16,9 +16,9 @@ use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, AssistantKind, AssistantPhase, CallEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent,
-    InlineCompletionEvent, MemoryEvent, ReplEvent, SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
+    SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -391,25 +391,8 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_assistant_event(
-        self: &Arc<Self>,
-        conversation_id: Option<String>,
-        kind: AssistantKind,
-        phase: AssistantPhase,
-        model: String,
-        response_latency: Option<Duration>,
-        error_message: Option<String>,
-    ) {
-        let event = Event::Assistant(AssistantEvent {
-            conversation_id,
-            kind,
-            phase,
-            model: model.to_string(),
-            response_latency,
-            error_message,
-        });
-
-        self.report_event(event)
+    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
+        self.report_event(Event::Assistant(event));
     }
 
     pub fn report_call_event(
