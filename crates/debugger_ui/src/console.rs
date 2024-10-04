@@ -84,19 +84,19 @@ impl Console {
     }
 
     fn evaluate(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        let expession = self.query_bar.update(cx, |editor, cx| {
-            let expession = editor.text(cx);
+        let expression = self.query_bar.update(cx, |editor, cx| {
+            let expression = editor.text(cx);
 
             editor.clear(cx);
 
-            expession
+            expression
         });
 
         let evaluate_task = self.dap_store.update(cx, |store, cx| {
             store.evaluate(
                 &self.client_id,
                 self.current_stack_frame_id,
-                expession,
+                expression,
                 dap::EvaluateArgumentsContext::Variables,
                 cx,
             )

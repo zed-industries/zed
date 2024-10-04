@@ -2270,6 +2270,18 @@ impl BufferSnapshot {
         self.anchor_at_offset(position.to_offset(self), bias)
     }
 
+    pub fn breakpoint_anchor<T: ToOffset>(&self, position: T) -> Anchor {
+        let offset = position.to_offset(self);
+
+        let bias = if offset == 0usize {
+            Bias::Right
+        } else {
+            Bias::Left
+        };
+
+        self.anchor_at_offset(offset, bias)
+    }
+
     fn anchor_at_offset(&self, offset: usize, bias: Bias) -> Anchor {
         if bias == Bias::Left && offset == 0 {
             Anchor::MIN

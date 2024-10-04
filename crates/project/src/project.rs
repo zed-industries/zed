@@ -35,7 +35,7 @@ use dap::{
 };
 
 use collections::{BTreeSet, HashMap, HashSet};
-use dap_store::{Breakpoint, DapStore, DapStoreEvent, SerializedBreakpoint};
+use dap_store::{Breakpoint, BreakpointEditAction, DapStore, DapStoreEvent, SerializedBreakpoint};
 use debounced_delay::DebouncedDelay;
 pub use environment::ProjectEnvironment;
 use futures::{
@@ -1244,6 +1244,7 @@ impl Project {
         &self,
         buffer_id: BufferId,
         breakpoint: Breakpoint,
+        edit_action: BreakpointEditAction,
         cx: &mut ModelContext<Self>,
     ) {
         let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
@@ -1267,6 +1268,7 @@ impl Project {
                 breakpoint,
                 buffer_path,
                 buffer.read(cx).snapshot(),
+                edit_action,
                 cx,
             );
         });

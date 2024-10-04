@@ -140,6 +140,20 @@ impl DapStore {
         &self.breakpoints
     }
 
+    pub fn breakpoint_at_row(
+        &self,
+        row: u32,
+        project_path: &ProjectPath,
+        buffer_snapshot: BufferSnapshot,
+    ) -> Option<Breakpoint> {
+        let breakpoint_set = self.breakpoints.get(project_path)?;
+
+        breakpoint_set
+            .iter()
+            .find(|bp| bp.point_for_buffer_snapshot(&buffer_snapshot).row == row)
+            .cloned()
+    }
+
     pub fn on_open_buffer(
         &mut self,
         project_path: &ProjectPath,
@@ -763,16 +777,21 @@ impl DapStore {
         breakpoint: Breakpoint,
         buffer_path: PathBuf,
         buffer_snapshot: BufferSnapshot,
+        edit_action: BreakpointEditAction,
         cx: &mut ModelContext<Self>,
     ) {
         let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
 
-        if let Some(gotten_breakpoint) = breakpoint_set.take(&breakpoint) {
-            if gotten_breakpoint.kind != breakpoint.kind {
+        match edit_action {
+            BreakpointEditAction::Toggle => {
+                if !breakpoint_set.remove(&breakpoint) {
+                    breakpoint_set.insert(breakpoint);
+                }
+            }
+            BreakpointEditAction::EditLogMessage => {
+                breakpoint_set.remove(&breakpoint);
                 breakpoint_set.insert(breakpoint);
             }
-        } else {
-            breakpoint_set.insert(breakpoint);
         }
 
         cx.notify();
@@ -855,7 +874,13 @@ impl DapStore {
 
 type LogMessage = Arc<str>;
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug)]
+pub enum BreakpointEditAction {
+    Toggle,
+    EditLogMessage,
+}
+
+#[derive(Clone, Debug)]
 pub enum BreakpointKind {
     Standard,
     Log(LogMessage),
@@ -867,6 +892,27 @@ impl BreakpointKind {
             BreakpointKind::Standard => 0,
             BreakpointKind::Log(_) => 1,
         }
+    }
+
+    pub fn log_message(&self) -> Option<LogMessage> {
+        match self {
+            BreakpointKind::Standard => None,
+            BreakpointKind::Log(message) => Some(message.clone()),
+        }
+    }
+}
+
+impl PartialEq for BreakpointKind {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+impl Eq for BreakpointKind {}
+
+impl Hash for BreakpointKind {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
     }
 }
 
@@ -883,7 +929,12 @@ pub struct Breakpoint {
 // overlapping breakpoint's with them being aware.
 impl PartialEq for Breakpoint {
     fn eq(&self, other: &Self) -> bool {
-        self.active_position == other.active_position && self.cache_position == other.cache_position
+        match (&self.active_position, &other.active_position) {
+            (None, None) => self.cache_position == other.cache_position,
+            (None, Some(_)) => false,
+            (Some(_), None) => false,
+            (Some(self_position), Some(other_position)) => self_position == other_position,
+        }
     }
 }
 
@@ -891,8 +942,11 @@ impl Eq for Breakpoint {}
 
 impl Hash for Breakpoint {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.active_position.hash(state);
-        self.cache_position.hash(state);
+        if self.active_position.is_some() {
+            self.active_position.hash(state);
+        } else {
+            self.cache_position.hash(state);
+        }
     }
 }
 
@@ -915,13 +969,8 @@ impl Breakpoint {
 
     pub fn set_active_position(&mut self, buffer: &Buffer) {
         if self.active_position.is_none() {
-            let bias = if self.cache_position == 0 {
-                text::Bias::Right
-            } else {
-                text::Bias::Left
-            };
-
-            self.active_position = Some(buffer.anchor_at(Point::new(self.cache_position, 0), bias));
+            self.active_position =
+                Some(buffer.breakpoint_anchor(Point::new(self.cache_position, 0)));
         }
     }
 

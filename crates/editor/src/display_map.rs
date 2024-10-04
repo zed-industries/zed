@@ -592,6 +592,17 @@ impl DisplaySnapshot {
             .anchor_at(point.to_offset(self, bias), bias)
     }
 
+    pub fn display_point_to_breakpoint_anchor(&self, point: DisplayPoint) -> Anchor {
+        let bias = if point.is_zero() {
+            Bias::Right
+        } else {
+            Bias::Left
+        };
+
+        self.buffer_snapshot
+            .anchor_at(point.to_offset(self, bias), bias)
+    }
+
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
