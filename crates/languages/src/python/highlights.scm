@@ -44,8 +44,11 @@
   (float)
 ] @number
 
-; Self references
+; Variables
+(assignment
+  left: (identifier) @variable)
 
+; self references
 [
   (parameters (identifier) @variable.special)
   (attribute (identifier) @variable.special)
