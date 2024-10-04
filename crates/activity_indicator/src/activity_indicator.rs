@@ -189,8 +189,7 @@ impl ActivityIndicator {
 
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
         // Show if any direnv calls failed
-        if let Some((worktree_id, _error)) = self.pending_direnv_errors(cx).next() {
-            let worktree_id = worktree_id.clone();
+        if let Some((&worktree_id, _error)) = self.pending_direnv_errors(cx).next() {
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
