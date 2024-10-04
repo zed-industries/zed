@@ -3040,7 +3040,7 @@ impl Render for ProjectPanel {
                                         .into_iter()
                                         .enumerate()
                                         .map(|(idx, layout)| {
-                                            let offset = if layout.overflows {
+                                            let offset = if layout.continues_offscreen {
                                                 px(0.)
                                             } else {
                                                 px(PADDING_Y)
