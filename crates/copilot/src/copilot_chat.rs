@@ -47,6 +47,8 @@ impl Model {
             "gpt-4o" => Ok(Self::Gpt4o),
             "gpt-4" => Ok(Self::Gpt4),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
+            "o1-preview" => Ok(Self::GptO1Preview),
+            "o1-mini" => Ok(Self::GptO1Mini),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
