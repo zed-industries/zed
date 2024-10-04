@@ -269,6 +269,9 @@ impl Vim {
                 if regex {
                     options |= SearchOptions::REGEX;
                 }
+                if whole_word {
+                    options |= SearchOptions::WHOLE_WORD;
+                }
                 if !search_bar.show(cx) {
                     return None;
                 }
@@ -276,10 +279,7 @@ impl Vim {
                     drop(search_bar.search("", None, cx));
                     return None;
                 };
-                let mut query = regex::escape(&query);
-                if whole_word {
-                    query = format!(r"\<{}\>", query);
-                }
+                let query = regex::escape(&query);
                 Some(search_bar.search(&query, Some(options), cx))
             });
 
