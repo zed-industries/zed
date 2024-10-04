@@ -2138,7 +2138,7 @@ impl Context {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
-                            model: model.telemetry_id().to_string(),
+                            model: model.telemetry_id(),
                             model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,

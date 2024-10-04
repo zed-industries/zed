@@ -1069,7 +1069,7 @@ impl Codegen {
                             conversation_id: None,
                             kind: AssistantKind::Inline,
                             phase: AssistantPhase::Response,
-                            model: model_telemetry_id.to_string(),
+                            model: model_telemetry_id,
                             model_provider: model_provider_id.to_string(),
                             response_latency,
                             error_message,
