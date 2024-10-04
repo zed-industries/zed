@@ -350,9 +350,10 @@ impl PickerDelegate for TabSwitcherDelegate {
         };
         let label = tab_match.item.tab_content(params, cx);
 
-        let icon = match tab_match.item.tab_icon(cx) {
-            Some(icon) => {
-                let color = if ItemSettings::get_global(cx).git_status {
+        let icon = tab_match.item.tab_icon(cx).map(|icon| {
+            let git_status_color = ItemSettings::get_global(cx)
+                .git_status
+                .then(|| {
                     tab_match
                         .item
                         .project_path(cx)
@@ -365,15 +366,11 @@ impl PickerDelegate for TabSwitcherDelegate {
                                 selected,
                             )
                         })
-                        .unwrap_or_else(|| Color::Default)
-                } else {
-                    Color::Default
-                };
+                })
+                .flatten();
 
-                Some(div().child(icon.color(color)).into_any_element())
-            }
-            None => None,
-        };
+            icon.color(git_status_color.unwrap_or_default())
+        });
 
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
         let indicator_color = if let Some(ref indicator) = indicator {
@@ -412,7 +409,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
-                .start_slot::<AnyElement>(icon)
+                .start_slot::<Icon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)
