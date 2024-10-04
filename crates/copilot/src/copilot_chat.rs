@@ -29,6 +29,10 @@ pub enum Role {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
+    #[serde(alias = "o1-preview", rename = "o1-preview")]
+    GptO1Preview,
+    #[serde(alias = "o1-mini", rename = "o1-mini")]
+    GptO1Mini,
     #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
     Gpt4o,
     #[serde(alias = "gpt-4", rename = "gpt-4")]
@@ -52,6 +56,8 @@ impl Model {
             Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
             Self::Gpt4o => "gpt-4o",
+            Self::GptO1Mini => "o1-mini",
+            Self::GptO1Preview => "o1-preview",
         }
     }
 
@@ -60,6 +66,8 @@ impl Model {
             Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
             Self::Gpt4o => "GPT-4o",
+            Self::GptO1Mini => "o1-mini",
+            Self::GptO1Preview => "o1-preview",
         }
     }
 
@@ -68,6 +76,8 @@ impl Model {
             Self::Gpt4o => 128000,
             Self::Gpt4 => 8192,
             Self::Gpt3_5Turbo => 16385,
+            Self::GptO1Mini => 65000,
+            Self::GptO1Preview => 32000,
         }
     }
 }
