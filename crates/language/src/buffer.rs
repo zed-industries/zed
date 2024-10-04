@@ -19,6 +19,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
 pub use clock::ReplicaId;
+use clock::LOCAL_BRANCH_REPLICA_ID;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -87,11 +88,7 @@ pub type BufferRow = u32;
 #[derive(Clone)]
 enum BufferDiffBase {
     Git(Rope),
-    PastBufferVersion {
-        buffer: Model<Buffer>,
-        rope: Rope,
-        operations_to_ignore: Vec<clock::Lamport>,
-    },
+    PastBufferVersion { buffer: Model<Buffer>, rope: Rope },
 }
 
 /// An in-memory representation of a source code file, including its text,
@@ -802,7 +799,6 @@ impl Buffer {
                 diff_base: Some(BufferDiffBase::PastBufferVersion {
                     buffer: this.clone(),
                     rope: self.as_rope().clone(),
-                    operations_to_ignore: Vec::new(),
                 }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
@@ -826,37 +822,50 @@ impl Buffer {
     /// Applies all of the changes in this buffer that intersect the given `range`
     /// to its base buffer. This buffer must be a branch buffer to call this method.
     pub fn merge_into_base(&mut self, range: Option<Range<usize>>, cx: &mut ModelContext<Self>) {
+        dbg!("=== MERGE ===", &range);
+
         let Some(base_buffer) = self.diff_base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
         };
 
-        base_buffer.update(cx, |base_buffer, cx| {
-            let edits = self
-                .edits_since::<usize>(&base_buffer.version)
-                .filter_map(|edit| {
-                    if range
-                        .as_ref()
-                        .map_or(true, |range| range.overlaps(&edit.new))
-                    {
-                        Some((edit.old, self.text_for_range(edit.new).collect::<String>()))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
+        let base_version = base_buffer.read(cx).version();
 
-            let operation = base_buffer.edit(edits, None, cx);
-
-            // Prevent this operation from being reapplied to the branch.
-            if let Some(BufferDiffBase::PastBufferVersion {
-                operations_to_ignore,
-                ..
-            }) = &mut self.diff_base
-            {
-                operations_to_ignore.extend(operation);
+        let mut edits = Vec::new();
+        let mut ranges_to_restore = Vec::new();
+        for edit in self.edits_since::<usize>(&base_version) {
+            if range.as_ref().map_or(false, |range| {
+                range.start > edit.new.end || edit.new.start > range.end
+            }) {
+                continue;
             }
 
+            edits.push((
+                edit.old.clone(),
+                self.text_for_range(edit.new.clone()).collect::<String>(),
+            ));
+            ranges_to_restore.push(edit.new);
+        }
+
+        dbg!(self.text());
+        let mut undo_operation =
+            self.restore_ranges_to_version(ranges_to_restore, base_version, cx);
+        dbg!(self.text());
+
+        dbg!(&undo_operation);
+
+        undo_operation
+            .counts
+            .retain(|timestamp, _value| timestamp.replica_id != LOCAL_BRANCH_REPLICA_ID);
+
+        dbg!(&undo_operation);
+
+        base_buffer.update(cx, |base_buffer, cx| {
+            base_buffer.apply_ops(
+                [Operation::Buffer(text::Operation::Undo(undo_operation))],
+                cx,
+            );
+            base_buffer.edit(edits, None, cx);
             cx.emit(BufferEvent::DiffBaseChanged);
         });
     }
@@ -868,29 +877,9 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         if let BufferEvent::Operation { operation, .. } = event {
-            if let Some(BufferDiffBase::PastBufferVersion {
-                operations_to_ignore,
-                ..
-            }) = &mut self.diff_base
-            {
-                let mut is_ignored = false;
-                if let Operation::Buffer(text::Operation::Edit(buffer_operation)) = &operation {
-                    operations_to_ignore.retain(|operation_to_ignore| {
-                        match buffer_operation.timestamp.cmp(&operation_to_ignore) {
-                            Ordering::Less => true,
-                            Ordering::Equal => {
-                                is_ignored = true;
-                                false
-                            }
-                            Ordering::Greater => false,
-                        }
-                    });
-                }
-                if !is_ignored {
-                    self.apply_ops([operation.clone()], cx);
-                    self.diff_base_version += 1;
-                }
-            }
+            dbg!(&operation);
+            self.apply_ops([operation.clone()], cx);
+            self.diff_base_version += 1;
         }
     }
 
@@ -2020,6 +2009,21 @@ impl Buffer {
         self.end_transaction(cx);
         self.send_operation(Operation::Buffer(edit_operation), true, cx);
         Some(edit_id)
+    }
+
+    pub fn restore_ranges_to_version(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+        version: clock::Global,
+        cx: &mut ModelContext<Self>,
+    ) -> UndoOperation {
+        let undo_operation = self.text.restore_ranges_to_version(ranges, version);
+        self.send_operation(
+            Operation::Buffer(text::Operation::Undo(undo_operation.clone())),
+            true,
+            cx,
+        );
+        undo_operation
     }
 
     fn did_edit(

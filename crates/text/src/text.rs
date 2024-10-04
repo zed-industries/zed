@@ -767,6 +767,108 @@ impl Buffer {
         operation
     }
 
+    pub fn restore_ranges_to_version(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+        target_version: clock::Global,
+    ) -> UndoOperation {
+        let timestamp = self.lamport_clock.tick();
+        let mut edits_patch = Patch::default();
+        let mut undo_op = UndoOperation {
+            timestamp,
+            version: self.version(),
+            counts: Default::default(),
+        };
+
+        let mut ranges = ranges.into_iter().peekable();
+
+        let mut new_ropes =
+            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
+        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>(&None);
+        let mut new_fragments =
+            old_fragments.slice(&ranges.peek().unwrap().start, Bias::Right, &None);
+        new_ropes.append(new_fragments.summary().text);
+
+        for range in ranges {
+            let slice = old_fragments.slice(&range.start, Bias::Right, &None);
+            new_ropes.append(slice.summary().text);
+            new_fragments.append(slice, &None);
+
+            eprintln!("range {:?}", range);
+
+            loop {
+                let fragment_start = old_fragments.start().visible;
+                let fragment_end = old_fragments.end(&None).visible;
+
+                eprintln!("fragment range {:?}", fragment_start..fragment_end);
+
+                if fragment_start > range.end
+                    || (fragment_start == range.end && fragment_end > range.end)
+                {
+                    break;
+                }
+                let Some(mut fragment) = old_fragments.item().cloned() else {
+                    break;
+                };
+                // let mut fragment = old_fragments.item().unwrap().clone();
+                old_fragments.next(&None);
+
+                let was_visible = fragment.visible;
+                let was_visible_in_target_version =
+                    fragment.was_visible(&target_version, &self.undo_map);
+
+                if fragment.visible && !was_visible_in_target_version {
+                    fragment.visible = false;
+
+                    let new_start = new_fragments.summary().text.visible;
+                    edits_patch.push(Edit {
+                        old: fragment_start..fragment_end,
+                        new: new_start..new_start,
+                    });
+
+                    undo_op.counts.insert(fragment.timestamp, 1);
+                } else if !fragment.visible && was_visible_in_target_version {
+                    fragment.visible = true;
+
+                    let new_start = new_fragments.summary().text.visible;
+                    edits_patch.push(Edit {
+                        old: fragment_start..fragment_start,
+                        new: new_start..new_start + fragment.len,
+                    });
+
+                    for deletion in &fragment.deletions {
+                        if !target_version.observed(*deletion) {
+                            let deletion_undo_count = self.undo_map.undo_count(*deletion);
+                            if deletion_undo_count % 2 == 0 {
+                                undo_op.counts.insert(*deletion, deletion_undo_count + 1);
+                            }
+                        }
+                    }
+
+                    let undo_count = self.undo_map.undo_count(fragment.timestamp);
+                    if undo_count % 2 == 1 {
+                        undo_op.counts.insert(fragment.timestamp, undo_count + 1);
+                    }
+                }
+
+                new_ropes.push_fragment(&fragment, was_visible);
+                new_fragments.push(fragment, &None);
+            }
+        }
+
+        let suffix = old_fragments.suffix(&None);
+        new_ropes.append(suffix.summary().text);
+        new_fragments.append(suffix, &None);
+        let (visible_text, deleted_text) = new_ropes.finish();
+        drop(old_fragments);
+
+        self.snapshot.fragments = new_fragments;
+        self.snapshot.visible_text = visible_text;
+        self.snapshot.deleted_text = deleted_text;
+        self.subscriptions.publish_mut(&edits_patch);
+        undo_op
+    }
+
     fn apply_local_edit<S: ToOffset, T: Into<Arc<str>>>(
         &mut self,
         edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
@@ -2607,10 +2709,13 @@ impl Fragment {
 
     fn was_visible(&self, version: &clock::Global, undos: &UndoMap) -> bool {
         (version.observed(self.timestamp) && !undos.was_undone(self.timestamp, version))
-            && self
-                .deletions
-                .iter()
-                .all(|d| !version.observed(*d) || undos.was_undone(*d, version))
+            && self.was_deleted(version, undos)
+    }
+
+    fn was_deleted(&self, version: &clock::Global, undos: &UndoMap) -> bool {
+        self.deletions
+            .iter()
+            .all(|d| !version.observed(*d) || undos.was_undone(*d, version))
     }
 }
 
