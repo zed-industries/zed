@@ -18,7 +18,7 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self},
-    vi_mode::ViMotion,
+    vi_mode::{ViModeCursor, ViMotion},
     vte::ansi::{
         ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
     },
@@ -773,6 +773,30 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
                 self.refresh_hovered_word();
+
+                if self.vi_mode {
+                    match *scroll {
+                        AlacScroll::Delta(delta) => {
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, delta);
+                        }
+                        AlacScroll::PageUp => {
+                            let lines = term.screen_lines() as i32;
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                        }
+                        AlacScroll::PageDown => {
+                            let lines = -(term.screen_lines() as i32);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                        }
+                        AlacScroll::Top => {
+                            let point = AlacPoint::new(term.topmost_line(), Column(0));
+                            term.vi_mode_cursor = ViModeCursor::new(point);
+                        }
+                        AlacScroll::Bottom => {
+                            let point = AlacPoint::new(term.bottommost_line(), Column(0));
+                            term.vi_mode_cursor = ViModeCursor::new(point);
+                        }
+                    }
+                }
             }
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
