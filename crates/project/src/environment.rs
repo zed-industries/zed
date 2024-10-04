@@ -136,7 +136,7 @@ impl ProjectEnvironment {
                         async move { load_shell_environment(&cwd, &load_direnv).await }
                     })
                     .await
-                    .ok()
+                    .log_err()
                     .unzip();
 
                 if let Some(shell_env) = shell_env.as_mut() {
