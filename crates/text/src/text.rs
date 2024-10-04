@@ -767,17 +767,19 @@ impl Buffer {
         operation
     }
 
-    pub fn restore_ranges_to_version(
+    pub fn delete_insertions_since(
         &mut self,
         ranges: Vec<Range<usize>>,
         target_version: clock::Global,
-    ) -> UndoOperation {
+    ) -> Option<Operation> {
+        self.start_transaction();
         let timestamp = self.lamport_clock.tick();
         let mut edits_patch = Patch::default();
-        let mut undo_op = UndoOperation {
+        let mut edit_op = EditOperation {
             timestamp,
             version: self.version(),
-            counts: Default::default(),
+            ranges: Vec::new(),
+            new_text: Vec::new(),
         };
 
         let mut ranges = ranges.into_iter().peekable();
@@ -789,18 +791,16 @@ impl Buffer {
             old_fragments.slice(&ranges.peek().unwrap().start, Bias::Right, &None);
         new_ropes.append(new_fragments.summary().text);
 
+        let empty = Arc::<str>::from("");
+
         for range in ranges {
             let slice = old_fragments.slice(&range.start, Bias::Right, &None);
             new_ropes.append(slice.summary().text);
             new_fragments.append(slice, &None);
 
-            eprintln!("range {:?}", range);
-
             loop {
                 let fragment_start = old_fragments.start().visible;
                 let fragment_end = old_fragments.end(&None).visible;
-
-                eprintln!("fragment range {:?}", fragment_start..fragment_end);
 
                 if fragment_start > range.end
                     || (fragment_start == range.end && fragment_end > range.end)
@@ -810,7 +810,6 @@ impl Buffer {
                 let Some(mut fragment) = old_fragments.item().cloned() else {
                     break;
                 };
-                // let mut fragment = old_fragments.item().unwrap().clone();
                 old_fragments.next(&None);
 
                 let was_visible = fragment.visible;
@@ -818,7 +817,12 @@ impl Buffer {
                     fragment.was_visible(&target_version, &self.undo_map);
 
                 if fragment.visible && !was_visible_in_target_version {
+                    let full_range_start =
+                        FullOffset(fragment_start + old_fragments.start().deleted);
+                    let full_range_end =
+                        FullOffset(fragment_end + old_fragments.end(&None).deleted);
                     fragment.visible = false;
+                    fragment.deletions.insert(timestamp);
 
                     let new_start = new_fragments.summary().text.visible;
                     edits_patch.push(Edit {
@@ -826,29 +830,8 @@ impl Buffer {
                         new: new_start..new_start,
                     });
 
-                    undo_op.counts.insert(fragment.timestamp, 1);
-                } else if !fragment.visible && was_visible_in_target_version {
-                    fragment.visible = true;
-
-                    let new_start = new_fragments.summary().text.visible;
-                    edits_patch.push(Edit {
-                        old: fragment_start..fragment_start,
-                        new: new_start..new_start + fragment.len,
-                    });
-
-                    for deletion in &fragment.deletions {
-                        if !target_version.observed(*deletion) {
-                            let deletion_undo_count = self.undo_map.undo_count(*deletion);
-                            if deletion_undo_count % 2 == 0 {
-                                undo_op.counts.insert(*deletion, deletion_undo_count + 1);
-                            }
-                        }
-                    }
-
-                    let undo_count = self.undo_map.undo_count(fragment.timestamp);
-                    if undo_count % 2 == 1 {
-                        undo_op.counts.insert(fragment.timestamp, undo_count + 1);
-                    }
+                    edit_op.ranges.push(full_range_start..full_range_end);
+                    edit_op.new_text.push(empty.clone());
                 }
 
                 new_ropes.push_fragment(&fragment, was_visible);
@@ -866,7 +849,13 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.subscriptions.publish_mut(&edits_patch);
-        undo_op
+        let operation = Operation::Edit(edit_op);
+
+        self.history.push(operation.clone());
+        self.history.push_undo(operation.timestamp());
+        self.snapshot.version.observe(operation.timestamp());
+        self.end_transaction();
+        Some(operation)
     }
 
     fn apply_local_edit<S: ToOffset, T: Into<Arc<str>>>(
@@ -1532,16 +1521,22 @@ impl Buffer {
             counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
         }
 
+        let operation = self.undo_operations(counts);
+        self.history.push(operation.clone());
+        operation
+    }
+
+    pub fn undo_operations(&mut self, counts: HashMap<clock::Lamport, u32>) -> Operation {
+        let timestamp = self.lamport_clock.tick();
+        let version = self.version();
+        self.snapshot.version.observe(timestamp);
         let undo = UndoOperation {
-            timestamp: self.lamport_clock.tick(),
-            version: self.version(),
+            timestamp,
+            version,
             counts,
         };
         self.apply_undo(&undo);
-        self.snapshot.version.observe(undo.timestamp);
-        let operation = Operation::Undo(undo);
-        self.history.push(operation.clone());
-        operation
+        Operation::Undo(undo)
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {

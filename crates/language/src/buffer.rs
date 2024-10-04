@@ -18,8 +18,9 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
+use clock::Lamport;
 pub use clock::ReplicaId;
-use clock::LOCAL_BRANCH_REPLICA_ID;
+use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -88,7 +89,11 @@ pub type BufferRow = u32;
 #[derive(Clone)]
 enum BufferDiffBase {
     Git(Rope),
-    PastBufferVersion { buffer: Model<Buffer>, rope: Rope },
+    PastBufferVersion {
+        buffer: Model<Buffer>,
+        rope: Rope,
+        operation_map: HashMap<Lamport, Lamport>,
+    },
 }
 
 /// An in-memory representation of a source code file, including its text,
@@ -799,6 +804,7 @@ impl Buffer {
                 diff_base: Some(BufferDiffBase::PastBufferVersion {
                     buffer: this.clone(),
                     rope: self.as_rope().clone(),
+                    operation_map: Default::default(),
                 }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
@@ -822,8 +828,6 @@ impl Buffer {
     /// Applies all of the changes in this buffer that intersect the given `range`
     /// to its base buffer. This buffer must be a branch buffer to call this method.
     pub fn merge_into_base(&mut self, range: Option<Range<usize>>, cx: &mut ModelContext<Self>) {
-        dbg!("=== MERGE ===", &range);
-
         let Some(base_buffer) = self.diff_base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
@@ -831,43 +835,36 @@ impl Buffer {
 
         let base_version = base_buffer.read(cx).version();
 
+        let empty = Arc::<str>::from("");
         let mut edits = Vec::new();
-        let mut ranges_to_restore = Vec::new();
+        let mut deletions = Vec::new();
         for edit in self.edits_since::<usize>(&base_version) {
-            if range.as_ref().map_or(false, |range| {
-                range.start > edit.new.end || edit.new.start > range.end
-            }) {
-                continue;
+            if let Some(range) = &range {
+                if range.start > edit.new.end || edit.new.start > range.end {
+                    continue;
+                }
             }
-
             edits.push((
                 edit.old.clone(),
                 self.text_for_range(edit.new.clone()).collect::<String>(),
             ));
-            ranges_to_restore.push(edit.new);
+            deletions.push((edit.new, empty.clone()));
         }
 
-        dbg!(self.text());
-        let mut undo_operation =
-            self.restore_ranges_to_version(ranges_to_restore, base_version, cx);
-        dbg!(self.text());
+        let deletion_operation = self.edit(deletions, None, cx);
 
-        dbg!(&undo_operation);
-
-        undo_operation
-            .counts
-            .retain(|timestamp, _value| timestamp.replica_id != LOCAL_BRANCH_REPLICA_ID);
-
-        dbg!(&undo_operation);
-
-        base_buffer.update(cx, |base_buffer, cx| {
-            base_buffer.apply_ops(
-                [Operation::Buffer(text::Operation::Undo(undo_operation))],
-                cx,
-            );
-            base_buffer.edit(edits, None, cx);
+        let operation = base_buffer.update(cx, |base_buffer, cx| {
             cx.emit(BufferEvent::DiffBaseChanged);
+            base_buffer.edit(edits, None, cx)
         });
+
+        if let Some((operation, deletion_operation)) = operation.zip(deletion_operation) {
+            if let Some(BufferDiffBase::PastBufferVersion { operation_map, .. }) =
+                &mut self.diff_base
+            {
+                operation_map.insert(operation, deletion_operation);
+            }
+        }
     }
 
     fn on_base_buffer_event(
@@ -876,11 +873,32 @@ impl Buffer {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        if let BufferEvent::Operation { operation, .. } = event {
-            dbg!(&operation);
-            self.apply_ops([operation.clone()], cx);
-            self.diff_base_version += 1;
+        let BufferEvent::Operation { operation, .. } = event else {
+            return;
+        };
+        let Some(BufferDiffBase::PastBufferVersion { operation_map, .. }) = &self.diff_base else {
+            return;
+        };
+
+        // When the base buffer undoes or redoes an operation that was created via a merge
+        // from this branch buffer, undo the corresponding operation in this buffer.
+        if let Operation::Buffer(text::Operation::Undo(operation)) = &operation {
+            let counts = operation
+                .counts
+                .iter()
+                .filter_map(|(operation, count)| {
+                    let operation = operation_map.get(&operation)?;
+                    Some((*operation, *count))
+                })
+                .collect::<HashMap<_, _>>();
+            if !counts.is_empty() {
+                let operation = self.text.undo_operations(counts);
+                self.send_operation(Operation::Buffer(operation), true, cx);
+            }
         }
+
+        self.apply_ops([operation.clone()], cx);
+        self.diff_base_version += 1;
     }
 
     #[cfg(test)]
@@ -2011,19 +2029,18 @@ impl Buffer {
         Some(edit_id)
     }
 
-    pub fn restore_ranges_to_version(
+    pub fn delete_insertions_since(
         &mut self,
         ranges: Vec<Range<usize>>,
         version: clock::Global,
         cx: &mut ModelContext<Self>,
-    ) -> UndoOperation {
-        let undo_operation = self.text.restore_ranges_to_version(ranges, version);
-        self.send_operation(
-            Operation::Buffer(text::Operation::Undo(undo_operation.clone())),
-            true,
-            cx,
-        );
-        undo_operation
+    ) {
+        self.start_transaction();
+        let operation = self.text.delete_insertions_since(ranges, version);
+        self.end_transaction(cx);
+        if let Some(operation) = operation {
+            self.send_operation(Operation::Buffer(operation), true, cx);
+        }
     }
 
     fn did_edit(

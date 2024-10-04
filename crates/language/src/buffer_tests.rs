@@ -2536,16 +2536,22 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
         branch.edit([(0..3, "ABC"), (7..9, "HI")], None, cx);
         branch.merge_into_base(Some(7..7), cx);
     });
-
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
 
+    // Undo the merge in the base buffer.
     base.update(cx, |base, cx| {
         base.undo(cx);
     });
-
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
-    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefghijk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
+
+    // Merge that operation into the base again.
+    branch.update(cx, |branch, cx| {
+        branch.merge_into_base(Some(7..7), cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
 }
 
 fn start_recalculating_diff(buffer: &Model<Buffer>, cx: &mut TestAppContext) {

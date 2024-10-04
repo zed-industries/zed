@@ -686,7 +686,7 @@ fn test_restore_ranges_to_version() {
     buffer.edit([(3..6, "DEF!"), (10..13, "KLM?"), (14..15, "O.")]);
     assert_eq!(buffer.text(), "abcDEF!ghijKLM?nO.");
 
-    buffer.restore_ranges_to_version(vec![11..15], v0);
+    buffer.delete_insertions_since(vec![11..15], v0);
     assert_eq!(buffer.text(), "abcDEF!ghijklmnO.");
 }
 
