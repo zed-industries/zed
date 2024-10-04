@@ -210,29 +210,6 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
-        if let Some(telemetry) = self.telemetry.as_ref() {
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                let language_name = editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .all_buffers()
-                    .iter()
-                    .flat_map(|buffer| buffer.read(cx).language())
-                    .last()
-                    .map(|language| language.name());
-                telemetry.report_assistant_event(AssistantEvent {
-                    conversation_id: None,
-                    kind: AssistantKind::Inline,
-                    phase: AssistantPhase::Invoked,
-                    model: model.telemetry_id(),
-                    model_provider: model.provider_id().to_string(),
-                    response_latency: None,
-                    error_message: None,
-                    language_name,
-                });
-            }
-        }
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
 
         let mut selections = Vec::<Selection<Point>>::new();
@@ -279,6 +256,21 @@ impl InlineAssistant {
                 text_anchor: buffer.anchor_after(buffer_range.end),
             };
             codegen_ranges.push(start..end);
+
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                    telemetry.report_assistant_event(AssistantEvent {
+                        conversation_id: None,
+                        kind: AssistantKind::Inline,
+                        phase: AssistantPhase::Invoked,
+                        model: model.telemetry_id(),
+                        model_provider: model.provider_id().to_string(),
+                        response_latency: None,
+                        error_message: None,
+                        language_name: buffer.language().map(|language| language.name()),
+                    });
+                }
+            }
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
@@ -777,14 +769,11 @@ impl InlineAssistant {
             if let Some(telemetry) = self.telemetry.as_ref() {
                 if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
                     let language_name = assist.editor.upgrade().and_then(|editor| {
-                        editor
-                            .read(cx)
-                            .buffer()
-                            .read(cx)
-                            .all_buffers()
-                            .iter()
-                            .flat_map(|buffer| buffer.read(cx).language())
-                            .last()
+                        let multibuffer = editor.read(cx).buffer().read(cx);
+                        let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
+                        ranges
+                            .first()
+                            .and_then(|(buffer, _, _)| buffer.read(cx).language())
                             .map(|language| language.name())
                     });
                     telemetry.report_assistant_event(AssistantEvent {
@@ -2838,14 +2827,14 @@ impl CodegenAlternative {
         }
 
         let telemetry = self.telemetry.clone();
-        let language_name = self
-            .buffer
-            .read(cx)
-            .all_buffers()
-            .iter()
-            .flat_map(|buffer| buffer.read(cx).language())
-            .last()
-            .map(|language| language.name());
+        let language_name = {
+            let multibuffer = self.buffer.read(cx);
+            let ranges = multibuffer.range_to_buffer_ranges(self.range.clone(), cx);
+            ranges
+                .first()
+                .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                .map(|language| language.name())
+        };
 
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
