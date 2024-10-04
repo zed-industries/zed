@@ -3450,7 +3450,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
- "log",
  "menu",
  "parking_lot",
  "project",
@@ -3460,7 +3459,6 @@ dependencies = [
  "tasks_ui",
  "theme",
  "ui",
- "util",
  "workspace",
 ]
 
