@@ -123,7 +123,7 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
 pub struct IndentGuideLayout {
     pub offset: Point<usize>,
     pub length: usize,
-    pub overflows: bool,
+    pub continues_offscreen: bool,
 }
 
 fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGuideLayout; 16]> {
@@ -151,7 +151,7 @@ fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGu
                     indent_stack.push(IndentGuideLayout {
                         offset: Point::new(new_depth, current_row),
                         length: current_row,
-                        overflows: false,
+                        continues_offscreen: false,
                     });
                 }
             }
@@ -166,7 +166,7 @@ fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGu
     indent_guides.extend(indent_stack);
 
     for guide in indent_guides.iter_mut() {
-        guide.overflows = guide.offset.x < min_depth;
+        guide.continues_offscreen = guide.offset.x < min_depth;
     }
 
     indent_guides
@@ -200,10 +200,12 @@ mod tests {
                 IndentGuideLayout {
                     offset: Point::new(0, 1),
                     length: 4,
+                    continues_offscreen: false,
                 },
                 IndentGuideLayout {
                     offset: Point::new(1, 2),
                     length: 2,
+                    continues_offscreen: false,
                 },
             ],
         );
@@ -215,10 +217,12 @@ mod tests {
                 IndentGuideLayout {
                     offset: Point::new(0, 0),
                     length: 5,
+                    continues_offscreen: false,
                 },
                 IndentGuideLayout {
                     offset: Point::new(1, 0),
                     length: 3,
+                    continues_offscreen: false,
                 },
             ],
         );
@@ -230,14 +234,17 @@ mod tests {
                 IndentGuideLayout {
                     offset: Point::new(0, 0),
                     length: 5,
+                    continues_offscreen: false,
                 },
                 IndentGuideLayout {
                     offset: Point::new(1, 1),
                     length: 3,
+                    continues_offscreen: false,
                 },
                 IndentGuideLayout {
                     offset: Point::new(2, 2),
                     length: 1,
+                    continues_offscreen: false,
                 },
             ],
         );
