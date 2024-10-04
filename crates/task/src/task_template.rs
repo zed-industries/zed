@@ -276,7 +276,6 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
             }
             return Ok(Some(name));
         } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
-            // TODO kb this triggers for something really odd, see another TODO about the variables?
             bail!("Unknown variable name: {variable_name}");
         }
         // This is an unknown variable.
