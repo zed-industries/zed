@@ -15,6 +15,7 @@ pub mod worktree_store;
 mod project_tests;
 
 mod direnv;
+pub use direnv::DirenvError;
 mod environment;
 pub mod search_history;
 mod yarn;
@@ -28,7 +29,6 @@ use client::{
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
-use environment::EnvironmentEvent;
 pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
@@ -614,9 +614,6 @@ impl Project {
                 .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
-            cx.subscribe(&environment, Self::on_environment_event)
-                .detach();
-
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
@@ -1173,6 +1170,13 @@ impl Project {
 
     pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
         self.environment.read(cx).get_cli_environment()
+    }
+
+    pub fn all_direnv_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a DirenvError)> {
+        self.environment.read(cx).all_direnv_errors()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1947,21 +1951,6 @@ impl Project {
                         .log_err();
                 }
             }
-        }
-    }
-
-    fn on_environment_event(
-        &mut self,
-        _: Model<ProjectEnvironment>,
-        event: &EnvironmentEvent,
-        cx: &mut ModelContext<Self>,
-    ) {
-        match event {
-            EnvironmentEvent::DirenvError(error) => cx.emit(crate::Event::Notification(format!(
-                "Direnv exited with {}.\n{}",
-                error.status,
-                String::from_utf8_lossy(&error.stderr).trim()
-            ))),
         }
     }
 

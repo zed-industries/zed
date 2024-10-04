@@ -10,9 +10,9 @@ use gpui::{
 use language::{
     LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
 };
-use project::{LanguageServerProgress, Project};
+use project::{DirenvError, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
-use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
+use std::{cmp::Reverse, collections::HashSet, fmt::Write, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -28,6 +28,7 @@ pub enum Event {
 pub struct ActivityIndicator {
     statuses: Vec<LspStatus>,
     project: Model<Project>,
+    ignored_direnv_worktrees: HashSet<WorktreeId>,
     auto_updater: Option<Model<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -79,6 +80,7 @@ impl ActivityIndicator {
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
+                ignored_direnv_worktrees: Default::default(),
                 auto_updater,
                 context_menu_handle: Default::default(),
             }
@@ -175,7 +177,32 @@ impl ActivityIndicator {
             .flatten()
     }
 
+    fn pending_direnv_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a DirenvError)> {
+        self.project
+            .read(cx)
+            .all_direnv_errors(cx)
+            .filter(|(worktree_id, _)| !self.ignored_direnv_worktrees.contains(worktree_id))
+    }
+
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
+        // Show if any direnv calls failed
+        if let Some((worktree_id, _error)) = self.pending_direnv_errors(cx).next() {
+            let worktree_id = worktree_id.clone();
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .into_any_element(),
+                ),
+                message: "Running direnv failed. See logs for more info".to_string(),
+                on_click: Some(Arc::new(move |this, _| {
+                    this.ignored_direnv_worktrees.insert(worktree_id);
+                })),
+            });
+        }
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {

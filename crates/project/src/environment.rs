@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
 use collections::HashMap;
-use gpui::{AppContext, Context, EventEmitter, Model, ModelContext, Task};
+use gpui::{AppContext, Context, Model, ModelContext, Task};
 use settings::Settings as _;
 use worktree::WorktreeId;
 
@@ -19,13 +19,8 @@ pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
+    direnv_errors: HashMap<WorktreeId, DirenvError>,
 }
-
-pub enum EnvironmentEvent {
-    DirenvError(DirenvError),
-}
-
-impl EventEmitter<EnvironmentEvent> for ProjectEnvironment {}
 
 impl ProjectEnvironment {
     pub fn new(
@@ -45,6 +40,7 @@ impl ProjectEnvironment {
                 cli_environment,
                 get_environment_task: None,
                 cached_shell_environments: Default::default(),
+                direnv_errors: Default::default(),
             }
         })
     }
@@ -72,6 +68,11 @@ impl ProjectEnvironment {
         } else {
             None
         }
+    }
+
+    /// Returns a direnv error for a given worktree_id
+    pub(crate) fn all_direnv_errors(&self) -> impl Iterator<Item = (&WorktreeId, &DirenvError)> {
+        self.direnv_errors.iter()
     }
 
     /// Returns the project environment, if possible.
@@ -138,17 +139,14 @@ impl ProjectEnvironment {
                     .ok()
                     .unzip();
 
-                if let Some(error) = error.flatten() {
-                    this.update(&mut cx, move |_, cx| {
-                        cx.emit(EnvironmentEvent::DirenvError(error))
-                    })
-                    .log_err();
-                }
-
                 if let Some(shell_env) = shell_env.as_mut() {
                     this.update(&mut cx, |this, _| {
                         this.cached_shell_environments
-                            .insert(worktree_id, shell_env.clone())
+                            .insert(worktree_id, shell_env.clone());
+
+                        if let Some(error) = error.flatten() {
+                            this.direnv_errors.insert(worktree_id, error);
+                        }
                     })
                     .log_err();
 

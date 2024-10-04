@@ -1,11 +1,8 @@
-use std::process::ExitStatus;
 #[cfg(not(any(test, feature = "test-support")))]
 use {collections::HashMap, std::path::Path, util::ResultExt};
 
-pub struct DirenvError {
-    pub status: ExitStatus,
-    pub stderr: Vec<u8>,
-}
+#[derive(Clone)]
+pub struct DirenvError;
 
 #[cfg(not(any(test, feature = "test-support")))]
 pub async fn load_direnv_environment(
@@ -32,13 +29,7 @@ pub async fn load_direnv_environment(
             direnv_output.status,
             String::from_utf8_lossy(&direnv_output.stderr)
         );
-        return (
-            None,
-            Some(DirenvError {
-                status: direnv_output.status,
-                stderr: direnv_output.stderr,
-            }),
-        );
+        return (None, Some(DirenvError));
     }
 
     let output = String::from_utf8_lossy(&direnv_output.stdout);
