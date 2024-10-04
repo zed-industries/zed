@@ -2259,6 +2259,7 @@ message GetSupermavenApiKeyResponse {
 message TaskContextForLocation {
     uint64 project_id = 1;
     Location location = 2;
+    map<string, string> task_variables = 3;
 }
 
 message TaskContext {

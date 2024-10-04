@@ -4694,15 +4694,15 @@ impl Editor {
                                         value.clone(),
                                     );
                                 }
-                                project
-                                    .read(cx)
-                                    .task_store()
-                                    .read(cx)
-                                    .task_context_for_location(
-                                        captured_task_variables,
-                                        location,
-                                        cx,
-                                    )
+                                project.update(cx, |project, cx| {
+                                    project.task_store().update(cx, |task_store, cx| {
+                                        task_store.task_context_for_location(
+                                            captured_task_variables,
+                                            location,
+                                            cx,
+                                        )
+                                    })
+                                })
                             });
 
                     Some(cx.spawn(|editor, mut cx| async move {
@@ -9122,9 +9122,12 @@ impl Editor {
                     .as_ref()
                     .into_iter()
                     .flat_map(|inventory| {
-                        inventory
-                            .read(cx)
-                            .list_tasks(file.clone(), None, worktree_id, cx)
+                        inventory.read(cx).list_tasks(
+                            file.clone(),
+                            Some(runnable.language.clone()),
+                            worktree_id,
+                            cx,
+                        )
                     })
                     .filter(move |(_, template)| {
                         template.tags.iter().any(|source_tag| source_tag == &tag)

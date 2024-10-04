@@ -136,7 +136,6 @@ impl VariableName {
 impl FromStr for VariableName {
     type Err = ();
 
-    // TODO kb need a derive instead
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let without_prefix = s.strip_prefix(ZED_VARIABLE_NAME_PREFIX).ok_or(())?;
         let value = match without_prefix {

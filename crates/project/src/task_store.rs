@@ -61,6 +61,7 @@ impl TaskSettingsStore for TaskSettings {
         worktree: Option<WorktreeId>,
         templates: RawTaskTemplates<'a>,
     ) {
+        // TODO kb logging or a pop-up (separatee per kind of templates?)
         let mut bad_templates = 0;
 
         match worktree {
@@ -169,14 +170,13 @@ impl TaskStore {
             .location
             .context("no location given for task context handling")?;
         let (buffer_store, is_remote) = store.update(&mut cx, |store, _| {
-            let (store, is_remote) = match store {
+            Ok(match store {
                 TaskStore::Local { buffer_store, .. } => (buffer_store.clone(), false),
                 TaskStore::Remote { buffer_store, .. } => (buffer_store.clone(), true),
                 TaskStore::Empty => {
                     anyhow::bail!("empty task store cannot handle task context requests")
                 }
-            };
-            Ok((store, is_remote))
+            })
         })??;
         let buffer_store = buffer_store
             .upgrade()
@@ -216,9 +216,15 @@ impl TaskStore {
             range: start..end,
         };
         let context_task = store.update(&mut cx, |store, cx| {
-            // TODO kb why not send the original task variables from the client?
             let captured_variables = {
-                let mut variables = TaskVariables::default();
+                let mut variables = TaskVariables::from_iter(
+                    envelope
+                        .payload
+                        .task_variables
+                        .into_iter()
+                        .filter_map(|(k, v)| Some((k.parse().log_err()?, v))),
+                );
+
                 for range in location
                     .buffer
                     .read(cx)
@@ -282,7 +288,7 @@ impl TaskStore {
         &self,
         captured_variables: TaskVariables,
         location: Location,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Task<Option<TaskContext>> {
         match self {
             TaskStore::Local {
@@ -297,8 +303,16 @@ impl TaskStore {
                 cx,
             ),
             TaskStore::Remote {
-                upstream_client, ..
-            } => remote_task_context_for_location(upstream_client, location, cx),
+                upstream_client,
+                worktree_store,
+                ..
+            } => remote_task_context_for_location(
+                upstream_client,
+                worktree_store.clone(),
+                captured_variables,
+                location,
+                cx,
+            ),
             TaskStore::Empty => Task::ready(None),
         }
     }
@@ -386,9 +400,18 @@ fn local_task_context_for_location(
 
 fn remote_task_context_for_location(
     upstream_client: &AnyProtoClient,
+    worktree_store: Model<WorktreeStore>,
+    captured_variables: TaskVariables,
     location: Location,
-    cx: &AppContext,
+    cx: &mut AppContext,
 ) -> Task<Option<TaskContext>> {
+    // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
+    let mut remote_context = BasicContextProvider::new(worktree_store)
+        .build_context(&TaskVariables::default(), &location, None, cx)
+        .log_err()
+        .unwrap_or_default();
+    remote_context.extend(captured_variables);
+
     let context_task = upstream_client.request(proto::TaskContextForLocation {
         project_id: SSH_PROJECT_ID,
         location: Some(proto::Location {
@@ -396,6 +419,10 @@ fn remote_task_context_for_location(
             start: Some(serialize_anchor(&location.range.start)),
             end: Some(serialize_anchor(&location.range.end)),
         }),
+        task_variables: remote_context
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
     });
     cx.spawn(|_| async move {
         let task_context = context_task.await.log_err()?;
