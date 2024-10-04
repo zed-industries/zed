@@ -789,7 +789,7 @@ impl InlineAssistant {
                         } else {
                             AssistantPhase::Accepted
                         },
-                        model: model.telemetry_id().to_string(),
+                        model: model.telemetry_id(),
                         model_provider: model.provider_id().to_string(),
                         response_latency: None,
                         error_message: None,
