@@ -1110,7 +1110,12 @@ impl Terminal {
     }
 
     pub fn vi_motion(&mut self, keystroke: &Keystroke) {
-        let motion: Option<ViMotion> = match keystroke.key.as_str() {
+        let mut key = keystroke.key.clone();
+        if keystroke.modifiers.shift {
+            key = key.to_uppercase();
+        }
+
+        let motion: Option<ViMotion> = match key.as_str() {
             "h" => Some(ViMotion::Left),
             "j" => Some(ViMotion::Down),
             "k" => Some(ViMotion::Up),
@@ -1122,8 +1127,52 @@ impl Terminal {
             "$" => Some(ViMotion::Last),
             "0" => Some(ViMotion::First),
             "^" => Some(ViMotion::FirstOccupied),
+            "H" => Some(ViMotion::High),
+            "M" => Some(ViMotion::Middle),
+            "L" => Some(ViMotion::Low),
             _ => None,
         };
+
+        let scroll_motion = match key.as_str() {
+            "g" => Some(AlacScroll::Top),
+            "G" => Some(AlacScroll::Bottom),
+            "b" => {
+                if keystroke.modifiers.control {
+                    Some(AlacScroll::PageUp)
+                } else {
+                    None
+                }
+            }
+            "f" => {
+                if keystroke.modifiers.control {
+                    Some(AlacScroll::PageDown)
+                } else {
+                    None
+                }
+            }
+            "d" => {
+                if keystroke.modifiers.control {
+                    let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
+                    Some(AlacScroll::Delta(-amount))
+                } else {
+                    None
+                }
+            }
+            "u" => {
+                if keystroke.modifiers.control {
+                    let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
+                    Some(AlacScroll::Delta(amount))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(scroll_motion) = scroll_motion {
+            self.events.push_back(InternalEvent::Scroll(scroll_motion));
+            return;
+        }
 
         if keystroke.key.as_str() == "v" {
             let point = self.last_content.cursor.point;
@@ -1157,8 +1206,8 @@ impl Terminal {
         if let Some(motion) = motion {
             let cursor = self.last_content.cursor.point;
             let cursor_pos = Point {
-                x: Pixels::from(cursor.column.0 as f32 * self.last_content.size.cell_width),
-                y: Pixels::from(cursor.line.0 as f32 * self.last_content.size.line_height),
+                x: cursor.column.0 as f32 * self.last_content.size.cell_width,
+                y: cursor.line.0 as f32 * self.last_content.size.line_height,
             };
             self.events
                 .push_back(InternalEvent::UpdateSelection(cursor_pos));
