@@ -28,14 +28,14 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct TailwindLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl TailwindLspAdapter {
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("tailwindcss-language-server");
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         TailwindLspAdapter { node }
     }
 }
@@ -44,38 +44,6 @@ impl TailwindLspAdapter {
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME.clone()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
-    ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx
-            .update(|cx| {
-                language_server_settings(delegate, &Self::SERVER_NAME, cx)
-                    .and_then(|s| s.binary.clone())
-            })
-            .ok()??;
-
-        let path = if let Some(configured_path) = configured_binary.path.map(PathBuf::from) {
-            configured_path
-        } else {
-            self.node.binary_path().await.ok()?
-        };
-
-        let arguments = configured_binary
-            .arguments
-            .unwrap_or_default()
-            .iter()
-            .map(|arg| arg.into())
-            .collect();
-
-        Some(LanguageServerBinary {
-            path,
-            arguments,
-            env: None,
-        })
     }
 
     async fn fetch_latest_server_version(
@@ -122,14 +90,7 @@ impl LspAdapter for TailwindLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &self.node).await
     }
 
     async fn initialization_options(
@@ -198,7 +159,7 @@ impl LspAdapter for TailwindLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_version_dir = None;

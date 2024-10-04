@@ -394,7 +394,7 @@ fn matching_history_items<'a>(
                         .chars(),
                 ),
             };
-            candidates_paths.insert(Arc::clone(&found_path.project.path), found_path);
+            candidates_paths.insert(&found_path.project, found_path);
             Some((found_path.project.worktree_id, candidate))
         })
         .fold(
@@ -419,17 +419,21 @@ fn matching_history_items<'a>(
                 max_results,
             )
             .into_iter()
-            .map(|path_match| {
-                let (_, found_path) = candidates_paths
-                    .remove_entry(&path_match.path)
-                    .expect("candidate info not found");
-                (
-                    Arc::clone(&path_match.path),
-                    Match::History {
-                        path: found_path.clone(),
-                        panel_match: Some(ProjectPanelOrdMatch(path_match)),
-                    },
-                )
+            .filter_map(|path_match| {
+                candidates_paths
+                    .remove_entry(&ProjectPath {
+                        worktree_id: WorktreeId::from_usize(path_match.worktree_id),
+                        path: Arc::clone(&path_match.path),
+                    })
+                    .map(|(_, found_path)| {
+                        (
+                            Arc::clone(&path_match.path),
+                            Match::History {
+                                path: found_path.clone(),
+                                panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                            },
+                        )
+                    })
             }),
         );
     }
@@ -884,7 +888,7 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || (project.is_local_or_ssh() && history_item.absolute.is_some())
+                            || (project.is_local() && history_item.absolute.is_some())
                     }),
                     self.currently_opened_path.as_ref(),
                     None,
@@ -1070,7 +1074,9 @@ impl PickerDelegate for FileFinderDelegate {
             self.labels_for_match(path_match, cx, ix);
 
         let file_icon = if settings.file_icons {
-            FileIcons::get_icon(Path::new(&file_name), cx).map(Icon::from_path)
+            FileIcons::get_icon(Path::new(&file_name), cx)
+                .map(Icon::from_path)
+                .map(|icon| icon.color(Color::Muted))
         } else {
             None
         };

@@ -22,7 +22,8 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-use isahc_http_client::IsahcHttpClient;
+
+use reqwest_client::ReqwestClient;
 use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -43,7 +44,7 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: IsahcHttpClient,
+    pub http_client: ReqwestClient,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -69,11 +70,8 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client = IsahcHttpClient::builder()
-            .default_header("User-Agent", user_agent)
-            .build()
-            .map(IsahcHttpClient::from)
-            .context("failed to construct http client")?;
+        let http_client =
+            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
 
         let this = Self {
             executor,
@@ -391,42 +389,6 @@ async fn perform_completion(
                         // TODO - implement token counting for Google AI
                         let input_tokens = 0;
                         let output_tokens = 0;
-                        (
-                            serde_json::to_vec(&chunk).unwrap(),
-                            input_tokens,
-                            output_tokens,
-                        )
-                    })
-                })
-                .boxed()
-        }
-        LanguageModelProvider::Zed => {
-            let api_key = state
-                .config
-                .runpod_api_key
-                .as_ref()
-                .context("no Qwen2-7B API key configured on the server")?;
-            let api_url = state
-                .config
-                .runpod_api_summary_url
-                .as_ref()
-                .context("no Qwen2-7B URL configured on the server")?;
-            let chunks = open_ai::stream_completion(
-                &state.http_client,
-                api_url,
-                api_key,
-                serde_json::from_str(params.provider_request.get())?,
-                None,
-            )
-            .await?;
-
-            chunks
-                .map(|event| {
-                    event.map(|chunk| {
-                        let input_tokens =
-                            chunk.usage.as_ref().map_or(0, |u| u.prompt_tokens) as usize;
-                        let output_tokens =
-                            chunk.usage.as_ref().map_or(0, |u| u.completion_tokens) as usize;
                         (
                             serde_json::to_vec(&chunk).unwrap(),
                             input_tokens,

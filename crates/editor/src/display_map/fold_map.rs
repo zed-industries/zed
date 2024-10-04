@@ -944,7 +944,7 @@ struct TransformSummary {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.summary.clone()
     }
 }
@@ -1004,7 +1004,7 @@ impl Default for FoldRange {
 impl sum_tree::Item for Fold {
     type Summary = FoldSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &MultiBufferSnapshot) -> Self::Summary {
         FoldSummary {
             start: self.range.start,
             end: self.range.end,

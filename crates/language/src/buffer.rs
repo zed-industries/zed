@@ -62,7 +62,7 @@ pub use text::{
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::RangeExt;
+use util::{debug_panic, RangeExt};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -73,7 +73,7 @@ pub use lsp::DiagnosticSeverity;
 /// a diff against the contents of its file.
 pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
-/// Indicate whether a [Buffer] has permissions to edit.
+/// Indicate whether a [`Buffer`] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Capability {
     /// The buffer is a mutable replica.
@@ -87,7 +87,11 @@ pub type BufferRow = u32;
 #[derive(Clone)]
 enum BufferDiffBase {
     Git(Rope),
-    PastBufferVersion(Model<Buffer>, BufferSnapshot),
+    PastBufferVersion {
+        buffer: Model<Buffer>,
+        rope: Rope,
+        operations_to_ignore: Vec<clock::Lamport>,
+    },
 }
 
 /// An in-memory representation of a source code file, including its text,
@@ -207,7 +211,7 @@ pub struct Diagnostic {
     ///
     /// When a language server produces a diagnostic with
     /// one or more associated diagnostics, those diagnostics are all
-    /// assigned a single group id.
+    /// assigned a single group ID.
     pub group_id: usize,
     /// Whether this diagnostic is the primary diagnostic for its group.
     ///
@@ -714,7 +718,7 @@ impl Buffer {
         self
     }
 
-    /// Returns the [Capability] of this buffer.
+    /// Returns the [`Capability`] of this buffer.
     pub fn capability(&self) -> Capability {
         self.capability
     }
@@ -724,7 +728,7 @@ impl Buffer {
         self.capability == Capability::ReadOnly
     }
 
-    /// Builds a [Buffer] with the given underlying [TextBuffer], diff base, [File] and [Capability].
+    /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
     pub fn build(
         buffer: TextBuffer,
         diff_base: Option<String>,
@@ -795,19 +799,15 @@ impl Buffer {
         let this = cx.handle();
         cx.new_model(|cx| {
             let mut branch = Self {
-                diff_base: Some(BufferDiffBase::PastBufferVersion(
-                    this.clone(),
-                    self.snapshot(),
-                )),
+                diff_base: Some(BufferDiffBase::PastBufferVersion {
+                    buffer: this.clone(),
+                    rope: self.as_rope().clone(),
+                    operations_to_ignore: Vec::new(),
+                }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
-                _subscriptions: vec![cx.subscribe(&this, |branch: &mut Self, _, event, cx| {
-                    if let BufferEvent::Operation { operation, .. } = event {
-                        branch.apply_ops([operation.clone()], cx);
-                        branch.diff_base_version += 1;
-                    }
-                })],
+                _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
                 ..Self::build(
                     self.text.branch(),
                     None,
@@ -819,22 +819,82 @@ impl Buffer {
                 branch.set_language_registry(language_registry);
             }
 
+            // Reparse the branch buffer so that we get syntax highlighting immediately.
+            branch.reparse(cx);
+
             branch
         })
     }
 
-    pub fn merge(&mut self, branch: &Model<Self>, cx: &mut ModelContext<Self>) {
-        let branch = branch.read(cx);
-        let edits = branch
-            .edits_since::<usize>(&self.version)
-            .map(|edit| {
-                (
-                    edit.old,
-                    branch.text_for_range(edit.new).collect::<String>(),
-                )
-            })
-            .collect::<Vec<_>>();
-        self.edit(edits, None, cx);
+    /// Applies all of the changes in this buffer that intersect the given `range`
+    /// to its base buffer. This buffer must be a branch buffer to call this method.
+    pub fn merge_into_base(&mut self, range: Option<Range<usize>>, cx: &mut ModelContext<Self>) {
+        let Some(base_buffer) = self.diff_base_buffer() else {
+            debug_panic!("not a branch buffer");
+            return;
+        };
+
+        base_buffer.update(cx, |base_buffer, cx| {
+            let edits = self
+                .edits_since::<usize>(&base_buffer.version)
+                .filter_map(|edit| {
+                    if range
+                        .as_ref()
+                        .map_or(true, |range| range.overlaps(&edit.new))
+                    {
+                        Some((edit.old, self.text_for_range(edit.new).collect::<String>()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let operation = base_buffer.edit(edits, None, cx);
+
+            // Prevent this operation from being reapplied to the branch.
+            if let Some(BufferDiffBase::PastBufferVersion {
+                operations_to_ignore,
+                ..
+            }) = &mut self.diff_base
+            {
+                operations_to_ignore.extend(operation);
+            }
+
+            cx.emit(BufferEvent::DiffBaseChanged);
+        });
+    }
+
+    fn on_base_buffer_event(
+        &mut self,
+        _: Model<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let BufferEvent::Operation { operation, .. } = event {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                operations_to_ignore,
+                ..
+            }) = &mut self.diff_base
+            {
+                let mut is_ignored = false;
+                if let Operation::Buffer(text::Operation::Edit(buffer_operation)) = &operation {
+                    operations_to_ignore.retain(|operation_to_ignore| {
+                        match buffer_operation.timestamp.cmp(&operation_to_ignore) {
+                            Ordering::Less => true,
+                            Ordering::Equal => {
+                                is_ignored = true;
+                                false
+                            }
+                            Ordering::Greater => false,
+                        }
+                    });
+                }
+                if !is_ignored {
+                    self.apply_ops([operation.clone()], cx);
+                    self.diff_base_version += 1;
+                }
+            }
+        }
     }
 
     #[cfg(test)]
@@ -884,7 +944,7 @@ impl Buffer {
         self.syntax_map.lock().language_registry()
     }
 
-    /// Assign the buffer a new [Capability].
+    /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
         cx.emit(BufferEvent::CapabilityChanged)
@@ -975,7 +1035,7 @@ impl Buffer {
         cx.notify();
     }
 
-    /// Updates the [File] backing this buffer. This should be called when
+    /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
         let mut file_changed = false;
@@ -1014,12 +1074,11 @@ impl Buffer {
         }
     }
 
-    /// Returns the current diff base, see [Buffer::set_diff_base].
+    /// Returns the current diff base, see [`Buffer::set_diff_base`].
     pub fn diff_base(&self) -> Option<&Rope> {
         match self.diff_base.as_ref()? {
-            BufferDiffBase::Git(rope) => Some(rope),
-            BufferDiffBase::PastBufferVersion(_, buffer_snapshot) => {
-                Some(buffer_snapshot.as_rope())
+            BufferDiffBase::Git(rope) | BufferDiffBase::PastBufferVersion { rope, .. } => {
+                Some(rope)
             }
         }
     }
@@ -1050,41 +1109,48 @@ impl Buffer {
         self.diff_base_version
     }
 
+    pub fn diff_base_buffer(&self) -> Option<Model<Self>> {
+        match self.diff_base.as_ref()? {
+            BufferDiffBase::Git(_) => None,
+            BufferDiffBase::PastBufferVersion { buffer, .. } => Some(buffer.clone()),
+        }
+    }
+
     /// Recomputes the diff.
     pub fn recalculate_diff(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base_rope = match self.diff_base.as_mut()? {
+        let diff_base_rope = match self.diff_base.as_ref()? {
             BufferDiffBase::Git(rope) => rope.clone(),
-            BufferDiffBase::PastBufferVersion(base_buffer, base_buffer_snapshot) => {
-                let new_base_snapshot = base_buffer.read(cx).snapshot();
-                *base_buffer_snapshot = new_base_snapshot;
-                base_buffer_snapshot.as_rope().clone()
-            }
+            BufferDiffBase::PastBufferVersion { buffer, .. } => buffer.read(cx).as_rope().clone(),
         };
-        let snapshot = self.snapshot();
 
+        let snapshot = self.snapshot();
         let mut diff = self.git_diff.clone();
         let diff = cx.background_executor().spawn(async move {
             diff.update(&diff_base_rope, &snapshot).await;
-            diff
+            (diff, diff_base_rope)
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            let buffer_diff = diff.await;
+            let (buffer_diff, diff_base_rope) = diff.await;
             this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
                 this.non_text_state_update_count += 1;
+                if let Some(BufferDiffBase::PastBufferVersion { rope, .. }) = &mut this.diff_base {
+                    *rope = diff_base_rope;
+                    cx.emit(BufferEvent::DiffBaseChanged);
+                }
                 cx.emit(BufferEvent::DiffUpdated);
             })
             .ok();
         }))
     }
 
-    /// Returns the primary [Language] assigned to this [Buffer].
+    /// Returns the primary [`Language`] assigned to this [`Buffer`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
 
-    /// Returns the [Language] at the given location.
+    /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
         self.syntax_map
@@ -2667,6 +2733,7 @@ impl BufferSnapshot {
             .collect();
         (captures, highlight_maps)
     }
+
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
@@ -2718,12 +2785,12 @@ impl BufferSnapshot {
             .last()
     }
 
-    /// Returns the main [Language]
+    /// Returns the main [`Language`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
 
-    /// Returns the [Language] at the given location.
+    /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
         self.syntax_layer_at(position)
             .map(|info| info.language)
@@ -2743,7 +2810,7 @@ impl BufferSnapshot {
         CharClassifier::new(self.language_scope_at(point))
     }
 
-    /// Returns the [LanguageScope] at the given location.
+    /// Returns the [`LanguageScope`] at the given location.
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
         let mut scope = None;
@@ -2898,7 +2965,7 @@ impl BufferSnapshot {
 
     /// Returns the outline for the buffer.
     ///
-    /// This method allows passing an optional [SyntaxTheme] to
+    /// This method allows passing an optional [`SyntaxTheme`] to
     /// syntax-highlight the returned symbols.
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         self.outline_items_containing(0..self.len(), true, theme)
@@ -2907,7 +2974,7 @@ impl BufferSnapshot {
 
     /// Returns all the symbols that contain the given position.
     ///
-    /// This method allows passing an optional [SyntaxTheme] to
+    /// This method allows passing an optional [`SyntaxTheme`] to
     /// syntax-highlight the returned symbols.
     pub fn symbols_containing<T: ToOffset>(
         &self,
@@ -3150,7 +3217,7 @@ impl BufferSnapshot {
     }
 
     /// For each grammar in the language, runs the provided
-    /// [tree_sitter::Query] against the given range.
+    /// [`tree_sitter::Query`] against the given range.
     pub fn matches(
         &self,
         range: Range<usize>,
@@ -3711,7 +3778,7 @@ impl BufferSnapshot {
             })
     }
 
-    /// Whether the buffer contains any git changes.
+    /// Whether the buffer contains any Git changes.
     pub fn has_git_diff(&self) -> bool {
         !self.git_diff.is_empty()
     }
@@ -3793,7 +3860,7 @@ impl BufferSnapshot {
     }
 
     /// Returns all the diagnostic groups associated with the given
-    /// language server id. If no language server id is provided,
+    /// language server ID. If no language server ID is provided,
     /// all diagnostics groups are returned.
     pub fn diagnostic_groups(
         &self,
@@ -4176,7 +4243,7 @@ impl Default for Diagnostic {
 }
 
 impl IndentSize {
-    /// Returns an [IndentSize] representing the given spaces.
+    /// Returns an [`IndentSize`] representing the given spaces.
     pub fn spaces(len: u32) -> Self {
         Self {
             len,
@@ -4184,7 +4251,7 @@ impl IndentSize {
         }
     }
 
-    /// Returns an [IndentSize] representing a tab.
+    /// Returns an [`IndentSize`] representing a tab.
     pub fn tab() -> Self {
         Self {
             len: 1,
@@ -4192,12 +4259,12 @@ impl IndentSize {
         }
     }
 
-    /// An iterator over the characters represented by this [IndentSize].
+    /// An iterator over the characters represented by this [`IndentSize`].
     pub fn chars(&self) -> impl Iterator<Item = char> {
         iter::repeat(self.char()).take(self.len as usize)
     }
 
-    /// The character representation of this [IndentSize].
+    /// The character representation of this [`IndentSize`].
     pub fn char(&self) -> char {
         match self.kind {
             IndentKind::Space => ' ',
@@ -4205,7 +4272,7 @@ impl IndentSize {
         }
     }
 
-    /// Consumes the current [IndentSize] and returns a new one that has
+    /// Consumes the current [`IndentSize`] and returns a new one that has
     /// been shrunk or enlarged by the given size along the given direction.
     pub fn with_delta(mut self, direction: Ordering, size: IndentSize) -> Self {
         match direction {

@@ -1360,7 +1360,7 @@ impl<'a> Iterator for BlockBufferRows<'a> {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.summary.clone()
     }
 }

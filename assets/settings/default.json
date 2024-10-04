@@ -15,9 +15,11 @@
   // text editor:
   //
   // 1. "VSCode"
-  // 2. "JetBrains"
-  // 3. "SublimeText"
-  // 4. "Atom"
+  // 2. "Atom"
+  // 3. "JetBrains"
+  // 4. "None"
+  // 5. "SublimeText"
+  // 6. "TextMate"
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
@@ -354,9 +356,19 @@
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
+      /// This setting can take four values:
       ///
-      /// Default: always
-      "show": "always"
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
     }
   },
   "outline_panel": {
@@ -533,17 +545,16 @@
   // How to soft-wrap long lines of text.
   // Possible values:
   //
-  // 1. Do not soft wrap.
+  // 1. Prefer a single line generally, unless an overly long line is encountered.
   //      "soft_wrap": "none",
-  // 2. Prefer a single line generally, unless an overly long line is encountered.
-  //      "soft_wrap": "prefer_line",
-  // 3. Soft wrap lines that overflow the editor.
+  //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
+  // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 4. Soft wrap lines at the preferred line length.
+  // 3. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
-  // 5. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
-  "soft_wrap": "prefer_line",
+  "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -598,13 +609,11 @@
     }
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
-  // 1. Load direnv configuration through the shell hook, works for POSIX shells and fish.
-  //      "load_direnv": "shell_hook"
-  // 2. Load direnv configuration using `direnv export json` directly.
-  //    This can help with some shells that otherwise would not detect
-  //    the direnv environment, such as nushell or elvish.
+  // 1. Load direnv configuration using `direnv export json` directly.
   //      "load_direnv": "direct"
-  "load_direnv": "shell_hook",
+  // 2. Load direnv configuration through the shell hook, works for POSIX shells and fish.
+  //      "load_direnv": "shell_hook"
+  "load_direnv": "direct",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
@@ -670,6 +679,18 @@
     //  3. Always blink the cursor, ignoring the terminal mode
     //         "blinking": "on",
     "blinking": "terminal_controlled",
+    // Default cursor shape for the terminal.
+    //  1. A block that surrounds the following character
+    //     "block"
+    //  2. A vertical bar
+    //     "bar"
+    //  3. An underline that runs along the following character
+    //     "underscore"
+    //  4. A box drawn around the following character
+    //     "hollow"
+    //
+    // Default: not set, defaults to "block"
+    "cursor_shape": null,
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -760,6 +781,7 @@
   // }
   //
   "file_types": {
+    "Plain Text": ["txt"],
     "JSON": ["flake.lock"],
     "JSONC": [
       "**/.zed/**/*.json",
@@ -767,8 +789,24 @@
       "**/Zed/**/*.json",
       "tsconfig.json",
       "pyrightconfig.json"
-    ]
+    ],
+    "TOML": ["uv.lock"]
   },
+  /// By default use a recent system version of node, or install our own.
+  /// You can override this to use a version of node that is not in $PATH with:
+  /// {
+  ///   "node": {
+  ///     "node_path": "/path/to/node"
+  ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
+  ///   }
+  /// }
+  /// or to ensure Zed always downloads and installs an isolated version of node:
+  /// {
+  ///   "node": {
+  ///     "ignore_system_version": true,
+  ///   }
+  /// NOTE: changing this setting currently requires restarting Zed.
+  "node": {},
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings

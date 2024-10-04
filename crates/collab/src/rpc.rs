@@ -36,8 +36,8 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
-use isahc_http_client::IsahcHttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
+use reqwest_client::ReqwestClient;
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -473,9 +473,6 @@ impl Server {
             ))
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetReferences>,
-            ))
-            .add_request_handler(user_handler(
-                forward_read_only_project_request::<proto::SearchProject>,
             ))
             .add_request_handler(user_handler(forward_find_search_candidates_request))
             .add_request_handler(user_handler(
@@ -957,8 +954,8 @@ impl Server {
             tracing::info!("connection opened");
 
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-            let http_client = match IsahcHttpClient::builder().default_header("User-Agent", user_agent).build() {
-                Ok(http_client) => Arc::new(IsahcHttpClient::from(http_client)),
+            let http_client = match ReqwestClient::user_agent(&user_agent) {
+                Ok(http_client) => Arc::new(http_client),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;
@@ -1742,6 +1739,7 @@ fn notify_rejoined_projects(
                         worktree_id: worktree.id,
                         path: settings_file.path,
                         content: Some(settings_file.content),
+                        kind: Some(settings_file.kind.to_proto().into()),
                     },
                 )?;
             }
@@ -2223,6 +2221,7 @@ fn join_project_internal(
                     worktree_id: worktree.id,
                     path: settings_file.path,
                     content: Some(settings_file.content),
+                    kind: Some(proto::update_user_settings::Kind::Settings.into()),
                 },
             )?;
         }
@@ -2298,7 +2297,7 @@ async fn list_remote_directory(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(dev_server_id, ZedVersion::with_list_directory())?;
+        .online_dev_server_connection_id(dev_server_id)?;
 
     session
         .db()
@@ -2337,10 +2336,7 @@ async fn update_dev_server_project(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(
-            dev_server_project.dev_server_id,
-            ZedVersion::with_list_directory(),
-        )?;
+        .online_dev_server_connection_id(dev_server_project.dev_server_id)?;
 
     session.peer.send(
         dev_server_connection_id,
@@ -2950,40 +2946,6 @@ async fn forward_find_search_candidates_request(
         .await
         .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
         .await?;
-
-    let host_version = session
-        .connection_pool()
-        .await
-        .connection(host_connection_id)
-        .map(|c| c.zed_version);
-
-    if host_version.is_some_and(|host_version| host_version < ZedVersion::with_search_candidates())
-    {
-        let query = request.query.ok_or_else(|| anyhow!("missing query"))?;
-        let search = proto::SearchProject {
-            project_id: project_id.to_proto(),
-            query: query.query,
-            regex: query.regex,
-            whole_word: query.whole_word,
-            case_sensitive: query.case_sensitive,
-            files_to_include: query.files_to_include,
-            files_to_exclude: query.files_to_exclude,
-            include_ignored: query.include_ignored,
-        };
-
-        let payload = session
-            .peer
-            .forward_request(session.connection_id, host_connection_id, search)
-            .await?;
-        return response.send(proto::FindSearchCandidatesResponse {
-            buffer_ids: payload
-                .locations
-                .into_iter()
-                .map(|loc| loc.buffer_id)
-                .collect(),
-        });
-    }
-
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)

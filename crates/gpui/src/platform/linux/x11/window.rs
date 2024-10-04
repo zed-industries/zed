@@ -4,9 +4,9 @@ use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
-    X11ClientStatePtr,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
 };
 
-use super::{X11Display, XINPUT_MASTER_DEVICE};
+use super::{X11Display, XINPUT_ALL_DEVICES, XINPUT_ALL_DEVICE_GROUPS};
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
         XA_ATOM,
@@ -475,13 +475,26 @@ impl X11WindowState {
             .xinput_xi_select_events(
                 x_window,
                 &[xinput::EventMask {
-                    deviceid: XINPUT_MASTER_DEVICE,
+                    deviceid: XINPUT_ALL_DEVICE_GROUPS,
                     mask: vec![
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
                             | xinput::XIEventMask::BUTTON_RELEASE
                             | xinput::XIEventMask::ENTER
                             | xinput::XIEventMask::LEAVE,
+                    ],
+                }],
+            )
+            .unwrap();
+
+        xcb_connection
+            .xinput_xi_select_events(
+                x_window,
+                &[xinput::EventMask {
+                    deviceid: XINPUT_ALL_DEVICES,
+                    mask: vec![
+                        xinput::XIEventMask::HIERARCHY,
+                        xinput::XIEventMask::DEVICE_CHANGED,
                     ],
                 }],
             )
@@ -1253,7 +1266,7 @@ impl PlatformWindow for X11Window {
             self.0.x_window,
             state.atoms._GTK_SHOW_WINDOW_MENU,
             [
-                XINPUT_MASTER_DEVICE as u32,
+                XINPUT_ALL_DEVICE_GROUPS as u32,
                 coords.dst_x as u32,
                 coords.dst_y as u32,
                 0,
@@ -1412,7 +1425,7 @@ impl PlatformWindow for X11Window {
         }
     }
 
-    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let mut state = self.0.state.borrow_mut();
         let client = state.client.clone();
         drop(state);

@@ -67,8 +67,12 @@ impl Project {
     }
 
     fn ssh_command(&self, cx: &AppContext) -> Option<SshCommand> {
-        if let Some(ssh_session) = self.ssh_session.as_ref() {
-            return Some(SshCommand::Direct(ssh_session.ssh_args()));
+        if let Some(args) = self
+            .ssh_client
+            .as_ref()
+            .and_then(|session| session.ssh_args())
+        {
+            return Some(SshCommand::Direct(args));
         }
 
         let dev_server_project_id = self.dev_server_project_id()?;
@@ -215,7 +219,7 @@ impl Project {
             spawn_task,
             shell,
             env,
-            Some(settings.blinking),
+            settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
             window,

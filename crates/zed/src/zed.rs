@@ -15,6 +15,7 @@ use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
+use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
@@ -231,7 +232,7 @@ pub fn initialize_workspace(
 
         let project = workspace.project().clone();
         if project.update(cx, |project, cx| {
-            project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
+            project.is_local() || project.is_via_ssh() || project.ssh_connection_string(cx).is_some()
         }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
@@ -587,6 +588,8 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
+            let proposed_change_bar = cx.new_view(|_| ProposedChangesEditorToolbar::new());
+            toolbar.add_item(proposed_change_bar, cx);
             let quick_action_bar =
                 cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);
@@ -3370,7 +3373,7 @@ mod tests {
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
-        let node_runtime = node_runtime::FakeNodeRuntime::new();
+        let node_runtime = node_runtime::NodeRuntime::unavailable();
         cx.update(|cx| {
             languages::init(languages.clone(), node_runtime, cx);
         });

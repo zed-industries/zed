@@ -93,6 +93,62 @@ Extensions that provide language servers may also provide default settings for t
 
 `boolean` values
 
+## Base Keymap
+
+- Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
+- Setting: `base_keymap`
+- Default: `VSCode`
+
+**Options**
+
+1. VSCode
+
+```json
+{
+  "base_keymap": "VSCode"
+}
+```
+
+2. Atom
+
+```json
+{
+  "base_keymap": "Atom"
+}
+```
+
+3. JetBrains
+
+```json
+{
+  "base_keymap": "JetBrains"
+}
+```
+
+4. None
+
+```json
+{
+  "base_keymap": "None"
+}
+```
+
+5. SublimeText
+
+```json
+{
+  "base_keymap": "SublimeText"
+}
+```
+
+6. TextMate
+
+```json
+{
+  "base_keymap": "TextMate"
+}
+```
+
 ## Buffer Font Family
 
 - Description: The name of a font to use for rendering text in the editor.
@@ -159,7 +215,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values
+`integer` values from `6` to `100` pixels (inclusive)
 
 ## Buffer Font Weight
 
@@ -211,12 +267,14 @@ left and right padding of the central pane from the workspace when the centered 
 
 ## Direnv Integration
 
-- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. `direnv` integration currently only means that the environment variables set by a `direnv` configuration can be used to detect some language servers in `$PATH` instead of installing them.
+- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed.
+  `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
+  It also allows for those environment variables to be used in tasks.
 - Setting: `load_direnv`
 - Default:
 
 ```json
-"load_direnv": "shell_hook"
+"load_direnv": "direct"
 ```
 
 **Options**
@@ -324,12 +382,6 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
-
-## Default Dock Anchor
-
-- Description: The default anchor for new docks.
-- Setting: `default_dock_anchor`
-- Default: `bottom`
 
 **Options**
 
@@ -857,7 +909,50 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-### Indent Guides
+### Inline Git Blame
+
+- Description: Whether or not to show git blame information inline, on the currently focused line.
+- Setting: `inline_blame`
+- Default:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Options**
+
+1. Disable inline git blame:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  }
+}
+```
+
+2. Only show inline git blame after a delay (that starts after cursor stops moving):
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "delay_ms": 500
+    }
+  }
+}
+```
+
+## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
@@ -922,49 +1017,6 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "enabled": true,
     "coloring": "indent_aware",
     "background_coloring": "indent_aware"
-  }
-}
-```
-
-### Inline Git Blame
-
-- Description: Whether or not to show git blame information inline, on the currently focused line.
-- Setting: `inline_blame`
-- Default:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true
-    }
-  }
-}
-```
-
-**Options**
-
-1. Disable inline git blame:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": false
-    }
-  }
-}
-```
-
-2. Only show inline git blame after a delay (that starts after cursor stops moving):
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true,
-      "delay_ms": 500
-    }
   }
 }
 ```
@@ -1307,12 +1359,12 @@ Or to set a `socks5` proxy:
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
-- Default: `prefer_line`
+- Default: `none`
 
 **Options**
 
-1. `none` to stop the soft-wrapping
-2. `prefer_line` to avoid wrapping generally, unless the line is too long
+1. `none` to avoid wrapping generally, unless the line is too long
+2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
 4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
 
@@ -1684,7 +1736,7 @@ See Buffer Font Features
 
 ## Terminal: Detect Virtual Environments {#terminal-detect_venv}
 
-- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environemtn
+- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environment.
 - Setting: `detect_venv`
 - Default:
 
@@ -1902,7 +1954,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
-      "show": "always"
+      "show": null
     }
   }
 }
@@ -2022,13 +2074,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ### Scrollbar
 
-- Description: Scrollbar related settings. Possible values: "always", "never".
+- Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
 - Setting: `scrollbar`
 - Default:
 
 ```json
 "scrollbar": {
-    "show": "always"
+    "show": null
 }
 ```
 
@@ -2127,6 +2179,84 @@ Float values between `0.0` and `0.9`, where:
   "unnecessary_code_fade": 0.5
 }
 ```
+
+## UI Font Family
+
+- Description: The name of the font to use for text in the UI.
+- Setting: `ui_font_family`
+- Default: `Zed Plex Sans`
+
+**Options**
+
+The name of any font family installed on the system.
+
+## UI Font Features
+
+- Description: The OpenType features to enable for text in the UI.
+- Setting: `ui_font_features`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+Zed supports all OpenType features that can be enabled or disabled for a given UI font, as well as setting values for font features.
+
+For example, to disable font ligatures, add the following to your settings:
+
+```json
+{
+  "ui_font_features": {
+    "calt": false
+  }
+}
+```
+
+You can also set other OpenType features, like setting `cv01` to `7`:
+
+```json
+{
+  "ui_font_features": {
+    "cv01": 7
+  }
+}
+```
+
+## UI Font Fallbacks
+
+- Description: The font fallbacks to use for text in the UI.
+- Setting: `ui_font_fallbacks`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+For example, to use `Nerd Font` as a fallback, add the following to your settings:
+
+```json
+{
+  "ui_font_fallbacks": ["Nerd Font"]
+}
+```
+
+## UI Font Size
+
+- Description: The default font size for text in the UI.
+- Setting: `ui_font_size`
+- Default: `16`
+
+**Options**
+
+`integer` values from `6` to `100` pixels (inclusive)
+
+## UI Font Weight
+
+- Description: The default font weight for text in the UI.
+- Setting: `ui_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
 
 ## An example configuration:
 

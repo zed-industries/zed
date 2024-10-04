@@ -18,7 +18,7 @@ use gpui::{
 use postage::oneshot;
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
-    AnyProtoClient, TypedEnvelope,
+    AnyProtoClient, ErrorExt, TypedEnvelope,
 };
 use smol::{
     channel::{Receiver, Sender},
@@ -36,19 +36,27 @@ struct MatchingEntry {
     respond: oneshot::Sender<ProjectPath>,
 }
 
+enum WorktreeStoreState {
+    Local {
+        fs: Arc<dyn Fs>,
+    },
+    Remote {
+        dev_server_project_id: Option<DevServerProjectId>,
+        upstream_client: AnyProtoClient,
+        upstream_project_id: u64,
+    },
+}
+
 pub struct WorktreeStore {
     next_entry_id: Arc<AtomicUsize>,
-    upstream_client: Option<AnyProtoClient>,
-    downstream_client: Option<AnyProtoClient>,
-    remote_id: u64,
-    dev_server_project_id: Option<DevServerProjectId>,
+    downstream_client: Option<(AnyProtoClient, u64)>,
     retain_worktrees: bool,
     worktrees: Vec<WorktreeHandle>,
     worktrees_reordered: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
         HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
-    fs: Arc<dyn Fs>,
+    state: WorktreeStoreState,
 }
 
 pub enum WorktreeStoreEvent {
@@ -69,27 +77,37 @@ impl WorktreeStore {
         client.add_model_request_handler(Self::handle_expand_project_entry);
     }
 
-    pub fn new(
-        upstream_client: Option<AnyProtoClient>,
-        retain_worktrees: bool,
-        fs: Arc<dyn Fs>,
-    ) -> Self {
+    pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
         Self {
             next_entry_id: Default::default(),
             loading_worktrees: Default::default(),
-            dev_server_project_id: None,
             downstream_client: None,
             worktrees: Vec::new(),
             worktrees_reordered: false,
             retain_worktrees,
-            remote_id: 0,
-            upstream_client,
-            fs,
+            state: WorktreeStoreState::Local { fs },
         }
     }
 
-    pub fn set_dev_server_project_id(&mut self, id: DevServerProjectId) {
-        self.dev_server_project_id = Some(id);
+    pub fn remote(
+        retain_worktrees: bool,
+        upstream_client: AnyProtoClient,
+        upstream_project_id: u64,
+        dev_server_project_id: Option<DevServerProjectId>,
+    ) -> Self {
+        Self {
+            next_entry_id: Default::default(),
+            loading_worktrees: Default::default(),
+            downstream_client: None,
+            worktrees: Vec::new(),
+            worktrees_reordered: false,
+            retain_worktrees,
+            state: WorktreeStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+                dev_server_project_id,
+            },
+        }
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
@@ -159,23 +177,40 @@ impl WorktreeStore {
     ) -> Task<Result<Model<Worktree>>> {
         let path: Arc<Path> = abs_path.as_ref().into();
         if !self.loading_worktrees.contains_key(&path) {
-            let task = if let Some(client) = self.upstream_client.clone() {
-                if let Some(dev_server_project_id) = self.dev_server_project_id {
-                    self.create_dev_server_worktree(client, dev_server_project_id, abs_path, cx)
-                } else {
-                    self.create_ssh_worktree(client, abs_path, visible, cx)
+            let task = match &self.state {
+                WorktreeStoreState::Remote {
+                    upstream_client,
+                    dev_server_project_id,
+                    ..
+                } => {
+                    if let Some(dev_server_project_id) = dev_server_project_id {
+                        self.create_dev_server_worktree(
+                            upstream_client.clone(),
+                            *dev_server_project_id,
+                            abs_path,
+                            cx,
+                        )
+                    } else if upstream_client.is_via_collab() {
+                        Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
+                    } else {
+                        self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
+                    }
                 }
-            } else {
-                self.create_local_worktree(abs_path, visible, cx)
+                WorktreeStoreState::Local { fs } => {
+                    self.create_local_worktree(fs.clone(), abs_path, visible, cx)
+                }
             };
 
             self.loading_worktrees.insert(path.clone(), task.shared());
         }
         let task = self.loading_worktrees.get(&path).unwrap().clone();
-        cx.background_executor().spawn(async move {
-            match task.await {
+        cx.spawn(|this, mut cx| async move {
+            let result = task.await;
+            this.update(&mut cx, |this, _| this.loading_worktrees.remove(&path))
+                .ok();
+            match result {
                 Ok(worktree) => Ok(worktree),
-                Err(err) => Err(anyhow!("{}", err)),
+                Err(err) => Err((*err).cloned()),
             }
         })
     }
@@ -187,12 +222,14 @@ impl WorktreeStore {
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
-        let mut abs_path = abs_path.as_ref().to_string_lossy().to_string();
+        let path_key: Arc<Path> = abs_path.as_ref().into();
+        let mut abs_path = path_key.clone().to_string_lossy().to_string();
         // If we start with `/~` that means the ssh path was something like `ssh://user@host/~/home-dir-folder/`
-        // in which case want to strip the leading the `/` and expand the tilde.
+        // in which case want to strip the leading the `/`.
+        // On the host-side, the `~` will get expanded.
         // That's what git does too: https://github.com/libgit2/libgit2/issues/3345#issuecomment-127050850
         if abs_path.starts_with("/~") {
-            abs_path = shellexpand::tilde(&abs_path[1..]).to_string();
+            abs_path = abs_path[1..].to_string();
         }
         let root_name = PathBuf::from(abs_path.clone())
             .file_name()
@@ -228,28 +265,25 @@ impl WorktreeStore {
                 )
             })?;
 
-            this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
-
+            this.update(&mut cx, |this, cx| {
+                this.add(&worktree, cx);
+            })?;
             Ok(worktree)
         })
     }
 
     fn create_local_worktree(
         &mut self,
+        fs: Arc<dyn Fs>,
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
-        let fs = self.fs.clone();
         let next_entry_id = self.next_entry_id.clone();
         let path: Arc<Path> = abs_path.as_ref().into();
 
         cx.spawn(move |this, mut cx| async move {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
-
-            this.update(&mut cx, |project, _| {
-                project.loading_worktrees.remove(&path);
-            })?;
 
             let worktree = worktree?;
             this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
@@ -284,7 +318,7 @@ impl WorktreeStore {
         });
 
         let abs_path = abs_path.as_ref().to_path_buf();
-        cx.spawn(move |project, mut cx| async move {
+        cx.spawn(move |project, cx| async move {
             let (tx, rx) = futures::channel::oneshot::channel();
             let tx = RefCell::new(Some(tx));
             let Some(project) = project.upgrade() else {
@@ -306,14 +340,10 @@ impl WorktreeStore {
             request.await?;
             let worktree = rx.await.map_err(|e| anyhow!(e))?;
             drop(observer);
-            project.update(&mut cx, |project, _| {
-                project.loading_worktrees.remove(&path);
-            })?;
             Ok(worktree)
         })
     }
 
-    #[track_caller]
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         let worktree_id = worktree.read(cx).id();
         debug_assert!(self.worktrees().all(|w| w.read(cx).id() != worktree_id));
@@ -374,6 +404,17 @@ impl WorktreeStore {
         self.worktrees_reordered = worktrees_reordered;
     }
 
+    fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
+        match &self.state {
+            WorktreeStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+                ..
+            } => Some((upstream_client.clone(), *upstream_project_id)),
+            WorktreeStoreState::Local { .. } => None,
+        }
+    }
+
     pub fn set_worktrees_from_proto(
         &mut self,
         worktrees: Vec<proto::WorktreeMetadata>,
@@ -389,8 +430,8 @@ impl WorktreeStore {
             })
             .collect::<HashMap<_, _>>();
 
-        let client = self
-            .upstream_client
+        let (client, project_id) = self
+            .upstream_client()
             .clone()
             .ok_or_else(|| anyhow!("invalid project"))?;
 
@@ -408,7 +449,7 @@ impl WorktreeStore {
                 self.worktrees.push(handle);
             } else {
                 self.add(
-                    &Worktree::remote(self.remote_id, replica_id, worktree, client.clone(), cx),
+                    &Worktree::remote(project_id, replica_id, worktree, client.clone(), cx),
                     cx,
                 );
             }
@@ -477,10 +518,9 @@ impl WorktreeStore {
     }
 
     pub fn send_project_updates(&mut self, cx: &mut ModelContext<Self>) {
-        let Some(downstream_client) = self.downstream_client.clone() else {
+        let Some((downstream_client, project_id)) = self.downstream_client.clone() else {
             return;
         };
-        let project_id = self.remote_id;
 
         let update = proto::UpdateProject {
             project_id,
@@ -510,9 +550,12 @@ impl WorktreeStore {
                                 let client = client.clone();
                                 async move {
                                     if client.is_via_collab() {
-                                        client.request(update).map(|result| result.is_ok()).await
+                                        client
+                                            .request(update)
+                                            .map(|result| result.log_err().is_some())
+                                            .await
                                     } else {
-                                        client.send(update).is_ok()
+                                        client.send(update).log_err().is_some()
                                     }
                                 }
                             }
@@ -549,8 +592,7 @@ impl WorktreeStore {
         cx: &mut ModelContext<Self>,
     ) {
         self.retain_worktrees = true;
-        self.remote_id = remote_id;
-        self.downstream_client = Some(downsteam_client);
+        self.downstream_client = Some((downsteam_client, remote_id));
 
         // When shared, retain all worktrees
         for worktree_handle in self.worktrees.iter_mut() {
