@@ -440,7 +440,12 @@
       "cmd-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "cmd-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "cmd-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
-      "cmd-shift-x": "zed::Extensions",
+      "cmd-shift-x": "zed::Extensions"
+    }
+  },
+  {
+    "context": "Editor && !Terminal",
+    "bindings": {
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
