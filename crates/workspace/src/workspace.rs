@@ -5514,7 +5514,7 @@ pub fn join_hosted_project(
 pub fn open_ssh_project(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
-    session: Arc<SshRemoteClient>,
+    session: Model<SshRemoteClient>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut AppContext,

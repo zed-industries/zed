@@ -15,7 +15,9 @@ use futures::{
     select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, SinkExt,
     StreamExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion, Subscription, Task};
+use gpui::{
+    AppContext, AsyncAppContext, Context, Model, ModelContext, SemanticVersion, Task, WeakModel,
+};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
@@ -32,7 +34,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering::SeqCst},
-        Arc, Weak,
+        Arc,
     },
     time::Instant,
 };
@@ -253,7 +255,6 @@ pub struct SshRemoteClient {
     client: Arc<ChannelClient>,
     connection_options: SshConnectionOptions,
     inner_state: Arc<Mutex<Option<SshRemoteClientState>>>,
-    _subscriptions: Arc<Mutex<Vec<Subscription>>>,
 }
 
 impl Drop for SshRemoteClient {
@@ -263,61 +264,61 @@ impl Drop for SshRemoteClient {
 }
 
 impl SshRemoteClient {
-    pub async fn new(
+    pub fn new(
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Arc<Self>> {
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
-        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        cx: &AppContext,
+    ) -> Task<Result<Model<Self>>> {
+        cx.spawn(|mut cx| async move {
+            let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
+            let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
-        let client = cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx))?;
-        let this = Arc::new(Self {
-            client,
-            connection_options: connection_options.clone(),
-            inner_state: Arc::new(Mutex::new(None)),
-            _subscriptions: Arc::new(Mutex::new(Vec::new())),
-        });
+            let this = cx.new_model(|cx| {
+                cx.on_app_quit(|this: &mut Self, _| {
+                    this.shutdown_processes();
+                    futures::future::ready(())
+                })
+                .detach();
 
-        let weak = Arc::downgrade(&this);
-        this._subscriptions
-            .lock()
-            .push(cx.update(move |cx| cx.on_app_quit(move |_| Self::on_app_quit(weak.clone())))?);
+                let client = ChannelClient::new(incoming_rx, outgoing_tx, cx);
+                Self {
+                    client,
+                    connection_options: SshConnectionOptions::default(),
+                    inner_state: Arc::new(Mutex::new(None)),
+                }
+            })?;
 
-        let inner_state = {
-            let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
-                ChannelForwarder::new(incoming_tx, outgoing_rx, cx);
+            let inner_state = {
+                let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
+                    ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
 
-            let (ssh_connection, ssh_proxy_process) =
-                Self::establish_connection(connection_options, delegate.clone(), cx).await?;
+                let (ssh_connection, ssh_proxy_process) =
+                    Self::establish_connection(connection_options, delegate.clone(), &mut cx)
+                        .await?;
 
-            let multiplex_task = Self::multiplex(
-                Arc::downgrade(&this),
-                ssh_proxy_process,
-                proxy_incoming_tx,
-                proxy_outgoing_rx,
-                cx,
-            );
+                let multiplex_task = Self::multiplex(
+                    this.downgrade(),
+                    ssh_proxy_process,
+                    proxy_incoming_tx,
+                    proxy_outgoing_rx,
+                    &mut cx,
+                );
 
-            SshRemoteClientState {
-                ssh_connection,
-                delegate,
-                forwarder: proxy,
-                multiplex_task,
-            }
-        };
+                SshRemoteClientState {
+                    ssh_connection,
+                    delegate,
+                    forwarder: proxy,
+                    multiplex_task,
+                }
+            };
 
-        this.inner_state.lock().replace(inner_state);
+            this.update(&mut cx, |this, cx| {
+                this.inner_state.lock().replace(inner_state);
+                cx.notify();
+            })?;
 
-        Ok(this)
-    }
-
-    async fn on_app_quit(this: Weak<Self>) {
-        let Some(this) = this.upgrade() else {
-            return;
-        };
-        log::info!("ssh client is shutting down");
-        this.shutdown_processes();
+            Ok(this)
+        })
     }
 
     fn shutdown_processes(&self) {
@@ -333,8 +334,8 @@ impl SshRemoteClient {
         drop(state);
     }
 
-    fn reconnect(this: Arc<Self>, cx: &mut AsyncAppContext) -> Result<()> {
-        let Some(state) = this.inner_state.lock().take() else {
+    fn reconnect(&self, cx: &mut ModelContext<Self>) -> Result<()> {
+        let Some(state) = self.inner_state.lock().take() else {
             return Err(anyhow!("reconnect is already in progress"));
         };
 
@@ -346,7 +347,7 @@ impl SshRemoteClient {
         } = state;
         drop(multiplex_task);
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let (incoming_tx, outgoing_rx) = proxy.into_channels().await;
 
             ssh_connection.master_process.kill()?;
@@ -369,24 +370,24 @@ impl SshRemoteClient {
                 delegate,
                 forwarder: proxy,
                 multiplex_task: Self::multiplex(
-                    Arc::downgrade(&this),
+                    this.clone(),
                     ssh_process,
                     proxy_incoming_tx,
                     proxy_outgoing_rx,
                     &mut cx,
                 ),
             };
-            this.inner_state.lock().replace(inner_state);
 
-            anyhow::Ok(())
+            this.update(&mut cx, |this, _| {
+                this.inner_state.lock().replace(inner_state);
+            })
         })
         .detach();
-
-        anyhow::Ok(())
+        Ok(())
     }
 
     fn multiplex(
-        this: Weak<Self>,
+        this: WeakModel<Self>,
         mut ssh_proxy_process: Child,
         incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
@@ -481,9 +482,9 @@ impl SshRemoteClient {
 
             if let Err(error) = result {
                 log::warn!("ssh io task died with error: {:?}. reconnecting...", error);
-                if let Some(this) = this.upgrade() {
-                    Self::reconnect(this, &mut cx).ok();
-                }
+                this.update(&mut cx, |this, cx| {
+                    this.reconnect(cx).ok();
+                })?;
             }
 
             Ok(())
@@ -558,18 +559,19 @@ impl SshRemoteClient {
     pub fn fake(
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (Arc<Self>, Arc<ChannelClient>) {
+    ) -> (Model<Self>, Arc<ChannelClient>) {
+        use gpui::Context;
+
         let (server_to_client_tx, server_to_client_rx) = mpsc::unbounded();
         let (client_to_server_tx, client_to_server_rx) = mpsc::unbounded();
 
         (
             client_cx.update(|cx| {
                 let client = ChannelClient::new(server_to_client_rx, client_to_server_tx, cx);
-                Arc::new(Self {
+                cx.new_model(|_| Self {
                     client,
                     connection_options: SshConnectionOptions::default(),
                     inner_state: Arc::new(Mutex::new(None)),
-                    _subscriptions: Arc::new(Mutex::new(Vec::new())),
                 })
             }),
             server_cx.update(|cx| ChannelClient::new(client_to_server_rx, server_to_client_tx, cx)),

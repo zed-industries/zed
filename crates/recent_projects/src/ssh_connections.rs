@@ -4,21 +4,21 @@ use anyhow::Result;
 use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::AppContext;
 use gpui::{
     percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
     EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
     Transformation, View,
 };
+use gpui::{AppContext, Model};
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    h_flex, v_flex, Color, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext,
-    WindowContext,
+    h_flex, v_flex, Color, FluentBuilder as _, Icon, IconName, IconSize,
+    InteractiveElement, IntoElement, Label, LabelCommon, Styled, StyledExt as _, ViewContext,
+    VisualContext, WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -376,22 +376,19 @@ pub fn connect_over_ssh(
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
     cx: &mut WindowContext,
-) -> Task<Result<Arc<SshRemoteClient>>> {
+) -> Task<Result<Model<SshRemoteClient>>> {
     let window = cx.window_handle();
     let known_password = connection_options.password.clone();
 
-    cx.spawn(|mut cx| async move {
-        remote::SshRemoteClient::new(
-            connection_options,
-            Arc::new(SshClientDelegate {
-                window,
-                ui,
-                known_password,
-            }),
-            &mut cx,
-        )
-        .await
-    })
+    remote::SshRemoteClient::new(
+        connection_options,
+        Arc::new(SshClientDelegate {
+            window,
+            ui,
+            known_password,
+        }),
+        cx,
+    )
 }
 
 pub async fn open_ssh_project(

@@ -655,7 +655,7 @@ async fn init_test(
     (project, headless, fs)
 }
 
-fn build_project(ssh: Arc<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
+fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
