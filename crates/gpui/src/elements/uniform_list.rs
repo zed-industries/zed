@@ -297,7 +297,11 @@ impl Element for UniformList {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
                             let item_origin = padded_bounds.origin
                                 + point(
-                                    scroll_offset.x + padding.left,
+                                    if can_scroll_horizontally {
+                                        scroll_offset.x + padding.left
+                                    } else {
+                                        scroll_offset.x
+                                    },
                                     item_height * ix + scroll_offset.y + padding.top,
                                 );
                             let available_width = if can_scroll_horizontally {
