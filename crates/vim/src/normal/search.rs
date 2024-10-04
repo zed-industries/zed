@@ -5,6 +5,7 @@ use gpui::{actions, impl_actions, ViewContext};
 use language::Point;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
+use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
@@ -17,15 +18,23 @@ use crate::{
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToNext {
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
     #[serde(default)]
     partial_word: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToPrev {
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
     #[serde(default)]
     partial_word: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -73,11 +82,23 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
 impl Vim {
     fn move_to_next(&mut self, action: &MoveToNext, cx: &mut ViewContext<Self>) {
-        self.move_to_internal(Direction::Next, !action.partial_word, cx)
+        self.move_to_internal(
+            Direction::Next,
+            action.case_sensitive,
+            !action.partial_word,
+            action.regex,
+            cx,
+        )
     }
 
     fn move_to_prev(&mut self, action: &MoveToPrev, cx: &mut ViewContext<Self>) {
-        self.move_to_internal(Direction::Prev, !action.partial_word, cx)
+        self.move_to_internal(
+            Direction::Prev,
+            action.case_sensitive,
+            !action.partial_word,
+            action.regex,
+            cx,
+        )
     }
 
     fn move_to_next_match(&mut self, _: &MoveToNextMatch, cx: &mut ViewContext<Self>) {
@@ -225,7 +246,9 @@ impl Vim {
     pub fn move_to_internal(
         &mut self,
         direction: Direction,
+        case_sensitive: bool,
         whole_word: bool,
+        regex: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let Some(pane) = self.pane(cx) else { return };
@@ -239,7 +262,13 @@ impl Vim {
                 return false;
             };
             let search = search_bar.update(cx, |search_bar, cx| {
-                let options = SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX;
+                let mut options = SearchOptions::NONE;
+                if case_sensitive {
+                    options |= SearchOptions::CASE_SENSITIVE;
+                }
+                if regex {
+                    options |= SearchOptions::REGEX;
+                }
                 if !search_bar.show(cx) {
                     return None;
                 }
