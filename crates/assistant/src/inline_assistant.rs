@@ -50,6 +50,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
@@ -211,14 +212,14 @@ impl InlineAssistant {
     ) {
         if let Some(telemetry) = self.telemetry.as_ref() {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                telemetry.report_assistant_event(
-                    None,
-                    telemetry_events::AssistantKind::Inline,
-                    telemetry_events::AssistantPhase::Invoked,
-                    model.telemetry_id(),
-                    None,
-                    None,
-                );
+                telemetry.report_assistant_event(AssistantEvent {
+                    conversation_id: None,
+                    kind: AssistantKind::Inline,
+                    phase: AssistantPhase::Invoked,
+                    model: model.telemetry_id(),
+                    response_latency: None,
+                    error_message: None,
+                });
             }
         }
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -763,18 +764,18 @@ impl InlineAssistant {
     pub fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
         if let Some(telemetry) = self.telemetry.as_ref() {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                telemetry.report_assistant_event(
-                    None,
-                    telemetry_events::AssistantKind::Inline,
-                    if undo {
-                        telemetry_events::AssistantPhase::Rejected
+                telemetry.report_assistant_event(AssistantEvent {
+                    conversation_id: None,
+                    kind: AssistantKind::Inline,
+                    phase: if undo {
+                        AssistantPhase::Rejected
                     } else {
-                        telemetry_events::AssistantPhase::Accepted
+                        AssistantPhase::Accepted
                     },
-                    model.telemetry_id(),
-                    None,
-                    None,
-                );
+                    model: model.telemetry_id(),
+                    response_latency: None,
+                    error_message: None,
+                });
             }
         }
         if let Some(assist) = self.assists.get(&assist_id) {
@@ -2920,14 +2921,14 @@ impl CodegenAlternative {
                             let error_message =
                                 result.as_ref().err().map(|error| error.to_string());
                             if let Some(telemetry) = telemetry {
-                                telemetry.report_assistant_event(
-                                    None,
-                                    telemetry_events::AssistantKind::Inline,
-                                    telemetry_events::AssistantPhase::Response,
-                                    model_telemetry_id,
+                                telemetry.report_assistant_event(AssistantEvent {
+                                    conversation_id: None,
+                                    kind: AssistantKind::Inline,
+                                    phase: AssistantPhase::Response,
+                                    model: model_telemetry_id,
                                     response_latency,
                                     error_message,
-                                );
+                                });
                             }
 
                             result?;
