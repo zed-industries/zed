@@ -2133,7 +2133,11 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
-                        let language_name = this.buffer.read(cx).language().map(|l| l.name());
+                        let language_name = this
+                            .buffer
+                            .read(cx)
+                            .language()
+                            .map(|language| language.name());
                         telemetry.report_assistant_event(AssistantEvent {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,

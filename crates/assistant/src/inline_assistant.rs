@@ -217,7 +217,7 @@ impl InlineAssistant {
                     .buffer()
                     .read(cx)
                     .language(cx)
-                    .map(|l| l.name());
+                    .map(|language| language.name());
                 telemetry.report_assistant_event(AssistantEvent {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
@@ -779,7 +779,7 @@ impl InlineAssistant {
                             .buffer()
                             .read(cx)
                             .language(cx)
-                            .map(|l| l.name())
+                            .map(|language| language.name())
                     });
                     telemetry.report_assistant_event(AssistantEvent {
                         conversation_id: None,
@@ -2832,7 +2832,11 @@ impl CodegenAlternative {
         }
 
         let telemetry = self.telemetry.clone();
-        let language_name = self.buffer.read(cx).language(cx).map(|l| l.name());
+        let language_name = self
+            .buffer
+            .read(cx)
+            .language(cx)
+            .map(|language| language.name());
 
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
