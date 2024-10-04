@@ -18,7 +18,6 @@ type NodeMeasureFn =
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<()>,
     styles: FxHashMap<LayoutId, Style>,
-    children_to_parents: FxHashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
     nodes_to_measure: FxHashMap<LayoutId, NodeMeasureFn>,
@@ -31,7 +30,6 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy: TaffyTree::new(),
             styles: FxHashMap::default(),
-            children_to_parents: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             nodes_to_measure: FxHashMap::default(),
@@ -40,7 +38,6 @@ impl TaffyLayoutEngine {
 
     pub fn clear(&mut self) {
         self.taffy.clear();
-        self.children_to_parents.clear();
         self.absolute_layout_bounds.clear();
         self.computed_layouts.clear();
         self.nodes_to_measure.clear();
@@ -68,8 +65,6 @@ impl TaffyLayoutEngine {
                 })
                 .expect(EXPECT_MESSAGE)
                 .into();
-            self.children_to_parents
-                .extend(children.iter().map(|child_id| (*child_id, parent_id)));
             parent_id
         };
         self.styles.insert(layout_id, style);
@@ -209,8 +204,8 @@ impl TaffyLayoutEngine {
             size: layout.size.into(),
         };
 
-        if let Some(parent_id) = self.children_to_parents.get(&id).copied() {
-            let parent_bounds = self.layout_bounds(parent_id);
+        if let Some(parent_id) = self.taffy.parent(id.0) {
+            let parent_bounds = self.layout_bounds(parent_id.into());
             bounds.origin += parent_bounds.origin;
         }
         self.absolute_layout_bounds.insert(id, bounds);
