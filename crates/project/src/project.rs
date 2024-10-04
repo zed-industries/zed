@@ -565,7 +565,7 @@ impl Project {
         BufferStore::init(&client);
         LspStore::init(&client);
         SettingsObserver::init(&client);
-        TaskStore::init(&client);
+        TaskStore::init(&client, cx);
     }
 
     pub fn local(
@@ -790,7 +790,7 @@ impl Project {
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
-            TaskStore::init(&client);
+            TaskStore::init(&client, cx);
 
             this
         })

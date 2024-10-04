@@ -1,8 +1,12 @@
-use std::path::PathBuf;
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Context as _;
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, Location,
@@ -11,13 +15,14 @@ use rpc::{
     proto::{self, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
-use task::{TaskContext, TaskVariables, VariableName};
+use settings::{RawTaskTemplates, SettingsStore, TaskSettingsStore, WorktreeId};
+use task::{TaskContext, TaskTemplate, TaskVariables, VariableName};
 use text::BufferId;
 use util::{debug_panic, ResultExt};
 
 use crate::{
     buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
-    ProjectEnvironment,
+    ProjectEnvironment, TaskSourceKind,
 };
 
 /// TODO kb docs
@@ -40,8 +45,117 @@ pub enum TaskStore {
     Empty,
 }
 
+#[derive(Debug, Default)]
+pub(super) struct TaskSettings {
+    global_tasks: Vec<TaskTemplate>,
+    worktree_tasks: HashMap<WorktreeId, Vec<(Arc<Path>, TaskTemplate)>>,
+}
+
+impl TaskSettingsStore for TaskSettings {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn update_task_templates<'a>(
+        &'a mut self,
+        worktree: Option<WorktreeId>,
+        templates: RawTaskTemplates<'a>,
+    ) {
+        let mut bad_templates = 0;
+
+        match worktree {
+            Some(worktree) => {
+                if templates.worktree.is_empty() {
+                    self.worktree_tasks.remove(&worktree);
+                } else {
+                    *self.worktree_tasks.entry(worktree).or_default() =
+                        templates
+                            .worktree
+                            .into_iter()
+                            .filter_map(|(directory_path, raw_template)| {
+                                match serde_json::from_value::<TaskTemplate>(raw_template.clone())
+                                    .log_err()
+                                {
+                                    Some(template) => Some((Arc::clone(directory_path), template)),
+                                    None => {
+                                        bad_templates += 1;
+                                        None
+                                    }
+                                }
+                            })
+                            .collect();
+                }
+            }
+            None => {
+                self.global_tasks = templates
+                    .global
+                    .into_iter()
+                    .filter_map(|raw_template| {
+                        match serde_json::from_value::<TaskTemplate>(raw_template.clone()).log_err()
+                        {
+                            Some(template) => Some(template),
+                            None => {
+                                bad_templates += 1;
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+            }
+        }
+    }
+}
+
+impl TaskSettings {
+    /// Returns every user task template defined globally.
+    /// If a worktree is provided, local, worktree-specific tasks will be returned as well.
+    /// No deduplication or sorting is performed.
+    pub(super) fn task_templates(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> impl Iterator<Item = (TaskSourceKind, TaskTemplate)> + '_ {
+        self.global_tasks
+            .clone()
+            .into_iter()
+            .map(|template| {
+                (
+                    TaskSourceKind::AbsPath {
+                        id_base: Cow::Borrowed("global tasks.json"),
+                        abs_path: paths::tasks_file().clone(),
+                    },
+                    template,
+                )
+            })
+            .chain(worktree.into_iter().flat_map(|worktree| {
+                self.worktree_tasks
+                    .get(&worktree)
+                    .cloned()
+                    .into_iter()
+                    .flat_map(move |templates| {
+                        templates
+                            .into_iter()
+                            .map(move |(directory_path, template)| {
+                                (
+                                    TaskSourceKind::Worktree {
+                                        id: worktree,
+                                        local_path: directory_path.to_path_buf(),
+                                        id_base: Cow::Owned(format!(
+                                        "worktree {worktree} tasks.json at path {directory_path:?}"
+                                    )),
+                                    },
+                                    template,
+                                )
+                            })
+                    })
+            }))
+    }
+}
+
 impl TaskStore {
-    pub fn init(client: &AnyProtoClient) {
+    pub fn init(client: &AnyProtoClient, cx: &mut AppContext) {
+        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+            settings_store.set_task_settings_store(Box::new(TaskSettings::default()), cx);
+        });
         client.add_model_request_handler(Self::handle_task_context_for_location);
     }
 

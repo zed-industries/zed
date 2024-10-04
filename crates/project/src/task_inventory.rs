@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{btree_map, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{btree_map, BTreeMap, HashMap, VecDeque};
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
@@ -22,10 +22,12 @@ use task::{
     TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix, ResultExt};
+use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
+
+use super::task_store::TaskSettings;
 
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
@@ -341,72 +343,15 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
-    // TODO kb this should be summarized at a SettingsStore level instead, can be very slow now and is used to test things
-    fn templates_from_settings(
-        &self,
+    fn templates_from_settings<'a>(
+        &'a self,
         worktree: Option<WorktreeId>,
-        cx: &AppContext,
-    ) -> impl Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        let raw_templates = cx.global::<SettingsStore>().get_task_templates(worktree);
-        let mut templates =
-            Vec::with_capacity(raw_templates.global.len() + raw_templates.worktree.len());
-        let mut unique_labels = HashSet::default();
-
-        let mut bad_templates = 0;
-        // Most-specific tasks override least-specific ones in case of label conflicts.
-        if let Some(worktree) = worktree {
-            for (directory_path, worktree_template) in raw_templates.worktree {
-                if let Some(template) =
-                    serde_json::from_value::<TaskTemplate>(worktree_template.clone()).log_err()
-                {
-                    if unique_labels.insert(template.label.clone()) {
-                        templates.push((
-                            TaskSourceKind::Worktree {
-                                id: worktree,
-                                local_path: directory_path.to_path_buf(),
-                                id_base: Cow::Owned(
-                                    format!("local tasks for worktree {worktree} at path {directory_path:?}"),
-                                ),
-                            },
-                            template,
-                        ));
-                    }
-                } else {
-                    bad_templates += 1;
-                }
-            }
-            // TODO kb pop-ups instead?
-            if bad_templates > 0 {
-                log::error!("Failed to parse {bad_templates} worktree templates");
-            }
-        }
-
-        bad_templates = 0;
-        let local_tasks_file = paths::tasks_file();
-        for global_template in raw_templates.global {
-            if let Some(template) =
-                serde_json::from_value::<TaskTemplate>(global_template.clone()).log_err()
-            {
-                if unique_labels.insert(template.label.clone()) {
-                    templates.push((
-                        TaskSourceKind::AbsPath {
-                            abs_path: local_tasks_file.clone(),
-                            id_base: Cow::Owned(format!(
-                                "local absolute tasks at path {local_tasks_file:?}",
-                            )),
-                        },
-                        template,
-                    ));
-                }
-            } else {
-                bad_templates += 1;
-            }
-        }
-        if bad_templates > 0 {
-            log::error!("Failed to parse {bad_templates} global templates");
-        }
-
-        templates.into_iter()
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
+        cx.global::<SettingsStore>()
+            .get_task_settings_store::<TaskSettings>()
+            .into_iter()
+            .flat_map(move |settings| settings.task_templates(worktree))
     }
 }
 
