@@ -66,7 +66,7 @@ fn start_server(
     })
     .detach();
 
-    cx.background_executor().spawn(async move {
+    cx.spawn(|cx| async move {
         let mut stdin_incoming = stdin_listener.incoming();
         let mut stdout_incoming = stdout_listener.incoming();
 
@@ -83,6 +83,12 @@ fn start_server(
                 }
                 _ = futures::FutureExt::fuse(smol::Timer::after(IDLE_TIMEOUT)) => {
                     log::warn!("server: timed out waiting for new connections after {:?}. exiting.", IDLE_TIMEOUT);
+                    cx.update(|cx| {
+                        // TODO: This is a hack, because in a headless project, shutdown isn't executed
+                        // when calling quit, but it should be.
+                        cx.shutdown();
+                        cx.quit();
+                    })?;
                     break;
                 }
                 _ = app_quit_rx.next().fuse() => {

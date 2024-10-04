@@ -553,6 +553,7 @@ impl SshRemoteClient {
     pub fn is_reconnect_underway(&self) -> bool {
         maybe!({ Some(self.inner_state.try_lock()?.is_none()) }).unwrap_or_default()
     }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(
         client_cx: &mut gpui::TestAppContext,

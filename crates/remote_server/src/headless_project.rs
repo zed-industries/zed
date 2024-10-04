@@ -345,7 +345,7 @@ impl HeadlessProject {
         cx.spawn(|cx| async move {
             cx.update(|cx| {
                 // TODO: This is a hack, because in a headless project, shutdown isn't executed
-                // when callig quit, but it should be.
+                // when calling quit, but it should be.
                 cx.shutdown();
                 cx.quit();
             })
