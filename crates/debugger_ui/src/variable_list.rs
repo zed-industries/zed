@@ -366,9 +366,9 @@ impl VariableList {
                 "Copy name",
                 None,
                 cx.handler_for(&this, {
-                    let variable = variable.clone();
+                    let variable_name = variable.name.clone();
                     move |_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(variable.name.clone()))
+                        cx.write_to_clipboard(ClipboardItem::new_string(variable_name.clone()))
                     }
                 }),
             )
@@ -376,11 +376,25 @@ impl VariableList {
                 "Copy value",
                 None,
                 cx.handler_for(&this, {
-                    let variable = variable.clone();
+                    let variable_value = variable.value.clone();
                     move |_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(variable.value.clone()))
+                        cx.write_to_clipboard(ClipboardItem::new_string(variable_value.clone()))
                     }
                 }),
+            )
+            .when_some(
+                variable.memory_reference.clone(),
+                |menu, memory_reference| {
+                    menu.entry(
+                        "Copy memory reference",
+                        None,
+                        cx.handler_for(&this, move |_, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                memory_reference.clone(),
+                            ))
+                        }),
+                    )
+                },
             )
             .when(support_set_variable, move |menu| {
                 let variable = variable.clone();
