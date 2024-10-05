@@ -1,5 +1,5 @@
 [package]
-name = "zed_protobuf"
+name = "zed_proto"
 version = "0.0.1"
 edition = "2021"
 publish = false
