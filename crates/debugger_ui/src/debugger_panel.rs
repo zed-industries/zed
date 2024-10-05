@@ -6,7 +6,7 @@ use dap::debugger_settings::DebuggerSettings;
 use dap::messages::{Events, Message};
 use dap::requests::{Request, StartDebugging};
 use dap::{
-    Capabilities, ContinuedEvent, ExitedEvent, OutputEvent, StackFrame, StoppedEvent,
+    Capabilities, ContinuedEvent, ExitedEvent, ModuleEvent, OutputEvent, StackFrame, StoppedEvent,
     TerminatedEvent, ThreadEvent, ThreadEventReason,
 };
 use gpui::{
@@ -36,6 +36,7 @@ pub enum DebugPanelEvent {
     Thread((DebugAdapterClientId, ThreadEvent)),
     Continued((DebugAdapterClientId, ContinuedEvent)),
     Output((DebugAdapterClientId, OutputEvent)),
+    Module((DebugAdapterClientId, ModuleEvent)),
     ClientStopped(DebugAdapterClientId),
 }
 
@@ -243,7 +244,7 @@ impl DebugPanel {
             Events::Thread(event) => self.handle_thread_event(&client_id, event, cx),
             Events::Output(event) => self.handle_output_event(&client_id, event, cx),
             Events::Breakpoint(_) => {}
-            Events::Module(_) => {}
+            Events::Module(event) => self.handle_module_event(&client_id, event, cx),
             Events::LoadedSource(_) => {}
             Events::Capabilities(_) => {}
             Events::Memory(_) => {}
@@ -470,6 +471,15 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) {
         cx.emit(DebugPanelEvent::Output((*client_id, event.clone())));
+    }
+
+    fn handle_module_event(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        event: &ModuleEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        cx.emit(DebugPanelEvent::Module((*client_id, event.clone())));
     }
 
     fn render_did_not_stop_warning(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {

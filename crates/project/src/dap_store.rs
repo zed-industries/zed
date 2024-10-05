@@ -5,18 +5,18 @@ use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::messages::Message;
 use dap::requests::{
     Attach, Completions, ConfigurationDone, Continue, Disconnect, Evaluate, Initialize, Launch,
-    Next, Pause, Scopes, SetBreakpoints, SetExpression, SetVariable, StackTrace, StepIn, StepOut,
-    Terminate, TerminateThreads, Variables,
+    Modules, Next, Pause, Scopes, SetBreakpoints, SetExpression, SetVariable, StackTrace, StepIn,
+    StepOut, Terminate, TerminateThreads, Variables,
 };
 use dap::{
     AttachRequestArguments, Capabilities, CompletionItem, CompletionsArguments,
     ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, EvaluateArguments,
     EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
-    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, NextArguments, PauseArguments,
-    Scope, ScopesArguments, SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments,
-    Source, SourceBreakpoint, StackFrame, StackTraceArguments, StepInArguments, StepOutArguments,
-    SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
-    VariablesArguments,
+    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, Module, ModulesArguments,
+    NextArguments, PauseArguments, Scope, ScopesArguments, SetBreakpointsArguments,
+    SetExpressionArguments, SetVariableArguments, Source, SourceBreakpoint, StackFrame,
+    StackTraceArguments, StepInArguments, StepOutArguments, SteppingGranularity,
+    TerminateArguments, TerminateThreadsArguments, Variable, VariablesArguments,
 };
 use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Buffer, BufferSnapshot};
@@ -313,6 +313,32 @@ impl DapStore {
             }
 
             Ok(())
+        })
+    }
+
+    pub fn modules(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Module>>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Client was not found")));
+        };
+
+        let capabilities = self.capabilities_by_id(client_id);
+
+        if !capabilities.supports_modules_request.unwrap_or_default() {
+            return Task::ready(Ok(Vec::default()));
+        }
+
+        cx.spawn(|_, _| async move {
+            Ok(client
+                .request::<Modules>(ModulesArguments {
+                    start_module: None,
+                    module_count: None,
+                })
+                .await?
+                .modules)
         })
     }
 

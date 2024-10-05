@@ -2,13 +2,14 @@ use std::path::Path;
 
 use crate::console::Console;
 use crate::debugger_panel::{DebugPanel, DebugPanelEvent, ThreadState};
+use crate::module_list::ModuleList;
 use crate::variable_list::VariableList;
 
 use dap::client::{DebugAdapterClientId, ThreadStatus};
 use dap::debugger_settings::DebuggerSettings;
 use dap::{
-    Capabilities, ContinuedEvent, OutputEvent, OutputEventCategory, StackFrame, StoppedEvent,
-    ThreadEvent,
+    Capabilities, ContinuedEvent, ModuleEvent, OutputEvent, OutputEventCategory, StackFrame,
+    StoppedEvent, ThreadEvent,
 };
 use editor::Editor;
 use gpui::{
@@ -28,9 +29,10 @@ pub enum Event {
     Close,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum ThreadItem {
     Variables,
+    Modules,
     Console,
     Output,
 }
@@ -43,6 +45,7 @@ pub struct DebugPanelItem {
     stack_frame_list: ListState,
     output_editor: View<Editor>,
     current_stack_frame_id: u64,
+    module_list: View<ModuleList>,
     client_kind: DebugAdapterKind,
     active_thread_item: ThreadItem,
     workspace: WeakView<Workspace>,
@@ -76,6 +79,9 @@ impl DebugPanelItem {
                 cx,
             )
         });
+
+        let module_list = cx.new_view(|cx| ModuleList::new(dap_store.clone(), &client_id, cx));
+
         let console = cx.new_view(|cx| {
             Console::new(
                 client_id,
@@ -112,6 +118,9 @@ impl DebugPanelItem {
                     DebugPanelEvent::Output((client_id, event)) => {
                         this.handle_output_event(client_id, event, cx)
                     }
+                    DebugPanelEvent::Module((client_id, event)) => {
+                        this.handle_module_event(client_id, event, cx)
+                    }
                     DebugPanelEvent::ClientStopped(client_id) => {
                         this.handle_client_stopped_event(client_id, cx)
                     }
@@ -144,6 +153,7 @@ impl DebugPanelItem {
             thread_id,
             dap_store,
             workspace,
+            module_list,
             thread_state,
             focus_handle,
             output_editor,
@@ -263,6 +273,21 @@ impl DebugPanelItem {
                 });
             }
         }
+    }
+
+    fn handle_module_event(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        event: &ModuleEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.should_skip_event(client_id, self.thread_id) {
+            return;
+        }
+
+        self.module_list.update(cx, |variable_list, cx| {
+            variable_list.on_module_event(event, cx);
+        });
     }
 
     fn handle_client_stopped_event(
@@ -462,6 +487,28 @@ impl DebugPanelItem {
                     .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
             )
             .into_any()
+    }
+
+    fn render_entry_button(
+        &self,
+        label: &SharedString,
+        thread_item: ThreadItem,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
+        div()
+            .id(label.clone())
+            .px_2()
+            .py_1()
+            .cursor_pointer()
+            .border_b_2()
+            .when(self.active_thread_item == thread_item, |this| {
+                this.border_color(cx.theme().colors().border)
+            })
+            .child(Button::new(label.clone(), label.clone()))
+            .on_click(cx.listener(move |this, _, _| {
+                this.active_thread_item = thread_item.clone();
+            }))
+            .into_any_element()
     }
 
     pub fn continue_thread(&mut self, cx: &mut ViewContext<Self>) {
@@ -717,54 +764,37 @@ impl Render for DebugPanelItem {
                             .border_b_1()
                             .w_full()
                             .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                div()
-                                    .id("variables")
-                                    .px_2()
-                                    .py_1()
-                                    .cursor_pointer()
-                                    .border_b_2()
-                                    .when(*active_thread_item == ThreadItem::Variables, |this| {
-                                        this.border_color(cx.theme().colors().border)
-                                    })
-                                    .child(Button::new("variables-button", "Variables"))
-                                    .on_click(cx.listener(|this, _, _| {
-                                        this.active_thread_item = ThreadItem::Variables;
-                                    })),
+                            .child(self.render_entry_button(
+                                &SharedString::from("Variables"),
+                                ThreadItem::Variables,
+                                cx,
+                            ))
+                            .when(
+                                capabilities.supports_modules_request.unwrap_or_default(),
+                                |this| {
+                                    this.child(self.render_entry_button(
+                                        &SharedString::from("Modules"),
+                                        ThreadItem::Modules,
+                                        cx,
+                                    ))
+                                },
                             )
-                            .child(
-                                div()
-                                    .id("console")
-                                    .px_2()
-                                    .py_1()
-                                    .cursor_pointer()
-                                    .border_b_2()
-                                    .when(*active_thread_item == ThreadItem::Console, |this| {
-                                        this.border_color(cx.theme().colors().border)
-                                    })
-                                    .child(Button::new("console-button", "Console"))
-                                    .on_click(cx.listener(|this, _, _| {
-                                        this.active_thread_item = ThreadItem::Console;
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("output")
-                                    .px_2()
-                                    .py_1()
-                                    .cursor_pointer()
-                                    .border_b_2()
-                                    .when(*active_thread_item == ThreadItem::Output, |this| {
-                                        this.border_color(cx.theme().colors().border)
-                                    })
-                                    .child(Button::new("output", "Output"))
-                                    .on_click(cx.listener(|this, _, _| {
-                                        this.active_thread_item = ThreadItem::Output;
-                                    })),
-                            ),
+                            .child(self.render_entry_button(
+                                &SharedString::from("Console"),
+                                ThreadItem::Console,
+                                cx,
+                            ))
+                            .child(self.render_entry_button(
+                                &SharedString::from("Output"),
+                                ThreadItem::Output,
+                                cx,
+                            )),
                     )
                     .when(*active_thread_item == ThreadItem::Variables, |this| {
                         this.size_full().child(self.variable_list.clone())
+                    })
+                    .when(*active_thread_item == ThreadItem::Modules, |this| {
+                        this.size_full().child(self.module_list.clone())
                     })
                     .when(*active_thread_item == ThreadItem::Output, |this| {
                         this.child(self.output_editor.clone())

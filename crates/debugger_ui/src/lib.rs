@@ -11,6 +11,7 @@ use workspace::{
 mod console;
 pub mod debugger_panel;
 mod debugger_panel_item;
+mod module_list;
 mod variable_list;
 
 pub fn init(cx: &mut AppContext) {
