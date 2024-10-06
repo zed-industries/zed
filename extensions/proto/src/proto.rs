@@ -2,7 +2,7 @@ use zed_extension_api::{self as zed, settings::LspSettings, Result};
 
 const PROTOBUF_LANGUAGE_SERVER_NAME: &str = "protobuf-language-server";
 
-struct ProtobufLangageServerBinary {
+struct ProtobufLanguageServerBinary {
     path: String,
     args: Option<Vec<String>>,
 }
@@ -14,7 +14,7 @@ impl ProtobufExtension {
         &self,
         _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<ProtobufLangageServerBinary> {
+    ) -> Result<ProtobufLanguageServerBinary> {
         let binary_settings = LspSettings::for_worktree("protobuf-language-server", worktree)
             .ok()
             .and_then(|lsp_settings| lsp_settings.binary);
@@ -23,14 +23,14 @@ impl ProtobufExtension {
             .and_then(|binary_settings| binary_settings.arguments.clone());
 
         if let Some(path) = binary_settings.and_then(|binary_settings| binary_settings.path) {
-            return Ok(ProtobufLangageServerBinary {
+            return Ok(ProtobufLanguageServerBinary {
                 path,
                 args: binary_args,
             });
         }
 
         if let Some(path) = worktree.which(PROTOBUF_LANGUAGE_SERVER_NAME) {
-            return Ok(ProtobufLangageServerBinary {
+            return Ok(ProtobufLanguageServerBinary {
                 path,
                 args: binary_args,
             });
