@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{
     div, rems, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, WindowContext,
 };

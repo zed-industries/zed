@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use crate::{
     h_flex, prelude::*, v_flex, Icon, IconName, KeyBinding, Label, List, ListItem, ListSeparator,
     ListSubHeader, WithRemSize,

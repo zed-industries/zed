@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use chrono::{DateTime, Local, NaiveDateTime};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

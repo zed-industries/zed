@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{hsla, point, px, BoxShadow};
 use smallvec::{smallvec, SmallVec};
 

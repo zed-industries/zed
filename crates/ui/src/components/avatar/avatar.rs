@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use crate::prelude::*;
 
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};

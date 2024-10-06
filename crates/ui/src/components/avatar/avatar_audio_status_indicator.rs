@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::AnyView;
 
 use crate::prelude::*;

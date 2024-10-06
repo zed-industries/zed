@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{px, rems, Pixels, Rems, WindowContext};
 use settings::Settings;
 use theme::{ThemeSettings, UiDensity};
