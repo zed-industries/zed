@@ -89,7 +89,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
       perl-File-Copy
       mold
     )
-  elif grep grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release; then
+  elif grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release; then
     deps+=( perl-interpreter )
   fi
 
