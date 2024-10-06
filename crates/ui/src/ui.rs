@@ -17,10 +17,8 @@ mod styles;
 mod tests;
 mod traits;
 pub mod utils;
-mod with_rem_size;
 
 pub use components::*;
 pub use prelude::*;
 pub use styled_ext::*;
 pub use styles::*;
-pub use with_rem_size::*;
