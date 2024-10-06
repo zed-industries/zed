@@ -320,7 +320,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Result<TerminalBuilder> {
         // TODO: Properly set the current locale,
         env.entry("LC_ALL".to_string())
@@ -455,7 +455,7 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(mut self, cx: &ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
             while let Some(event) = self.events_rx.next().await {
@@ -1280,7 +1280,7 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&mut self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
+    fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
         let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
@@ -1351,12 +1351,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(
-        &mut self,
-        e: &MouseUpEvent,
-        origin: Point<Pixels>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn mouse_up(&mut self, e: &MouseUpEvent, origin: Point<Pixels>, cx: &ModelContext<Self>) {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - origin;
@@ -1458,9 +1453,9 @@ impl Terminal {
     }
 
     pub fn find_matches(
-        &mut self,
+        &self,
         mut searcher: RegexSearch,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
         cx.background_executor().spawn(async move {
@@ -1530,7 +1525,7 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn wait_for_completed_task(&self, cx: &mut AppContext) -> Task<()> {
+    pub fn wait_for_completed_task(&self, cx: &AppContext) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let mut completion_receiver = task.completion_rx.clone();

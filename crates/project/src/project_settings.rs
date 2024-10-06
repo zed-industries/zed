@@ -321,7 +321,7 @@ impl SettingsObserver {
     pub async fn handle_update_user_settings(
         _: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateUserSettings>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> anyhow::Result<()> {
         cx.update_global(move |settings_store: &mut SettingsStore, cx| {
             settings_store.set_user_settings(&envelope.payload.content, cx)
