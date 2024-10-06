@@ -549,7 +549,7 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|_cx| {
-            let mut buffer = Buffer::remote(
+            let buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
                 capability,

@@ -347,7 +347,7 @@ pub fn monitor_main_thread_hangs(
 fn upload_panics_and_crashes(
     http: Arc<HttpClientWithUrl>,
     installation_id: Option<String>,
-    cx: &mut AppContext,
+    cx: &AppContext,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()

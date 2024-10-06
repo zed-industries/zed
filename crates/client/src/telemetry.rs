@@ -288,7 +288,7 @@ impl Telemetry {
         system_id: Option<String>,
         installation_id: Option<String>,
         session_id: String,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) {
         let mut state = self.state.lock();
         state.system_id = system_id.map(|id| id.into());
