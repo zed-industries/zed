@@ -6,10 +6,10 @@
 //!
 
 mod components;
-mod path_str_tests;
 pub mod prelude;
 mod styled_ext;
 mod styles;
+mod tests;
 mod traits;
 pub mod utils;
 mod with_rem_size;
