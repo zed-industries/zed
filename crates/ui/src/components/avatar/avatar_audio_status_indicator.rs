@@ -1,14 +1,18 @@
-#![allow(missing_docs)]
 use gpui::AnyView;
 
 use crate::prelude::*;
 
+/// The audio status of an player, for use in representing
+/// their status visually on their avatar.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum AudioStatus {
+    /// The player's microphone is muted.
     Muted,
+    /// The player's microphone is muted, and collaboration audio is disabled.
     Deafened,
 }
 
+/// An indicator that shows the audio status of a player.
 #[derive(IntoElement)]
 pub struct AvatarAudioStatusIndicator {
     audio_status: AudioStatus,
@@ -16,6 +20,7 @@ pub struct AvatarAudioStatusIndicator {
 }
 
 impl AvatarAudioStatusIndicator {
+    /// Creates a new `AvatarAudioStatusIndicator`
     pub fn new(audio_status: AudioStatus) -> Self {
         Self {
             audio_status,
@@ -23,6 +28,7 @@ impl AvatarAudioStatusIndicator {
         }
     }
 
+    /// Sets the tooltip for the indicator.
     pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
