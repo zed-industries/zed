@@ -14864,6 +14864,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_proto"
+version = "0.1.0"
+dependencies = [
+ "zed_extension_api 0.1.0",
+]
+
+[[package]]
 name = "zed_purescript"
 version = "0.0.1"
 dependencies = [
