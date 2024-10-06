@@ -356,6 +356,9 @@
     },
     "vue": {
       "icon": "icons/file_icons/vue.svg"
+    },
+    "zig": {
+      "icon": "icons/file_icons/zig.svg"
     }
   }
 }
