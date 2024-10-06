@@ -1,4 +1,4 @@
-// We need to test [ui_macros::DerivePathStr] here as we can't envoke it
+// We need to test [ui_macros::DerivePathStr] here as we can't invoke it
 // in the `ui_macros` crate.
 #[cfg(test)]
 mod tests {

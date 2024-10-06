@@ -17,7 +17,7 @@ pub enum ElevationIndex {
     Surface,
     /// A surface that is elevated above the primary surface. but below washes, models, and dragged elements.
     ElevatedSurface,
-    /// A surface that is above all non-modal surfaces, and seperates the app from focused intents, like dialogs, alerts, modals, etc.
+    /// A surface that is above all non-modal surfaces, and separates the app from focused intents, like dialogs, alerts, modals, etc.
     Wash,
     /// A surface above the [ElevationIndex::Wash] that is used for dialogs, alerts, modals, etc.
     ModalSurface,
