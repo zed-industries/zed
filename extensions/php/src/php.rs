@@ -1,5 +1,8 @@
 mod language_servers;
 
+use zed::lsp::CompletionKind;
+use zed::settings::LspSettings;
+use zed::{CodeLabel, CodeLabelSpan};
 use zed_extension_api::{self as zed, serde_json, LanguageServerId, Result};
 
 use crate::language_servers::{Intelephense, Phpactor};
@@ -52,6 +55,19 @@ impl zed::Extension for PhpExtension {
         }
 
         Ok(None)
+    }
+
+    fn label_for_completion(
+        &self,
+        language_server_id: &zed::LanguageServerId,
+        completion: zed::lsp::Completion,
+    ) -> Option<CodeLabel> {
+        match language_server_id.as_ref() {
+            Intelephense::LANGUAGE_SERVER_ID => {
+                self.intelephense.as_ref()?.label_for_completion(completion)
+            }
+            _ => None,
+        }
     }
 }
 
