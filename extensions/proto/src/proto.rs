@@ -15,7 +15,7 @@ impl ProtobufExtension {
         _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<ProtobufLspBinary> {
-        let binary_settings = LspSettings::for_worktree("omnisharp", worktree)
+        let binary_settings = LspSettings::for_worktree("protobuf-language-server", worktree)
             .ok()
             .and_then(|lsp_settings| lsp_settings.binary);
         let binary_args = binary_settings
