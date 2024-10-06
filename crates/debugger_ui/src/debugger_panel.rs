@@ -6,8 +6,8 @@ use dap::debugger_settings::DebuggerSettings;
 use dap::messages::{Events, Message};
 use dap::requests::{Request, StartDebugging};
 use dap::{
-    Capabilities, ContinuedEvent, ExitedEvent, ModuleEvent, OutputEvent, StackFrame, StoppedEvent,
-    TerminatedEvent, ThreadEvent, ThreadEventReason,
+    Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent, ModuleEvent, OutputEvent,
+    StackFrame, StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
 };
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
@@ -38,6 +38,7 @@ pub enum DebugPanelEvent {
     Output((DebugAdapterClientId, OutputEvent)),
     Module((DebugAdapterClientId, ModuleEvent)),
     ClientStopped(DebugAdapterClientId),
+    CapabilitiesChanged(DebugAdapterClientId),
 }
 
 actions!(debug_panel, [ToggleFocus]);
@@ -246,7 +247,9 @@ impl DebugPanel {
             Events::Breakpoint(_) => {}
             Events::Module(event) => self.handle_module_event(&client_id, event, cx),
             Events::LoadedSource(_) => {}
-            Events::Capabilities(_) => {}
+            Events::Capabilities(event) => {
+                self.handle_capabilities_changed_event(client_id, event, cx);
+            }
             Events::Memory(_) => {}
             Events::Process(_) => {}
             Events::ProgressEnd(_) => {}
@@ -267,6 +270,8 @@ impl DebugPanel {
             self.dap_store.update(cx, |store, cx| {
                 store.merge_capabilities_for_client(&client_id, capabilities, cx);
             });
+
+            cx.emit(DebugPanelEvent::CapabilitiesChanged(*client_id));
         }
 
         let send_breakpoints_task = self.workspace.update(cx, |workspace, cx| {
@@ -480,6 +485,19 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) {
         cx.emit(DebugPanelEvent::Module((*client_id, event.clone())));
+    }
+
+    fn handle_capabilities_changed_event(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        event: &CapabilitiesEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.dap_store.update(cx, |store, cx| {
+            store.merge_capabilities_for_client(client_id, &event.capabilities, cx);
+        });
+
+        cx.emit(DebugPanelEvent::CapabilitiesChanged(*client_id));
     }
 
     fn render_did_not_stop_warning(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {

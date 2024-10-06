@@ -130,6 +130,9 @@ impl DebugPanelItem {
                     DebugPanelEvent::Exited(client_id) | DebugPanelEvent::Terminated(client_id) => {
                         this.handle_client_exited_and_terminated_event(client_id, cx);
                     }
+                    DebugPanelEvent::CapabilitiesChanged(client_id) => {
+                        this.handle_capabilities_changed_event(client_id, cx);
+                    }
                 };
             }
         })];
@@ -316,6 +319,18 @@ impl DebugPanelItem {
         self.update_thread_state_status(ThreadStatus::Exited, cx);
 
         cx.emit(Event::Close);
+    }
+
+    fn handle_capabilities_changed_event(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if Self::should_skip_event(self, client_id, self.thread_id) {
+            return;
+        }
+
+        cx.notify();
     }
 
     pub fn client_id(&self) -> DebugAdapterClientId {
