@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::{rems, Length, Rems, WindowContext};
 
 /// The base size of a rem, in pixels.
