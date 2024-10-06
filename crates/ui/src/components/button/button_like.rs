@@ -456,7 +456,7 @@ impl ButtonCommon for ButtonLike {
     }
 
     fn layer(mut self, elevation: ElevationIndex) -> Self {
-        self.layer = Some(elevation.into());
+        self.layer = Some(elevation);
         self
     }
 }
