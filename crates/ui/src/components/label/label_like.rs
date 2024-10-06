@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled, UnderlineStyle};
 use settings::Settings;
 use smallvec::SmallVec;
