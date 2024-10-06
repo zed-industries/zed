@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use crate::{
     h_flex, v_flex, Clickable, Color, Headline, HeadlineSize, IconButton, IconButtonShape,
     IconName, Label, LabelCommon, LabelSize, Spacing,

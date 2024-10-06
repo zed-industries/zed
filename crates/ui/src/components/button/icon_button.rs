@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::{AnyView, DefiniteLength};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
