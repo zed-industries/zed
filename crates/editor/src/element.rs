@@ -688,8 +688,14 @@ impl EditorElement {
         }
 
         let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
-        let left = text_bounds.origin.x + horizontal_margin;
-        let right = text_bounds.upper_right().x - horizontal_margin;
+
+        // Testing bounds for scroll
+        // [TODO] Add a configuration setting for this
+        let scroll_space: f32 = 150.0;
+
+        let left = text_bounds.origin.x + horizontal_margin + Pixels(scroll_space);
+        let right = text_bounds.upper_right().x - horizontal_margin - Pixels(scroll_space);
+
         if event.position.x < left {
             scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
         }
