@@ -444,7 +444,7 @@
     }
   },
   {
-    "context": "Editor && !Terminal",
+    "context": "Workspace && !Terminal",
     "bindings": {
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
