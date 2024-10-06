@@ -5,7 +5,7 @@
 
 mod components;
 mod key_bindings;
-mod path_str;
+mod path_str_tests;
 pub mod prelude;
 mod styled_ext;
 mod styles;
