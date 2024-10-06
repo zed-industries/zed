@@ -4,7 +4,6 @@
 //!
 
 mod components;
-mod key_bindings;
 mod path_str_tests;
 pub mod prelude;
 mod styled_ext;
@@ -14,7 +13,6 @@ pub mod utils;
 mod with_rem_size;
 
 pub use components::*;
-pub use key_bindings::*;
 pub use prelude::*;
 pub use styled_ext::*;
 pub use styles::*;
