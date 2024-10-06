@@ -9,7 +9,7 @@ Zed uses two different rust crates for matching glob patterns:
 - [ignore crate](https://docs.rs/ignore/latest/ignore/) for matching glob patterns stored in `.gitignore` files
 - [glob crate](https://docs.rs/glob/latest/glob/) for matching file paths in Zed
 
-While simple expressions are portable across environments (e.g. running `ls *.py` or `*.tmp` in a gitignore) there is significant divergence in the support for and syntax of more advanced features varies (character classes, exlcusions, `**`, etc) across implementations. For the rest of this document we will be describing globs as supported in Zed via the `glob` crate implementation. Please see [References](#references) below for documentation links for glob pattern syntax for `.gitignore`, shells and other programming languages.
+While simple expressions are portable across environments (e.g. running `ls *.py` or `*.tmp` in a gitignore) there is significant divergence in the support for and syntax of more advanced features varies (character classes, exclusions, `**`, etc) across implementations. For the rest of this document we will be describing globs as supported in Zed via the `glob` crate implementation. Please see [References](#references) below for documentation links for glob pattern syntax for `.gitignore`, shells and other programming languages.
 
 The `glob` crate is implemented entirely in rust and does not rely on the `glob` / `fnmatch` interfaces provided by your platforms libc. This means that globs in Zed should behave similarly with across platforms.
 
@@ -32,7 +32,7 @@ Notes:
 
 1. Shell-style brace-expansions like `{a,b,c}` are not supported.
 2. To match a literal `-` character inside brackets it must come first `[-abc]` or last `[abc-]`.
-3. To match the literal `[` character use `[[]` or put it as the first chracter in the group `[[abc]`.
+3. To match the literal `[` character use `[[]` or put it as the first character in the group `[[abc]`.
 4. To match the literal `]` character use `[]]` or put it as the last character in the group `[abc]]`.
 
 ## Examples
