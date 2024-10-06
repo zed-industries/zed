@@ -1,6 +1,5 @@
 use std::{env, fs};
 
-use zed::lsp::CompletionKind;
 use zed::{CodeLabel, CodeLabelSpan};
 use zed_extension_api::settings::LspSettings;
 use zed_extension_api::{self as zed, serde_json, LanguageServerId, Result};

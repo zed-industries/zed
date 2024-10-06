@@ -1,8 +1,6 @@
 mod language_servers;
 
-use zed::lsp::CompletionKind;
-use zed::settings::LspSettings;
-use zed::{CodeLabel, CodeLabelSpan};
+use zed::CodeLabel;
 use zed_extension_api::{self as zed, serde_json, LanguageServerId, Result};
 
 use crate::language_servers::{Intelephense, Phpactor};
