@@ -126,11 +126,12 @@ impl Intelephense {
                 }
 
                 let mut parts = completion.detail.as_ref()?.split(":");
-                let name_and_params = parts.next()?; // foo(string $var)
-                let return_type = parts.next()?;
+                // E.g., `foo(string $var)`
+                let name_and_params = parts.next()?;
+                let return_type = parts.next()?.trim();
 
-                let (_, params_dirty) = name_and_params.split_once("(")?;
-                let params = params_dirty.trim_end_matches(")");
+                let (_, params) = name_and_params.split_once("(")?;
+                let params = params.trim_end_matches(")");
 
                 Some(CodeLabel {
                     spans: vec![
@@ -138,14 +139,13 @@ impl Intelephense {
                         CodeLabelSpan::literal("(", None),
                         CodeLabelSpan::literal(params, Some("comment".to_string())),
                         CodeLabelSpan::literal("): ", None),
-                        CodeLabelSpan::literal(return_type.trim(), Some("type".to_string())),
+                        CodeLabelSpan::literal(return_type, Some("type".to_string())),
                     ],
                     filter_range: (0..label.len()).into(),
                     code: completion.label,
                 })
             }
             zed::lsp::CompletionKind::Constant | zed::lsp::CompletionKind::EnumMember => {
-                // Check if constant/enum has details, contains enum value
                 if let Some(ref detail) = completion.detail {
                     if !detail.is_empty() {
                         return Some(CodeLabel {
@@ -179,7 +179,7 @@ impl Intelephense {
                 })
             }
             zed::lsp::CompletionKind::Variable => {
-                // see: https://www.php.net/manual/en/reserved.variables.php
+                // See https://www.php.net/manual/en/reserved.variables.php
                 const SYSTEM_VAR_NAMES: &[&str] =
                     &["argc", "argv", "php_errormsg", "http_response_header"];
 
