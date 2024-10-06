@@ -1,20 +1,20 @@
 use zed_extension_api::{self as zed, settings::LspSettings, Result};
 
-const DEFAULT_BINARY_NAME: &str = "protobuf-language-server";
+const PROTOBUF_LANGUAGE_SERVER_NAME: &str = "protobuf-language-server";
 
-struct ProtobufLspBinary {
+struct ProtobufLangageServerBinary {
     path: String,
     args: Option<Vec<String>>,
 }
 
-struct ProtobufExtension {}
+struct ProtobufExtension;
 
 impl ProtobufExtension {
     fn language_server_binary(
         &self,
         _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<ProtobufLspBinary> {
+    ) -> Result<ProtobufLangageServerBinary> {
         let binary_settings = LspSettings::for_worktree("protobuf-language-server", worktree)
             .ok()
             .and_then(|lsp_settings| lsp_settings.binary);
@@ -23,23 +23,26 @@ impl ProtobufExtension {
             .and_then(|binary_settings| binary_settings.arguments.clone());
 
         if let Some(path) = binary_settings.and_then(|binary_settings| binary_settings.path) {
-            return Ok(ProtobufLspBinary {
+            return Ok(ProtobufLangageServerBinary {
                 path,
                 args: binary_args,
             });
         }
 
-        if let Some(path) = worktree.which(DEFAULT_BINARY_NAME) {
-            return Ok(ProtobufLspBinary { path, args: None });
+        if let Some(path) = worktree.which(PROTOBUF_LANGUAGE_SERVER_NAME) {
+            return Ok(ProtobufLangageServerBinary {
+                path,
+                args: binary_args,
+            });
         }
 
-        return Err(format!("{} not found in PATH", DEFAULT_BINARY_NAME));
+        Err(format!("{PROTOBUF_LANGUAGE_SERVER_NAME} not found in PATH",))
     }
 }
 
 impl zed::Extension for ProtobufExtension {
     fn new() -> Self {
-        Self {}
+        Self
     }
 
     fn language_server_command(
