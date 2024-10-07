@@ -429,15 +429,10 @@ impl SshRemoteClient {
 
         let connection_attempts = connection_attempts + 1;
         if connection_attempts > MAX_RECONNECT_ATTEMPTS {
-            println!(
-                "\n\n\nreconnect failed!!!! this.failed_reconnect_attempts: {}\n\n\n",
-                connection_attempts
-            );
             log::error!(
                 "Failed to reconnect to after {} attempts, giving up",
                 MAX_RECONNECT_ATTEMPTS
             );
-
             *lock = Some(State::ReconnectExhausted);
             return Ok(());
         }
