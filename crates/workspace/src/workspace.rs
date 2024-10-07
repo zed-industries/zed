@@ -61,6 +61,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
+use release_channel::ReleaseChannel;
 use remote::{SshClientDelegate, SshConnectionOptions};
 use serde::Deserialize;
 use session::AppSession;
@@ -5519,11 +5520,24 @@ pub fn open_ssh_project(
     paths: Vec<PathBuf>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
+    let release_channel = ReleaseChannel::global(cx);
+
     cx.spawn(|mut cx| async move {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
             serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
 
-        let unique_identifier = format!("workspace-{}", workspace_id.0);
+        let unique_identifier = match release_channel {
+            ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview => {
+                format!(
+                    "workspace-{}-{}",
+                    release_channel.dev_name(),
+                    workspace_id.0
+                )
+            }
+            ReleaseChannel::Stable => {
+                format!("workspace-{}", workspace_id.0.to_string())
+            }
+        };
 
         let session = cx
             .update(|cx| {
