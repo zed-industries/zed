@@ -1,8 +1,11 @@
-use crate::variable_list::VariableList;
+use crate::{
+    stack_frame_list::{StackFrameList, StackFrameListEvent},
+    variable_list::VariableList,
+};
 use dap::client::DebugAdapterClientId;
 use editor::{CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::StringMatchCandidate;
-use gpui::{Model, Render, Task, TextStyle, View, ViewContext, WeakView};
+use gpui::{Model, Render, Subscription, Task, TextStyle, View, ViewContext, WeakView};
 use language::{Buffer, CodeLabel, LanguageServerId, ToOffsetUtf16};
 use menu::Confirm;
 use parking_lot::RwLock;
@@ -16,15 +19,16 @@ pub struct Console {
     console: View<Editor>,
     query_bar: View<Editor>,
     dap_store: Model<DapStore>,
-    current_stack_frame_id: u64,
     client_id: DebugAdapterClientId,
+    _subscriptions: Vec<Subscription>,
     variable_list: View<VariableList>,
+    stack_frame_list: View<StackFrameList>,
 }
 
 impl Console {
     pub fn new(
+        stack_frame_list: &View<StackFrameList>,
         client_id: &DebugAdapterClientId,
-        current_stack_frame_id: u64,
         variable_list: View<VariableList>,
         dap_store: Model<DapStore>,
         cx: &mut ViewContext<Self>,
@@ -54,24 +58,32 @@ impl Console {
             editor
         });
 
+        let _subscriptions =
+            vec![cx.subscribe(stack_frame_list, Self::handle_stack_frame_list_events)];
+
         Self {
             console,
             dap_store,
             query_bar,
             variable_list,
+            _subscriptions,
             client_id: *client_id,
-            current_stack_frame_id,
+            stack_frame_list: stack_frame_list.clone(),
         }
     }
 
-    pub fn update_current_stack_frame_id(
+    fn handle_stack_frame_list_events(
         &mut self,
-        stack_frame_id: u64,
+        _: View<StackFrameList>,
+        event: &StackFrameListEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        self.current_stack_frame_id = stack_frame_id;
-
-        cx.notify();
+        match event {
+            StackFrameListEvent::ChangedStackFrame => cx.notify(),
+            StackFrameListEvent::StackFramesUpdated => {
+                // TODO debugger: check if we need to do something here
+            }
+        }
     }
 
     pub fn add_message(&mut self, message: &str, cx: &mut ViewContext<Self>) {
@@ -95,7 +107,7 @@ impl Console {
         let evaluate_task = self.dap_store.update(cx, |store, cx| {
             store.evaluate(
                 &self.client_id,
-                self.current_stack_frame_id,
+                self.stack_frame_list.read(cx).current_stack_frame_id(),
                 expression,
                 dap::EvaluateArgumentsContext::Variables,
                 cx,
@@ -263,7 +275,7 @@ impl ConsoleQueryBarCompletionProvider {
             let mut variables = HashMap::new();
             let mut string_matches = Vec::new();
 
-            for variable in console.variable_list.read(cx).variables() {
+            for variable in console.variable_list.update(cx, |v, cx| v.variables(cx)) {
                 if let Some(evaluate_name) = &variable.variable.evaluate_name {
                     variables.insert(evaluate_name.clone(), variable.variable.value.clone());
                     string_matches.push(StringMatchCandidate {
@@ -340,7 +352,7 @@ impl ConsoleQueryBarCompletionProvider {
             console.dap_store.update(cx, |store, cx| {
                 store.completions(
                     &console.client_id,
-                    console.current_stack_frame_id,
+                    console.stack_frame_list.read(cx).current_stack_frame_id(),
                     text,
                     buffer_position.to_offset_utf16(&snapshot).0 as u64,
                     cx,
