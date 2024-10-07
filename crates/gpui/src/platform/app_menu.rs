@@ -171,7 +171,7 @@ pub enum OsAction {
     Redo,
 }
 
-pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &mut AppContext) {
+pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &AppContext) {
     platform.on_will_open_app_menu(Box::new({
         let cx = cx.to_async();
         move || {

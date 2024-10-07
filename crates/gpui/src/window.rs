@@ -835,10 +835,7 @@ impl Window {
             prompt: None,
         })
     }
-    fn new_focus_listener(
-        &mut self,
-        value: AnyWindowFocusListener,
-    ) -> (Subscription, impl FnOnce()) {
+    fn new_focus_listener(&self, value: AnyWindowFocusListener) -> (Subscription, impl FnOnce()) {
         self.focus_listeners.insert((), value)
     }
 }
@@ -929,7 +926,7 @@ impl<'a> WindowContext<'a> {
 
     /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
     /// for elements rendered within this window.
-    pub fn focus_handle(&mut self) -> FocusHandle {
+    pub fn focus_handle(&self) -> FocusHandle {
         FocusHandle::new(&self.window.focus_handles)
     }
 
@@ -1127,7 +1124,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register a callback to be invoked when the given Model or View is released.
     pub fn observe_release<E, T>(
-        &mut self,
+        &self,
         entity: &E,
         mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
     ) -> Subscription
@@ -1155,7 +1152,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
-    pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
+    pub fn on_next_frame(&self, callback: impl FnOnce(&mut WindowContext) + 'static) {
         RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
     }
 
@@ -1165,7 +1162,7 @@ impl<'a> WindowContext<'a> {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
-    pub fn request_animation_frame(&mut self) {
+    pub fn request_animation_frame(&self) {
         let parent_id = self.parent_view_id();
         self.on_next_frame(move |cx| {
             if let Some(parent_id) = parent_id {
@@ -1179,7 +1176,7 @@ impl<'a> WindowContext<'a> {
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
-    pub fn spawn<Fut, R>(&mut self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,
@@ -2865,7 +2862,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Get the last view id for the current element
-    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+    pub fn parent_view_id(&self) -> Option<EntityId> {
         self.window.next_frame.dispatch_tree.parent_view_id()
     }
 
@@ -3606,7 +3603,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
-    pub fn invalidate_character_coordinates(&mut self) {
+    pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|cx| {
             if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(cx) {
@@ -3752,7 +3749,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register a callback that can interrupt the closing of the current window based the returned boolean.
     /// If the callback returns false, the window won't be closed.
-    pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
+    pub fn on_window_should_close(&self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
         let mut this = self.to_async();
         self.window
             .platform_window
@@ -4070,7 +4067,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Sets a given callback to be run on the next frame.
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
+    pub fn on_next_frame(&self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
     where
         V: 'static,
     {
@@ -4162,7 +4159,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// The callback receives a handle to the view's window. This handle may be
     /// invalid, if the window was closed before the view was released.
     pub fn on_release(
-        &mut self,
+        &self,
         on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
@@ -4179,7 +4176,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the given Model or View is released.
     pub fn observe_release<V2, E>(
-        &mut self,
+        &self,
         entity: &E,
         mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
@@ -4212,7 +4209,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the window is resized.
     pub fn observe_window_bounds(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4226,7 +4223,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the window is activated or deactivated.
     pub fn observe_window_activation(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4240,7 +4237,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4260,7 +4257,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         fn inner(
-            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
             handler: KeystrokeObserver,
         ) -> Subscription {
             let (subscription, activate) = keystroke_observers.insert((), handler);
@@ -4284,7 +4281,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the window's pending input changes.
     pub fn observe_pending_input(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4372,7 +4369,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// and this callback lets you chose a default place to restore the users focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_lost(
-        &mut self,
+        &self,
         mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4418,10 +4415,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
-    pub fn spawn<Fut, R>(
-        &mut self,
-        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,

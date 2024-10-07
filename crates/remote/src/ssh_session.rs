@@ -202,7 +202,7 @@ impl ChannelForwarder {
     fn new(
         mut incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
-        cx: &mut AsyncAppContext,
+        cx: &AsyncAppContext,
     ) -> (Self, UnboundedSender<Envelope>, UnboundedReceiver<Envelope>) {
         let (quit_tx, mut quit_rx) = mpsc::unbounded::<()>();
 
@@ -352,7 +352,7 @@ impl SshRemoteClient {
         drop(state);
     }
 
-    fn reconnect(&self, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn reconnect(&self, cx: &ModelContext<Self>) -> Result<()> {
         let Some(state) = self.inner_state.lock().take() else {
             return Err(anyhow!("reconnect is already in progress"));
         };
@@ -416,7 +416,7 @@ impl SshRemoteClient {
         mut ssh_proxy_process: Child,
         incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
-        cx: &mut AsyncAppContext,
+        cx: &AsyncAppContext,
     ) -> Task<Result<()>> {
         let mut child_stderr = ssh_proxy_process.stderr.take().unwrap();
         let mut child_stdout = ssh_proxy_process.stdout.take().unwrap();

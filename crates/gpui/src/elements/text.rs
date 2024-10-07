@@ -252,7 +252,7 @@ impl TextLayout {
     }
 
     fn layout(
-        &mut self,
+        &self,
         text: SharedString,
         runs: Option<Vec<TextRun>>,
         cx: &mut WindowContext,
@@ -350,7 +350,7 @@ impl TextLayout {
         layout_id
     }
 
-    fn prepaint(&mut self, bounds: Bounds<Pixels>, text: &str) {
+    fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
         let mut element_state = self.lock();
         let element_state = element_state
             .as_mut()
@@ -359,7 +359,7 @@ impl TextLayout {
         element_state.bounds = Some(bounds);
     }
 
-    fn paint(&mut self, text: &str, cx: &mut WindowContext) {
+    fn paint(&self, text: &str, cx: &mut WindowContext) {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()

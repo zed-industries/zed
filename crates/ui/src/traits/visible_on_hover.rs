@@ -1,5 +1,7 @@
 use gpui::{InteractiveElement, SharedString, Styled};
 
+/// A trait for elements that can be made visible on hover by
+/// tracking a specific group.
 pub trait VisibleOnHover {
     /// Sets the element to only be visible when the specified group is hovered.
     ///

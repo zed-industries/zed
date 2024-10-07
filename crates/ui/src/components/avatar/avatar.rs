@@ -33,6 +33,7 @@ pub struct Avatar {
 }
 
 impl Avatar {
+    /// Creates a new avatar element with the specified image source.
     pub fn new(src: impl Into<ImageSource>) -> Self {
         Avatar {
             image: img(src),
@@ -54,6 +55,7 @@ impl Avatar {
     ///
     /// Avatar::new("path/to/image.png").shape(AvatarShape::Circle);
     /// ```
+    ///
     pub fn shape(mut self, shape: AvatarShape) -> Self {
         self.image = match shape {
             AvatarShape::Circle => self.image.rounded_full(),
@@ -76,6 +78,11 @@ impl Avatar {
         self
     }
 
+    /// Sets the border color of the avatar.
+    ///
+    /// This might be used to match the border to the background color of
+    /// the parent element to create the illusion of cropping another
+    /// shape underneath (for example in face piles.)
     pub fn border_color(mut self, color: impl Into<Hsla>) -> Self {
         self.border_color = Some(color.into());
         self
@@ -87,6 +94,7 @@ impl Avatar {
         self
     }
 
+    /// Sets the current indicator to be displayed on the avatar, if any.
     pub fn indicator<E: IntoElement>(mut self, indicator: impl Into<Option<E>>) -> Self {
         self.indicator = indicator.into().map(IntoElement::into_any_element);
         self

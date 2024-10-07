@@ -7859,9 +7859,9 @@ dependencies = [
 
 [[package]]
 name = "parking"
-version = "2.2.0"
+version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae"
+checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"
@@ -10711,6 +10711,7 @@ dependencies = [
  "libsqlite3-sys",
  "parking_lot",
  "smol",
+ "sqlformat",
  "thread_local",
  "util",
  "uuid",
@@ -10727,9 +10728,9 @@ dependencies = [
 
 [[package]]
 name = "sqlformat"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f895e3734318cc55f1fe66258926c9b910c124d47520339efecbb6c59cec7c1f"
+checksum = "7bba3a93db0cc4f7bdece8bb09e77e2e785c20bfebf79eb8340ed80708048790"
 dependencies = [
  "nom",
  "unicode_categories",
@@ -11413,6 +11414,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "settings",
  "theme",
  "ui",
  "util",
@@ -11497,6 +11499,7 @@ dependencies = [
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
+ "language",
  "semantic_version",
  "serde",
 ]
@@ -14858,6 +14861,13 @@ dependencies = [
 [[package]]
 name = "zed_prisma"
 version = "0.0.3"
+dependencies = [
+ "zed_extension_api 0.1.0",
+]
+
+[[package]]
+name = "zed_proto"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
