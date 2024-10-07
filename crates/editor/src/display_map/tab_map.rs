@@ -344,13 +344,16 @@ impl TabSnapshot {
                 let tab_len = tab_size - expanded_chars % tab_size;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
-            } else if ('\u{0001}'..='\u{0008}').contains(&c) ||
+            } else if ('\u{200B}'..='\u{200F}').contains(&c) {
+                expanded_bytes += 1;
+                expanded_chars += 1;
+            }else if ('\u{0001}'..='\u{0008}').contains(&c) ||
             ('\u{000B}'..='\u{000C}').contains(&c) ||
             ('\u{000E}'..='\u{001F}').contains(&c) ||
             ('\u{007F}'..='\u{009F}').contains(&c) {
                 expanded_bytes += 3;
                 expanded_chars += 1;
-            }else {
+            } else {
                 expanded_bytes += c.len_utf8() as u32;
                 expanded_chars += 1;
             }
@@ -413,7 +416,18 @@ impl TabSnapshot {
                         Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
                     };
                 }
-            } else if
+            } else if ('\u{200B}'..='\u{200F}').contains(&c) {
+                expanded_chars += 1;
+                expanded_bytes += 1;
+                if expanded_bytes > column {
+                    expanded_chars -= expanded_bytes - column;
+                    return match bias {
+                        Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
+                        Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
+                    };
+                }
+            }
+            else if
             ('\u{0001}'..='\u{0008}').contains(&c) ||
             ('\u{000B}'..='\u{000C}').contains(&c) ||
             ('\u{000E}'..='\u{001F}').contains(&c) ||
@@ -585,7 +599,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         self.input_column += len;
                         self.output_position = next_output_position;
                         return Some(Chunk {
-                            text: "□",
+                            text: " ",
                             is_invisible: true,
                             ..self.chunk.clone()
                         });
