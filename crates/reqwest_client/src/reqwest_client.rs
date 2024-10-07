@@ -163,8 +163,12 @@ impl futures::stream::Stream for WrappedBody {
             WrappedBodyInner::SyncReader(cursor) => {
                 let mut buf = Vec::new();
                 match cursor.read_to_end(&mut buf) {
-                    Ok(_) => {
-                        return Poll::Ready(Some(Ok(Bytes::from(buf))));
+                    Ok(bytes) => {
+                        if bytes == 0 {
+                            return Poll::Ready(None);
+                        } else {
+                            return Poll::Ready(Some(Ok(Bytes::from(buf))));
+                        }
                     }
                     Err(e) => return Poll::Ready(Some(Err(e))),
                 }
@@ -232,5 +236,24 @@ impl http_client::HttpClient for ReqwestClient {
             builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use core::str;
+
+    use http_client::AsyncBody;
+    use smol::stream::StreamExt;
+
+    use crate::WrappedBody;
+
+    #[tokio::test]
+    async fn test_sync_streaming_upload() {
+        let mut body = WrappedBody::new(AsyncBody::from("hello there".to_string())).fuse();
+        let result = body.next().await.unwrap().unwrap();
+        assert!(body.next().await.is_none());
+        assert_eq!(str::from_utf8(&result).unwrap(), "hello there");
     }
 }
