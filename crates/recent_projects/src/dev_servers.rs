@@ -1250,19 +1250,13 @@ impl DevServerProjects {
                                     .gap_2()
                                     .child(h_flex().w_full())
                                     .child(
-                                        div()
-                                            .p_1()
-                                            .rounded_lg()
-                                            .bg(Color::Muted.color(cx))
-                                            .with_animation(
-                                                "pulse-ssh-waiting-for-connection",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.2, 0.5)),
-                                                move |this, progress| {
-                                                    this.bg(color.opacity(progress))
-                                                },
-                                            ),
+                                        div().p_1().rounded_lg().bg(color).with_animation(
+                                            "pulse-ssh-waiting-for-connection",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.2, 0.5)),
+                                            move |this, progress| this.bg(color.opacity(progress)),
+                                        ),
                                     )
                                     .child(Label::new("Waiting for connection…"))
                                     .child(h_flex().w_full()),
