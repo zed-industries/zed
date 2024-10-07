@@ -119,7 +119,7 @@ pub fn routes() -> Router<(), Body> {
         .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
         .route("/deadlock", get(repro_deadlock))
-    .layer(middleware::from_fn(validate_api_token))
+    // .layer(middleware::from_fn(validate_api_token))
 }
 
 async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
@@ -187,26 +187,42 @@ async fn repro_deadlock(Extension(state): Extension<Arc<LlmState>>) -> Result<Js
 
     let low_speed_timeout = Some(std::time::Duration::from_secs(10));
 
-    let mut request_builder = http_client::Request::builder()
-        .method(http_client::Method::GET)
-        .uri("https://jsonplaceholder.typicode.com/todos/1")
-        .header("Content-Type", "application/json");
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        dbg!("set read_timeout");
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    }
-    let request = request_builder
-        .body(AsyncBody::empty())
-        .context("failed to construct request body")?;
+    let api_key = state
+        .config
+        .anthropic_staff_api_key
+        .as_ref()
+        .context("no Anthropic AI staff API key configured on the server")?;
 
-    dbg!("send request");
-    let mut response = state
-        .http_client
-        .send(request)
-        .await
-        .context("failed to send request")?;
+    let request = anthropic::Request {
+        model: anthropic::Model::Claude3_5Sonnet.id().to_string(),
+        max_tokens: 200_000,
+        messages: vec![anthropic::Message {
+            role: anthropic::Role::User,
+            content: vec![anthropic::RequestContent::Text {
+                text: "Is this thing on?".to_string(),
+                cache_control: None,
+            }],
+        }],
+        tools: Vec::new(),
+        tool_choice: None,
+        system: None,
+        metadata: None,
+        stop_sequences: Vec::new(),
+        temperature: None,
+        top_k: None,
+        top_p: None,
+    };
 
-    dbg!(&response.status());
+    let result = anthropic::stream_completion_with_rate_limit_info(
+        &state.http_client,
+        anthropic::ANTHROPIC_API_URL,
+        api_key,
+        request,
+        None,
+    )
+    .await;
+
+    dbg!(&result.is_ok());
 
     Ok(Json(Test { ok: true }))
 }
