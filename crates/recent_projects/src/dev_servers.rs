@@ -1164,12 +1164,11 @@ impl DevServerProjects {
             kind = NewServerKind::DirectSSH;
         }
 
-        let name = self.dev_server_name_input.update(cx, |input, cx| {
+        self.dev_server_name_input.update(cx, |input, cx| {
             input.editor().update(cx, |editor, cx| {
                 if editor.text(cx).is_empty() {
                     editor.set_placeholder_text("ssh me@my.server / ssh@secret-box:2222", cx);
                 }
-                editor.text(cx)
             })
         });
         let theme = cx.theme();
@@ -1271,21 +1270,6 @@ impl DevServerProjects {
                         }
                     }),
             )
-    }
-
-    fn render_loading_spinner(label: impl Into<SharedString>) -> Div {
-        h_flex()
-            .gap_2()
-            .child(
-                Icon::new(IconName::ArrowCircle)
-                    .size(IconSize::Medium)
-                    .with_animation(
-                        "arrow-circle",
-                        Animation::new(Duration::from_secs(2)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    ),
-            )
-            .child(Label::new(label))
     }
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {

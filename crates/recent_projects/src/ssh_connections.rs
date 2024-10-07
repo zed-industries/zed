@@ -141,7 +141,6 @@ impl SshPrompt {
 
 impl Render for SshPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let theme = cx.theme();
         v_flex()
             .w_full()
             .key_context("PasswordPrompt")
