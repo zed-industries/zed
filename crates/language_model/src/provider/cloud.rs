@@ -387,7 +387,6 @@ impl CloudLanguageModel {
         let http_client = &client.http_client();
 
         let mut token = llm_api_token.acquire(&client).await?;
-
         let mut did_retry = false;
 
         let response = loop {
@@ -401,9 +400,7 @@ impl CloudLanguageModel {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .body(serde_json::to_string(&body)?.into())?;
-
             let mut response = http_client.send(request).await?;
-
             if response.status().is_success() {
                 break response;
             } else if !did_retry
