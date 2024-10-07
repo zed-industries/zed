@@ -172,10 +172,10 @@ pub fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: Path
     Ok(())
 }
 
-pub fn execute_proxy(unique_project_id: String) -> Result<()> {
+pub fn execute_proxy(identifier: String) -> Result<()> {
     log::debug!("proxy: starting up. PID: {}", std::process::id());
 
-    let project_dir = ensure_project_dir(&unique_project_id)?;
+    let project_dir = ensure_project_dir(&identifier)?;
 
     let pid_file = project_dir.join("server.pid");
     let stdin_socket = project_dir.join("stdin.sock");
@@ -212,13 +212,13 @@ pub fn execute_proxy(unique_project_id: String) -> Result<()> {
     Ok(())
 }
 
-fn ensure_project_dir(unique_project_id: &str) -> Result<PathBuf> {
+fn ensure_project_dir(identifier: &str) -> Result<PathBuf> {
     let project_dir = env::var("HOME").unwrap_or_else(|_| ".".to_string());
     let project_dir = PathBuf::from(project_dir)
         .join(".local")
-        .join("zed")
-        .join("server")
-        .join(unique_project_id);
+        .join("state")
+        .join("zed-remote-server")
+        .join(identifier);
 
     std::fs::create_dir_all(&project_dir)?;
 

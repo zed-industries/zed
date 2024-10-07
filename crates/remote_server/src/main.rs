@@ -23,7 +23,10 @@ enum Commands {
         #[arg(long)]
         stdout_socket: PathBuf,
     },
-    Proxy,
+    Proxy {
+        #[arg(long)]
+        identifier: String,
+    },
     Version,
 }
 
@@ -48,9 +51,9 @@ fn main() -> Result<()> {
             init_logging(Some(log_file))?;
             execute_run(pid_file, stdin_socket, stdout_socket)
         }
-        Some(Commands::Proxy) => {
+        Some(Commands::Proxy { identifier }) => {
             init_logging(None)?;
-            execute_proxy("some-project".to_string())
+            execute_proxy(identifier)
         }
         Some(Commands::Version) => {
             eprintln!("{}", env!("ZED_PKG_VERSION"));

@@ -95,6 +95,17 @@ impl SshConnectionOptions {
             host
         }
     }
+
+    // Uniquely identifies dev server projects on a remote host. Needs to be
+    // stable for the same dev server project.
+    pub fn dev_server_identifier(&self) -> String {
+        let mut identifier = format!("dev-server-{:?}", self.host);
+        if let Some(username) = self.username.as_ref() {
+            identifier.push('-');
+            identifier.push_str(&username);
+        }
+        identifier
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -253,6 +264,7 @@ struct SshRemoteClientState {
 
 pub struct SshRemoteClient {
     client: Arc<ChannelClient>,
+    unique_identifier: String,
     connection_options: SshConnectionOptions,
     inner_state: Arc<Mutex<Option<SshRemoteClientState>>>,
 }
@@ -265,6 +277,7 @@ impl Drop for SshRemoteClient {
 
 impl SshRemoteClient {
     pub fn new(
+        unique_identifier: String,
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &AppContext,
@@ -283,6 +296,7 @@ impl SshRemoteClient {
                 let client = ChannelClient::new(incoming_rx, outgoing_tx, cx);
                 Self {
                     client,
+                    unique_identifier: unique_identifier.clone(),
                     connection_options: SshConnectionOptions::default(),
                     inner_state: Arc::new(Mutex::new(None)),
                 }
@@ -292,9 +306,13 @@ impl SshRemoteClient {
                 let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
                     ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
 
-                let (ssh_connection, ssh_proxy_process) =
-                    Self::establish_connection(connection_options, delegate.clone(), &mut cx)
-                        .await?;
+                let (ssh_connection, ssh_proxy_process) = Self::establish_connection(
+                    unique_identifier,
+                    connection_options,
+                    delegate.clone(),
+                    &mut cx,
+                )
+                .await?;
 
                 let multiplex_task = Self::multiplex(
                     this.downgrade(),
@@ -339,6 +357,8 @@ impl SshRemoteClient {
             return Err(anyhow!("reconnect is already in progress"));
         };
 
+        let workspace_identifier = self.unique_identifier.clone();
+
         let SshRemoteClientState {
             mut ssh_connection,
             delegate,
@@ -359,8 +379,13 @@ impl SshRemoteClient {
 
             let connection_options = ssh_connection.socket.connection_options.clone();
 
-            let (ssh_connection, ssh_process) =
-                Self::establish_connection(connection_options, delegate.clone(), &mut cx).await?;
+            let (ssh_connection, ssh_process) = Self::establish_connection(
+                workspace_identifier,
+                connection_options,
+                delegate.clone(),
+                &mut cx,
+            )
+            .await?;
 
             let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
@@ -492,6 +517,7 @@ impl SshRemoteClient {
     }
 
     async fn establish_connection(
+        unique_identifier: String,
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
@@ -519,10 +545,11 @@ impl SshRemoteClient {
 
         let ssh_proxy_process = socket
             .ssh_command(format!(
-                "RUST_LOG={} RUST_BACKTRACE={} {:?} proxy",
+                "RUST_LOG={} RUST_BACKTRACE={} {:?} proxy --identifier {}",
                 std::env::var("RUST_LOG").unwrap_or_default(),
                 std::env::var("RUST_BACKTRACE").unwrap_or_default(),
                 remote_binary_path,
+                unique_identifier,
             ))
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
@@ -570,6 +597,7 @@ impl SshRemoteClient {
                 let client = ChannelClient::new(server_to_client_rx, client_to_server_tx, cx);
                 cx.new_model(|_| Self {
                     client,
+                    unique_identifier: "fake".to_string(),
                     connection_options: SshConnectionOptions::default(),
                     inner_state: Arc::new(Mutex::new(None)),
                 })

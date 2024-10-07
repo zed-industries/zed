@@ -305,13 +305,19 @@ impl DevServerProjects {
 
         let connection_options = remote::SshConnectionOptions {
             host: host.to_string(),
-            username,
+            username: username.clone(),
             port,
             password: None,
         };
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
-        let connection = connect_over_ssh(connection_options.clone(), ssh_prompt.clone(), cx)
-            .prompt_err("Failed to connect", cx, |_, _| None);
+
+        let connection = connect_over_ssh(
+            connection_options.dev_server_identifier(),
+            connection_options.clone(),
+            ssh_prompt.clone(),
+            cx,
+        )
+        .prompt_err("Failed to connect", cx, |_, _| None);
 
         let creating = cx.spawn(move |this, mut cx| async move {
             match connection.await {
@@ -363,11 +369,13 @@ impl DevServerProjects {
                     .prompt
                     .clone();
 
-                let connect = connect_over_ssh(connection_options, prompt, cx).prompt_err(
-                    "Failed to connect",
+                let connect = connect_over_ssh(
+                    connection_options.dev_server_identifier(),
+                    connection_options,
+                    prompt,
                     cx,
-                    |_, _| None,
-                );
+                )
+                .prompt_err("Failed to connect", cx, |_, _| None);
                 cx.spawn(|workspace, mut cx| async move {
                     let Some(session) = connect.await else {
                         workspace
