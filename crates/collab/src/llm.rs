@@ -23,7 +23,6 @@ use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
 
-use http_client::AsyncBody;
 use reqwest_client::ReqwestClient;
 use rpc::ListModelsResponse;
 use rpc::{
@@ -174,11 +173,6 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
             "unauthorized".to_string(),
         )),
     }
-}
-
-#[derive(serde::Serialize)]
-struct Test {
-    ok: bool,
 }
 
 async fn list_models(
