@@ -4,12 +4,12 @@ use anyhow::Result;
 use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::AppContext;
 use gpui::{
     percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
     EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
     Transformation, View,
 };
+use gpui::{AppContext, Model};
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
@@ -373,25 +373,24 @@ impl SshClientDelegate {
 }
 
 pub fn connect_over_ssh(
+    unique_identifier: String,
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
     cx: &mut WindowContext,
-) -> Task<Result<Arc<SshRemoteClient>>> {
+) -> Task<Result<Model<SshRemoteClient>>> {
     let window = cx.window_handle();
     let known_password = connection_options.password.clone();
 
-    cx.spawn(|mut cx| async move {
-        remote::SshRemoteClient::new(
-            connection_options,
-            Arc::new(SshClientDelegate {
-                window,
-                ui,
-                known_password,
-            }),
-            &mut cx,
-        )
-        .await
-    })
+    remote::SshRemoteClient::new(
+        unique_identifier,
+        connection_options,
+        Arc::new(SshClientDelegate {
+            window,
+            ui,
+            known_password,
+        }),
+        cx,
+    )
 }
 
 pub async fn open_ssh_project(
@@ -420,22 +419,25 @@ pub async fn open_ssh_project(
         })?
     };
 
-    let session = window
-        .update(cx, |workspace, cx| {
-            cx.activate_window();
-            workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
-            let ui = workspace
-                .active_modal::<SshConnectionModal>(cx)
-                .unwrap()
-                .read(cx)
-                .prompt
-                .clone();
-            connect_over_ssh(connection_options.clone(), ui, cx)
-        })?
-        .await?;
+    let delegate = window.update(cx, |workspace, cx| {
+        cx.activate_window();
+        workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+        let ui = workspace
+            .active_modal::<SshConnectionModal>(cx)
+            .unwrap()
+            .read(cx)
+            .prompt
+            .clone();
+
+        Arc::new(SshClientDelegate {
+            window: cx.window_handle(),
+            ui,
+            known_password: connection_options.password.clone(),
+        })
+    })?;
 
     cx.update(|cx| {
-        workspace::open_ssh_project(window, connection_options, session, app_state, paths, cx)
+        workspace::open_ssh_project(window, connection_options, delegate, app_state, paths, cx)
     })?
     .await
 }

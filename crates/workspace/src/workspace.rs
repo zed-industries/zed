@@ -61,7 +61,8 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
-use remote::{SshConnectionOptions, SshRemoteClient};
+use release_channel::ReleaseChannel;
+use remote::{SshClientDelegate, SshConnectionOptions};
 use serde::Deserialize;
 use session::AppSession;
 use settings::{InvalidSettingsError, Settings};
@@ -5514,22 +5515,31 @@ pub fn join_hosted_project(
 pub fn open_ssh_project(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
-    session: Arc<SshRemoteClient>,
+    delegate: Arc<dyn SshClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
+    let release_channel = ReleaseChannel::global(cx);
+
     cx.spawn(|mut cx| async move {
-        let serialized_ssh_project = persistence::DB
-            .get_or_create_ssh_project(
-                connection_options.host.clone(),
-                connection_options.port,
-                paths
-                    .iter()
-                    .map(|path| path.to_string_lossy().to_string())
-                    .collect::<Vec<_>>(),
-                connection_options.username.clone(),
-            )
+        let (serialized_ssh_project, workspace_id, serialized_workspace) =
+            serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
+
+        let identifier_prefix = match release_channel {
+            ReleaseChannel::Stable => None,
+            _ => Some(format!("{}-", release_channel.dev_name())),
+        };
+        let unique_identifier = format!(
+            "{}workspace-{}",
+            identifier_prefix.unwrap_or_default(),
+            workspace_id.0
+        );
+
+        let session = cx
+            .update(|cx| {
+                remote::SshRemoteClient::new(unique_identifier, connection_options, delegate, cx)
+            })?
             .await?;
 
         let project = cx.update(|cx| {
@@ -5561,17 +5571,6 @@ pub fn open_ssh_project(
             };
         }
 
-        let serialized_workspace =
-            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
-
-        let workspace_id = if let Some(workspace_id) =
-            serialized_workspace.as_ref().map(|workspace| workspace.id)
-        {
-            workspace_id
-        } else {
-            persistence::DB.next_id().await?
-        };
-
         cx.update_window(window.into(), |_, cx| {
             cx.replace_root_view(|cx| {
                 let mut workspace =
@@ -5600,6 +5599,45 @@ pub fn open_ssh_project(
                 }
             }
         })
+    })
+}
+
+fn serialize_ssh_project(
+    connection_options: SshConnectionOptions,
+    paths: Vec<PathBuf>,
+    cx: &AsyncAppContext,
+) -> Task<
+    Result<(
+        SerializedSshProject,
+        WorkspaceId,
+        Option<SerializedWorkspace>,
+    )>,
+> {
+    cx.background_executor().spawn(async move {
+        let serialized_ssh_project = persistence::DB
+            .get_or_create_ssh_project(
+                connection_options.host.clone(),
+                connection_options.port,
+                paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>(),
+                connection_options.username.clone(),
+            )
+            .await?;
+
+        let serialized_workspace =
+            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+
+        let workspace_id = if let Some(workspace_id) =
+            serialized_workspace.as_ref().map(|workspace| workspace.id)
+        {
+            workspace_id
+        } else {
+            persistence::DB.next_id().await?
+        };
+
+        Ok((serialized_ssh_project, workspace_id, serialized_workspace))
     })
 }
 
