@@ -2,16 +2,6 @@ use crate::prelude::*;
 
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 
-/// The shape of an [`Avatar`].
-#[derive(Debug, Default, PartialEq, Clone)]
-pub enum AvatarShape {
-    /// The avatar is shown in a circle.
-    #[default]
-    Circle,
-    /// The avatar is shown in a rectangle with rounded corners.
-    RoundedRectangle,
-}
-
 /// An element that renders a user avatar with customizable appearance options.
 ///
 /// # Examples
@@ -41,27 +31,6 @@ impl Avatar {
             border_color: None,
             indicator: None,
         }
-    }
-
-    /// Sets the shape of the avatar image.
-    ///
-    /// This method allows the shape of the avatar to be specified using an [`AvatarShape`].
-    /// It modifies the corner radius of the image to match the specified shape.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ui::{Avatar, AvatarShape};
-    ///
-    /// Avatar::new("path/to/image.png").shape(AvatarShape::Circle);
-    /// ```
-    ///
-    pub fn shape(mut self, shape: AvatarShape) -> Self {
-        self.image = match shape {
-            AvatarShape::Circle => self.image.rounded_full(),
-            AvatarShape::RoundedRectangle => self.image.rounded_md(),
-        };
-        self
     }
 
     /// Applies a grayscale filter to the avatar image.
@@ -102,11 +71,7 @@ impl Avatar {
 }
 
 impl RenderOnce for Avatar {
-    fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
-        if self.image.style().corner_radii.top_left.is_none() {
-            self = self.shape(AvatarShape::Circle);
-        }
-
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let border_width = if self.border_color.is_some() {
             px(2.)
         } else {
@@ -118,16 +83,15 @@ impl RenderOnce for Avatar {
 
         div()
             .size(container_size)
-            .map(|mut div| {
-                div.style().corner_radii = self.image.style().corner_radii.clone();
-                div
-            })
+            .rounded_full()
+            .overflow_hidden()
             .when_some(self.border_color, |this, color| {
                 this.border(border_width).border_color(color)
             })
             .child(
                 self.image
                     .size(image_size)
+                    .rounded_full()
                     .bg(cx.theme().colors().ghost_element_background),
             )
             .children(self.indicator.map(|indicator| div().child(indicator)))
