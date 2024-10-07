@@ -1,0 +1,90 @@
+name: Build Zed for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        profile: minimal
+        components: rustfmt, clippy, wasm32-wasip1
+
+    - name: Install Visual Studio
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install Windows 10 SDK
+      run: |
+        choco install windows-sdk-10-version-2004
+
+    - name: Install CMake
+      uses: lukka/get-cmake@latest
+
+    - name: Install Postgres
+      run: |
+        choco install postgresql
+
+    - name: Install Livekit and Foreman
+      run: |
+        choco install livekit-cli
+        choco install theforeman
+
+    - name: Install Docker
+      run: |
+        choco install docker-desktop
+
+    - name: Start Docker Compose
+      run: |
+        docker compose up -d
+
+    - name: Build Zed (Debug)
+      run: |
+        cargo run
+
+    - name: Build Zed (Release)
+      run: |
+        cargo run --release
+
+    - name: Run Tests
+      run: |
+        cargo test --workspace
+
+    - name: Install MSYS2
+      run: |
+        choco install msys2
+
+    - name: Install Zed from MSYS2
+      run: |
+        pacman -Syu
+        pacman -S $MINGW_PACKAGE_PREFIX-zed
+
+    - name: Set up environment variables
+      run: |
+        echo "ZED_RC_TOOLKIT_PATH=C:\Program Files (x86)\Windows Kits\10\bin\<SDK_version>\x64" >> $GITHUB_ENV
+
+    - name: Build Zed with custom linker
+      run: |
+        cargo build --release
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: zed-windows-build
+        path: target/release/zed.exe
