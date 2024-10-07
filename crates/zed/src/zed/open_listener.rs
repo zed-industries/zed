@@ -661,7 +661,7 @@ mod tests {
         path: &str,
         open_new_workspace: Option<bool>,
         app_state: Arc<AppState>,
-        cx: &mut TestAppContext,
+        cx: &TestAppContext,
     ) {
         let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
 

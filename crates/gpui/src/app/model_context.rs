@@ -91,7 +91,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     /// Register a callback to be invoked when GPUI releases this model.
     pub fn on_release(
-        &mut self,
+        &self,
         on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
     where
@@ -110,7 +110,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     /// Register a callback to be run on the release of another model or view
     pub fn observe_release<T2, E>(
-        &mut self,
+        &self,
         entity: &E,
         on_release: impl FnOnce(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
     ) -> Subscription
@@ -154,7 +154,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// Arrange for the given function to be invoked whenever the application is quit.
     /// The future returned from this callback will be polled for up to [crate::SHUTDOWN_TIMEOUT] until the app fully quits.
     pub fn on_app_quit<Fut>(
-        &mut self,
+        &self,
         mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + 'static,
     ) -> Subscription
     where

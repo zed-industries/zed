@@ -10,6 +10,8 @@ pub struct WithRemSize {
 }
 
 impl WithRemSize {
+    /// Create a new [WithRemSize] element, which sets a
+    /// particular rem size for its children.
     pub fn new(rem_size: impl Into<Pixels>) -> Self {
         Self {
             div: div(),

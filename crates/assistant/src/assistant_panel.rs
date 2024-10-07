@@ -77,7 +77,7 @@ use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
-    Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
+    Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::{maybe, ResultExt};
@@ -262,9 +262,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
                             .gap_2()
                             .children(if let Some(host_user) = host_user {
                                 vec![
-                                    Avatar::new(host_user.avatar_uri.clone())
-                                        .shape(AvatarShape::Circle)
-                                        .into_any_element(),
+                                    Avatar::new(host_user.avatar_uri.clone()).into_any_element(),
                                     Label::new(format!("Shared by @{}", host_user.github_login))
                                         .color(Color::Muted)
                                         .size(LabelSize::Small)
