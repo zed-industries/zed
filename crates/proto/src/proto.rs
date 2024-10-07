@@ -489,7 +489,7 @@ request_messages!(
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
-    (ShutdownRemoteServer, Ack),
+    (ShutdownRemoteServer, Ack)
 );
 
 entity_messages!(

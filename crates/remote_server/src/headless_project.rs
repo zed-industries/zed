@@ -359,7 +359,7 @@ impl HeadlessProject {
     pub async fn handle_ping(
         _this: Model<Self>,
         _envelope: TypedEnvelope<proto::Ping>,
-        cx: AsyncAppContext,
+        _cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
