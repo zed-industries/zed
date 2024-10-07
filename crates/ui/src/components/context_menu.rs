@@ -461,9 +461,6 @@ impl Render for ContextMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
 
-        println!("show_advanced: {}", self.show_advanced);
-        println!("hidden_items: {:#?}", self.item_visibility);
-
         div().occlude().elevation_2(cx).flex().flex_row().child(
             WithRemSize::new(ui_font_size).flex().child(
                 v_flex()
