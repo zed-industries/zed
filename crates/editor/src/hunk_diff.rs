@@ -379,6 +379,7 @@ impl Editor {
             });
 
         let border_color = cx.theme().colors().border_variant;
+        let bg_color = cx.theme().colors().editor_background;
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => cx.theme().status().created,
             DiffHunkStatus::Modified => cx.theme().status().modified,
@@ -394,6 +395,7 @@ impl Editor {
             render: Box::new({
                 let editor = cx.view().clone();
                 let hunk = hunk.clone();
+
                 move |cx| {
                     let hunk_controls_menu_handle =
                         editor.read(cx).hunk_controls_menu_handle.clone();
@@ -404,7 +406,7 @@ impl Editor {
                         .w_full()
                         .border_t_1()
                         .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
+                        .bg(bg_color)
                         .child(
                             div()
                                 .id("gutter-strip")
@@ -424,14 +426,9 @@ impl Editor {
                         )
                         .child(
                             h_flex()
-                                .pl_2()
-                                .pr_6()
+                                .px_6()
                                 .size_full()
                                 .justify_between()
-                                .border_t_1()
-                                .pl_6()
-                                .pr_6()
-                                .border_color(border_color)
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -608,7 +605,7 @@ impl Editor {
                                                                 move |menu, _| {
                                                                     menu.context(focus.clone())
                                                                         .action(
-                                                                            "Discard All",
+                                                                            "Discard All Hunks",
                                                                             RevertFile
                                                                                 .boxed_clone(),
                                                                         )

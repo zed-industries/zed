@@ -844,6 +844,27 @@ If the setting is set to `true`:
 
 The result is still `)))` and not `))))))`, which is what it would be by default.
 
+## File Scan Exclusions
+
+- Setting: `file_scan_exclusions`
+- Description: Configure how Add filename or directory globs that will be excluded by Zed entirely. They will be skipped during file scans, file searches and hidden from project file tree.
+- Default:
+
+```json
+"file_scan_exclusions": [
+  "**/.git",
+  "**/.svn",
+  "**/.hg",
+  "**/CVS",
+  "**/.DS_Store",
+  "**/Thumbs.db",
+  "**/.classpath",
+  "**/.settings"
+],
+```
+
+Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
+
 ## File Types
 
 - Setting: `file_types`

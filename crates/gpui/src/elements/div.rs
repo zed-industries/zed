@@ -1418,7 +1418,7 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &mut self,
+        &self,
         bounds: Bounds<Pixels>,
         style: &Style,
         cx: &mut WindowContext,
@@ -1547,7 +1547,7 @@ impl Interactivity {
 
     #[cfg(debug_assertions)]
     fn paint_debug_info(
-        &mut self,
+        &self,
         global_id: Option<&GlobalElementId>,
         hitbox: &Hitbox,
         style: &Style,

@@ -115,7 +115,7 @@ impl UniformListScrollHandle {
     }
 
     /// Scroll the list to the given item index.
-    pub fn scroll_to_item(&mut self, ix: usize) {
+    pub fn scroll_to_item(&self, ix: usize) {
         self.0.borrow_mut().deferred_scroll_to_item = Some(ix);
     }
 
@@ -297,7 +297,11 @@ impl Element for UniformList {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
                             let item_origin = padded_bounds.origin
                                 + point(
-                                    scroll_offset.x + padding.left,
+                                    if can_scroll_horizontally {
+                                        scroll_offset.x + padding.left
+                                    } else {
+                                        scroll_offset.x
+                                    },
                                     item_height * ix + scroll_offset.y + padding.top,
                                 );
                             let available_width = if can_scroll_horizontally {
