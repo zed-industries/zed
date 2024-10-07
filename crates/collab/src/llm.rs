@@ -23,6 +23,7 @@ use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
 
+use http_client::AsyncBody;
 use reqwest_client::ReqwestClient;
 use rpc::ListModelsResponse;
 use rpc::{
@@ -117,7 +118,8 @@ pub fn routes() -> Router<(), Body> {
     Router::new()
         .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
-        .layer(middleware::from_fn(validate_api_token))
+        .route("/deadlock", get(repro_deadlock))
+    .layer(middleware::from_fn(validate_api_token))
 }
 
 async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
@@ -175,6 +177,40 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
     }
 }
 
+#[derive(serde::Serialize)]
+struct Test {
+    ok: bool,
+}
+
+async fn repro_deadlock(Extension(state): Extension<Arc<LlmState>>) -> Result<Json<Test>> {
+    use http_client::{HttpClient, HttpRequestExt};
+
+    let low_speed_timeout = Some(std::time::Duration::from_secs(10));
+
+    let mut request_builder = http_client::Request::builder()
+        .method(http_client::Method::GET)
+        .uri("https://jsonplaceholder.typicode.com/todos/1")
+        .header("Content-Type", "application/json");
+    if let Some(low_speed_timeout) = low_speed_timeout {
+        dbg!("set read_timeout");
+        request_builder = request_builder.read_timeout(low_speed_timeout);
+    }
+    let request = request_builder
+        .body(AsyncBody::empty())
+        .context("failed to construct request body")?;
+
+    dbg!("send request");
+    let mut response = state
+        .http_client
+        .send(request)
+        .await
+        .context("failed to send request")?;
+
+    dbg!(&response.status());
+
+    Ok(Json(Test { ok: true }))
+}
+
 async fn list_models(
     Extension(state): Extension<Arc<LlmState>>,
     Extension(claims): Extension<LlmTokenClaims>,
@@ -212,11 +248,13 @@ async fn perform_completion(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
+    dbg!("performing completion");
     let model = normalize_model_name(
         state.db.model_names_for_provider(params.provider),
         params.model,
     );
 
+    dbg!("authorize_access_to_language_model");
     authorize_access_to_language_model(
         &state.config,
         &claims,
@@ -227,6 +265,7 @@ async fn perform_completion(
         &model,
     )?;
 
+    dbg!("check_usage_limit");
     check_usage_limit(&state, params.provider, &model, &claims).await?;
 
     let stream = match params.provider {
@@ -262,6 +301,7 @@ async fn perform_completion(
                 _ => request.model,
             };
 
+            dbg!("stream_completion_with_rate_limit_info");
             let (chunks, rate_limit_info) = anthropic::stream_completion_with_rate_limit_info(
                 &state.http_client,
                 anthropic::ANTHROPIC_API_URL,
@@ -315,6 +355,7 @@ async fn perform_completion(
                 );
             }
 
+            dbg!("map chunks");
             chunks
                 .map(move |event| {
                     let chunk = event?;

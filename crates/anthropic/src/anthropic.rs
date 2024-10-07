@@ -287,7 +287,9 @@ pub async fn stream_completion_with_rate_limit_info(
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
+    dbg!(&low_speed_timeout);
     if let Some(low_speed_timeout) = low_speed_timeout {
+        dbg!("set read_timeout");
         request_builder = request_builder.read_timeout(low_speed_timeout);
     }
     let serialized_request =
@@ -296,10 +298,12 @@ pub async fn stream_completion_with_rate_limit_info(
         .body(AsyncBody::from(serialized_request))
         .context("failed to construct request body")?;
 
+    dbg!("send request");
     let mut response = client
         .send(request)
         .await
         .context("failed to send request to Anthropic")?;
+    dbg!("got response");
     if response.status().is_success() {
         let rate_limits = RateLimitInfo::from_headers(response.headers());
         let reader = BufReader::new(response.into_body());
