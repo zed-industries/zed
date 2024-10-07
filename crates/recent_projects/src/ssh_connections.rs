@@ -140,7 +140,7 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .w_full()
             .key_context("PasswordPrompt")

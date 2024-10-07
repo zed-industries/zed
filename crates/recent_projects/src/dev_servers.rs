@@ -966,10 +966,10 @@ impl DevServerProjects {
                                 self.render_ssh_project(ix, &ssh_connection, pix, p, cx)
                             }))
                             .child(
-                                div().child(
+                                h_flex().child(
                                     Button::new("new-remote_project", "Open folder…")
                                         .icon(IconName::Plus)
-                                        .size(ButtonSize::Large)
+                                        .size(ButtonSize::Default)
                                         .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
                                         .icon_position(IconPosition::Start)
