@@ -19,7 +19,7 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
@@ -2122,11 +2122,17 @@ impl ProjectPanel {
         }
     }
 
-    fn index_for_entry(&self, entry_id: ProjectEntryId, worktree_id: WorktreeId) -> Option<usize> {
-        let mut offset = 0;
+    fn index_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        worktree_id: WorktreeId,
+    ) -> Option<(usize, usize, usize)> {
+        let mut worktree_ix = 0;
+        let mut total_ix = 0;
         for (current_worktree_id, visible_worktree_entries, _) in &self.visible_entries {
             if worktree_id != *current_worktree_id {
-                offset += visible_worktree_entries.len();
+                total_ix += visible_worktree_entries.len();
+                worktree_ix += 1;
                 continue;
             }
 
@@ -2134,7 +2140,7 @@ impl ProjectPanel {
                 .iter()
                 .enumerate()
                 .find(|(_, entry)| entry.id == entry_id)
-                .map(|(ix, _)| ix + offset);
+                .map(|(ix, _)| (worktree_ix, ix, total_ix + ix));
         }
         None
     }
@@ -2875,20 +2881,81 @@ impl ProjectPanel {
         }
     }
 
-    fn find_active_indent_guide(&self, indent_guides: &[IndentGuideLayout]) -> Option<usize> {
-        let active_entry_idx = self.selection.and_then(|selection| {
-            self.index_for_entry(selection.entry_id, selection.worktree_id)
-        })?;
+    fn find_active_indent_guide(
+        &self,
+        indent_guides: &[IndentGuideLayout],
+        cx: &AppContext,
+    ) -> Option<usize> {
+        let (worktree, entry) = self.selected_entry(cx)?;
+        let is_expanded_dir = entry.is_dir()
+            && self
+                .expanded_dir_ids
+                .get(&worktree.id())
+                .map(|ids| ids.binary_search(&entry.id).is_ok())
+                .unwrap_or(false);
 
-        indent_guides
+        let entry = if is_expanded_dir {
+            entry
+        } else {
+            worktree.entry_for_path(&entry.path.parent()?)?
+        };
+
+        let (active_indent_range, depth) = {
+            // let child_count = snapshot.child_entries(&entry.path).count();
+
+            let (worktree_ix, child_offset, ix) = self.index_for_entry(entry.id, worktree.id())?;
+            let child_paths = &self.visible_entries[worktree_ix].1;
+            let mut child_count = 0;
+            while let Some(entry) = child_paths.get(child_offset + child_count) {
+                if entry.path.parent() == Some(&entry.path) {
+                    child_count += 1;
+                } else {
+                    break;
+                }
+            }
+
+            let depth = entry.path.ancestors().count() - 1;
+            let start = ix + 1;
+            let end = start + child_count;
+
+            (start..end, depth)
+        };
+
+        let candidates = indent_guides
             .iter()
             .enumerate()
-            .filter(|(_, layout)| {
-                let start = layout.offset.y.saturating_sub(1);
-                start <= active_entry_idx && active_entry_idx <= start + layout.length
-            })
-            .max_by_key(|(_, layout)| layout.offset.x)
-            .map(|(idx, _)| idx)
+            .filter(|(_, indent_guide)| indent_guide.offset.x == depth);
+
+        dbg!(&active_indent_range, depth);
+
+        for (i, indent) in candidates {
+            dbg!(indent);
+            // Find matches that are either an exact match, partially on screen, or inside the enclosing indent
+            if active_indent_range.start <= indent.offset.y + indent.length
+                && indent.offset.y <= active_indent_range.end
+            {
+                return Some(i);
+            }
+        }
+        None
+        // Use the selection to find the active item range,
+        // This is either:
+        // - The containing range if the selected item is a file or a non-expanded directory
+        // - The children range if the selected item is a directory and expanded
+        //
+        // First find out which case we are dealing with
+        // Then compute the range
+        // Then find the matching indent guide
+
+        // indent_guides
+        //     .iter()
+        //     .enumerate()
+        //     .filter(|(_, layout)| {
+        //         let start = layout.offset.y.saturating_sub(1);
+        //         start <= active_entry_idx && active_entry_idx <= start + layout.length
+        //     })
+        //     .max_by_key(|(_, layout)| layout.offset.x)
+        //     .map(|(idx, _)| idx)
     }
 }
 
@@ -3011,7 +3078,8 @@ impl Render for ProjectPanel {
                     })
                     .when(indent_guides, |this| {
                         let line_color = cx.theme().colors().editor_indent_guide;
-                        let active_line_color = cx.theme().colors().editor_indent_guide_active;
+                        // let active_line_color = cx.theme().colors().editor_indent_guide_active;
+                        let active_line_color = Hsla::red();
                         this.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
@@ -3030,12 +3098,12 @@ impl Render for ProjectPanel {
                             )
                             .with_render_fn(
                                 cx.view().clone(),
-                                move |this, indent_guides, indent_size, item_height, _| {
+                                move |this, indent_guides, indent_size, item_height, cx| {
                                     const LEFT_OFFSET: f32 = 14.;
                                     const PADDING_Y: f32 = 4.;
 
                                     let active_indent_guide_index =
-                                        this.find_active_indent_guide(&indent_guides);
+                                        this.find_active_indent_guide(&indent_guides, cx);
 
                                     indent_guides
                                         .into_iter()
