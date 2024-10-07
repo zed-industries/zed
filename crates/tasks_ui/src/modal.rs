@@ -204,19 +204,17 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
-            let Some(candidates_task) = picker
+            let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     match &mut picker.delegate.candidates {
-                        Some(candidates) => {
-                            Task::ready(Ok(string_match_candidates(candidates.iter())))
-                        }
+                        Some(candidates) => string_match_candidates(candidates.iter()),
                         None => {
                             let Ok((worktree, location)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
                                     active_item_selection_properties(workspace, cx)
                                 })
                             else {
-                                return Task::ready(Ok(Vec::new()));
+                                return Vec::new();
                             };
                             let Some(task_inventory) = picker
                                 .delegate
@@ -225,7 +223,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 .task_inventory()
                                 .cloned()
                             else {
-                                return Task::ready(Ok(Vec::new()));
+                                return Vec::new();
                             };
 
                             let (used, current) =
@@ -250,11 +248,6 @@ impl PickerDelegate for TasksModalDelegate {
                     }
                 })
                 .ok()
-            else {
-                return;
-            };
-            let Some(candidates): Option<Vec<StringMatchCandidate>> =
-                candidates_task.await.log_err()
             else {
                 return;
             };

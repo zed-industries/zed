@@ -19,8 +19,7 @@ use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
 use settings::SettingsStore;
 use task::{
-    static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
-    TaskVariables, VariableName,
+    ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix};
@@ -32,15 +31,7 @@ use super::task_store::TaskSettings;
 
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
-    sources: Vec<SourceInInventory>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    _update_sender: UnboundedSender<()>,
-    _update_pooler: Task<anyhow::Result<()>>,
-}
-
-struct SourceInInventory {
-    source: StaticSource,
-    kind: TaskSourceKind,
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -66,25 +57,6 @@ pub enum TaskSourceKind {
 }
 
 impl TaskSourceKind {
-    #[cfg(test)]
-    pub fn path(&self) -> Option<&Path> {
-        match self {
-            Self::AbsPath { abs_path: path, .. }
-            | Self::Worktree {
-                worktree_directory: path,
-                ..
-            } => Some(path),
-            Self::UserInput | Self::Language { .. } | Self::RemoteGlobal => None,
-        }
-    }
-
-    fn worktree(&self) -> Option<WorktreeId> {
-        match self {
-            Self::Worktree { id, .. } => Some(*id),
-            _ => None,
-        }
-    }
-
     pub fn to_id_base(&self) -> String {
         match self {
             TaskSourceKind::UserInput => "oneshot".to_string(),
@@ -106,22 +78,8 @@ impl TaskSourceKind {
 
 impl Inventory {
     pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|cx| {
-            let (update_sender, mut rx) = unbounded();
-            let _update_pooler = cx.spawn(|this, mut cx| async move {
-                while let Some(()) = rx.next().await {
-                    this.update(&mut cx, |_, cx| {
-                        cx.notify();
-                    })?;
-                }
-                Ok(())
-            });
-            Self {
-                sources: Vec::new(),
-                last_scheduled_tasks: VecDeque::new(),
-                _update_sender: update_sender,
-                _update_pooler,
-            }
+        cx.new_model(|_| Self {
+            last_scheduled_tasks: VecDeque::new(),
         })
     }
 
@@ -143,22 +101,7 @@ impl Inventory {
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
 
-        self.sources
-            .iter()
-            .filter(|source| {
-                let source_worktree = source.kind.worktree();
-                worktree.is_none() || source_worktree.is_none() || source_worktree == worktree
-            })
-            .flat_map(|source| {
-                source
-                    .source
-                    .tasks_to_schedule()
-                    .0
-                    .into_iter()
-                    .map(|task| (&source.kind, task))
-            })
-            .map(|(task_source_kind, task)| (task_source_kind.clone(), task))
-            .chain(self.templates_from_settings(worktree, cx))
+        self.templates_from_settings(worktree, cx)
             .chain(language_tasks)
             .collect()
     }
@@ -231,21 +174,7 @@ impl Inventory {
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
         let new_resolved_tasks = self
-            .sources
-            .iter()
-            .filter(|source| {
-                let source_worktree = source.kind.worktree();
-                worktree.is_none() || source_worktree.is_none() || source_worktree == worktree
-            })
-            .flat_map(|source| {
-                source
-                    .source
-                    .tasks_to_schedule()
-                    .0
-                    .into_iter()
-                    .map(|task| (source.kind.clone(), task))
-            })
-            .chain(self.templates_from_settings(worktree, cx))
+            .templates_from_settings(worktree, cx)
             .chain(language_tasks)
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
@@ -321,40 +250,6 @@ impl Inventory {
     }
 }
 
-impl Inventory {
-    /// If the task with the same path was not added yet,
-    /// registers a new tasks source to fetch for available tasks later.
-    /// Unless a source is removed, ignores future additions for the same path.
-    #[cfg(test)] // TODO kb why do we need source-less inventory now?
-    pub fn add_source(
-        &mut self,
-        kind: TaskSourceKind,
-        create_source: impl FnOnce(UnboundedSender<()>, &mut AppContext) -> StaticSource,
-        cx: &mut gpui::ModelContext<Self>,
-    ) {
-        let source_path = kind.path();
-        if source_path.is_some() {
-            if let Some(a) = self.sources.iter().find(|s| s.kind.path() == source_path) {
-                log::debug!("Source for path {source_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
-                return;
-            }
-        }
-        let source = create_source(self._update_sender.clone(), cx);
-        let source = SourceInInventory { source, kind };
-        self.sources.push(source);
-        cx.notify();
-    }
-
-    /// If present, removes the local static source entry that has the given path,
-    /// making corresponding task definitions unavailable in the fetch results.
-    ///
-    /// Now, entry for this path can be re-added again.
-    #[cfg(test)]
-    pub fn remove_local_static_source(&mut self, path: &Path) {
-        self.sources.retain(|s| s.kind.path() != Some(path));
-    }
-}
-
 fn task_lru_comparator(
     (kind_a, task_a, lru_score_a): &(TaskSourceKind, ResolvedTask, u32),
     (kind_b, task_b, lru_score_b): &(TaskSourceKind, ResolvedTask, u32),
@@ -399,39 +294,14 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 
 #[cfg(test)]
 mod test_inventory {
-    use gpui::{AppContext, Model, TestAppContext};
+    use gpui::{Model, TestAppContext};
     use itertools::Itertools;
-    use task::{
-        static_source::{StaticSource, TrackedFile},
-        TaskContext, TaskTemplate, TaskTemplates,
-    };
+    use task::TaskContext;
     use worktree::WorktreeId;
 
     use crate::Inventory;
 
-    use super::{task_source_kind_preference, TaskSourceKind, UnboundedSender};
-
-    pub(super) fn static_test_source(
-        task_names: impl IntoIterator<Item = String>,
-        updates: UnboundedSender<()>,
-        cx: &mut AppContext,
-    ) -> StaticSource {
-        let tasks = TaskTemplates(
-            task_names
-                .into_iter()
-                .map(|name| TaskTemplate {
-                    label: name,
-                    command: "test command".to_owned(),
-                    ..TaskTemplate::default()
-                })
-                .collect(),
-        );
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-        let file = TrackedFile::new(rx, updates, cx);
-        tx.unbounded_send(serde_json::to_string(&tasks).unwrap())
-            .unwrap();
-        StaticSource::new(file)
-    }
+    use super::{task_source_kind_preference, TaskSourceKind};
 
     pub(super) fn task_template_names(
         inventory: &Model<Inventory>,
@@ -629,31 +499,6 @@ mod tests {
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
         );
-
-        inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| static_test_source(vec!["3_task".to_string()], tx, cx),
-                cx,
-            );
-        });
-        inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| {
-                    static_test_source(
-                        vec![
-                            "1_task".to_string(),
-                            "2_task".to_string(),
-                            "1_a_task".to_string(),
-                        ],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-        });
         cx.run_until_parked();
         let expected_initial_state = [
             "1_a_task".to_string(),
@@ -708,15 +553,6 @@ mod tests {
             ],
         );
 
-        inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| {
-                    static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], tx, cx)
-                },
-                cx,
-            );
-        });
         cx.run_until_parked();
         let expected_updated_state = [
             "10_hello".to_string(),
@@ -778,77 +614,6 @@ mod tests {
         let worktree_2 = WorktreeId::from_usize(2);
         let worktree_path_2 = Path::new("worktree_path_2");
 
-        inventory_with_statics.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| {
-                    static_test_source(
-                        vec!["user_input".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_1.to_path_buf(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["static_source_1".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_2.to_path_buf(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["static_source_2".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::Worktree {
-                    id: worktree_1,
-                    worktree_directory: worktree_path_1.to_path_buf(),
-                    id_base: "test_source".into(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["worktree_1".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::Worktree {
-                    id: worktree_2,
-                    worktree_directory: worktree_path_2.to_path_buf(),
-                    id_base: "test_source".into(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["worktree_2".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-        });
         cx.run_until_parked();
         let worktree_independent_tasks = vec![
             (
