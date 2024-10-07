@@ -615,8 +615,8 @@ impl<S> Drop for TokenCountingStream<S> {
         let model = std::mem::take(&mut self.model);
         let input_token_count = self.input_tokens;
         let output_token_count = self.output_tokens;
-        let cache_creation_input_tokens = self.cache_creation_input_tokens;
-        let cache_read_input_tokens = self.cache_read_input_tokens;
+        let cache_creation_input_token_count = self.cache_creation_input_tokens;
+        let cache_read_input_token_count = self.cache_read_input_tokens;
         self.state.executor.spawn_detached(async move {
             let usage = state
                 .db
@@ -626,8 +626,8 @@ impl<S> Drop for TokenCountingStream<S> {
                     provider,
                     &model,
                     input_token_count,
-                    cache_creation_input_tokens,
-                    cache_read_input_tokens,
+                    cache_creation_input_token_count,
+                    cache_read_input_token_count,
                     output_token_count,
                     Utc::now(),
                 )
@@ -659,11 +659,20 @@ impl<S> Drop for TokenCountingStream<S> {
                             model,
                             provider: provider.to_string(),
                             input_token_count: input_token_count as u64,
+                            cache_creation_input_token_count: cache_creation_input_token_count
+                                as u64,
+                            cache_read_input_token_count: cache_read_input_token_count as u64,
                             output_token_count: output_token_count as u64,
                             requests_this_minute: usage.requests_this_minute as u64,
                             tokens_this_minute: usage.tokens_this_minute as u64,
                             tokens_this_day: usage.tokens_this_day as u64,
                             input_tokens_this_month: usage.input_tokens_this_month as u64,
+                            cache_creation_input_tokens_this_month: usage
+                                .cache_creation_input_tokens_this_month
+                                as u64,
+                            cache_read_input_tokens_this_month: usage
+                                .cache_read_input_tokens_this_month
+                                as u64,
                             output_tokens_this_month: usage.output_tokens_this_month as u64,
                             spending_this_month: usage.spending_this_month as u64,
                             lifetime_spending: usage.lifetime_spending as u64,

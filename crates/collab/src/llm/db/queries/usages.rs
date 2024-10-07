@@ -1,3 +1,14 @@
+/*
+
+todo!("Add Clickhouse event rows")
+    LlmUsageEventRow
+        pub cache_creation_input_token_count: u64,
+        pub cache_read_input_token_count: u64,
+        pub cache_creation_input_tokens_this_month: u64,
+        pub cache_read_input_tokens_this_month: u64,
+
+*/
+
 use crate::db::UserId;
 use chrono::Duration;
 use futures::StreamExt as _;
