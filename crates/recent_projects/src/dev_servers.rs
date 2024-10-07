@@ -35,7 +35,10 @@ use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::ElevationIndex;
 use ui::Section;
-use ui::{prelude::*, Indicator, List, ListItem, Modal, ModalFooter, ModalHeader, Tooltip};
+use ui::{
+    prelude::*, IconButtonShape, Indicator, List, ListItem, Modal, ModalFooter, ModalHeader,
+    Tooltip,
+};
 use ui_input::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::OpenOptions;
@@ -889,7 +892,7 @@ impl DevServerProjects {
     ) -> impl IntoElement {
         v_flex()
             .w_full()
-            .px(Spacing::Medium.rems(cx) + Spacing::Medium.rems(cx))
+            .px(Spacing::Small.rems(cx) + Spacing::Small.rems(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -954,9 +957,8 @@ impl DevServerProjects {
                     .w_full()
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .rounded_md()
                     .my_1()
-                    .mx_2()
+                    .mx_1p5()
                     .py_0p5()
                     .px_3()
                     .child(
@@ -967,7 +969,7 @@ impl DevServerProjects {
                             }))
                             .child(
                                 h_flex().child(
-                                    Button::new("new-remote_project", "Open folder…")
+                                    Button::new("new-remote_project", "Open Folder…")
                                         .icon(IconName::Plus)
                                         .size(ButtonSize::Default)
                                         .style(ButtonStyle::Filled)
@@ -1181,11 +1183,12 @@ impl DevServerProjects {
                 h_flex()
                     .p_2()
                     .gap_2()
-                    .items_start()
+                    .items_center()
                     .border_b_1()
                     .border_color(theme.colors().border_variant)
                     .child(
                         IconButton::new("cancel-dev-server-creation", IconName::ArrowLeft)
+                            .shape(IconButtonShape::Square)
                             .on_click(|_, cx| {
                                 cx.dispatch_action(menu::Cancel.boxed_clone());
                             }),
@@ -1194,9 +1197,7 @@ impl DevServerProjects {
             )
             .child(
                 v_flex()
-                    .py_3()
-                    .px_2()
-                    .gap_0p5()
+                    .p_3()
                     .border_b_1()
                     .border_color(theme.colors().border_variant)
                     .child(Label::new("SSH Arguments"))
@@ -1207,6 +1208,7 @@ impl DevServerProjects {
                     )
                     .child(
                         h_flex()
+                            .mt_2()
                             .w_full()
                             .gap_2()
                             .child(self.dev_server_name_input.clone())
@@ -1258,7 +1260,10 @@ impl DevServerProjects {
                                             move |this, progress| this.bg(color.opacity(progress)),
                                         ),
                                     )
-                                    .child(Label::new("Waiting for connection…"))
+                                    .child(
+                                        Label::new("Waiting for connection…")
+                                            .size(LabelSize::Small),
+                                    )
                                     .child(h_flex().w_full()),
                             )
                         }
@@ -1325,7 +1330,7 @@ impl DevServerProjects {
                 Section::new().padded(false).child(
                     div()
                         .border_y_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(cx.theme().colors().border_variant)
                         .w_full()
                         .child(
                             div().p_2().child(
