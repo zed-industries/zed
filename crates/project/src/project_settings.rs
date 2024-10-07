@@ -439,14 +439,24 @@ impl SettingsObserver {
             } else if path.ends_with(local_tasks_file_relative_path()) {
                 let settings_dir = Arc::<Path>::from(
                     path.ancestors()
-                        .nth(local_tasks_file_relative_path().components().count())
+                        .nth(
+                            local_tasks_file_relative_path()
+                                .components()
+                                .count()
+                                .saturating_sub(1),
+                        )
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Tasks)
             } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
                 let settings_dir = Arc::<Path>::from(
                     path.ancestors()
-                        .nth(local_vscode_tasks_file_relative_path().components().count())
+                        .nth(
+                            local_vscode_tasks_file_relative_path()
+                                .components()
+                                .count()
+                                .saturating_sub(1),
+                        )
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Tasks)

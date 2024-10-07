@@ -619,6 +619,20 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "With no global tasks and no open item, no tasks should be listed"
+        );
+        drop(tasks_picker);
+
+        let _ = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
             vec!["another one", "example task"],
             "Initial tasks should be listed in alphabetical order"
         );
@@ -922,8 +936,9 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["TypeScript task from file /dir/a1.ts", "TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
-            "After spawning the task and getting it into the history, it should be up in the sort as recently used"
+            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            "After spawning the task and getting it into the history, it should be up in the sort as recently used.
+            Tasks with the same labels and context are deduplicated."
         );
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);

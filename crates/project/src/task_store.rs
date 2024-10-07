@@ -18,7 +18,7 @@ use rpc::{
 use settings::{RawTaskTemplates, SettingsStore, TaskSettingsStore, WorktreeId};
 use task::{TaskContext, TaskTemplate, TaskVariables, VariableName};
 use text::BufferId;
-use util::{debug_panic, ResultExt};
+use util::ResultExt;
 
 use crate::{
     buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
@@ -139,7 +139,7 @@ impl TaskSettings {
                                 (
                                     TaskSourceKind::Worktree {
                                         id: worktree,
-                                        worktree_directory: directory_path.to_path_buf(),
+                                        directory_in_worktree: directory_path.to_path_buf(),
                                         id_base: Cow::Owned(format!(
                                             "local worktree tasks from directory {directory_path:?}"
                                         )),
@@ -338,8 +338,6 @@ impl TaskStore {
         } = self
         {
             *downstream_client = Some((new_downstream_client, remote_id));
-        } else {
-            debug_panic!("called shared on a non-local task store");
         }
     }
 
@@ -349,8 +347,6 @@ impl TaskStore {
         } = self
         {
             *downstream_client = None;
-        } else {
-            debug_panic!("called unshared on a non-local task store");
         }
     }
 }

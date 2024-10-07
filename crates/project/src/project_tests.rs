@@ -138,8 +138,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     });
     let topmost_local_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
-        worktree_directory: PathBuf::new(),
-        id_base: "local worktree tasks from directory \"\"".into(),
+        directory_in_worktree: PathBuf::from(".zed"),
+        id_base: "local worktree tasks from directory \".zed\"".into(),
     };
 
     let all_tasks = cx
@@ -189,8 +189,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    worktree_directory: PathBuf::from("b"),
-                    id_base: "local worktree tasks from directory \"b\"".into(),
+                    directory_in_worktree: PathBuf::from("b/.zed"),
+                    id_base: "local worktree tasks from directory \"b/.zed\"".into(),
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],
@@ -269,8 +269,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    worktree_directory: PathBuf::from("b"),
-                    id_base: "local worktree tasks from directory \"b\"".into(),
+                    directory_in_worktree: PathBuf::from("b/.zed"),
+                    id_base: "local worktree tasks from directory \"b/.zed\"".into(),
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],
@@ -278,7 +278,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             ),
             (
                 TaskSourceKind::AbsPath {
-                    abs_path: PathBuf::from("/Users/someonetoignore/.config/zed/tasks.json"),
+                    abs_path: paths::tasks_file().clone(),
                     id_base: "global tasks.json".into(),
                 },
                 "cargo check unstable".to_string(),

@@ -38,7 +38,7 @@ pub enum TaskSourceKind {
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
-        worktree_directory: PathBuf,
+        directory_in_worktree: PathBuf,
         id_base: Cow<'static, str>,
     },
     /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
@@ -62,7 +62,7 @@ impl TaskSourceKind {
             TaskSourceKind::Worktree {
                 id,
                 id_base,
-                worktree_directory: abs_path,
+                directory_in_worktree: abs_path,
             } => {
                 format!("{id_base}_{id}_{}", abs_path.display())
             }
@@ -477,13 +477,19 @@ impl ContextProvider for ContextProviderWithTasks {
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    use gpui::{BorrowAppContext, TestAppContext};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use settings::LocalSettingsKind;
+
+    use crate::task_store::TaskStore;
 
     use super::test_inventory::*;
     use super::*;
 
     #[gpui::test]
     async fn test_task_list_sorting(cx: &mut TestAppContext) {
+        init_test(cx);
         let inventory = cx.update(Inventory::new);
         let initial_tasks = resolved_task_names(&inventory, None, cx).await;
         assert!(
@@ -502,6 +508,18 @@ mod tests {
             "2_task".to_string(),
             "3_task".to_string(),
         ];
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, ()>(|store, cx| {
+                store
+                    .set_user_tasks(
+                        &mock_tasks_from_names(
+                            expected_initial_state.iter().map(|name| name.as_str()),
+                        ),
+                        cx,
+                    )
+                    .unwrap();
+            })
+        });
         assert_eq!(
             task_template_names(&inventory, None, cx),
             &expected_initial_state,
@@ -520,7 +538,6 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx).await,
             vec![
-                "2_task".to_string(),
                 "2_task".to_string(),
                 "1_a_task".to_string(),
                 "1_task".to_string(),
@@ -542,13 +559,24 @@ mod tests {
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
-                "3_task".to_string(),
-                "1_task".to_string(),
-                "2_task".to_string(),
                 "1_a_task".to_string(),
             ],
         );
 
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, ()>(|store, cx| {
+                store
+                    .set_user_tasks(
+                        &mock_tasks_from_names(
+                            ["10_hello", "11_hello"]
+                                .into_iter()
+                                .chain(expected_initial_state.iter().map(|name| name.as_str())),
+                        ),
+                        cx,
+                    )
+                    .unwrap();
+            })
+        });
         cx.run_until_parked();
         let expected_updated_state = [
             "10_hello".to_string(),
@@ -565,9 +593,6 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx).await,
             vec![
-                "3_task".to_string(),
-                "1_task".to_string(),
-                "2_task".to_string(),
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
@@ -589,10 +614,6 @@ mod tests {
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
-                "11_hello".to_string(),
-                "3_task".to_string(),
-                "1_task".to_string(),
-                "2_task".to_string(),
                 "1_a_task".to_string(),
                 "10_hello".to_string(),
             ],
@@ -601,62 +622,50 @@ mod tests {
 
     #[gpui::test]
     async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
+        init_test(cx);
         let inventory_with_statics = cx.update(Inventory::new);
         let common_name = "common_task_name";
-        let path_1 = Path::new("path_1");
-        let path_2 = Path::new("path_2");
         let worktree_1 = WorktreeId::from_usize(1);
-        let worktree_path_1 = Path::new("worktree_path_1");
         let worktree_2 = WorktreeId::from_usize(2);
-        let worktree_path_2 = Path::new("worktree_path_2");
 
         cx.run_until_parked();
         let worktree_independent_tasks = vec![
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_1.to_path_buf(),
+                    id_base: "global tasks.json".into(),
+                    abs_path: paths::tasks_file().clone(),
+                },
+                common_name.to_string(),
+            ),
+            (
+                TaskSourceKind::AbsPath {
+                    id_base: "global tasks.json".into(),
+                    abs_path: paths::tasks_file().clone(),
                 },
                 "static_source_1".to_string(),
             ),
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_1.to_path_buf(),
-                },
-                common_name.to_string(),
-            ),
-            (
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_2.to_path_buf(),
-                },
-                common_name.to_string(),
-            ),
-            (
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_2.to_path_buf(),
+                    id_base: "global tasks.json".into(),
+                    abs_path: paths::tasks_file().clone(),
                 },
                 "static_source_2".to_string(),
             ),
-            (TaskSourceKind::UserInput, common_name.to_string()),
-            (TaskSourceKind::UserInput, "user_input".to_string()),
         ];
         let worktree_1_tasks = [
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    worktree_directory: worktree_path_1.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    worktree_directory: worktree_path_1.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 "worktree_1".to_string(),
             ),
@@ -665,33 +674,62 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    worktree_directory: worktree_path_2.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    worktree_directory: worktree_path_2.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 "worktree_2".to_string(),
             ),
         ];
 
-        let all_tasks = worktree_1_tasks
-            .iter()
-            .chain(worktree_2_tasks.iter())
-            // worktree-less tasks come later in the list
-            .chain(worktree_independent_tasks.iter())
-            .cloned()
-            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
-            .collect::<Vec<_>>();
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, ()>(|store, cx| {
+                store
+                    .set_user_tasks(
+                        &mock_tasks_from_names(
+                            worktree_independent_tasks
+                                .iter()
+                                .map(|(_, name)| name.as_str()),
+                        ),
+                        cx,
+                    )
+                    .unwrap();
+                store
+                    .set_local_settings(
+                        worktree_1,
+                        Arc::from(Path::new(".zed")),
+                        LocalSettingsKind::Tasks,
+                        Some(&mock_tasks_from_names(
+                            worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
+                        )),
+                        cx,
+                    )
+                    .unwrap();
+                store
+                    .set_local_settings(
+                        worktree_2,
+                        Arc::from(Path::new(".zed")),
+                        LocalSettingsKind::Tasks,
+                        Some(&mock_tasks_from_names(
+                            worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
+                        )),
+                        cx,
+                    )
+                    .unwrap();
+            })
+        });
 
         assert_eq!(
             list_tasks(&inventory_with_statics, None, cx).await,
-            all_tasks
+            worktree_independent_tasks,
+            "Without a worktree, only worktree-independent tasks should be listed"
         );
         assert_eq!(
             list_tasks(&inventory_with_statics, Some(worktree_1), cx).await,
@@ -713,6 +751,17 @@ mod tests {
         );
     }
 
+    fn init_test(cx: &mut TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            TaskStore::init(None, cx);
+        });
+    }
+
     pub(super) async fn resolved_task_names(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
@@ -725,5 +774,20 @@ mod tests {
             .chain(current)
             .map(|(_, task)| task.original_task().label.clone())
             .collect()
+    }
+
+    fn mock_tasks_from_names<'a>(task_names: impl Iterator<Item = &'a str> + 'a) -> String {
+        serde_json::to_string(&serde_json::Value::Array(
+            task_names
+                .map(|task_name| {
+                    json!({
+                        "label": task_name,
+                        "command": "echo",
+                        "args": vec![task_name],
+                    })
+                })
+                .collect::<Vec<_>>(),
+        ))
+        .unwrap()
     }
 }

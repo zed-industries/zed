@@ -209,7 +209,7 @@ mod tests {
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
     use language::{Language, LanguageConfig};
-    use project::{BasicContextProvider, FakeFs, Project};
+    use project::{task_store::TaskStore, BasicContextProvider, FakeFs, Project};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
@@ -402,6 +402,7 @@ mod tests {
             editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
+            TaskStore::init(None, cx);
             state
         })
     }
