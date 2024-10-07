@@ -55,7 +55,7 @@ impl HeadlessProject {
             store
         });
 
-        let dap_store = cx.new_model(DapStore::new);
+        let dap_store = cx.new_model(|cx| DapStore::new(None, None, fs.clone(), cx));
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store =
                 BufferStore::local(worktree_store.clone(), dap_store.clone(), cx);

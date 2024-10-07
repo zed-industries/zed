@@ -1,10 +1,12 @@
 use crate::client::TransportParams;
+use ::fs::Fs;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::AsyncAppContext;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use http_client::HttpClient;
+use node_runtime::NodeRuntime;
+use serde_json::Value;
 use smol::{
     self,
     io::BufReader,
@@ -12,26 +14,17 @@ use smol::{
     process,
 };
 use std::{
+    collections::HashMap,
+    ffi::OsString,
     fmt::Debug,
     net::{Ipv4Addr, SocketAddrV4},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::Duration,
 };
-use task::{CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, TCPHost};
 
-pub fn build_adapter(adapter_config: &DebugAdapterConfig) -> Result<Box<dyn DebugAdapter>> {
-    match &adapter_config.kind {
-        DebugAdapterKind::Custom(start_args) => Ok(Box::new(CustomDebugAdapter::new(
-            adapter_config,
-            start_args.clone(),
-        ))),
-        DebugAdapterKind::Python => Ok(Box::new(PythonDebugAdapter::new(adapter_config))),
-        DebugAdapterKind::PHP => Ok(Box::new(PhpDebugAdapter::new(adapter_config))),
-        DebugAdapterKind::Lldb => Ok(Box::new(LldbDebugAdapter::new(adapter_config))),
-    }
-}
+use task::TCPHost;
 
 /// Get an open port to use with the tcp client when not supplied by debug config
 async fn get_port(host: Ipv4Addr) -> Option<u16> {
@@ -45,19 +38,20 @@ async fn get_port(host: Ipv4Addr) -> Option<u16> {
     )
 }
 
-/// Creates a debug client that connects to an adapter through tcp
-///
+pub trait DapDelegate {
+    fn http_client(&self) -> Option<Arc<dyn HttpClient>>;
+    fn node_runtime(&self) -> Option<NodeRuntime>;
+    fn fs(&self) -> Arc<dyn Fs>;
+}
+
 /// TCP clients don't have an error communication stream with an adapter
-///
 /// # Parameters
-/// - `command`: The command that starts the debugger
-/// - `args`: Arguments of the command that starts the debugger
-/// - `cwd`: The absolute path of the project that is being debugged
+/// - `host`: The ip/port that that the client will connect too
+/// - `adapter_binary`: The debug adapter binary to start
 /// - `cx`: The context that the new client belongs too
-async fn create_tcp_client(
+pub async fn create_tcp_client(
     host: TCPHost,
-    command: &String,
-    args: &Vec<String>,
+    adapter_binary: DebugAdapterBinary,
     cx: &mut AsyncAppContext,
 ) -> Result<TransportParams> {
     let host_address = host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1));
@@ -66,10 +60,17 @@ async fn create_tcp_client(
     if port.is_none() {
         port = get_port(host_address).await;
     }
+    let mut command = if let Some(start_command) = &adapter_binary.start_command {
+        let mut command = process::Command::new(start_command);
+        command.arg(adapter_binary.path);
+        command
+    } else {
+        process::Command::new(adapter_binary.path)
+    };
 
-    let mut command = process::Command::new(command);
     command
-        .args(args)
+        .args(adapter_binary.arguments)
+        .envs(adapter_binary.env.clone().unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -93,6 +94,7 @@ async fn create_tcp_client(
     );
 
     let (rx, tx) = TcpStream::connect(address).await?.split();
+    log::info!("Debug adapter has connected to tcp server");
 
     Ok(TransportParams::new(
         Box::new(BufReader::new(rx)),
@@ -105,12 +107,20 @@ async fn create_tcp_client(
 /// Creates a debug client that connects to an adapter through std input/output
 ///
 /// # Parameters
-/// - `command`: The command that starts the debugger
-/// - `args`: Arguments of the command that starts the debugger
-fn create_stdio_client(command: &String, args: &Vec<String>) -> Result<TransportParams> {
-    let mut command = process::Command::new(command);
+/// - `adapter_binary`: The debug adapter binary to start
+pub fn create_stdio_client(adapter_binary: DebugAdapterBinary) -> Result<TransportParams> {
+    let mut command = if let Some(start_command) = &adapter_binary.start_command {
+        let mut command = process::Command::new(start_command);
+        command.arg(adapter_binary.path);
+        command
+    } else {
+        let command = process::Command::new(adapter_binary.path);
+        command
+    };
+
     command
-        .args(args)
+        .args(adapter_binary.arguments)
+        .envs(adapter_binary.env.clone().unwrap_or_default())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -133,6 +143,8 @@ fn create_stdio_client(command: &String, args: &Vec<String>) -> Result<Transport
         .take()
         .ok_or_else(|| anyhow!("Failed to open stderr"))?;
 
+    log::info!("Debug adapter has connected to stdio adapter");
+
     Ok(TransportParams::new(
         Box::new(BufReader::new(stdout)),
         Box::new(stdin),
@@ -141,11 +153,26 @@ fn create_stdio_client(command: &String, args: &Vec<String>) -> Result<Transport
     ))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct DebugAdapterName(pub Arc<str>);
 
+impl AsRef<Path> for DebugAdapterName {
+    fn as_ref(&self) -> &Path {
+        Path::new(&*self.0)
+    }
+}
+
+impl std::fmt::Display for DebugAdapterName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
+    pub start_command: Option<String>,
     pub path: PathBuf,
+    pub arguments: Vec<OsString>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[async_trait(?Send)]
@@ -156,214 +183,16 @@ pub trait DebugAdapter: Debug + Send + Sync + 'static {
 
     fn name(&self) -> DebugAdapterName;
 
-    async fn connect(&self, cx: &mut AsyncAppContext) -> anyhow::Result<TransportParams>;
+    async fn connect(
+        &self,
+        adapter_binary: DebugAdapterBinary,
+        cx: &mut AsyncAppContext,
+    ) -> anyhow::Result<TransportParams>;
 
-    fn is_installed(&self) -> Option<DebugAdapterBinary>;
-
-    fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary>;
+    async fn install_or_fetch_binary(
+        &self,
+        delegate: Box<dyn DapDelegate>,
+    ) -> Result<DebugAdapterBinary>;
 
     fn request_args(&self) -> Value;
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
-struct CustomDebugAdapter {
-    start_command: String,
-    initialize_args: Option<Vec<String>>,
-    program: String,
-    connection: DebugConnectionType,
-}
-
-impl CustomDebugAdapter {
-    const _ADAPTER_NAME: &'static str = "custom_dap";
-
-    fn new(adapter_config: &DebugAdapterConfig, custom_args: CustomArgs) -> Self {
-        CustomDebugAdapter {
-            start_command: custom_args.start_command,
-            program: adapter_config.program.clone(),
-            connection: custom_args.connection,
-            initialize_args: adapter_config.initialize_args.clone(),
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for CustomDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::_ADAPTER_NAME.into())
-    }
-
-    async fn connect(&self, cx: &mut AsyncAppContext) -> Result<TransportParams> {
-        match &self.connection {
-            DebugConnectionType::STDIO => create_stdio_client(&self.start_command, &vec![]),
-            DebugConnectionType::TCP(tcp_host) => {
-                create_tcp_client(tcp_host.clone(), &self.start_command, &vec![], cx).await
-            }
-        }
-    }
-
-    fn is_installed(&self) -> Option<DebugAdapterBinary> {
-        None
-    }
-
-    fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary> {
-        Err(anyhow::format_err!("Not implemented"))
-    }
-
-    fn request_args(&self) -> Value {
-        let base_args = json!({
-            "program": format!("{}", &self.program)
-        });
-
-        // TODO Debugger: Figure out a way to combine this with base args
-        // if let Some(args) = &self.initialize_args {
-        //     let args = json!(args.clone()).as_object().into_iter();
-        //     base_args.as_object_mut().unwrap().extend(args);
-        // }
-
-        base_args
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
-struct PythonDebugAdapter {
-    program: String,
-    adapter_path: Option<String>,
-}
-
-impl PythonDebugAdapter {
-    const _ADAPTER_NAME: &'static str = "debugpy";
-
-    fn new(adapter_config: &DebugAdapterConfig) -> Self {
-        PythonDebugAdapter {
-            program: adapter_config.program.clone(),
-            adapter_path: adapter_config.adapter_path.clone(),
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for PythonDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::_ADAPTER_NAME.into())
-    }
-
-    async fn connect(&self, _cx: &mut AsyncAppContext) -> Result<TransportParams> {
-        let command = "python3".to_string();
-
-        let args = if let Some(path) = self.adapter_path.clone() {
-            vec![path]
-        } else {
-            Vec::new()
-        };
-
-        create_stdio_client(&command, &args)
-    }
-
-    fn is_installed(&self) -> Option<DebugAdapterBinary> {
-        None
-    }
-
-    fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary> {
-        Err(anyhow::format_err!("Not implemented"))
-    }
-
-    fn request_args(&self) -> Value {
-        json!({"program": format!("{}", &self.program)})
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
-struct PhpDebugAdapter {
-    program: String,
-    adapter_path: Option<String>,
-}
-
-impl PhpDebugAdapter {
-    const _ADAPTER_NAME: &'static str = "vscode-php-debug";
-
-    fn new(adapter_config: &DebugAdapterConfig) -> Self {
-        PhpDebugAdapter {
-            program: adapter_config.program.clone(),
-            adapter_path: adapter_config.adapter_path.clone(),
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for PhpDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::_ADAPTER_NAME.into())
-    }
-
-    async fn connect(&self, cx: &mut AsyncAppContext) -> Result<TransportParams> {
-        let command = "bun".to_string();
-
-        let args = if let Some(path) = self.adapter_path.clone() {
-            vec![path, "--server=8132".into()]
-        } else {
-            Vec::new()
-        };
-
-        let host = TCPHost {
-            port: Some(8132),
-            host: None,
-            delay: Some(1000),
-        };
-
-        create_tcp_client(host, &command, &args, cx).await
-    }
-
-    fn is_installed(&self) -> Option<DebugAdapterBinary> {
-        None
-    }
-
-    fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary> {
-        Err(anyhow::format_err!("Not implemented"))
-    }
-
-    fn request_args(&self) -> Value {
-        json!({"program": format!("{}", &self.program)})
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
-struct LldbDebugAdapter {
-    program: String,
-    adapter_path: Option<String>,
-}
-
-impl LldbDebugAdapter {
-    const _ADAPTER_NAME: &'static str = "lldb";
-
-    fn new(adapter_config: &DebugAdapterConfig) -> Self {
-        LldbDebugAdapter {
-            program: adapter_config.program.clone(),
-            adapter_path: adapter_config.adapter_path.clone(),
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for LldbDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::_ADAPTER_NAME.into())
-    }
-
-    async fn connect(&self, _: &mut AsyncAppContext) -> Result<TransportParams> {
-        let command = "/opt/homebrew/opt/llvm/bin/lldb-dap".to_string();
-
-        create_stdio_client(&command, &vec![])
-    }
-
-    fn is_installed(&self) -> Option<DebugAdapterBinary> {
-        None
-    }
-
-    fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary> {
-        Err(anyhow::format_err!("Not implemented"))
-    }
-
-    fn request_args(&self) -> Value {
-        json!({"program": format!("{}", &self.program)})
-    }
 }

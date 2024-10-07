@@ -12,9 +12,14 @@ workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 dap-types = { git = "https://github.com/zed-industries/dap-types" }
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http_client.workspace = true
+log.workspace = true
+node_runtime.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

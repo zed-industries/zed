@@ -245,6 +245,14 @@ pub fn languages_dir() -> &'static PathBuf {
     LANGUAGES_DIR.get_or_init(|| support_dir().join("languages"))
 }
 
+/// Returns the path to the debug adapters directory
+///
+/// This is where debug adapters are downloaded to for DAPs that are built-in to Zed.
+pub fn debug_adapters_dir() -> &'static PathBuf {
+    static DEBUG_ADAPTERS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DEBUG_ADAPTERS_DIR.get_or_init(|| support_dir().join("debug_adapters"))
+}
+
 /// Returns the path to the Copilot directory.
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();

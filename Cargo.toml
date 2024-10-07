@@ -23,6 +23,7 @@ members = [
     "crates/context_servers",
     "crates/copilot",
     "crates/dap",
+    "crates/dap_adapters",
     "crates/debugger_ui",
     "crates/db",
     "crates/dev_server_projects",
@@ -207,6 +208,7 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }
 dap = { path = "crates/dap" }
+dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
 debugger_ui = { path = "crates/debugger_ui" }
 dev_server_projects = { path = "crates/dev_server_projects" }

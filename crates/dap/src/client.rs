@@ -1,7 +1,5 @@
 use crate::transport::Transport;
-use anyhow::{anyhow, Context, Result};
-
-use crate::adapters::{build_adapter, DebugAdapter};
+use anyhow::{anyhow, Result};
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
@@ -38,7 +36,8 @@ pub struct DebugAdapterClientId(pub usize);
 
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
-    adapter: Arc<Box<dyn DebugAdapter>>,
+    adapter_id: String,
+    request_args: Value,
     transport: Arc<Transport>,
     _process: Arc<Mutex<Option<Child>>>,
     sequence_count: AtomicU64,
@@ -71,16 +70,16 @@ impl TransportParams {
 impl DebugAdapterClient {
     pub async fn new<F>(
         id: DebugAdapterClientId,
+        adapter_id: String,
+        request_args: Value,
         config: DebugAdapterConfig,
+        transport_params: TransportParams,
         event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<Self>>
     where
         F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        let adapter = Arc::new(build_adapter(&config).context("Creating debug adapter")?);
-        let transport_params = adapter.connect(cx).await?;
-
         let transport = Self::handle_transport(
             transport_params.rx,
             transport_params.tx,
@@ -88,11 +87,11 @@ impl DebugAdapterClient {
             event_handler,
             cx,
         );
-
         Ok(Arc::new(Self {
             id,
+            adapter_id,
+            request_args,
             config,
-            adapter,
             transport,
             sequence_count: AtomicU64::new(1),
             _process: Arc::new(Mutex::new(transport_params.process)),
@@ -189,12 +188,12 @@ impl DebugAdapterClient {
         self.config.clone()
     }
 
-    pub fn adapter(&self) -> Arc<Box<dyn DebugAdapter>> {
-        self.adapter.clone()
+    pub fn adapter_id(&self) -> String {
+        self.adapter_id.clone()
     }
 
     pub fn request_args(&self) -> Value {
-        self.adapter.request_args()
+        self.request_args.clone()
     }
 
     pub fn request_type(&self) -> DebugRequestType {

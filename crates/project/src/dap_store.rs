@@ -18,8 +18,12 @@ use dap::{
     StackTraceArguments, StepInArguments, StepOutArguments, SteppingGranularity,
     TerminateArguments, TerminateThreadsArguments, Variable, VariablesArguments,
 };
+use dap_adapters::build_adapter;
+use fs::Fs;
 use gpui::{EventEmitter, Model, ModelContext, Task};
+use http_client::HttpClient;
 use language::{Buffer, BufferSnapshot};
+use node_runtime::NodeRuntime;
 use serde_json::Value;
 use settings::WorktreeId;
 use std::{
@@ -33,7 +37,7 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugRequestType};
 use text::Point;
-use util::ResultExt as _;
+use util::ResultExt;
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
@@ -61,12 +65,20 @@ pub struct DapStore {
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
     capabilities: HashMap<DebugAdapterClientId, Capabilities>,
     active_debug_line: Option<(ProjectPath, DebugPosition)>,
+    http_client: Option<Arc<dyn HttpClient>>,
+    node_runtime: Option<NodeRuntime>,
+    fs: Arc<dyn Fs>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
-    pub fn new(cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        http_client: Option<Arc<dyn HttpClient>>,
+        node_runtime: Option<NodeRuntime>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         cx.on_app_quit(Self::shutdown_clients).detach();
 
         Self {
@@ -75,6 +87,9 @@ impl DapStore {
             breakpoints: Default::default(),
             capabilities: HashMap::default(),
             next_client_id: Default::default(),
+            http_client,
+            node_runtime,
+            fs,
         }
     }
 
@@ -216,12 +231,33 @@ impl DapStore {
 
     pub fn start_client(&mut self, config: DebugAdapterConfig, cx: &mut ModelContext<Self>) {
         let client_id = self.next_client_id();
-
+        let adapter_delegate = Box::new(DapAdapterDelegate::new(
+            self.http_client.clone(),
+            self.node_runtime.clone(),
+            self.fs.clone(),
+        ));
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
+            let adapter = Arc::new(
+                build_adapter(&config)
+                    .context("Creating debug adapter")
+                    .log_err()?,
+            );
+            let binary = adapter
+                .install_or_fetch_binary(adapter_delegate)
+                .await
+                .context("Failed to get debug adapter binary")
+                .log_err()?;
+            let transport_params = adapter.connect(binary, &mut cx).await.log_err()?;
+            let request_args = adapter.request_args();
+            let adapter_id = adapter.id();
+
             let client = DebugAdapterClient::new(
                 client_id,
+                adapter_id,
+                request_args,
                 config,
+                transport_params,
                 move |message, cx| {
                     dap_store
                         .update(cx, |_, cx| {
@@ -271,7 +307,7 @@ impl DapStore {
                 .request::<Initialize>(InitializeRequestArguments {
                     client_id: Some("zed".to_owned()),
                     client_name: Some("Zed".to_owned()),
-                    adapter_id: client.adapter().id(),
+                    adapter_id: client.adapter_id(),
                     locale: Some("en-US".to_owned()),
                     path_format: Some(InitializeRequestArgumentsPathFormat::Path),
                     supports_variable_type: Some(true),
@@ -402,9 +438,10 @@ impl DapStore {
                 .unwrap_or_default();
 
             if support_configuration_done_request {
-                client
+                let res = client
                     .request::<ConfigurationDone>(ConfigurationDoneArguments)
-                    .await
+                    .await;
+                res
             } else {
                 Ok(())
             }
@@ -1074,5 +1111,39 @@ impl SerializedBreakpoint {
             column: None,
             mode: None,
         }
+    }
+}
+
+pub struct DapAdapterDelegate {
+    fs: Arc<dyn Fs>,
+    http_client: Option<Arc<dyn HttpClient>>,
+    node_runtime: Option<NodeRuntime>,
+}
+
+impl DapAdapterDelegate {
+    pub fn new(
+        http_client: Option<Arc<dyn HttpClient>>,
+        node_runtime: Option<NodeRuntime>,
+        fs: Arc<dyn Fs>,
+    ) -> Self {
+        Self {
+            fs,
+            http_client,
+            node_runtime,
+        }
+    }
+}
+
+impl dap::adapters::DapDelegate for DapAdapterDelegate {
+    fn http_client(&self) -> Option<Arc<dyn HttpClient>> {
+        self.http_client.clone()
+    }
+
+    fn node_runtime(&self) -> Option<NodeRuntime> {
+        self.node_runtime.clone()
+    }
+
+    fn fs(&self) -> Arc<dyn Fs> {
+        self.fs.clone()
     }
 }

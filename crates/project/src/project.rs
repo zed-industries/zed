@@ -618,7 +618,15 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
-            let dap_store = cx.new_model(DapStore::new);
+            let dap_store = cx.new_model(|cx| {
+                DapStore::new(
+                    Some(client.http_client()),
+                    Some(node.clone()),
+                    fs.clone(),
+                    cx,
+                )
+            });
+
             let buffer_store = cx
                 .new_model(|cx| BufferStore::local(worktree_store.clone(), dap_store.clone(), cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -750,7 +758,14 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let dap_store = cx.new_model(DapStore::new);
+            let dap_store = cx.new_model(|cx| {
+                DapStore::new(
+                    Some(client.http_client()),
+                    Some(node.clone()),
+                    fs.clone(),
+                    cx,
+                )
+            });
             cx.on_release(|this, cx| {
                 if let Some(ssh_client) = this.ssh_client.as_ref() {
                     ssh_client
@@ -900,7 +915,8 @@ impl Project {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
 
-        let dap_store = cx.new_model(DapStore::new)?;
+        let dap_store =
+            cx.new_model(|cx| DapStore::new(Some(client.http_client()), None, fs.clone(), cx))?;
 
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_remote(
