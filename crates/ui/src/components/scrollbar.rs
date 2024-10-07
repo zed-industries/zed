@@ -29,8 +29,11 @@ impl ScrollableHandle {
             }
             ScrollableHandle::NonUniform(handle) => {
                 let last_children_index = handle.children_count().checked_sub(1)?;
-                handle.bounds();
-                todo!()
+                // todo: PO: this is slightly wrong for horizontal scrollbar, as the last item is not necessarily the longest one.
+                let mut last_item = handle.bounds_for_item(last_children_index)?;
+                last_item.size.height += last_item.origin.y;
+                last_item.size.width += last_item.origin.x;
+                Some(last_item.size)
             }
         }
     }
