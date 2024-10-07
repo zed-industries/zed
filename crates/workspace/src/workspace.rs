@@ -151,6 +151,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        TestTimeout,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -4401,6 +4402,11 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
                     workspace.toggle_dock(DockPosition::Bottom, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &TestTimeout, cx| {
+                    workspace.project.read(cx).ssh_send_timeout(cx);
                 }),
             )
             .on_action(

@@ -26,6 +26,7 @@ use rpc::{
 use smol::{
     fs,
     process::{self, Child, Stdio},
+    Timer,
 };
 use std::{
     any::TypeId,
@@ -260,6 +261,7 @@ struct SshRemoteClientState {
     delegate: Arc<dyn SshClientDelegate>,
     forwarder: ChannelForwarder,
     multiplex_task: Task<Result<()>>,
+    heartbeat_task: Task<Result<()>>,
 }
 
 pub struct SshRemoteClient {
@@ -327,6 +329,7 @@ impl SshRemoteClient {
                     delegate,
                     forwarder: proxy,
                     multiplex_task,
+                    heartbeat_task: Self::heartbeat(this.downgrade(), &mut cx),
                 }
             };
 
@@ -353,6 +356,7 @@ impl SshRemoteClient {
     }
 
     fn reconnect(&self, cx: &ModelContext<Self>) -> Result<()> {
+        log::info!("Trying to reconnect to ssh server...");
         let Some(state) = self.inner_state.lock().take() else {
             return Err(anyhow!("reconnect is already in progress"));
         };
@@ -364,8 +368,10 @@ impl SshRemoteClient {
             delegate,
             forwarder: proxy,
             multiplex_task,
+            heartbeat_task,
         } = state;
         drop(multiplex_task);
+        drop(heartbeat_task);
 
         cx.spawn(|this, mut cx| async move {
             let (incoming_tx, outgoing_rx) = proxy.into_channels().await;
@@ -401,6 +407,7 @@ impl SshRemoteClient {
                     proxy_outgoing_rx,
                     &mut cx,
                 ),
+                heartbeat_task: Self::heartbeat(this.clone(), &mut cx),
             };
 
             this.update(&mut cx, |this, _| {
@@ -409,6 +416,81 @@ impl SshRemoteClient {
         })
         .detach();
         Ok(())
+    }
+
+    fn heartbeat(this: WeakModel<Self>, cx: &mut AsyncAppContext) -> Task<Result<()>> {
+        let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
+            return Task::ready(Err(anyhow!("SshRemoteClient lost")));
+        };
+        cx.spawn(|mut cx| {
+            let this = this.clone();
+            async move {
+                const MAX_MISSED_HEARTBEATS: usize = 5;
+                let mut missed_heartbeats = 0;
+
+                let heartbeat_interval = std::time::Duration::from_secs(5);
+                let heartbeat_timeout = std::time::Duration::from_secs(5);
+
+                let mut timer = Timer::interval(heartbeat_interval);
+
+                let mut lol_count = 0;
+
+                loop {
+                    timer.next().await;
+
+                    log::info!("Sending heartbeat to server...");
+
+                    let result = smol::future::or(
+                        async {
+                            client.request(proto::Ping {}).await?;
+                            Ok(())
+                        },
+                        async {
+                            smol::Timer::after(heartbeat_timeout).await;
+
+                            Err(anyhow!("Timeout detected"))
+                        },
+                    )
+                    .await;
+
+                    if result.is_err() {
+                        missed_heartbeats += 1;
+                        log::warn!(
+                            "No heartbeat from server after {:?}. Missed heartbeat {} out of {}.",
+                            heartbeat_timeout,
+                            missed_heartbeats,
+                            MAX_MISSED_HEARTBEATS
+                        );
+                    }
+
+                    if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
+                        log::error!(
+                            "Missed last {} hearbeats. Reconnecting...",
+                            missed_heartbeats
+                        );
+
+                        this.update(&mut cx, |this, cx| {
+                            this.reconnect(cx)
+                                .context("failed to reconnect after missing heartbeats")
+                        })
+                        .context("failed to update weak reference, SshRemoteClient lost?")??;
+                        return Ok(());
+                    }
+
+                    lol_count += 1;
+                    if lol_count > 4 {
+                        log::info!("lol count exceeded, reconnecting...");
+
+                        this.update(&mut cx, |this, cx| {
+                            this.reconnect(cx)
+                                .context("failed to reconnect after missing heartbeats")
+                        })
+                        .context("failed to update weak reference, SshRemoteClient lost?")??;
+                        return Ok(());
+                    }
+                }
+            }
+        })
     }
 
     fn multiplex(

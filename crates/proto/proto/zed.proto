@@ -285,6 +285,8 @@ message Envelope {
         CheckFileExistsResponse check_file_exists_response = 256;
 
         ShutdownRemoteServer shutdown_remote_server = 257; // current max
+
+        TestingTimeout testing_timeout = 258;
     }
 
     reserved 87 to 88;
@@ -2515,3 +2517,5 @@ message CheckFileExistsResponse {
 }
 
 message ShutdownRemoteServer {}
+
+message TestingTimeout {}
