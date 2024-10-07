@@ -17,10 +17,10 @@ use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
-use text::Bias;
 use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
+use text::Bias;
 use theme::ThemeSettings;
 use ui::{prelude::*, window_is_transparent};
 use util::TryFutureExt;
@@ -219,20 +219,30 @@ fn show_hover(
 
     let is_invalid_char = {
         let offset = anchor.text_anchor.offset;
-        let test_buffer = buffer.clone().read(cx);
-        let byte_offset = (offset + 3).min(test_buffer.len());
-        let char_bytes_vec = test_buffer.bytes_in_range(offset..byte_offset).collect::<Vec<_>>();
+        let buffer = buffer.read(cx);
+        let byte_offset = (offset + 3).min(buffer.len());
+        let char_bytes_vec = buffer
+            .bytes_in_range(offset..byte_offset)
+            .collect::<Vec<_>>();
         if !char_bytes_vec.is_empty() && offset <= byte_offset {
             let char_bytes = char_bytes_vec[0];
             if char_bytes.len() == 3 {
                 let special_chars = ['\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}'];
-                let special_char_bytes = special_chars.iter().map(|x| {
-                    let mut bytes = [0; 3];
-                    x.encode_utf8(&mut bytes);
-                    bytes
-                }).collect::<Vec<[u8; 3]>>();
-                if let Ok(char_byte_array) = <&[u8] as std::convert::TryInto<&[u8; 3]>>::try_into(&char_bytes) {
-                    if let Some(index) = special_char_bytes.iter().position(|&b| &b == char_byte_array) {
+                let special_char_bytes = special_chars
+                    .iter()
+                    .map(|x| {
+                        let mut bytes = [0; 3];
+                        x.encode_utf8(&mut bytes);
+                        bytes
+                    })
+                    .collect::<Vec<[u8; 3]>>();
+                if let Ok(char_byte_array) =
+                    <&[u8] as std::convert::TryInto<&[u8; 3]>>::try_into(&char_bytes)
+                {
+                    if let Some(index) = special_char_bytes
+                        .iter()
+                        .position(|&b| &b == char_byte_array)
+                    {
                         Some(special_chars[index])
                     } else {
                         None
@@ -415,7 +425,7 @@ fn show_hover(
                     source: None,
                     code: None,
                     severity: DiagnosticSeverity::WARNING,
-                    message: format!("The Character ```{}```is invisible", new_x),
+                    message: format!("The Character `{:?}` is invisible", new_x),
                     group_id: 0,
                     is_primary: false,
                     is_disk_based: false,
@@ -424,38 +434,38 @@ fn show_hover(
                 };
                 let mut border_color: Option<Hsla> = None;
                 let mut background_color: Option<Hsla> = None;
-                let parsed_content = cx.new_view(|cx| {
-                    let text  = format!("The Character `{:?}` is invisible", new_x);
-                    let status_colors = cx.theme().status();
-                    background_color = Some(status_colors.warning_background);
-                    border_color = Some(status_colors.warning_border);
-                    let settings = ThemeSettings::get_global(cx);
-                    let mut base_text_style = cx.text_style();
-                    base_text_style.refine(&TextStyleRefinement {
-                        font_family: Some(settings.ui_font.family.clone()),
-                        font_size: Some(settings.ui_font_size.into()),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        background_color: Some(gpui::transparent_black()),
-
-                        ..Default::default()
-                    });
-                    let markdown_style = MarkdownStyle {
-                        base_text_style,
-                        selection_background_color: { cx.theme().players().local().selection },
-                        link: TextStyleRefinement {
-                            underline: Some(gpui::UnderlineStyle {
-                                thickness: px(1.),
-                                color: Some(cx.theme().colors().editor_foreground),
-                                wavy: false,
-                            }),
+                let parsed_content = cx
+                    .new_view(|cx| {
+                        let text = format!("The Character `{:?}` is invisible", new_x);
+                        let status_colors = cx.theme().status();
+                        background_color = Some(status_colors.warning_background);
+                        border_color = Some(status_colors.warning_border);
+                        let settings = ThemeSettings::get_global(cx);
+                        let mut base_text_style = cx.text_style();
+                        base_text_style.refine(&TextStyleRefinement {
+                            font_family: Some(settings.ui_font.family.clone()),
+                            font_size: Some(settings.ui_font_size.into()),
+                            color: Some(cx.theme().colors().editor_foreground),
+                            background_color: Some(gpui::transparent_black()),
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    };
-                    Markdown::new_text(text, markdown_style.clone(), None, cx, None)
-
-                }).ok();
-                let d = DiagnosticEntry{
+                        });
+                        let markdown_style = MarkdownStyle {
+                            base_text_style,
+                            selection_background_color: { cx.theme().players().local().selection },
+                            link: TextStyleRefinement {
+                                underline: Some(gpui::UnderlineStyle {
+                                    thickness: px(1.),
+                                    color: Some(cx.theme().colors().editor_foreground),
+                                    wavy: false,
+                                }),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        };
+                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
+                    })
+                    .ok();
+                let d = DiagnosticEntry {
                     range: anchor_start..anchor_end,
                     diagnostic: new_diagnostic,
                 };
@@ -468,8 +478,7 @@ fn show_hover(
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
                 })
-        }
-            else {
+            } else {
                 None
             };
 
