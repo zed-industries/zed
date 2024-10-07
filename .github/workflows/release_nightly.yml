@@ -100,7 +100,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - buildjet-16vcpu-ubuntu-2004
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -117,7 +117,7 @@ jobs:
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install Linux dependencies
-        run: ./script/linux
+        run: ./script/linux && ./script/install-mold 2.34.0
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100

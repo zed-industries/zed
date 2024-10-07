@@ -4,7 +4,7 @@ use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
 use language::language_settings::all_language_settings;
 use project::ProjectPath;
-use remote::SshSession;
+use remote::SshRemoteClient;
 use remote_server::HeadlessProject;
 use serde_json::json;
 use std::{path::Path, sync::Arc};
@@ -24,7 +24,7 @@ async fn test_sharing_an_ssh_remote_project(
         .await;
 
     // Set up project on remote FS
-    let (client_ssh, server_ssh) = SshSession::fake(cx_a, server_cx);
+    let (client_ssh, server_ssh) = SshRemoteClient::fake(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(

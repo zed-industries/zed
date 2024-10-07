@@ -77,7 +77,7 @@ pub fn handle_settings_file_changes(
             .set_user_settings(&user_settings_content, cx)
             .log_err();
     });
-    cx.spawn(move |mut cx| async move {
+    cx.spawn(move |cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_user_settings(&user_settings_content, cx);

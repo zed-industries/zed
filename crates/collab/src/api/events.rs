@@ -23,7 +23,7 @@ use telemetry_events::{
 };
 use uuid::Uuid;
 
-static CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
+const CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
 
 pub fn router() -> Router {
     Router::new()

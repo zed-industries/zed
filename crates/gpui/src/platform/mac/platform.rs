@@ -1432,7 +1432,7 @@ impl UTType {
         self.0
     }
 
-    fn inner_mut(&mut self) -> *mut Object {
+    fn inner_mut(&self) -> *mut Object {
         self.0 as *mut _
     }
 }

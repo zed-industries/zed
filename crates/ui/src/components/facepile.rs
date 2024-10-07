@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use crate::prelude::*;
 use gpui::{AnyElement, StyleRefinement};
 use smallvec::SmallVec;

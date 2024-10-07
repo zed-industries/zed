@@ -61,7 +61,7 @@ use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
-    CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine, SearchSettings,
+    CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine, SearchSettings, ShowScrollbar,
 };
 pub use editor_settings_controls::*;
 use element::LineWithInvisibles;
@@ -1322,6 +1322,10 @@ impl CompletionsMenu {
                                 None
                             };
 
+                        let color_swatch = completion
+                            .color()
+                            .map(|color| div().size_4().bg(color).rounded_sm());
+
                         div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
@@ -1337,6 +1341,7 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
+                                .start_slot::<Div>(color_swatch)
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Label>(documentation_label),
                         )
@@ -3154,7 +3159,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.clear_clicked_diff_hunks(cx) {
+        if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
             return;
         }
@@ -6333,6 +6338,20 @@ impl Editor {
                 editor.revert(revert_changes, cx);
             });
         }
+    }
+
+    fn apply_selected_diff_hunks(&mut self, _: &ApplyDiffHunk, cx: &mut ViewContext<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
+        self.transact(cx, |editor, cx| {
+            for hunk in hunks {
+                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.merge_into_base(Some(hunk.buffer_range.to_offset(buffer)), cx);
+                    });
+                }
+            }
+        });
     }
 
     pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
@@ -10903,7 +10922,7 @@ impl Editor {
             .selections
             .all::<Point>(cx)
             .iter()
-            .any(|selection| selection.range().overlaps(&intersection_range));
+            .any(|selection| RangeExt::overlaps(&selection.range(), &intersection_range));
 
         self.unfold_ranges(std::iter::once(intersection_range), true, autoscroll, cx)
     }
@@ -11373,30 +11392,32 @@ impl Editor {
         None
     }
 
+    fn target_file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn language::LocalFile> {
+        self.active_excerpt(cx)?
+            .1
+            .read(cx)
+            .file()
+            .and_then(|f| f.as_local())
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                cx.reveal_path(&file.abs_path(cx));
-            }
+        if let Some(target) = self.target_file(cx) {
+            cx.reveal_path(&target.abs_path(cx));
         }
     }
 
     pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                if let Some(path) = file.abs_path(cx).to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
-                }
+        if let Some(file) = self.target_file(cx) {
+            if let Some(path) = file.abs_path(cx).to_str() {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
     }
 
     pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                if let Some(path) = file.path().to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
-                }
+        if let Some(file) = self.target_file(cx) {
+            if let Some(path) = file.path().to_str() {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
     }
@@ -11607,12 +11628,10 @@ impl Editor {
     }
 
     pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
-                if let Some(path) = file.path().to_str() {
-                    let selection = self.selections.newest::<Point>(cx).start.row + 1;
-                    cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
-                }
+        if let Some(file) = self.target_file(cx) {
+            if let Some(path) = file.path().to_str() {
+                let selection = self.selections.newest::<Point>(cx).start.row + 1;
+                cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
             }
         }
     }
@@ -12373,12 +12392,9 @@ impl Editor {
         let buffer = self.buffer.read(cx);
         let mut new_selections_by_buffer = HashMap::default();
         for selection in self.selections.all::<usize>(cx) {
-            for (buffer, mut range, _) in
+            for (buffer, range, _) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
-                if selection.reversed {
-                    mem::swap(&mut range.start, &mut range.end);
-                }
                 let mut range = range.to_point(buffer.read(cx));
                 range.start.column = 0;
                 range.end.column = buffer.read(cx).line_len(range.end.row);

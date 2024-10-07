@@ -16,11 +16,11 @@ impl SlashCommand for PromptSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert prompt from library".into()
+        "Insert prompt from library".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Prompt from Library".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

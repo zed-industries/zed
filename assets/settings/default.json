@@ -356,9 +356,19 @@
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
+      /// This setting can take four values:
       ///
-      /// Default: always
-      "show": "always"
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
     }
   },
   "outline_panel": {
@@ -599,13 +609,11 @@
     }
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
-  // 1. Load direnv configuration through the shell hook, works for POSIX shells and fish.
-  //      "load_direnv": "shell_hook"
-  // 2. Load direnv configuration using `direnv export json` directly.
-  //    This can help with some shells that otherwise would not detect
-  //    the direnv environment, such as nushell or elvish.
+  // 1. Load direnv configuration using `direnv export json` directly.
   //      "load_direnv": "direct"
-  "load_direnv": "shell_hook",
+  // 2. Load direnv configuration through the shell hook, works for POSIX shells and fish.
+  //      "load_direnv": "shell_hook"
+  "load_direnv": "direct",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
@@ -671,6 +679,18 @@
     //  3. Always blink the cursor, ignoring the terminal mode
     //         "blinking": "on",
     "blinking": "terminal_controlled",
+    // Default cursor shape for the terminal.
+    //  1. A block that surrounds the following character
+    //     "block"
+    //  2. A vertical bar
+    //     "bar"
+    //  3. An underline that runs along the following character
+    //     "underscore"
+    //  4. A box drawn around the following character
+    //     "hollow"
+    //
+    // Default: not set, defaults to "block"
+    "cursor_shape": null,
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -769,7 +789,8 @@
       "**/Zed/**/*.json",
       "tsconfig.json",
       "pyrightconfig.json"
-    ]
+    ],
+    "TOML": ["uv.lock"]
   },
   /// By default use a recent system version of node, or install our own.
   /// You can override this to use a version of node that is not in $PATH with:
