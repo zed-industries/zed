@@ -844,6 +844,27 @@ If the setting is set to `true`:
 
 The result is still `)))` and not `))))))`, which is what it would be by default.
 
+## File Scan Exclusions
+
+- Setting: `file_scan_exclusions`
+- Description: Configure how Add filename or directory globs that will be excluded by Zed entirely. They will be skipped during file scans, file searches and hidden from project file tree.
+- Default:
+
+```json
+"file_scan_exclusions": [
+  "**/.git",
+  "**/.svn",
+  "**/.hg",
+  "**/CVS",
+  "**/.DS_Store",
+  "**/Thumbs.db",
+  "**/.classpath",
+  "**/.settings"
+],
+```
+
+Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
+
 ## File Types
 
 - Setting: `file_types`
@@ -2180,6 +2201,64 @@ Float values between `0.0` and `0.9`, where:
 }
 ```
 
+## UI Font Family
+
+- Description: The name of the font to use for text in the UI.
+- Setting: `ui_font_family`
+- Default: `Zed Plex Sans`
+
+**Options**
+
+The name of any font family installed on the system.
+
+## UI Font Features
+
+- Description: The OpenType features to enable for text in the UI.
+- Setting: `ui_font_features`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+Zed supports all OpenType features that can be enabled or disabled for a given UI font, as well as setting values for font features.
+
+For example, to disable font ligatures, add the following to your settings:
+
+```json
+{
+  "ui_font_features": {
+    "calt": false
+  }
+}
+```
+
+You can also set other OpenType features, like setting `cv01` to `7`:
+
+```json
+{
+  "ui_font_features": {
+    "cv01": 7
+  }
+}
+```
+
+## UI Font Fallbacks
+
+- Description: The font fallbacks to use for text in the UI.
+- Setting: `ui_font_fallbacks`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+For example, to use `Nerd Font` as a fallback, add the following to your settings:
+
+```json
+{
+  "ui_font_fallbacks": ["Nerd Font"]
+}
+```
+
 ## UI Font Size
 
 - Description: The default font size for text in the UI.
@@ -2189,6 +2268,16 @@ Float values between `0.0` and `0.9`, where:
 **Options**
 
 `integer` values from `6` to `100` pixels (inclusive)
+
+## UI Font Weight
+
+- Description: The default font weight for text in the UI.
+- Setting: `ui_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
 
 ## An example configuration:
 

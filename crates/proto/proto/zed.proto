@@ -282,7 +282,9 @@ message Envelope {
         UpdateUserSettings update_user_settings = 246;
 
         CheckFileExists check_file_exists = 255;
-        CheckFileExistsResponse check_file_exists_response = 256; // current max
+        CheckFileExistsResponse check_file_exists_response = 256;
+
+        ShutdownRemoteServer shutdown_remote_server = 257; // current max
     }
 
     reserved 87 to 88;
@@ -642,6 +644,13 @@ message UpdateWorktreeSettings {
     uint64 worktree_id = 2;
     string path = 3;
     optional string content = 4;
+    optional LocalSettingsKind kind = 5;
+}
+
+enum LocalSettingsKind {
+    Settings = 0;
+    Tasks = 1;
+    Editorconfig = 2;
 }
 
 message CreateProjectEntry {
@@ -2487,6 +2496,12 @@ message AddWorktreeResponse {
 message UpdateUserSettings {
     uint64 project_id = 1;
     string content = 2;
+    optional Kind kind = 3;
+
+    enum Kind {
+        Settings = 0;
+        Tasks = 1;
+    }
 }
 
 message CheckFileExists {
@@ -2498,3 +2513,5 @@ message CheckFileExistsResponse {
     bool exists = 1;
     string path = 2;
 }
+
+message ShutdownRemoteServer {}

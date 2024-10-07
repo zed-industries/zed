@@ -14,7 +14,7 @@ jobs:
           stale-issue-message: >
             Hi there! 👋
 
-            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. Are you able to reproduce this issue in the latest version of Zed? If so, please let us know by commenting on this issue and we will keep it open; otherwise, we'll close it in 10 days. Feel free to open a new issue if you're seeing this message after the issue has been closed.
+            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. Are you able to reproduce this issue in the latest version of Zed? If so, please let us know by commenting on this issue and we will keep it open; otherwise, we'll close it in 7 days. Feel free to open a new issue if you're seeing this message after the issue has been closed.
 
             Thanks for your help!
           close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
@@ -23,7 +23,7 @@ jobs:
           # 'community' to 'zed' repository. The migration added activity to all
           # issues, preventing 365 days from working until then.
           days-before-stale: 180
-          days-before-close: 10
+          days-before-close: 7
           any-of-issue-labels: "defect,panic / crash"
           operations-per-run: 1000
           ascending: true

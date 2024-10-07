@@ -835,7 +835,7 @@ impl TestClient {
     pub async fn build_ssh_project(
         &self,
         root_path: impl AsRef<Path>,
-        ssh: Arc<SshRemoteClient>,
+        ssh: Model<SshRemoteClient>,
         cx: &mut TestAppContext,
     ) -> (Model<Project>, WorktreeId) {
         let project = cx.update(|cx| {

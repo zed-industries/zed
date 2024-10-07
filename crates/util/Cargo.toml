@@ -17,19 +17,19 @@ test-support = ["tempfile", "git2", "rand"]
 
 [dependencies]
 anyhow.workspace = true
+async-fs.workspace = true
 collections.workspace = true
 dirs.workspace = true
+futures-lite.workspace = true
 futures.workspace = true
 git2 = { workspace = true, optional = true }
 globset.workspace = true
 log.workspace = true
-rand = {workspace = true, optional = true}
+rand = { workspace = true, optional = true }
 regex.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-async-fs.workspace = true
-futures-lite.workspace = true
 take-until = "0.2.0"
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true
@@ -39,5 +39,5 @@ tendril = "0.4.3"
 
 [dev-dependencies]
 git2.workspace = true
-tempfile.workspace = true
 rand.workspace = true
+tempfile.workspace = true

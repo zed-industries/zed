@@ -36,28 +36,28 @@ jobs:
           mdbook build ./docs --dest-dir=../target/deploy/docs/
 
       - name: Deploy Docs
-        uses: cloudflare/wrangler-action@f84a562284fc78278ff9052435d9526f9c718361 # v3
+        uses: cloudflare/wrangler-action@168bc28b7078db16f6f1ecc26477fc2248592143 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy target/deploy --project-name=docs
 
       - name: Deploy Install
-        uses: cloudflare/wrangler-action@f84a562284fc78278ff9052435d9526f9c718361 # v3
+        uses: cloudflare/wrangler-action@168bc28b7078db16f6f1ecc26477fc2248592143 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: r2 object put -f script/install.sh zed-open-source-website-assets/install.sh
 
       - name: Deploy Docs Workers
-        uses: cloudflare/wrangler-action@f84a562284fc78278ff9052435d9526f9c718361 # v3
+        uses: cloudflare/wrangler-action@168bc28b7078db16f6f1ecc26477fc2248592143 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy .cloudflare/docs-proxy/src/worker.js
 
       - name: Deploy Install Workers
-        uses: cloudflare/wrangler-action@f84a562284fc78278ff9052435d9526f9c718361 # v3
+        uses: cloudflare/wrangler-action@168bc28b7078db16f6f1ecc26477fc2248592143 # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

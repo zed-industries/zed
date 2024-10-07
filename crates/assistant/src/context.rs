@@ -47,7 +47,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -551,7 +551,7 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|_cx| {
-            let mut buffer = Buffer::remote(
+            let buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
                 capability,
@@ -2147,14 +2147,21 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
-                        telemetry.report_assistant_event(
-                            Some(this.id.0.clone()),
-                            AssistantKind::Panel,
-                            AssistantPhase::Response,
-                            model.telemetry_id(),
+                        let language_name = this
+                            .buffer
+                            .read(cx)
+                            .language()
+                            .map(|language| language.name());
+                        telemetry.report_assistant_event(AssistantEvent {
+                            conversation_id: Some(this.id.0.clone()),
+                            kind: AssistantKind::Panel,
+                            phase: AssistantPhase::Response,
+                            model: model.telemetry_id(),
+                            model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
-                        );
+                            language_name,
+                        });
                     }
 
                     if let Ok(stop_reason) = result {

@@ -58,6 +58,8 @@ extend-ignore-re = [
     # ProtoLS crate with tree-sitter Protobuf grammar.
     "protols",
     # x11rb SelectionNotifyEvent struct field
-    "requestor"
+    "requestor",
+    # Not an actual typo but an intentionally invalid color, in `color_extractor`
+    "#fof"
 ]
 check-filename = true

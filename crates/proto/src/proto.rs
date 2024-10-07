@@ -364,7 +364,8 @@ messages!(
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
     (CheckFileExists, Background),
-    (CheckFileExistsResponse, Background)
+    (CheckFileExistsResponse, Background),
+    (ShutdownRemoteServer, Foreground),
 );
 
 request_messages!(
@@ -487,7 +488,8 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CheckFileExists, CheckFileExistsResponse)
+    (CheckFileExists, CheckFileExistsResponse),
+    (ShutdownRemoteServer, Ack)
 );
 
 entity_messages!(

@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use util::ResultExt;
 
 use super::*;
@@ -527,6 +528,12 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
+        let kind = match update.kind {
+            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+                .with_context(|| format!("unknown worktree settings kind: {kind}"))?,
+            None => proto::LocalSettingsKind::Settings,
+        };
+        let kind = LocalSettingsKind::from_proto(kind);
         self.project_transaction(project_id, |tx| async move {
             // Ensure the update comes from the host.
             let project = project::Entity::find_by_id(project_id)
@@ -543,6 +550,7 @@ impl Database {
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
                     path: ActiveValue::Set(update.path.clone()),
                     content: ActiveValue::Set(content.clone()),
+                    kind: ActiveValue::Set(kind),
                 })
                 .on_conflict(
                     OnConflict::columns([
@@ -800,6 +808,7 @@ impl Database {
                     worktree.settings_files.push(WorktreeSettingsFile {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
+                        kind: db_settings_file.kind,
                     });
                 }
             }

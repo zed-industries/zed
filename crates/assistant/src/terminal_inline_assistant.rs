@@ -25,6 +25,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -1039,6 +1040,7 @@ impl Codegen {
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(|this, mut cx| async move {
             let model_telemetry_id = model.telemetry_id();
+            let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
             let generate = async {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
@@ -1063,14 +1065,16 @@ impl Codegen {
 
                     let error_message = result.as_ref().err().map(|error| error.to_string());
                     if let Some(telemetry) = telemetry {
-                        telemetry.report_assistant_event(
-                            None,
-                            telemetry_events::AssistantKind::Inline,
-                            telemetry_events::AssistantPhase::Response,
-                            model_telemetry_id,
+                        telemetry.report_assistant_event(AssistantEvent {
+                            conversation_id: None,
+                            kind: AssistantKind::Inline,
+                            phase: AssistantPhase::Response,
+                            model: model_telemetry_id,
+                            model_provider: model_provider_id.to_string(),
                             response_latency,
                             error_message,
-                        );
+                            language_name: None,
+                        });
                     }
 
                     result?;

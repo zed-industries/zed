@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
@@ -274,6 +275,7 @@ pub enum IconName {
     Tab,
     Terminal,
     Trash,
+    TrashAlt,
     TriangleRight,
     Undo,
     Unpin,

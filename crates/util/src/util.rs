@@ -378,9 +378,13 @@ fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: 
 where
     E: std::fmt::Debug,
 {
+    #[cfg(not(target_os = "windows"))]
+    let file = caller.file();
+    #[cfg(target_os = "windows")]
+    let file = caller.file().replace('\\', "/");
     // In this codebase, the first segment of the file path is
     // the 'crates' folder, followed by the crate name.
-    let target = caller.file().split('/').nth(1);
+    let target = file.split('/').nth(1);
 
     log::logger().log(
         &log::Record::builder()
