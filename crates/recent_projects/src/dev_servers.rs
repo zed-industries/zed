@@ -860,7 +860,7 @@ impl DevServerProjects {
                                     el.child(
                                         ListItem::new("new-remote_project")
                                             .start_slot(Icon::new(IconName::Plus))
-                                            .child(Label::new("Open folder…"))
+                                            .child(Label::new("Open Folder…"))
                                             .on_click(cx.listener(move |this, _, cx| {
                                                 this.mode =
                                                     Mode::Default(Some(CreateDevServerProject {

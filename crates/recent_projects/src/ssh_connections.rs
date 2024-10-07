@@ -88,6 +88,7 @@ pub struct SshPrompt {
 pub struct SshConnectionModal {
     pub(crate) prompt: View<SshPrompt>,
 }
+
 impl SshPrompt {
     pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
         let connection_string = connection_options.connection_string().into();
@@ -144,53 +145,45 @@ impl Render for SshPrompt {
         v_flex()
             .w_full()
             .key_context("PasswordPrompt")
-            .justify_start()
+            .justify_center()
             .child(
-                v_flex()
-                    .p_4()
-                    .size_full()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(h_flex().w_full())
-                            .child(if self.error_message.is_some() {
-                                Icon::new(IconName::XCircle)
-                                    .size(IconSize::Medium)
-                                    .color(Color::Error)
-                                    .into_any_element()
-                            } else {
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(IconSize::Medium)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    )
-                                    .into_any_element()
-                            })
-                            .child(Label::new(format!(
-                                "Connecting to {}…",
-                                self.connection_string
-                            )))
-                            .child(h_flex().w_full()),
-                    )
-                    .when_some(self.error_message.as_ref(), |el, error| {
-                        el.child(Label::new(error.clone()))
-                    })
-                    .when(
-                        self.error_message.is_none() && self.status_message.is_some(),
-                        |el| el.child(Label::new(self.status_message.clone().unwrap())),
-                    )
-                    .when_some(self.prompt.as_ref(), |el, prompt| {
-                        el.child(Label::new(prompt.0.clone()))
-                            .child(self.editor.clone())
-                    }),
+                v_flex().size_full().p_4().child(
+                    h_flex()
+                        .gap_1p5()
+                        .justify_center()
+                        .child(if self.error_message.is_some() {
+                            Icon::new(IconName::XCircle)
+                                .size(IconSize::Medium)
+                                .color(Color::Error)
+                                .into_any_element()
+                        } else {
+                            Icon::new(IconName::ArrowCircle)
+                                .size(IconSize::Medium)
+                                .with_animation(
+                                    "arrow-circle",
+                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                )
+                                .into_any_element()
+                        })
+                        .child(
+                            div()
+                                .when_some(self.error_message.as_ref(), |el, error| {
+                                    el.child(Label::new(error.clone()))
+                                })
+                                .when(
+                                    self.error_message.is_none() && self.status_message.is_some(),
+                                    |el| el.child(Label::new(self.status_message.clone().unwrap())),
+                                ),
+                        ),
+                ),
             )
+            .child(div().when_some(self.prompt.as_ref(), |el, prompt| {
+                el.child(Label::new(prompt.0.clone()))
+                    .child(self.editor.clone())
+            }))
     }
 }
 
@@ -214,29 +207,34 @@ impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
         let connection_string = self.prompt.read(cx).connection_string.clone();
         let theme = cx.theme();
-        let header_color = theme.colors().element_background;
+        let header_color = theme.colors().terminal_background;
         let body_color = theme.colors().background;
         v_flex()
             .elevation_3(cx)
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
-            .w(px(400.))
+            .w(px(450.))
             .child(
                 h_flex()
+                    .relative()
                     .p_1()
                     .border_b_1()
                     .border_color(theme.colors().border)
                     .bg(header_color)
                     .justify_between()
                     .child(
-                        IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
-                            .icon_size(IconSize::XSmall)
-                            .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
-                            .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
+                        div().absolute().left_0p5().top_0p5().child(
+                            IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
+                                .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
+                        ),
                     )
                     .child(
                         h_flex()
+                            .w_full()
                             .gap_2()
+                            .justify_center()
                             .child(Icon::new(IconName::Server).size(IconSize::XSmall))
                             .child(
                                 Label::new(connection_string)
