@@ -515,7 +515,7 @@ impl MultiBuffer {
     }
 
     pub fn edit<I, S, T>(
-        &mut self,
+        &self,
         edits: I,
         mut autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<Self>,
@@ -664,7 +664,7 @@ impl MultiBuffer {
         drop(snapshot);
         // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
         fn tail(
-            this: &mut MultiBuffer,
+            this: &MultiBuffer,
             buffer_edits: HashMap<BufferId, Vec<BufferEdit>>,
             autoindent_mode: Option<AutoindentMode>,
             edited_excerpt_ids: Vec<ExcerptId>,
@@ -928,7 +928,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &mut ModelContext<Self>)
+    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &ModelContext<Self>)
     where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
@@ -952,7 +952,7 @@ impl MultiBuffer {
     }
 
     pub fn set_active_selections(
-        &mut self,
+        &self,
         selections: &[Selection<Anchor>],
         line_mode: bool,
         cursor_shape: CursorShape,
@@ -1028,7 +1028,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn remove_active_selections(&self, cx: &mut ModelContext<Self>) {
         for buffer in self.buffers.borrow().values() {
             buffer
                 .buffer
@@ -1180,7 +1180,7 @@ impl MultiBuffer {
     }
 
     pub fn push_multiple_excerpts_with_context_lines(
-        &mut self,
+        &self,
         buffers_with_ranges: Vec<(Model<Buffer>, Vec<Range<text::Anchor>>)>,
         context_line_count: u32,
         cx: &mut ModelContext<Self>,
@@ -4208,7 +4208,7 @@ impl History {
         &mut self,
         buffer_transactions: T,
         now: Instant,
-        cx: &mut ModelContext<MultiBuffer>,
+        cx: &ModelContext<MultiBuffer>,
     ) where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {

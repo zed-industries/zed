@@ -498,7 +498,7 @@ pub fn observe_buffer_font_size_adjustment<V: 'static>(
 }
 
 /// Sets the adjusted buffer font size.
-pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
+pub fn adjusted_font_size(size: Pixels, cx: &AppContext) -> Pixels {
     if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let delta = *adjusted_size - buffer_font_size;
@@ -530,7 +530,7 @@ pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
 }
 
 /// Returns whether the buffer font size has been adjusted.
-pub fn has_adjusted_buffer_font_size(cx: &mut AppContext) -> bool {
+pub fn has_adjusted_buffer_font_size(cx: &AppContext) -> bool {
     cx.has_global::<AdjustedBufferFontSize>()
 }
 
@@ -576,7 +576,7 @@ pub fn adjust_ui_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
 }
 
 /// Returns whether the UI font size has been adjusted.
-pub fn has_adjusted_ui_font_size(cx: &mut AppContext) -> bool {
+pub fn has_adjusted_ui_font_size(cx: &AppContext) -> bool {
     cx.has_global::<AdjustedUiFontSize>()
 }
 

@@ -189,7 +189,7 @@ impl ThemeRegistry {
     }
 
     /// Removes all themes from the registry.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.state.write().themes.clear();
     }
 

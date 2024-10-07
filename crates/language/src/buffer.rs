@@ -588,7 +588,7 @@ impl IndentGuide {
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
+    pub fn local<T: Into<String>>(base_text: T, cx: &ModelContext<Self>) -> Self {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
@@ -601,7 +601,7 @@ impl Buffer {
     pub fn local_normalized(
         base_text_normalized: Rope,
         line_ending: LineEnding,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
@@ -934,7 +934,7 @@ impl Buffer {
 
     /// Assign a language registry to the buffer. This allows the buffer to retrieve
     /// other languages if parts of the buffer are written in different languages.
-    pub fn set_language_registry(&mut self, language_registry: Arc<LanguageRegistry>) {
+    pub fn set_language_registry(&self, language_registry: Arc<LanguageRegistry>) {
         self.syntax_map
             .lock()
             .set_language_registry(language_registry);
@@ -967,16 +967,13 @@ impl Buffer {
     }
 
     /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn discarded(&self, cx: &mut ModelContext<Self>) {
         cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
     /// Reloads the contents of the buffer from disk.
-    pub fn reload(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-    ) -> oneshot::Receiver<Option<Transaction>> {
+    pub fn reload(&mut self, cx: &ModelContext<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(|this, mut cx| async move {
@@ -1085,7 +1082,7 @@ impl Buffer {
 
     /// Sets the text that will be used to compute a Git diff
     /// against the buffer text.
-    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &ModelContext<Self>) {
         self.diff_base = diff_base.map(|mut raw_diff_base| {
             LineEnding::normalize(&mut raw_diff_base);
             BufferDiffBase::Git(Rope::from(raw_diff_base))
@@ -1117,7 +1114,7 @@ impl Buffer {
     }
 
     /// Recomputes the diff.
-    pub fn recalculate_diff(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
+    pub fn recalculate_diff(&self, cx: &ModelContext<Self>) -> Option<Task<()>> {
         let diff_base_rope = match self.diff_base.as_ref()? {
             BufferDiffBase::Git(rope) => rope.clone(),
             BufferDiffBase::PastBufferVersion { buffer, .. } => buffer.read(cx).as_rope().clone(),
@@ -2249,12 +2246,7 @@ impl Buffer {
         }
     }
 
-    fn send_operation(
-        &mut self,
-        operation: Operation,
-        is_local: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn send_operation(&self, operation: Operation, is_local: bool, cx: &mut ModelContext<Self>) {
         cx.emit(BufferEvent::Operation {
             operation,
             is_local,
