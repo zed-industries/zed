@@ -1248,22 +1248,6 @@ impl Project {
         Some(!self.ssh_client.as_ref()?.read(cx).is_reconnect_underway())
     }
 
-    pub fn ssh_send_timeout(&self, cx: &AppContext) {
-        let Some(client) = self.ssh_client.as_ref() else {
-            return;
-        };
-        let client = client.read(cx).to_proto_client();
-        cx.background_executor()
-            .spawn(async move {
-                let start = std::time::Instant::now();
-                log::info!("Sending testing timeout...");
-                let _: proto::Ack = client.request(proto::TestingTimeout {}).await?;
-                log::info!("Got testing timeout response after {:?}.", start.elapsed());
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-    }
-
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,

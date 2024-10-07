@@ -37,7 +37,7 @@ use std::{
         atomic::{AtomicU32, Ordering::SeqCst},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 use util::maybe;
@@ -174,7 +174,7 @@ async fn run_cmd(command: &mut process::Command) -> Result<String> {
 #[cfg(unix)]
 async fn read_with_timeout(
     stdout: &mut process::ChildStdout,
-    timeout: std::time::Duration,
+    timeout: Duration,
     output: &mut Vec<u8>,
 ) -> Result<(), std::io::Error> {
     smol::future::or(
@@ -426,15 +426,12 @@ impl SshRemoteClient {
             let this = this.clone();
             async move {
                 const MAX_MISSED_HEARTBEATS: usize = 5;
+                const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+                const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
+
                 let mut missed_heartbeats = 0;
 
-                let heartbeat_interval = std::time::Duration::from_secs(5);
-                let heartbeat_timeout = std::time::Duration::from_secs(5);
-
-                let mut timer = Timer::interval(heartbeat_interval);
-
-                let mut lol_count = 0;
-
+                let mut timer = Timer::interval(HEARTBEAT_INTERVAL);
                 loop {
                     timer.next().await;
 
@@ -446,7 +443,7 @@ impl SshRemoteClient {
                             Ok(())
                         },
                         async {
-                            smol::Timer::after(heartbeat_timeout).await;
+                            smol::Timer::after(HEARTBEAT_TIMEOUT).await;
 
                             Err(anyhow!("Timeout detected"))
                         },
@@ -457,10 +454,12 @@ impl SshRemoteClient {
                         missed_heartbeats += 1;
                         log::warn!(
                             "No heartbeat from server after {:?}. Missed heartbeat {} out of {}.",
-                            heartbeat_timeout,
+                            HEARTBEAT_TIMEOUT,
                             missed_heartbeats,
                             MAX_MISSED_HEARTBEATS
                         );
+                    } else {
+                        missed_heartbeats = 0;
                     }
 
                     if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
@@ -468,18 +467,6 @@ impl SshRemoteClient {
                             "Missed last {} hearbeats. Reconnecting...",
                             missed_heartbeats
                         );
-
-                        this.update(&mut cx, |this, cx| {
-                            this.reconnect(cx)
-                                .context("failed to reconnect after missing heartbeats")
-                        })
-                        .context("failed to update weak reference, SshRemoteClient lost?")??;
-                        return Ok(());
-                    }
-
-                    lol_count += 1;
-                    if lol_count > 4 {
-                        log::info!("lol count exceeded, reconnecting...");
 
                         this.update(&mut cx, |this, cx| {
                             this.reconnect(cx)
@@ -794,7 +781,7 @@ impl SshRemoteConnection {
         // has completed.
         let stdout = master_process.stdout.as_mut().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = std::time::Duration::from_secs(10);
+        let connection_timeout = Duration::from_secs(10);
         let result = read_with_timeout(stdout, connection_timeout, &mut output).await;
         if let Err(e) = result {
             let error_message = if e.kind() == std::io::ErrorKind::TimedOut {

@@ -366,7 +366,6 @@ messages!(
     (CheckFileExists, Background),
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
-    (TestingTimeout, Foreground),
 );
 
 request_messages!(
@@ -491,7 +490,6 @@ request_messages!(
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
     (ShutdownRemoteServer, Ack),
-    (TestingTimeout, Ack),
 );
 
 entity_messages!(
