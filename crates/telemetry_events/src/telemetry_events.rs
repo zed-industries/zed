@@ -117,6 +117,8 @@ pub struct EditorEvent {
     pub copilot_enabled: bool,
     /// Whether the user has copilot enabled for the language of the file opened or saved
     pub copilot_enabled_for_language: bool,
+    /// Whether the client is editing a local file or a remote file via SSH
+    pub is_via_ssh: bool,
 }
 
 /// Deprecated since Zed v0.137.0 (2024-05-29). Replaced by InlineCompletionEvent.
