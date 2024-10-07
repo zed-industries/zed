@@ -1418,7 +1418,7 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &mut self,
+        &self,
         bounds: Bounds<Pixels>,
         style: &Style,
         cx: &mut WindowContext,
@@ -1547,7 +1547,7 @@ impl Interactivity {
 
     #[cfg(debug_assertions)]
     fn paint_debug_info(
-        &mut self,
+        &self,
         global_id: Option<&GlobalElementId>,
         hitbox: &Hitbox,
         style: &Style,
@@ -2057,6 +2057,7 @@ impl Interactivity {
     fn paint_scroll_listener(&self, hitbox: &Hitbox, style: &Style, cx: &mut WindowContext) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
+            let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let line_height = cx.line_height();
             let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
@@ -2065,27 +2066,31 @@ impl Interactivity {
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
 
+                    let mut delta_x = Pixels::ZERO;
                     if overflow.x == Overflow::Scroll {
-                        let mut delta_x = Pixels::ZERO;
                         if !delta.x.is_zero() {
                             delta_x = delta.x;
                         } else if overflow.y != Overflow::Scroll {
                             delta_x = delta.y;
                         }
-
-                        scroll_offset.x += delta_x;
                     }
-
+                    let mut delta_y = Pixels::ZERO;
                     if overflow.y == Overflow::Scroll {
-                        let mut delta_y = Pixels::ZERO;
                         if !delta.y.is_zero() {
                             delta_y = delta.y;
                         } else if overflow.x != Overflow::Scroll {
                             delta_y = delta.x;
                         }
-
-                        scroll_offset.y += delta_y;
                     }
+                    if !allow_concurrent_scroll && !delta_x.is_zero() && !delta_y.is_zero() {
+                        if delta_x.abs() > delta_y.abs() {
+                            delta_y = Pixels::ZERO;
+                        } else {
+                            delta_x = Pixels::ZERO;
+                        }
+                    }
+                    scroll_offset.y += delta_y;
+                    scroll_offset.x += delta_x;
 
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {

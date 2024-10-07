@@ -539,13 +539,19 @@ impl LocalLspStore {
             }
             Formatter::External { command, arguments } => {
                 let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
-                Self::format_via_external_command(buffer, buffer_abs_path, command, arguments, cx)
-                    .await
-                    .context(format!(
-                        "failed to format via external command {:?}",
-                        command
-                    ))?
-                    .map(FormatOperation::External)
+                Self::format_via_external_command(
+                    buffer,
+                    buffer_abs_path,
+                    command,
+                    arguments.as_deref(),
+                    cx,
+                )
+                .await
+                .context(format!(
+                    "failed to format via external command {:?}",
+                    command
+                ))?
+                .map(FormatOperation::External)
             }
             Formatter::CodeActions(code_actions) => {
                 let code_actions = deserialize_code_actions(code_actions);
@@ -571,7 +577,7 @@ impl LocalLspStore {
         buffer: &Model<Buffer>,
         buffer_abs_path: Option<&Path>,
         command: &str,
-        arguments: &[String],
+        arguments: Option<&[String]>,
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Diff>> {
         let working_dir_path = buffer.update(cx, |buffer, cx| {
@@ -595,14 +601,17 @@ impl LocalLspStore {
             child.current_dir(working_dir_path);
         }
 
-        let mut child = child
-            .args(arguments.iter().map(|arg| {
+        if let Some(arguments) = arguments {
+            child.args(arguments.iter().map(|arg| {
                 if let Some(buffer_abs_path) = buffer_abs_path {
                     arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
                 } else {
                     arg.replace("{buffer_path}", "Untitled")
                 }
-            }))
+            }));
+        }
+
+        let mut child = child
             .stdin(smol::process::Stdio::piped())
             .stdout(smol::process::Stdio::piped())
             .stderr(smol::process::Stdio::piped())

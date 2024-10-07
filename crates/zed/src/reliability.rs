@@ -347,7 +347,7 @@ pub fn monitor_main_thread_hangs(
 fn upload_panics_and_crashes(
     http: Arc<HttpClientWithUrl>,
     installation_id: Option<String>,
-    cx: &mut AppContext,
+    cx: &AppContext,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
@@ -441,7 +441,7 @@ async fn upload_previous_panics(
     Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
-static LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
+const LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)

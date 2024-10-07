@@ -198,8 +198,9 @@ async fn load_shell_environment(
 
         anyhow::ensure!(
             direnv_output.status.success(),
-            "direnv exited with error {:?}",
-            direnv_output.status
+            "direnv exited with error {:?}. Stderr:\n{}",
+            direnv_output.status,
+            String::from_utf8_lossy(&direnv_output.stderr)
         );
 
         let output = String::from_utf8_lossy(&direnv_output.stdout);
@@ -214,7 +215,7 @@ async fn load_shell_environment(
 
     let direnv_environment = match load_direnv {
         DirenvSettings::ShellHook => None,
-        DirenvSettings::Direct => load_direnv_environment(dir).await?,
+        DirenvSettings::Direct => load_direnv_environment(dir).await.log_err().flatten(),
     }
     .unwrap_or(HashMap::default());
 

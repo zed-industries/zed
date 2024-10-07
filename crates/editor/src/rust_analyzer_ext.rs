@@ -10,7 +10,7 @@ use crate::{
     ExpandMacroRecursively,
 };
 
-static RUST_ANALYZER_NAME: &str = "rust-analyzer";
+const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 
 fn is_rust_language(language: &Language) -> bool {
     language.name() == "Rust".into()

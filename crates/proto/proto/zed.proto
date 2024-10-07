@@ -642,6 +642,13 @@ message UpdateWorktreeSettings {
     uint64 worktree_id = 2;
     string path = 3;
     optional string content = 4;
+    optional LocalSettingsKind kind = 5;
+}
+
+enum LocalSettingsKind {
+    Settings = 0;
+    Tasks = 1;
+    Editorconfig = 2;
 }
 
 message CreateProjectEntry {
@@ -2487,6 +2494,12 @@ message AddWorktreeResponse {
 message UpdateUserSettings {
     uint64 project_id = 1;
     string content = 2;
+    optional Kind kind = 3;
+
+    enum Kind {
+        Settings = 0;
+        Tasks = 1;
+    }
 }
 
 message CheckFileExists {

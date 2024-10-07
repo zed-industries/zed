@@ -184,7 +184,7 @@ impl PickerDelegate for SlashCommandDelegate {
                         h_flex()
                             .group(format!("command-entry-label-{ix}"))
                             .w_full()
-                            .min_w(px(220.))
+                            .min_w(px(250.))
                             .child(
                                 v_flex()
                                     .child(
@@ -203,7 +203,9 @@ impl PickerDelegate for SlashCommandDelegate {
                                                     div()
                                                         .font_buffer(cx)
                                                         .child(
-                                                            Label::new(args).size(LabelSize::Small),
+                                                            Label::new(args)
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Muted),
                                                         )
                                                         .visible_on_hover(format!(
                                                             "command-entry-label-{ix}"

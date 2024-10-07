@@ -9,7 +9,7 @@ use crate::lsp_ext::find_specific_language_server_in_selection;
 
 use crate::{element::register_action, Editor, SwitchSourceHeader};
 
-static CLANGD_SERVER_NAME: &str = "clangd";
+const CLANGD_SERVER_NAME: &str = "clangd";
 
 fn is_c_language(language: &Language) -> bool {
     return language.name() == "C++".into() || language.name() == "C".into();

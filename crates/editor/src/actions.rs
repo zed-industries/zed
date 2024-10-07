@@ -193,6 +193,7 @@ gpui::actions!(
         AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
+        ApplyDiffHunk,
         Backspace,
         Cancel,
         CancelLanguageServerWork,

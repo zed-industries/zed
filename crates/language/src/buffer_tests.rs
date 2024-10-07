@@ -2471,8 +2471,8 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Merging the branch applies all of its changes to the base.
-    base_buffer.update(cx, |base_buffer, cx| {
-        base_buffer.merge(&branch_buffer, None, cx);
+    branch_buffer.update(cx, |branch_buffer, cx| {
+        branch_buffer.merge_into_base(None, cx);
     });
 
     branch_buffer.update(cx, |branch_buffer, cx| {
@@ -2482,6 +2482,18 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
         );
         assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
+}
+
+#[gpui::test]
+fn test_merge_into_base(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+    let base = cx.new_model(|cx| Buffer::local("abcdefghijk", cx));
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+    branch.update(cx, |branch, cx| {
+        branch.edit([(0..3, "ABC"), (7..9, "HI")], None, cx);
+        branch.merge_into_base(Some(5..8), cx);
+    });
+    assert_eq!(base.read(cx).text(), "abcdefgHIjk");
 }
 
 fn start_recalculating_diff(buffer: &Model<Buffer>, cx: &mut TestAppContext) {
