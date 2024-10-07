@@ -26,6 +26,7 @@ use rpc::{
 use smol::{
     fs,
     process::{self, Child, Stdio},
+    Timer,
 };
 use std::{
     any::TypeId,
@@ -36,7 +37,7 @@ use std::{
         atomic::{AtomicU32, Ordering::SeqCst},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 use util::maybe;
@@ -173,7 +174,7 @@ async fn run_cmd(command: &mut process::Command) -> Result<String> {
 #[cfg(unix)]
 async fn read_with_timeout(
     stdout: &mut process::ChildStdout,
-    timeout: std::time::Duration,
+    timeout: Duration,
     output: &mut Vec<u8>,
 ) -> Result<(), std::io::Error> {
     smol::future::or(
@@ -260,6 +261,7 @@ struct SshRemoteClientState {
     delegate: Arc<dyn SshClientDelegate>,
     forwarder: ChannelForwarder,
     multiplex_task: Task<Result<()>>,
+    heartbeat_task: Task<Result<()>>,
 }
 
 pub struct SshRemoteClient {
@@ -327,6 +329,7 @@ impl SshRemoteClient {
                     delegate,
                     forwarder: proxy,
                     multiplex_task,
+                    heartbeat_task: Self::heartbeat(this.downgrade(), &mut cx),
                 }
             };
 
@@ -353,6 +356,7 @@ impl SshRemoteClient {
     }
 
     fn reconnect(&self, cx: &ModelContext<Self>) -> Result<()> {
+        log::info!("Trying to reconnect to ssh server...");
         let Some(state) = self.inner_state.lock().take() else {
             return Err(anyhow!("reconnect is already in progress"));
         };
@@ -364,8 +368,10 @@ impl SshRemoteClient {
             delegate,
             forwarder: proxy,
             multiplex_task,
+            heartbeat_task,
         } = state;
         drop(multiplex_task);
+        drop(heartbeat_task);
 
         cx.spawn(|this, mut cx| async move {
             let (incoming_tx, outgoing_rx) = proxy.into_channels().await;
@@ -401,6 +407,7 @@ impl SshRemoteClient {
                     proxy_outgoing_rx,
                     &mut cx,
                 ),
+                heartbeat_task: Self::heartbeat(this.clone(), &mut cx),
             };
 
             this.update(&mut cx, |this, _| {
@@ -409,6 +416,68 @@ impl SshRemoteClient {
         })
         .detach();
         Ok(())
+    }
+
+    fn heartbeat(this: WeakModel<Self>, cx: &mut AsyncAppContext) -> Task<Result<()>> {
+        let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
+            return Task::ready(Err(anyhow!("SshRemoteClient lost")));
+        };
+        cx.spawn(|mut cx| {
+            let this = this.clone();
+            async move {
+                const MAX_MISSED_HEARTBEATS: usize = 5;
+                const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+                const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
+
+                let mut missed_heartbeats = 0;
+
+                let mut timer = Timer::interval(HEARTBEAT_INTERVAL);
+                loop {
+                    timer.next().await;
+
+                    log::info!("Sending heartbeat to server...");
+
+                    let result = smol::future::or(
+                        async {
+                            client.request(proto::Ping {}).await?;
+                            Ok(())
+                        },
+                        async {
+                            smol::Timer::after(HEARTBEAT_TIMEOUT).await;
+
+                            Err(anyhow!("Timeout detected"))
+                        },
+                    )
+                    .await;
+
+                    if result.is_err() {
+                        missed_heartbeats += 1;
+                        log::warn!(
+                            "No heartbeat from server after {:?}. Missed heartbeat {} out of {}.",
+                            HEARTBEAT_TIMEOUT,
+                            missed_heartbeats,
+                            MAX_MISSED_HEARTBEATS
+                        );
+                    } else {
+                        missed_heartbeats = 0;
+                    }
+
+                    if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
+                        log::error!(
+                            "Missed last {} hearbeats. Reconnecting...",
+                            missed_heartbeats
+                        );
+
+                        this.update(&mut cx, |this, cx| {
+                            this.reconnect(cx)
+                                .context("failed to reconnect after missing heartbeats")
+                        })
+                        .context("failed to update weak reference, SshRemoteClient lost?")??;
+                        return Ok(());
+                    }
+                }
+            }
+        })
     }
 
     fn multiplex(
@@ -712,7 +781,7 @@ impl SshRemoteConnection {
         // has completed.
         let stdout = master_process.stdout.as_mut().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = std::time::Duration::from_secs(10);
+        let connection_timeout = Duration::from_secs(10);
         let result = read_with_timeout(stdout, connection_timeout, &mut output).await;
         if let Err(e) = result {
             let error_message = if e.kind() == std::io::ErrorKind::TimedOut {
