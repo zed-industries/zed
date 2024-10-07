@@ -15,8 +15,8 @@ pub mod worktree_store;
 mod project_tests;
 
 mod direnv;
-pub use direnv::DirenvError;
 mod environment;
+pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
@@ -1175,7 +1175,7 @@ impl Project {
     pub fn shell_environment_errors<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = (&'a WorktreeId, &'a DirenvError)> {
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
         self.environment.read(cx).shell_errors()
     }
 

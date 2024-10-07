@@ -10,7 +10,7 @@ use gpui::{
 use language::{
     LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
 };
-use project::{DirenvError, LanguageServerProgress, Project, WorktreeId};
+use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, collections::HashSet, fmt::Write, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
@@ -177,10 +177,10 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn pending_direnv_errors<'a>(
+    fn pending_environment_errors<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = (&'a WorktreeId, &'a DirenvError)> {
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
         self.project
             .read(cx)
             .shell_environment_errors(cx)
@@ -193,14 +193,14 @@ impl ActivityIndicator {
 
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
         // Show if any direnv calls failed
-        if let Some((&worktree_id, _error)) = self.pending_direnv_errors(cx).next() {
+        if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
-                message: "Running direnv failed. See logs for more info".to_string(),
+                message: error.0.clone(),
                 on_click: Some(Arc::new(move |this, _| {
                     this.ignored_environment_error_worktrees.insert(worktree_id);
                 })),

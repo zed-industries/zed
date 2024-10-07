@@ -1,15 +1,39 @@
+use crate::environment::EnvironmentErrorMessage;
+use std::process::ExitStatus;
+
 #[cfg(not(any(test, feature = "test-support")))]
 use {collections::HashMap, std::path::Path, util::ResultExt};
 
 #[derive(Clone)]
-pub struct DirenvError;
+pub enum DirenvError {
+    NotFound,
+    FailedRun,
+    NonZeroExit(ExitStatus, Vec<u8>),
+    EmptyOutput,
+    InvalidJson,
+}
+
+impl From<DirenvError> for Option<EnvironmentErrorMessage> {
+    fn from(value: DirenvError) -> Self {
+        match value {
+            DirenvError::NotFound => None,
+            DirenvError::FailedRun | DirenvError::NonZeroExit(_, _) => {
+                Some(EnvironmentErrorMessage(String::from(
+                    "Failed to run direnv. See logs for more info",
+                )))
+            }
+            DirenvError::EmptyOutput => None,
+            DirenvError::InvalidJson => Some(EnvironmentErrorMessage(String::from(
+                "Direnv returned invalid json. See logs for more info",
+            ))),
+        }
+    }
+}
 
 #[cfg(not(any(test, feature = "test-support")))]
-pub async fn load_direnv_environment(
-    dir: &Path,
-) -> (Option<HashMap<String, String>>, Option<DirenvError>) {
+pub async fn load_direnv_environment(dir: &Path) -> Result<HashMap<String, String>, DirenvError> {
     let Ok(direnv_path) = which::which("direnv") else {
-        return (None, None);
+        return Err(DirenvError::NotFound);
     };
 
     let Some(direnv_output) = smol::process::Command::new(direnv_path)
@@ -20,7 +44,7 @@ pub async fn load_direnv_environment(
         .await
         .log_err()
     else {
-        return (None, None);
+        return Err(DirenvError::FailedRun);
     };
 
     if !direnv_output.status.success() {
@@ -29,17 +53,20 @@ pub async fn load_direnv_environment(
             direnv_output.status,
             String::from_utf8_lossy(&direnv_output.stderr)
         );
-        return (None, Some(DirenvError));
+        return Err(DirenvError::NonZeroExit(
+            direnv_output.status,
+            direnv_output.stderr,
+        ));
     }
 
     let output = String::from_utf8_lossy(&direnv_output.stdout);
     if output.is_empty() {
-        return (None, None);
+        return Err(DirenvError::EmptyOutput);
     }
 
     let Some(env) = serde_json::from_str(&output).log_err() else {
-        return (None, None);
+        return Err(DirenvError::InvalidJson);
     };
 
-    (env, None)
+    Ok(env)
 }

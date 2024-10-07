@@ -10,7 +10,6 @@ use worktree::WorktreeId;
 use anyhow::Result;
 
 use crate::{
-    direnv::DirenvError,
     project_settings::{DirenvSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
@@ -19,7 +18,7 @@ pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
-    shell_errors: HashMap<WorktreeId, DirenvError>,
+    shell_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
 }
 
 impl ProjectEnvironment {
@@ -40,7 +39,7 @@ impl ProjectEnvironment {
                 cli_environment,
                 get_environment_task: None,
                 cached_shell_environments: Default::default(),
-                shell_errors: Default::default(),
+                shell_error_messages: Default::default(),
             }
         })
     }
@@ -71,8 +70,10 @@ impl ProjectEnvironment {
     }
 
     /// Returns all errors with associated worktree ids
-    pub(crate) fn shell_errors(&self) -> impl Iterator<Item = (&WorktreeId, &DirenvError)> {
-        self.shell_errors.iter()
+    pub(crate) fn shell_errors(
+        &self,
+    ) -> impl Iterator<Item = (&WorktreeId, &EnvironmentErrorMessage)> {
+        self.shell_error_messages.iter()
     }
 
     /// Returns the project environment, if possible.
@@ -145,7 +146,7 @@ impl ProjectEnvironment {
                             .insert(worktree_id, shell_env.clone());
 
                         if let Some(error) = error.flatten() {
-                            this.shell_errors.insert(worktree_id, error);
+                            this.shell_error_messages.insert(worktree_id, error);
                         }
                     })
                     .log_err();
@@ -179,11 +180,13 @@ impl From<EnvironmentOrigin> for String {
     }
 }
 
+pub struct EnvironmentErrorMessage(pub String);
+
 #[cfg(any(test, feature = "test-support"))]
 async fn load_shell_environment(
     _dir: &Path,
     _load_direnv: &DirenvSettings,
-) -> Result<(HashMap<String, String>, Option<DirenvError>)> {
+) -> Result<(HashMap<String, String>, Option<EnvironmentErrorMessage>)> {
     let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
         .into_iter()
         .collect();
@@ -194,15 +197,21 @@ async fn load_shell_environment(
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
-) -> Result<(HashMap<String, String>, Option<DirenvError>)> {
-    use crate::direnv::load_direnv_environment;
+) -> Result<(HashMap<String, String>, Option<EnvironmentErrorMessage>)> {
+    use crate::direnv::{load_direnv_environment, DirenvError};
     use anyhow::{anyhow, Context};
     use std::path::PathBuf;
     use util::parse_env_output;
 
     let (direnv_environment, direnv_error) = match load_direnv {
         DirenvSettings::ShellHook => (None, None),
-        DirenvSettings::Direct => load_direnv_environment(dir).await,
+        DirenvSettings::Direct => match load_direnv_environment(dir).await {
+            Ok(env) => (Some(env), None),
+            Err(err) => (
+                None,
+                <Option<EnvironmentErrorMessage> as From<DirenvError>>::from(err),
+            ),
+        },
     };
     let direnv_environment = direnv_environment.unwrap_or(HashMap::default());
 
