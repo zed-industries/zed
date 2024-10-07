@@ -48,6 +48,13 @@ impl ScrollableHandle {
         };
         base_handle.offset()
     }
+    fn bounds(&self) -> Bounds<Pixels> {
+        let base_handle = match self {
+            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
+            ScrollableHandle::NonUniform(handle) => &handle,
+        };
+        base_handle.bounds()
+    }
 }
 impl From<UniformListScrollHandle> for ScrollableHandle {
     fn from(value: UniformListScrollHandle) -> Self {
@@ -83,48 +90,27 @@ impl ScrollbarState {
     }
 
     fn thumb_bounds(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
-        match (&self.scroll_handle, axis) {
-            (ScrollableHandle::Uniform(handle), _) => {
-                let scroll_handle = handle.0.borrow();
-                let main_dimension_size = scroll_handle
-                    .last_item_size
-                    .filter(|size| size.contents.along(axis) > size.item.along(axis))?
-                    .contents
-                    .along(axis)
-                    .0;
-                let current_offset = scroll_handle
-                    .base_handle
-                    .offset()
-                    .along(axis)
-                    .min(px(0.))
-                    .abs()
-                    .0;
-                let mut percentage = current_offset / main_dimension_size;
-                let end_offset = (current_offset
-                    + scroll_handle.base_handle.bounds().size.along(axis).0)
-                    / main_dimension_size;
-                // Uniform scroll handle might briefly report an offset greater than the length of a list;
-                // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
-                let overshoot = (end_offset - 1.).clamp(0., 1.);
-                if overshoot > 0. {
-                    percentage -= overshoot;
-                }
-                const MINIMUM_SCROLLBAR_PERCENTAGE_SIZE: f32 = 0.005;
-                if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_SIZE > 1.0
-                    || end_offset > main_dimension_size
-                {
-                    return None;
-                }
-                if main_dimension_size < scroll_handle.base_handle.bounds().size.along(axis).0 {
-                    return None;
-                }
-                let end_offset =
-                    end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_SIZE, 1.);
-                Some(percentage..end_offset)
-            }
-            (ScrollableHandle::NonUniform(_), ScrollbarAxis::Horizontal) => todo!(),
-            (ScrollableHandle::NonUniform(_), ScrollbarAxis::Vertical) => todo!(),
+        const MINIMUM_SCROLLBAR_PERCENTAGE_SIZE: f32 = 0.005;
+        let main_dimension_size = self.scroll_handle.content_size()?.along(axis).0;
+        let current_offset = self.scroll_handle.offset().along(axis).min(px(0.)).abs().0;
+        let mut percentage = current_offset / main_dimension_size;
+        let viewport_size = self.scroll_handle.bounds().size;
+        let end_offset = (current_offset + viewport_size.along(axis).0) / main_dimension_size;
+        // Scroll handle might briefly report an offset greater than the length of a list;
+        // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
+        let overshoot = (end_offset - 1.).clamp(0., 1.);
+        if overshoot > 0. {
+            percentage -= overshoot;
         }
+        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_SIZE > 1.0 || end_offset > main_dimension_size
+        {
+            return None;
+        }
+        if main_dimension_size < viewport_size.along(axis).0 {
+            return None;
+        }
+        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_SIZE, 1.);
+        Some(percentage..end_offset)
     }
 }
 
