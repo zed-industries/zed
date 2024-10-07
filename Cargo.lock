@@ -10998,6 +10998,7 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
+ "ureq_client",
 ]
 
 [[package]]

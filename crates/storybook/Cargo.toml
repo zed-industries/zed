@@ -35,6 +35,7 @@ strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
+ureq_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
