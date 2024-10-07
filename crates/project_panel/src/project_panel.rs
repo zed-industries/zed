@@ -2127,6 +2127,7 @@ impl ProjectPanel {
         for (current_worktree_id, visible_worktree_entries, _) in &self.visible_entries {
             if worktree_id != *current_worktree_id {
                 offset += visible_worktree_entries.len();
+                continue;
             }
 
             return visible_worktree_entries
