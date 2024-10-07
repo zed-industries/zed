@@ -5526,18 +5526,15 @@ pub fn open_ssh_project(
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
             serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
 
-        let unique_identifier = match release_channel {
-            ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview => {
-                format!(
-                    "workspace-{}-{}",
-                    release_channel.dev_name(),
-                    workspace_id.0
-                )
-            }
-            ReleaseChannel::Stable => {
-                format!("workspace-{}", workspace_id.0.to_string())
-            }
+        let identifier_prefix = match release_channel {
+            ReleaseChannel::Stable => None,
+            _ => Some(format!("{}-", release_channel.dev_name())),
         };
+        let unique_identifier = format!(
+            "{}workspace-{}",
+            identifier_prefix.unwrap_or_default(),
+            workspace_id.0
+        );
 
         let session = cx
             .update(|cx| {
