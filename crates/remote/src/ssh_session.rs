@@ -787,7 +787,7 @@ impl SshRemoteConnection {
         if let Err(e) = result {
             let error_message = format!("Failed to connect to host: {}.", e);
             delegate.set_error(error_message, cx);
-            return Err(e.into());
+            return Err(e);
         }
 
         drop(askpass_task);
