@@ -1,9 +1,3 @@
-/*
-
-todo!("add cost to ClickHouse model table")
-todo!("add cost to Postgres table via seed")
-*/
-
 use crate::db::UserId;
 use chrono::Duration;
 use futures::StreamExt as _;
