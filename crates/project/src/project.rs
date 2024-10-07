@@ -1172,11 +1172,11 @@ impl Project {
         self.environment.read(cx).get_cli_environment()
     }
 
-    pub fn all_direnv_errors<'a>(
+    pub fn shell_environment_errors<'a>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (&'a WorktreeId, &'a DirenvError)> {
-        self.environment.read(cx).all_direnv_errors()
+        self.environment.read(cx).shell_errors()
     }
 
     #[cfg(any(test, feature = "test-support"))]

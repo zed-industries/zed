@@ -19,7 +19,7 @@ pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
-    direnv_errors: HashMap<WorktreeId, DirenvError>,
+    shell_errors: HashMap<WorktreeId, DirenvError>,
 }
 
 impl ProjectEnvironment {
@@ -40,7 +40,7 @@ impl ProjectEnvironment {
                 cli_environment,
                 get_environment_task: None,
                 cached_shell_environments: Default::default(),
-                direnv_errors: Default::default(),
+                shell_errors: Default::default(),
             }
         })
     }
@@ -70,9 +70,9 @@ impl ProjectEnvironment {
         }
     }
 
-    /// Returns all direnv errors with associated worktree ids
-    pub(crate) fn all_direnv_errors(&self) -> impl Iterator<Item = (&WorktreeId, &DirenvError)> {
-        self.direnv_errors.iter()
+    /// Returns all errors with associated worktree ids
+    pub(crate) fn shell_errors(&self) -> impl Iterator<Item = (&WorktreeId, &DirenvError)> {
+        self.shell_errors.iter()
     }
 
     /// Returns the project environment, if possible.
@@ -145,7 +145,7 @@ impl ProjectEnvironment {
                             .insert(worktree_id, shell_env.clone());
 
                         if let Some(error) = error.flatten() {
-                            this.direnv_errors.insert(worktree_id, error);
+                            this.shell_errors.insert(worktree_id, error);
                         }
                     })
                     .log_err();

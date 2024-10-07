@@ -28,7 +28,7 @@ pub enum Event {
 pub struct ActivityIndicator {
     statuses: Vec<LspStatus>,
     project: Model<Project>,
-    ignored_direnv_worktrees: HashSet<WorktreeId>,
+    ignored_environment_error_worktrees: HashSet<WorktreeId>,
     auto_updater: Option<Model<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -80,7 +80,7 @@ impl ActivityIndicator {
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
-                ignored_direnv_worktrees: Default::default(),
+                ignored_environment_error_worktrees: Default::default(),
                 auto_updater,
                 context_menu_handle: Default::default(),
             }
@@ -183,8 +183,12 @@ impl ActivityIndicator {
     ) -> impl Iterator<Item = (&'a WorktreeId, &'a DirenvError)> {
         self.project
             .read(cx)
-            .all_direnv_errors(cx)
-            .filter(|(worktree_id, _)| !self.ignored_direnv_worktrees.contains(worktree_id))
+            .shell_environment_errors(cx)
+            .filter(|(worktree_id, _)| {
+                !self
+                    .ignored_environment_error_worktrees
+                    .contains(worktree_id)
+            })
     }
 
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
@@ -198,7 +202,7 @@ impl ActivityIndicator {
                 ),
                 message: "Running direnv failed. See logs for more info".to_string(),
                 on_click: Some(Arc::new(move |this, _| {
-                    this.ignored_direnv_worktrees.insert(worktree_id);
+                    this.ignored_environment_error_worktrees.insert(worktree_id);
                 })),
             });
         }
