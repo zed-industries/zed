@@ -767,97 +767,6 @@ impl Buffer {
         operation
     }
 
-    pub fn delete_insertions_since(
-        &mut self,
-        ranges: Vec<Range<usize>>,
-        target_version: clock::Global,
-    ) -> Option<Operation> {
-        self.start_transaction();
-        let timestamp = self.lamport_clock.tick();
-        let mut edits_patch = Patch::default();
-        let mut edit_op = EditOperation {
-            timestamp,
-            version: self.version(),
-            ranges: Vec::new(),
-            new_text: Vec::new(),
-        };
-
-        let mut ranges = ranges.into_iter().peekable();
-
-        let mut new_ropes =
-            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>(&None);
-        let mut new_fragments =
-            old_fragments.slice(&ranges.peek().unwrap().start, Bias::Right, &None);
-        new_ropes.append(new_fragments.summary().text);
-
-        let empty = Arc::<str>::from("");
-
-        for range in ranges {
-            let slice = old_fragments.slice(&range.start, Bias::Right, &None);
-            new_ropes.append(slice.summary().text);
-            new_fragments.append(slice, &None);
-
-            loop {
-                let fragment_start = old_fragments.start().visible;
-                let fragment_end = old_fragments.end(&None).visible;
-
-                if fragment_start > range.end
-                    || (fragment_start == range.end && fragment_end > range.end)
-                {
-                    break;
-                }
-                let Some(mut fragment) = old_fragments.item().cloned() else {
-                    break;
-                };
-                old_fragments.next(&None);
-
-                let was_visible = fragment.visible;
-                let was_visible_in_target_version =
-                    fragment.was_visible(&target_version, &self.undo_map);
-
-                if fragment.visible && !was_visible_in_target_version {
-                    let full_range_start =
-                        FullOffset(fragment_start + old_fragments.start().deleted);
-                    let full_range_end =
-                        FullOffset(fragment_end + old_fragments.end(&None).deleted);
-                    fragment.visible = false;
-                    fragment.deletions.insert(timestamp);
-
-                    let new_start = new_fragments.summary().text.visible;
-                    edits_patch.push(Edit {
-                        old: fragment_start..fragment_end,
-                        new: new_start..new_start,
-                    });
-
-                    edit_op.ranges.push(full_range_start..full_range_end);
-                    edit_op.new_text.push(empty.clone());
-                }
-
-                new_ropes.push_fragment(&fragment, was_visible);
-                new_fragments.push(fragment, &None);
-            }
-        }
-
-        let suffix = old_fragments.suffix(&None);
-        new_ropes.append(suffix.summary().text);
-        new_fragments.append(suffix, &None);
-        let (visible_text, deleted_text) = new_ropes.finish();
-        drop(old_fragments);
-
-        self.snapshot.fragments = new_fragments;
-        self.snapshot.visible_text = visible_text;
-        self.snapshot.deleted_text = deleted_text;
-        self.subscriptions.publish_mut(&edits_patch);
-        let operation = Operation::Edit(edit_op);
-
-        self.history.push(operation.clone());
-        self.history.push_undo(operation.timestamp());
-        self.snapshot.version.observe(operation.timestamp());
-        self.end_transaction();
-        Some(operation)
-    }
-
     fn apply_local_edit<S: ToOffset, T: Into<Arc<str>>>(
         &mut self,
         edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
@@ -2704,13 +2613,10 @@ impl Fragment {
 
     fn was_visible(&self, version: &clock::Global, undos: &UndoMap) -> bool {
         (version.observed(self.timestamp) && !undos.was_undone(self.timestamp, version))
-            && self.was_deleted(version, undos)
-    }
-
-    fn was_deleted(&self, version: &clock::Global, undos: &UndoMap) -> bool {
-        self.deletions
-            .iter()
-            .all(|d| !version.observed(*d) || undos.was_undone(*d, version))
+            && self
+                .deletions
+                .iter()
+                .all(|d| !version.observed(*d) || undos.was_undone(*d, version))
     }
 }
 

@@ -20,7 +20,6 @@ use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
-use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -92,7 +91,7 @@ enum BufferDiffBase {
     PastBufferVersion {
         buffer: Model<Buffer>,
         rope: Rope,
-        operation_map: HashMap<Lamport, Lamport>,
+        merged_operations: Vec<Lamport>,
     },
 }
 
@@ -804,7 +803,7 @@ impl Buffer {
                 diff_base: Some(BufferDiffBase::PastBufferVersion {
                     buffer: this.clone(),
                     rope: self.as_rope().clone(),
-                    operation_map: Default::default(),
+                    merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
@@ -833,12 +832,8 @@ impl Buffer {
             return;
         };
 
-        let base_version = base_buffer.read(cx).version();
-
-        let empty = Arc::<str>::from("");
         let mut edits = Vec::new();
-        let mut deletions = Vec::new();
-        for edit in self.edits_since::<usize>(&base_version) {
+        for edit in self.edits_since::<usize>(&base_buffer.read(cx).version()) {
             if let Some(range) = &range {
                 if range.start > edit.new.end || edit.new.start > range.end {
                     continue;
@@ -848,21 +843,19 @@ impl Buffer {
                 edit.old.clone(),
                 self.text_for_range(edit.new.clone()).collect::<String>(),
             ));
-            deletions.push((edit.new, empty.clone()));
         }
-
-        let deletion_operation = self.edit(deletions, None, cx);
 
         let operation = base_buffer.update(cx, |base_buffer, cx| {
             cx.emit(BufferEvent::DiffBaseChanged);
             base_buffer.edit(edits, None, cx)
         });
 
-        if let Some((operation, deletion_operation)) = operation.zip(deletion_operation) {
-            if let Some(BufferDiffBase::PastBufferVersion { operation_map, .. }) =
-                &mut self.diff_base
+        if let Some(operation) = operation {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                merged_operations, ..
+            }) = &mut self.diff_base
             {
-                operation_map.insert(operation, deletion_operation);
+                merged_operations.push(operation);
             }
         }
     }
@@ -876,28 +869,30 @@ impl Buffer {
         let BufferEvent::Operation { operation, .. } = event else {
             return;
         };
-        let Some(BufferDiffBase::PastBufferVersion { operation_map, .. }) = &self.diff_base else {
+        let Some(BufferDiffBase::PastBufferVersion {
+            merged_operations, ..
+        }) = &mut self.diff_base
+        else {
             return;
         };
 
-        // When the base buffer undoes or redoes an operation that was created via a merge
-        // from this branch buffer, undo the corresponding operation in this buffer.
-        if let Operation::Buffer(text::Operation::Undo(operation)) = &operation {
-            let counts = operation
-                .counts
-                .iter()
-                .filter_map(|(operation, count)| {
-                    let operation = operation_map.get(&operation)?;
-                    Some((*operation, *count))
-                })
-                .collect::<HashMap<_, _>>();
-            if !counts.is_empty() {
-                let operation = self.text.undo_operations(counts);
-                self.send_operation(Operation::Buffer(operation), true, cx);
+        let mut operation_to_undo = None;
+        if let Operation::Buffer(text::Operation::Edit(operation)) = &operation {
+            if let Ok(ix) = merged_operations.binary_search(&operation.timestamp) {
+                merged_operations.remove(ix);
+                operation_to_undo = Some(operation.timestamp);
             }
         }
 
         self.apply_ops([operation.clone()], cx);
+
+        if let Some(timestamp) = operation_to_undo {
+            let operation = self
+                .text
+                .undo_operations([(timestamp, u32::MAX)].into_iter().collect());
+            self.send_operation(Operation::Buffer(operation), true, cx);
+        }
+
         self.diff_base_version += 1;
     }
 
@@ -2027,20 +2022,6 @@ impl Buffer {
         self.end_transaction(cx);
         self.send_operation(Operation::Buffer(edit_operation), true, cx);
         Some(edit_id)
-    }
-
-    pub fn delete_insertions_since(
-        &mut self,
-        ranges: Vec<Range<usize>>,
-        version: clock::Global,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.start_transaction();
-        let operation = self.text.delete_insertions_since(ranges, version);
-        self.end_transaction(cx);
-        if let Some(operation) = operation {
-            self.send_operation(Operation::Buffer(operation), true, cx);
-        }
     }
 
     fn did_edit(

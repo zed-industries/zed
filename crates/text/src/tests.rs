@@ -678,19 +678,6 @@ fn test_edited_ranges_for_transaction() {
 }
 
 #[test]
-fn test_restore_ranges_to_version() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "abcdefghijklmno".into());
-
-    let v0 = buffer.version();
-
-    buffer.edit([(3..6, "DEF!"), (10..13, "KLM?"), (14..15, "O.")]);
-    assert_eq!(buffer.text(), "abcDEF!ghijKLM?nO.");
-
-    buffer.delete_insertions_since(vec![11..15], v0);
-    assert_eq!(buffer.text(), "abcDEF!ghijklmnO.");
-}
-
-#[test]
 fn test_concurrent_edits() {
     let text = "abcdef";
 
