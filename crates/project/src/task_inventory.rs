@@ -10,11 +10,7 @@ use std::{
 
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
-use futures::{
-    channel::mpsc::{unbounded, UnboundedSender},
-    StreamExt,
-};
-use gpui::{AppContext, Context, Model, Task};
+use gpui::{AppContext, Context, Model};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
 use settings::SettingsStore;

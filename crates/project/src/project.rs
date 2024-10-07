@@ -735,7 +735,7 @@ impl Project {
                 TaskStore::remote(
                     buffer_store.downgrade(),
                     worktree_store.clone(),
-                    ssh.to_proto_client(),
+                    ssh.read(cx).to_proto_client(),
                     SSH_PROJECT_ID,
                     cx,
                 )
@@ -790,7 +790,7 @@ impl Project {
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
-            TaskStore::init(Some(&client), cx);
+            TaskStore::init(Some(&ssh_proto), cx);
 
             this
         })
