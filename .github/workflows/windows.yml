@@ -84,7 +84,7 @@ jobs:
         cargo build --release
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: zed-windows-build
         path: target/release/zed.exe
