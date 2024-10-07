@@ -496,12 +496,8 @@ mod tests {
 
         let tokenizer = SimpleTokenizer::new();
         let embedding_settings = EmbeddingIndexSettings::default();
-        let worktree_corpus_stats = Arc::new(RwLock::new(WorktreeTermStats::new(
-            HashMap::new(),
-            HashMap::new(),
-            0,
-            HashMap::new(),
-        )));
+        let worktree_corpus_stats =
+            Arc::new(RwLock::new(WorktreeTermStats::new(HashMap::new(), 0, 0)));
 
         let embed_files_task = cx.update(|cx| {
             EmbeddingIndex::embed_files(

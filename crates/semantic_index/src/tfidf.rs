@@ -1,10 +1,7 @@
+use anyhow::{anyhow, Result};
 use rust_stemmers::{Algorithm, Stemmer};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Clone)]
 pub struct SimpleTokenizer {
@@ -19,9 +16,27 @@ impl SimpleTokenizer {
     }
 
     pub fn tokenize_and_stem(&self, text: &str) -> Vec<Arc<str>> {
-        text.split_whitespace()
+        // Split on whitespace and punctuation
+        text.split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+            .flat_map(|word| {
+                word.chars().fold(Vec::<String>::new(), |mut acc, c| {
+                    // Split CamelCaps and camelCase
+                    if c.is_uppercase()
+                        && !acc.is_empty()
+                        && acc.last().unwrap().chars().last().unwrap().is_lowercase()
+                    {
+                        acc.push(String::new());
+                    }
+                    acc.last_mut()
+                        .unwrap_or(&mut String::new())
+                        .push(c.to_lowercase().next().unwrap());
+                    acc
+                })
+            })
+            .filter(|s| !s.is_empty())
             .map(|word| {
-                let stemmed = self.stemmer.stem(word).to_string();
+                // Stem each word and convert to Arc<str>
+                let stemmed = self.stemmer.stem(&word).to_string();
                 Arc::from(stemmed)
             })
             .collect()
@@ -39,61 +54,49 @@ impl Default for Bm25Parameters {
     }
 }
 pub trait Bm25Scorer {
-    fn total_chunks(&self) -> u64;
+    fn total_chunks(&self) -> u32;
     fn avg_chunk_length(&self) -> f32;
-    fn term_frequency(&self, term: &Arc<str>, chunk_id: u64) -> Option<u32>;
-    fn chunk_length(&self, chunk_id: u64) -> Option<u32>;
-    fn document_frequency(&self, term: &Arc<str>) -> u64;
+    fn term_frequency(&self, term: &Arc<str>, chunk_term_counts: &HashMap<Arc<str>, u32>) -> u32;
+    fn document_frequency(&self, term: &Arc<str>) -> u32;
 
     fn calculate_bm25_score(
         &self,
-        query_terms: &HashMap<Arc<str>, f32>,
-        chunk_id: u64,
+        query_terms: &HashMap<Arc<str>, u32>,
+        chunk_terms: &HashMap<Arc<str>, u32>,
         k1: f32,
         b: f32,
-    ) -> Option<f32> {
-        let avg_dl = self.avg_chunk_length();
-        let chunk_length = self.chunk_length(chunk_id)? as f32;
+    ) -> f32 {
+        let avg_chunk_length = self.avg_chunk_length();
+        let chunk_length = chunk_terms.values().sum::<u32>() as f32;
 
-        Some(
-            query_terms
-                .iter()
-                .filter_map(|(term, &query_tf)| {
-                    let tf = self.term_frequency(term, chunk_id)? as f32;
-                    let df = self.document_frequency(term) as f32;
-                    let idf = ((self.total_chunks() as f32 - df + 0.5) / (df + 0.5)).ln();
-                    let numerator = tf * (k1 + 1.0);
-                    let denominator = tf + k1 * (1.0 - b + b * chunk_length / avg_dl);
+        query_terms
+            .iter()
+            .map(|(term, &query_tf)| {
+                let tf = self.term_frequency(term, chunk_terms) as f32;
+                let df = self.document_frequency(term) as f32;
+                let idf = ((self.total_chunks() as f32 - df + 0.5) / (df + 0.5)).ln();
+                let numerator = tf * (k1 + 1.0);
+                let denominator = tf + k1 * (1.0 - b + b * chunk_length / avg_chunk_length);
 
-                    Some(query_tf * idf * (numerator / denominator))
-                })
-                .sum(),
-        )
+                query_tf as f32 * idf * (numerator / denominator)
+            })
+            .sum()
     }
 }
 
-#[derive(Debug)]
-pub struct TermStats {
-    frequency: u32,
-    chunk_ids: HashSet<u64>,
-}
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ChunkStats {
-    length: u32,
-    terms: HashMap<Arc<str>, u32>,
-}
+pub struct ChunkTermCounts(HashMap<Arc<str>, u32>);
 
-impl ChunkStats {
+impl ChunkTermCounts {
     pub fn from_text(text: &str, tokenizer: &SimpleTokenizer) -> Self {
         let tokens = tokenizer.tokenize_and_stem(text);
         let mut terms = HashMap::new();
-        let length = tokens.len() as u32;
 
         for token in tokens {
             *terms.entry(token).or_insert(0) += 1;
         }
 
-        ChunkStats { length, terms }
+        ChunkTermCounts(terms)
     }
 }
 
@@ -103,125 +106,73 @@ impl ChunkStats {
 /// and the total length of all chunks in the worktree.
 #[derive(Debug)]
 pub struct WorktreeTermStats {
-    /// A map of chunk IDs to their corresponding statistics.
-    chunks: HashMap<u64, ChunkStats>,
-    /// A map of terms to their statistics across all chunks in this worktree.
-    term_stats: HashMap<Arc<str>, TermStats>,
+    /// A map of terms to their counts across all chunks in this worktree.
+    term_counts: HashMap<Arc<str>, u32>,
     /// The total length of all chunks in this worktree.
     total_length: u32,
-    /// The next available chunk ID.
-    next_chunk_id: u64,
-    /// A map of filepaths to their corresponding chunk IDs.
-    filepath_to_chunks: HashMap<Arc<Path>, HashSet<u64>>,
+    /// The total number of chunks tracked in this worktree.
+    total_chunks: u32,
 }
+
 impl WorktreeTermStats {
-    pub fn new(
-        chunks: HashMap<u64, ChunkStats>,
-        term_stats: HashMap<Arc<str>, TermStats>,
-        total_length: u32,
-        filepath_to_chunks: HashMap<Arc<Path>, HashSet<u64>>,
-    ) -> Self {
-        let next_chunk_id = chunks.keys().max().map_or(0, |&id| id + 1);
+    pub fn new(term_counts: HashMap<Arc<str>, u32>, total_length: u32, total_chunks: u32) -> Self {
         Self {
-            chunks,
-            term_stats,
+            term_counts,
             total_length,
-            next_chunk_id,
-            filepath_to_chunks,
-        }
-    }
-    pub fn add_chunk(&mut self, chunk: ChunkStats, filepath: Arc<Path>) -> u64 {
-        let chunk_id = self.next_chunk_id;
-        self.next_chunk_id += 1;
-
-        // Update term_stats
-        for (term, &freq) in &chunk.terms {
-            let stats = self.term_stats.entry(term.clone()).or_insert(TermStats {
-                frequency: 0,
-                chunk_ids: HashSet::new(),
-            });
-            stats.frequency += freq;
-            stats.chunk_ids.insert(chunk_id);
-        }
-
-        // Update total_length
-        self.total_length += chunk.length;
-
-        // Add chunk to chunks
-        self.chunks.insert(chunk_id, chunk);
-
-        // Update filepath_to_chunks
-        self.filepath_to_chunks
-            .entry(filepath)
-            .or_insert_with(HashSet::new)
-            .insert(chunk_id);
-
-        chunk_id
-    }
-    pub fn remove_chunk(&mut self, chunk_id: u64) -> Option<ChunkStats> {
-        if let Some(chunk) = self.chunks.remove(&chunk_id) {
-            // Update term_stats
-            for (term, &freq) in &chunk.terms {
-                if let Some(stats) = self.term_stats.get_mut(term) {
-                    stats.frequency -= freq;
-                    stats.chunk_ids.remove(&chunk_id);
-                    if stats.chunk_ids.is_empty() {
-                        self.term_stats.remove(term);
-                    }
-                }
-            }
-            // Update total_length
-            self.total_length -= chunk.length;
-
-            // Update filepath_to_chunks
-            self.filepath_to_chunks.retain(|_, chunk_set| {
-                chunk_set.remove(&chunk_id);
-                !chunk_set.is_empty()
-            });
-
-            Some(chunk)
-        } else {
-            None
+            total_chunks,
         }
     }
 
-    pub fn remove_file(&mut self, filepath: &Arc<Path>) {
-        if let Some(chunk_ids) = self.filepath_to_chunks.remove(filepath) {
-            for chunk_id in chunk_ids {
-                self.remove_chunk(chunk_id);
+    pub fn add_chunk_counts(&mut self, chunk_counts: ChunkTermCounts) {
+        let mut chunk_length = 0;
+        for (term, &freq) in &chunk_counts.0 {
+            let counts = self.term_counts.entry(term.clone()).or_insert(0);
+            *counts += freq;
+            chunk_length += freq;
+        }
+        self.total_length += chunk_length;
+        self.total_chunks += 1;
+    }
+
+    pub fn remove_chunk_counts(&mut self, chunk_counts: ChunkTermCounts) -> Result<()> {
+        debug_assert!(chunk_counts.0.len() <= self.term_counts.len());
+
+        let mut chunk_length = 0;
+        for (term, &freq) in &chunk_counts.0 {
+            if let Some(stats) = self.term_counts.get_mut(term) {
+                *stats -= freq;
+                chunk_length += 0;
+            } else {
+                return Err(anyhow!(
+                    "Tried to remove ChunkTermCounts with term unknown to WorktreeTermStats: {:?}",
+                    term
+                ));
             }
         }
+        self.total_length -= chunk_length;
+        self.total_chunks -= 1;
+        Ok(())
     }
 }
 
 impl Bm25Scorer for WorktreeTermStats {
-    fn total_chunks(&self) -> u64 {
-        self.chunks.len() as u64
+    fn total_chunks(&self) -> u32 {
+        self.total_chunks
     }
 
     fn avg_chunk_length(&self) -> f32 {
-        if self.chunks.is_empty() {
+        if self.total_chunks == 0 {
             0.0
         } else {
-            self.total_length as f32 / self.chunks.len() as f32
+            self.total_length as f32 / self.total_chunks as f32
         }
     }
 
-    fn term_frequency(&self, term: &Arc<str>, chunk_id: u64) -> Option<u32> {
-        self.chunks
-            .get(&chunk_id)
-            .and_then(|chunk| chunk.terms.get(term))
-            .cloned()
+    fn term_frequency(&self, term: &Arc<str>, chunk_term_counts: &HashMap<Arc<str>, u32>) -> u32 {
+        *chunk_term_counts.get(term).unwrap_or(&0)
     }
 
-    fn chunk_length(&self, chunk_id: u64) -> Option<u32> {
-        self.chunks.get(&chunk_id).map(|chunk| chunk.length)
-    }
-
-    fn document_frequency(&self, term: &Arc<str>) -> u64 {
-        self.term_stats
-            .get(term)
-            .map(|stats| stats.chunk_ids.len() as u64)
-            .unwrap_or(0)
+    fn document_frequency(&self, term: &Arc<str>) -> u32 {
+        *self.term_counts.get(term).unwrap_or(&0)
     }
 }
