@@ -1,72 +1,87 @@
+#![expect(missing_docs)]
 use std::{cell::Cell, ops::Range, rc::Rc};
 
+use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
-    point, quad, Bounds, ContentMask, Corners, Edges, EntityId, Hitbox, Hsla, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Style, UniformListScrollHandle,
+    point, quad, Bounds, ContentMask, Corners, Edges, Element, ElementId, Entity, EntityId,
+    GlobalElementId, Hitbox, Hsla, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    ScrollWheelEvent, Style, UniformListScrollHandle, View, WindowContext,
 };
-use ui::{prelude::*, px, relative, IntoElement};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScrollbarKind {
+enum ScrollbarKind {
     Horizontal,
     Vertical,
 }
 
-pub(crate) struct ProjectPanelScrollbar {
+pub struct Scrollbar {
     thumb: Range<f32>,
     scroll: UniformListScrollHandle,
     // If Some(), there's an active drag, offset by percentage from the top of thumb.
-    scrollbar_drag_state: Rc<Cell<Option<f32>>>,
+    state: ScrollbarState,
     kind: ScrollbarKind,
+}
+
+#[derive(Clone)]
+pub struct ScrollbarState {
+    drag: Rc<Cell<Option<f32>>>,
     parent_id: EntityId,
 }
 
-impl ProjectPanelScrollbar {
-    pub(crate) fn vertical(
+impl ScrollbarState {
+    pub fn for_scrollable<V: 'static>(view: &View<V>) -> Self {
+        Self {
+            drag: Default::default(),
+            parent_id: view.entity_id(),
+        }
+    }
+    pub fn is_dragging(&self) -> bool {
+        self.drag.get().is_some()
+    }
+}
+
+impl Scrollbar {
+    pub fn vertical(
         thumb: Range<f32>,
         scroll: UniformListScrollHandle,
-        scrollbar_drag_state: Rc<Cell<Option<f32>>>,
-        parent_id: EntityId,
+        state: ScrollbarState,
     ) -> Self {
         Self {
             thumb,
             scroll,
-            scrollbar_drag_state,
+            state,
             kind: ScrollbarKind::Vertical,
-            parent_id,
         }
     }
 
-    pub(crate) fn horizontal(
+    pub fn horizontal(
         thumb: Range<f32>,
         scroll: UniformListScrollHandle,
-        scrollbar_drag_state: Rc<Cell<Option<f32>>>,
-        parent_id: EntityId,
+        state: ScrollbarState,
     ) -> Self {
         Self {
             thumb,
             scroll,
-            scrollbar_drag_state,
+            state,
             kind: ScrollbarKind::Horizontal,
-            parent_id,
         }
     }
 }
 
-impl gpui::Element for ProjectPanelScrollbar {
+impl Element for Scrollbar {
     type RequestLayoutState = ();
 
     type PrepaintState = Hitbox;
 
-    fn id(&self) -> Option<ui::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         None
     }
 
     fn request_layout(
         &mut self,
-        _id: Option<&gpui::GlobalElementId>,
-        cx: &mut ui::WindowContext,
-    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.flex_grow = 1.;
         style.flex_shrink = 1.;
@@ -83,10 +98,10 @@ impl gpui::Element for ProjectPanelScrollbar {
 
     fn prepaint(
         &mut self,
-        _id: Option<&gpui::GlobalElementId>,
-        bounds: Bounds<ui::Pixels>,
+        _id: Option<&GlobalElementId>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut ui::WindowContext,
+        cx: &mut WindowContext,
     ) -> Self::PrepaintState {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             cx.insert_hitbox(bounds, false)
@@ -95,11 +110,11 @@ impl gpui::Element for ProjectPanelScrollbar {
 
     fn paint(
         &mut self,
-        _id: Option<&gpui::GlobalElementId>,
-        bounds: Bounds<ui::Pixels>,
+        _id: Option<&GlobalElementId>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        cx: &mut ui::WindowContext,
+        cx: &mut WindowContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let colors = cx.theme().colors();
@@ -164,7 +179,7 @@ impl gpui::Element for ProjectPanelScrollbar {
 
             cx.on_mouse_event({
                 let scroll = self.scroll.clone();
-                let is_dragging = self.scrollbar_drag_state.clone();
+                let state = self.state.clone();
                 move |event: &MouseDownEvent, phase, _cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
                         if !thumb_bounds.contains(&event.position) {
@@ -199,7 +214,7 @@ impl gpui::Element for ProjectPanelScrollbar {
                             } else {
                                 (event.position.x - thumb_bounds.origin.x) / bounds.size.width
                             };
-                            is_dragging.set(Some(thumb_offset));
+                            state.drag.set(Some(thumb_offset));
                         }
                     }
                 }
@@ -217,11 +232,10 @@ impl gpui::Element for ProjectPanelScrollbar {
                     }
                 }
             });
-            let drag_state = self.scrollbar_drag_state.clone();
-            let view_id = self.parent_id;
+            let state = self.state.clone();
             let kind = self.kind;
             cx.on_mouse_event(move |event: &MouseMoveEvent, _, cx| {
-                if let Some(drag_state) = drag_state.get().filter(|_| event.dragging()) {
+                if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
                     let scroll = scroll.0.borrow();
                     if let Some(item_size) = scroll.last_item_size {
                         match kind {
@@ -251,24 +265,24 @@ impl gpui::Element for ProjectPanelScrollbar {
                             }
                         };
 
-                        cx.notify(view_id);
+                        cx.notify(state.parent_id);
                     }
                 } else {
-                    drag_state.set(None);
+                    state.drag.set(None);
                 }
             });
-            let is_dragging = self.scrollbar_drag_state.clone();
+            let state = self.state.clone();
             cx.on_mouse_event(move |_event: &MouseUpEvent, phase, cx| {
                 if phase.bubble() {
-                    is_dragging.set(None);
-                    cx.notify(view_id);
+                    state.drag.take();
+                    cx.notify(state.parent_id);
                 }
             });
         })
     }
 }
 
-impl IntoElement for ProjectPanelScrollbar {
+impl IntoElement for Scrollbar {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {

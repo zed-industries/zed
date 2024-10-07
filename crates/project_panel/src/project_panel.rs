@@ -1,8 +1,8 @@
 mod project_panel_settings;
-mod scrollbar;
+
 use client::{ErrorCode, ErrorExt};
-use scrollbar::ProjectPanelScrollbar;
 use settings::{Settings, SettingsStore};
+use ui::{Scrollbar, ScrollbarState};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
@@ -19,11 +19,10 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
     AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement,
-    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView,
-    WindowContext,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -34,12 +33,11 @@ use project::{
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::{Cell, OnceCell},
+    cell::OnceCell,
     collections::HashSet,
     ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
-    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -82,8 +80,8 @@ pub struct ProjectPanel {
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     show_scrollbar: bool,
-    vertical_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
-    horizontal_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
+    vertical_scrollbar_state: ScrollbarState,
+    horizontal_scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
 }
@@ -320,8 +318,8 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
-                vertical_scrollbar_drag_thumb_offset: Default::default(),
-                horizontal_scrollbar_drag_thumb_offset: Default::default(),
+                vertical_scrollbar_state: ScrollbarState::for_scrollable(cx.view()),
+                horizontal_scrollbar_state: ScrollbarState::for_scrollable(cx.view()),
                 max_width_item_index: None,
             };
             this.update_visible_entries(None, cx);
@@ -2617,9 +2615,7 @@ impl ProjectPanel {
         let scroll_handle = self.scroll_handle.0.borrow();
         let total_list_length = scroll_handle
             .last_item_size
-            .filter(|_| {
-                self.show_scrollbar || self.vertical_scrollbar_drag_thumb_offset.get().is_some()
-            })?
+            .filter(|_| self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())?
             .contents
             .height
             .0 as f64;
@@ -2659,7 +2655,7 @@ impl ProjectPanel {
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|this, _, cx| {
-                        if this.vertical_scrollbar_drag_thumb_offset.get().is_none()
+                        if !this.vertical_scrollbar_state.is_dragging()
                             && !this.focus_handle.contains_focused(cx)
                         {
                             this.hide_scrollbar(cx);
@@ -2679,11 +2675,10 @@ impl ProjectPanel {
                 .bottom_1()
                 .w(px(12.))
                 .cursor_default()
-                .child(ProjectPanelScrollbar::vertical(
+                .child(Scrollbar::vertical(
                     percentage as f32..end_offset as f32,
                     self.scroll_handle.clone(),
-                    self.vertical_scrollbar_drag_thumb_offset.clone(),
-                    cx.view().entity_id(),
+                    self.vertical_scrollbar_state.clone(),
                 )),
         )
     }
@@ -2695,9 +2690,7 @@ impl ProjectPanel {
         let scroll_handle = self.scroll_handle.0.borrow();
         let longest_item_width = scroll_handle
             .last_item_size
-            .filter(|_| {
-                self.show_scrollbar || self.horizontal_scrollbar_drag_thumb_offset.get().is_some()
-            })
+            .filter(|_| self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
             .filter(|size| size.contents.width > size.item.width)?
             .contents
             .width
@@ -2738,7 +2731,7 @@ impl ProjectPanel {
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|this, _, cx| {
-                        if this.horizontal_scrollbar_drag_thumb_offset.get().is_none()
+                        if !this.horizontal_scrollbar_state.is_dragging()
                             && !this.focus_handle.contains_focused(cx)
                         {
                             this.hide_scrollbar(cx);
@@ -2759,11 +2752,10 @@ impl ProjectPanel {
                 .h(px(12.))
                 .cursor_default()
                 .when(self.width.is_some(), |this| {
-                    this.child(ProjectPanelScrollbar::horizontal(
+                    this.child(Scrollbar::horizontal(
                         percentage as f32..end_offset as f32,
                         self.scroll_handle.clone(),
-                        self.horizontal_scrollbar_drag_thumb_offset.clone(),
-                        cx.view().entity_id(),
+                        self.horizontal_scrollbar_state.clone(),
                     ))
                 }),
         )
