@@ -118,8 +118,7 @@ pub fn routes() -> Router<(), Body> {
     Router::new()
         .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
-        .route("/deadlock", get(repro_deadlock))
-    // .layer(middleware::from_fn(validate_api_token))
+        .layer(middleware::from_fn(validate_api_token))
 }
 
 async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
@@ -182,51 +181,6 @@ struct Test {
     ok: bool,
 }
 
-async fn repro_deadlock(Extension(state): Extension<Arc<LlmState>>) -> Result<Json<Test>> {
-    use http_client::{HttpClient, HttpRequestExt};
-
-    let low_speed_timeout = Some(std::time::Duration::from_secs(10));
-
-    let api_key = state
-        .config
-        .anthropic_staff_api_key
-        .as_ref()
-        .context("no Anthropic AI staff API key configured on the server")?;
-
-    let request = anthropic::Request {
-        model: anthropic::Model::Claude3_5Sonnet.id().to_string(),
-        max_tokens: 200_000,
-        messages: vec![anthropic::Message {
-            role: anthropic::Role::User,
-            content: vec![anthropic::RequestContent::Text {
-                text: "Is this thing on?".to_string(),
-                cache_control: None,
-            }],
-        }],
-        tools: Vec::new(),
-        tool_choice: None,
-        system: None,
-        metadata: None,
-        stop_sequences: Vec::new(),
-        temperature: None,
-        top_k: None,
-        top_p: None,
-    };
-
-    let result = anthropic::stream_completion_with_rate_limit_info(
-        &state.http_client,
-        anthropic::ANTHROPIC_API_URL,
-        api_key,
-        request,
-        None,
-    )
-    .await;
-
-    dbg!(&result.is_ok());
-
-    Ok(Json(Test { ok: true }))
-}
-
 async fn list_models(
     Extension(state): Extension<Arc<LlmState>>,
     Extension(claims): Extension<LlmTokenClaims>,
@@ -264,13 +218,11 @@ async fn perform_completion(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
-    dbg!("performing completion");
     let model = normalize_model_name(
         state.db.model_names_for_provider(params.provider),
         params.model,
     );
 
-    dbg!("authorize_access_to_language_model");
     authorize_access_to_language_model(
         &state.config,
         &claims,
@@ -281,7 +233,6 @@ async fn perform_completion(
         &model,
     )?;
 
-    dbg!("check_usage_limit");
     check_usage_limit(&state, params.provider, &model, &claims).await?;
 
     let stream = match params.provider {
@@ -317,7 +268,6 @@ async fn perform_completion(
                 _ => request.model,
             };
 
-            dbg!("stream_completion_with_rate_limit_info");
             let (chunks, rate_limit_info) = anthropic::stream_completion_with_rate_limit_info(
                 &state.http_client,
                 anthropic::ANTHROPIC_API_URL,
@@ -371,7 +321,6 @@ async fn perform_completion(
                 );
             }
 
-            dbg!("map chunks");
             chunks
                 .map(move |event| {
                     let chunk = event?;
