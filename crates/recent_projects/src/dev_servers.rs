@@ -279,6 +279,13 @@ impl DevServerProjects {
             match connection.await {
                 Some(_) => this
                     .update(&mut cx, |this, cx| {
+                        let _ = this.workspace.update(cx, |workspace, _| {
+                            workspace
+                                .client()
+                                .telemetry()
+                                .report_app_event("create ssh server".to_string())
+                        });
+
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::Default(None);
                         cx.notify()
@@ -422,7 +429,15 @@ impl DevServerProjects {
                         );
 
                         cx.new_view(|cx| {
-                            Workspace::new(None, project.clone(), app_state.clone(), cx)
+                            let workspace =
+                                Workspace::new(None, project.clone(), app_state.clone(), cx);
+
+                            workspace
+                                .client()
+                                .telemetry()
+                                .report_app_event("create ssh project".to_string());
+
+                            workspace
                         })
                     })
                     .log_err();
