@@ -31,10 +31,12 @@ ENV GITHUB_SHA=$GITHUB_SHA
 # - Staging: `4f408ec65a3867278322a189b4eb20f1ab51f508`
 # - Production: `fc4c533d0a8c489e5636a4249d2b52a80039fbd7`
 #
+# Also add `cmake`, since we need it to build `wasmtime`.
+#
 # Installing these as a temporary workaround, but I think ideally we'd want to figure
 # out what caused them to be included in the first place.
 RUN apt-get update; \
-    apt-get install -y --no-install-recommends libxkbcommon-dev libxkbcommon-x11-dev
+    apt-get install -y --no-install-recommends libxkbcommon-dev libxkbcommon-x11-dev cmake
 
 RUN --mount=type=cache,target=./script/node_modules \
     --mount=type=cache,target=/usr/local/cargo/registry \
