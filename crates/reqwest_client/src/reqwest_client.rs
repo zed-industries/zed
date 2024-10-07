@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io::Read, pin::Pin, task::Poll};
+use std::{any::type_name, borrow::Cow, io::Read, pin::Pin, task::Poll};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -181,6 +181,10 @@ impl futures::stream::Stream for WrappedBody {
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&http::Uri> {
         None
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<Self>()
     }
 
     fn send(
