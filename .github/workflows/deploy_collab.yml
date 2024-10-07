@@ -3,7 +3,8 @@ name: Publish Collab Server Image
 on:
   push:
     tags:
-      - collab-production
+      # Pause production deploys while we investigate an issue.
+      # - collab-production
       - collab-staging
 
 env:
