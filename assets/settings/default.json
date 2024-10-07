@@ -300,6 +300,8 @@
     "include_ignored": false,
     "regex": false
   },
+  // Whether to visually clear search matches when cursor is moved or text is edited.
+  "clear_search_matches_on_selection_change": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //

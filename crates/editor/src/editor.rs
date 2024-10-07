@@ -161,12 +161,14 @@ use ui::{
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
+use workspace::searchable::SearchableItem;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
+use crate::items::BufferSearchHighlights;
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
 pub const FILE_HEADER_HEIGHT: u32 = 1;
@@ -2524,6 +2526,15 @@ impl Editor {
         );
 
         if local {
+            if EditorSettings::get_global(cx).clear_search_matches_on_selection_change
+                && self.has_background_highlights::<BufferSearchHighlights>()
+            {
+                let range = self.selections.last::<usize>(cx).range();
+                if range.start == range.end {
+                    self.clear_matches(cx);
+                }
+            }
+
             let new_cursor_position = self.selections.newest_anchor().head();
             let mut context_menu = self.context_menu.write();
             let completion_menu = match context_menu.as_ref() {
@@ -2586,6 +2597,7 @@ impl Editor {
             {
                 self.available_code_actions.take();
             }
+
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
