@@ -20,20 +20,39 @@ pub enum ScrollableHandle {
     Uniform(UniformListScrollHandle),
     NonUniform(ScrollHandle),
 }
+#[derive(Debug)]
+struct ContentSize {
+    size: Size<Pixels>,
+    scroll_adjustment: Option<Point<Pixels>>,
+}
 
 impl ScrollableHandle {
-    fn content_size(&self) -> Option<Size<Pixels>> {
+    fn content_size(&self) -> Option<ContentSize> {
         match self {
-            ScrollableHandle::Uniform(handle) => {
-                handle.0.borrow().last_item_size.map(|size| size.contents)
-            }
+            ScrollableHandle::Uniform(handle) => Some(ContentSize {
+                size: handle.0.borrow().last_item_size.map(|size| size.contents)?,
+                scroll_adjustment: None,
+            }),
             ScrollableHandle::NonUniform(handle) => {
                 let last_children_index = handle.children_count().checked_sub(1)?;
                 // todo: PO: this is slightly wrong for horizontal scrollbar, as the last item is not necessarily the longest one.
                 let mut last_item = handle.bounds_for_item(last_children_index)?;
                 last_item.size.height += last_item.origin.y;
                 last_item.size.width += last_item.origin.x;
-                Some(last_item.size)
+                let mut scroll_adjustment = None;
+                dbg!(&last_item.size);
+                if last_children_index != 0 {
+                    let first_item = handle.bounds_for_item(0)?;
+                    dbg!(&first_item);
+                    scroll_adjustment = Some(first_item.origin);
+                    last_item.size.height -= first_item.origin.y;
+                    last_item.size.width -= first_item.origin.x;
+                }
+                dbg!(&last_item.size);
+                Some(ContentSize {
+                    size: last_item.size,
+                    scroll_adjustment,
+                })
             }
         }
     }
@@ -49,9 +68,9 @@ impl ScrollableHandle {
             ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
             ScrollableHandle::NonUniform(handle) => &handle,
         };
-        base_handle.offset()
+        dbg!(base_handle.offset())
     }
-    fn bounds(&self) -> Bounds<Pixels> {
+    fn viewport(&self) -> Bounds<Pixels> {
         let base_handle = match self {
             ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
             ScrollableHandle::NonUniform(handle) => &handle,
@@ -92,13 +111,30 @@ impl ScrollbarState {
         self.drag.get().is_some()
     }
 
-    fn thumb_bounds(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
+    fn thumb_range(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
         const MINIMUM_SCROLLBAR_PERCENTAGE_SIZE: f32 = 0.005;
-        let main_dimension_size = self.scroll_handle.content_size()?.along(axis).0;
-        let current_offset = self.scroll_handle.offset().along(axis).min(px(0.)).abs().0;
+        let ContentSize {
+            size: main_dimension_size,
+            scroll_adjustment,
+        } = self.scroll_handle.content_size()?;
+        let main_dimension_size = main_dimension_size.along(axis).0;
+        let mut current_offset = self.scroll_handle.offset().along(axis).min(px(0.)).abs().0;
+        if let Some(adjustment) = scroll_adjustment.and_then(|adjustment| {
+            let adjust = adjustment.along(axis).0;
+            if adjust < 0.0 {
+                Some(adjust)
+            } else {
+                None
+            }
+        }) {
+            dbg!(&current_offset, adjustment);
+            current_offset -= adjustment;
+        }
         let mut percentage = current_offset / main_dimension_size;
-        let viewport_size = self.scroll_handle.bounds().size;
-        let end_offset = (current_offset + viewport_size.along(axis).0) / main_dimension_size;
+        let viewport_size = self.scroll_handle.viewport().size;
+        dbg!(&main_dimension_size);
+
+        let end_offset = (current_offset + dbg!(viewport_size.along(axis).0)) / main_dimension_size;
         // Scroll handle might briefly report an offset greater than the length of a list;
         // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
         let overshoot = (end_offset - 1.).clamp(0., 1.);
@@ -126,7 +162,8 @@ impl Scrollbar {
         Self::new(state, ScrollbarAxis::Horizontal)
     }
     fn new(state: ScrollbarState, kind: ScrollbarAxis) -> Option<Self> {
-        let thumb = state.thumb_bounds(kind)?;
+        let thumb = state.thumb_range(kind)?;
+        dbg!(&thumb);
         Some(Self { thumb, state, kind })
     }
 }
@@ -148,6 +185,7 @@ impl Element for Scrollbar {
         let mut style = Style::default();
         style.flex_grow = 1.;
         style.flex_shrink = 1.;
+
         if self.kind == ScrollbarAxis::Vertical {
             style.size.width = px(12.).into();
             style.size.height = relative(1.).into();
@@ -254,13 +292,17 @@ impl Element for Scrollbar {
                             - thumb_bounds.origin.along(axis))
                             / bounds.size.along(axis);
                         state.drag.set(Some(thumb_offset));
-                    } else if let Some(item_size) = scroll.content_size() {
+                    } else if let Some(ContentSize {
+                        size: item_size, ..
+                    }) = scroll.content_size()
+                    {
                         match kind {
                             ScrollbarAxis::Horizontal => {
                                 let percentage =
                                     (event.position.x - bounds.origin.x) / bounds.size.width;
                                 let max_offset = item_size.width;
                                 let percentage = percentage.min(1. - thumb_percentage_size);
+                                dbg!(percentage);
                                 scroll
                                     .set_offset(point(-max_offset * percentage, scroll.offset().y));
                             }
@@ -269,6 +311,7 @@ impl Element for Scrollbar {
                                     (event.position.y - bounds.origin.y) / bounds.size.height;
                                 let max_offset = item_size.height;
                                 let percentage = percentage.min(1. - thumb_percentage_size);
+                                dbg!(percentage);
                                 scroll
                                     .set_offset(point(scroll.offset().x, -max_offset * percentage));
                             }
@@ -281,7 +324,7 @@ impl Element for Scrollbar {
                 move |event: &ScrollWheelEvent, phase, cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
                         let current_offset = scroll.offset();
-
+                        dbg!(current_offset);
                         scroll
                             .set_offset(current_offset + event.delta.pixel_delta(cx.line_height()));
                     }
@@ -291,7 +334,10 @@ impl Element for Scrollbar {
             let kind = self.kind;
             cx.on_mouse_event(move |event: &MouseMoveEvent, _, cx| {
                 if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
-                    if let Some(item_size) = scroll.content_size() {
+                    if let Some(ContentSize {
+                        size: item_size, ..
+                    }) = scroll.content_size()
+                    {
                         match kind {
                             ScrollbarAxis::Horizontal => {
                                 let max_offset = item_size.width;
