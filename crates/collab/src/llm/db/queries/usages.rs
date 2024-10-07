@@ -321,7 +321,7 @@ impl LlmDatabase {
                     &usages,
                     UsageMeasure::CacheCreationInputTokensPerMonth,
                     now,
-                    input_token_count,
+                    cache_creation_input_tokens,
                     &tx,
                 )
                 .await?;
