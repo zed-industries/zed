@@ -22,25 +22,26 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+clap.workspace = true
 client.workspace = true
 env_logger.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-node_runtime.workspace = true
+language.workspace = true
+languages.workspace = true
 log.workspace = true
+node_runtime.workspace = true
 project.workspace = true
 remote.workspace = true
 rpc.workspace = true
-settings.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
-worktree.workspace = true
-language.workspace = true
-languages.workspace = true
 util.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

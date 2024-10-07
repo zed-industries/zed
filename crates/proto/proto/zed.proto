@@ -282,7 +282,9 @@ message Envelope {
         UpdateUserSettings update_user_settings = 246;
 
         CheckFileExists check_file_exists = 255;
-        CheckFileExistsResponse check_file_exists_response = 256; // current max
+        CheckFileExistsResponse check_file_exists_response = 256;
+
+        ShutdownRemoteServer shutdown_remote_server = 257; // current max
     }
 
     reserved 87 to 88;
@@ -2511,3 +2513,5 @@ message CheckFileExistsResponse {
     bool exists = 1;
     string path = 2;
 }
+
+message ShutdownRemoteServer {}

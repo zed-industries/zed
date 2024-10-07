@@ -70,7 +70,7 @@ impl Project {
         if let Some(args) = self
             .ssh_client
             .as_ref()
-            .and_then(|session| session.ssh_args())
+            .and_then(|session| session.read(cx).ssh_args())
         {
             return Some(SshCommand::Direct(args));
         }
