@@ -5,9 +5,9 @@ use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
-    EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
-    Transformation, View,
+    percentage, px, Action, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext,
+    DismissEvent, EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion,
+    SharedString, Task, Transformation, View,
 };
 use gpui::{AppContext, Model};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -16,9 +16,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    h_flex, v_flex, Color, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext,
-    WindowContext,
+    div, h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, FluentBuilder as _, Icon,
+    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, Styled,
+    StyledExt as _, Tooltip, ViewContext, VisualContext, WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -140,47 +140,57 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
+            .w_full()
             .key_context("PasswordPrompt")
-            .p_4()
-            .size_full()
+            .justify_start()
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(if self.error_message.is_some() {
-                        Icon::new(IconName::XCircle)
-                            .size(IconSize::Medium)
-                            .color(Color::Error)
-                            .into_any_element()
-                    } else {
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Medium)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
-                            .into_any_element()
-                    })
+                v_flex()
+                    .p_4()
+                    .size_full()
                     .child(
-                        Label::new(format!("ssh {}…", self.connection_string))
-                            .size(ui::LabelSize::Large),
-                    ),
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .child(h_flex().w_full())
+                            .child(if self.error_message.is_some() {
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::Medium)
+                                    .color(Color::Error)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::Medium)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    )
+                                    .into_any_element()
+                            })
+                            .child(Label::new(format!(
+                                "Connecting to {}…",
+                                self.connection_string
+                            )))
+                            .child(h_flex().w_full()),
+                    )
+                    .when_some(self.error_message.as_ref(), |el, error| {
+                        el.child(Label::new(error.clone()))
+                    })
+                    .when(
+                        self.error_message.is_none() && self.status_message.is_some(),
+                        |el| el.child(Label::new(self.status_message.clone().unwrap())),
+                    )
+                    .when_some(self.prompt.as_ref(), |el, prompt| {
+                        el.child(Label::new(prompt.0.clone()))
+                            .child(self.editor.clone())
+                    }),
             )
-            .when_some(self.error_message.as_ref(), |el, error| {
-                el.child(Label::new(error.clone()))
-            })
-            .when(
-                self.error_message.is_none() && self.status_message.is_some(),
-                |el| el.child(Label::new(self.status_message.clone().unwrap())),
-            )
-            .when_some(self.prompt.as_ref(), |el, prompt| {
-                el.child(Label::new(prompt.0.clone()))
-                    .child(self.editor.clone())
-            })
     }
 }
 
@@ -202,14 +212,41 @@ impl SshConnectionModal {
 
 impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+        let connection_string = self.prompt.read(cx).connection_string.clone();
+        let theme = cx.theme();
+        let header_color = theme.colors().element_background;
+        let body_color = theme.colors().background;
         v_flex()
             .elevation_3(cx)
-            .p_4()
-            .gap_2()
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .w(px(400.))
-            .child(self.prompt.clone())
+            .child(
+                h_flex()
+                    .p_1()
+                    .border_b_1()
+                    .border_color(theme.colors().border)
+                    .bg(header_color)
+                    .justify_between()
+                    .child(
+                        IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
+                            .icon_size(IconSize::XSmall)
+                            .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
+                            .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+                            .child(
+                                Label::new(connection_string)
+                                    .size(ui::LabelSize::Small)
+                                    .single_line(),
+                            ),
+                    )
+                    .child(div()),
+            )
+            .child(h_flex().bg(body_color).w_full().child(self.prompt.clone()))
     }
 }
 

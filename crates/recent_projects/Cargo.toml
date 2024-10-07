@@ -22,7 +22,6 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
-markdown.workspace = true
 menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true

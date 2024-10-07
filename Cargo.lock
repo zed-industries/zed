@@ -9002,7 +9002,6 @@ dependencies = [
  "gpui",
  "language",
  "log",
- "markdown",
  "menu",
  "ordered-float 2.10.1",
  "picker",

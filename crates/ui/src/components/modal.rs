@@ -262,6 +262,7 @@ impl RenderOnce for ModalFooter {
 #[derive(IntoElement)]
 pub struct Section {
     contained: bool,
+    padded: bool,
     header: Option<SectionHeader>,
     meta: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
@@ -277,6 +278,7 @@ impl Section {
     pub fn new() -> Self {
         Self {
             contained: false,
+            padded: true,
             header: None,
             meta: None,
             children: SmallVec::new(),
@@ -286,6 +288,7 @@ impl Section {
     pub fn new_contained() -> Self {
         Self {
             contained: true,
+            padded: true,
             header: None,
             meta: None,
             children: SmallVec::new(),
@@ -306,6 +309,10 @@ impl Section {
         self.meta = Some(meta.into());
         self
     }
+    pub fn padded(mut self, padded: bool) -> Self {
+        self.padded = padded;
+        self
+    }
 }
 
 impl ParentElement for Section {
@@ -320,22 +327,27 @@ impl RenderOnce for Section {
         section_bg.fade_out(0.96);
 
         let children = if self.contained {
-            v_flex().flex_1().px(Spacing::XLarge.rems(cx)).child(
-                v_flex()
-                    .w_full()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(section_bg)
-                    .py(Spacing::Medium.rems(cx))
-                    .gap_y(Spacing::Small.rems(cx))
-                    .child(div().flex().flex_1().size_full().children(self.children)),
-            )
+            v_flex()
+                .flex_1()
+                .when(self.padded, |this| this.px(Spacing::XLarge.rems(cx)))
+                .child(
+                    v_flex()
+                        .w_full()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(section_bg)
+                        .py(Spacing::Medium.rems(cx))
+                        .gap_y(Spacing::Small.rems(cx))
+                        .child(div().flex().flex_1().size_full().children(self.children)),
+                )
         } else {
             v_flex()
                 .w_full()
                 .gap_y(Spacing::Small.rems(cx))
-                .px(Spacing::Medium.rems(cx) + Spacing::Medium.rems(cx))
+                .when(self.padded, |this| {
+                    this.px(Spacing::Medium.rems(cx) + Spacing::Medium.rems(cx))
+                })
                 .children(self.children)
         };
 
