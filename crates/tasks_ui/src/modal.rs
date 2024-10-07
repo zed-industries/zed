@@ -228,30 +228,24 @@ impl PickerDelegate for TasksModalDelegate {
                                 return Task::ready(Ok(Vec::new()));
                             };
 
-                            let resolved_task =
+                            let (used, current) =
                                 task_inventory.read(cx).used_and_current_resolved_tasks(
                                     worktree,
                                     location,
                                     &picker.delegate.task_context,
                                     cx,
                                 );
-                            cx.spawn(|picker, mut cx| async move {
-                                let (used, current) = resolved_task.await;
-                                picker.update(&mut cx, |picker, _| {
-                                    picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                        None
-                                    } else {
-                                        Some(used.len() - 1)
-                                    };
+                            picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                None
+                            } else {
+                                Some(used.len() - 1)
+                            };
 
-                                    let mut new_candidates = used;
-                                    new_candidates.extend(current);
-                                    let match_candidates =
-                                        string_match_candidates(new_candidates.iter());
-                                    let _ = picker.delegate.candidates.insert(new_candidates);
-                                    match_candidates
-                                })
-                            })
+                            let mut new_candidates = used;
+                            new_candidates.extend(current);
+                            let match_candidates = string_match_candidates(new_candidates.iter());
+                            let _ = picker.delegate.candidates.insert(new_candidates);
+                            match_candidates
                         }
                     }
                 })
