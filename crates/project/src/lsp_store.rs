@@ -158,7 +158,7 @@ impl LocalLspStore {
 
     async fn format_locally(
         lsp_store: WeakModel<LspStore>,
-        mut buffers: Vec<FormatableBuffer>,
+        mut buffers: Vec<FormattableBuffer>,
         push_to_history: bool,
         trigger: FormatTrigger,
         mut cx: AsyncAppContext,
@@ -485,7 +485,7 @@ impl LocalLspStore {
         formatter: &Formatter,
         primary_server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
         lsp_store: WeakModel<LspStore>,
-        buffer: &FormatableBuffer,
+        buffer: &FormattableBuffer,
         settings: &LanguageSettings,
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         push_to_history: bool,
@@ -562,7 +562,7 @@ impl LocalLspStore {
     }
 
     async fn format_via_external_command(
-        buffer: &FormatableBuffer,
+        buffer: &FormattableBuffer,
         command: &str,
         arguments: Option<&[String]>,
         cx: &mut AsyncAppContext,
@@ -640,7 +640,7 @@ impl LocalLspStore {
     }
 }
 
-pub struct FormatableBuffer {
+pub struct FormattableBuffer {
     handle: Model<Buffer>,
     abs_path: Option<PathBuf>,
     env: Option<HashMap<String, String>>,
@@ -5070,7 +5070,7 @@ impl LspStore {
                 .collect::<Vec<_>>();
 
             cx.spawn(move |lsp_store, mut cx| async move {
-                let mut formatable_buffers = Vec::with_capacity(buffers_with_paths.len());
+                let mut formattable_buffers = Vec::with_capacity(buffers_with_paths.len());
 
                 for (handle, abs_path) in buffers_with_paths {
                     let env = lsp_store
@@ -5079,7 +5079,7 @@ impl LspStore {
                         })?
                         .await;
 
-                    formatable_buffers.push(FormatableBuffer {
+                    formattable_buffers.push(FormattableBuffer {
                         handle,
                         abs_path,
                         env,
@@ -5088,7 +5088,7 @@ impl LspStore {
 
                 let result = LocalLspStore::format_locally(
                     lsp_store.clone(),
-                    formatable_buffers,
+                    formattable_buffers,
                     push_to_history,
                     trigger,
                     cx.clone(),
