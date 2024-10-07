@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{btree_map, BTreeMap, HashMap, VecDeque};
+use collections::{btree_map, BTreeMap, HashMap, HashSet, VecDeque};
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
@@ -50,7 +50,7 @@ pub enum TaskSourceKind {
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
-        local_path: PathBuf,
+        worktree_directory: PathBuf,
         id_base: Cow<'static, str>,
     },
     /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
@@ -70,7 +70,8 @@ impl TaskSourceKind {
         match self {
             Self::AbsPath { abs_path: path, .. }
             | Self::Worktree {
-                local_path: path, ..
+                worktree_directory: path,
+                ..
             } => Some(path),
             Self::UserInput | Self::Language { .. } | Self::RemoteGlobal => None,
         }
@@ -92,7 +93,7 @@ impl TaskSourceKind {
             TaskSourceKind::Worktree {
                 id,
                 id_base,
-                local_path: abs_path,
+                worktree_directory: abs_path,
             } => {
                 format!("{id_base}_{id}_{}", abs_path.display())
             }
@@ -254,7 +255,7 @@ impl Inventory {
                     match tasks_by_label.entry((source, task.resolved_label.clone())) {
                         btree_map::Entry::Occupied(mut o) => {
                             let (_, previous_lru_score) = o.get();
-                            if previous_lru_score >= &lru_score {
+                            if previous_lru_score <= &lru_score {
                                 o.insert((task, lru_score));
                             }
                         }
@@ -284,12 +285,14 @@ impl Inventory {
                 },
             );
 
-            let resolved = tasks_by_label
+            let mut lru_scores_used_before = HashSet::default();
+            let used_before = tasks_by_label
                 .into_iter()
                 .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
                 .sorted_by(task_lru_comparator)
                 .filter_map(|(kind, task, lru_score)| {
                     if lru_score < not_used_score {
+                        lru_scores_used_before.insert(lru_score);
                         Some((kind, task))
                     } else {
                         None
@@ -298,9 +301,12 @@ impl Inventory {
                 .collect::<Vec<_>>();
 
             (
-                resolved,
+                used_before,
                 currently_resolved_tasks
                     .into_iter()
+                    .filter(|(_, _, lru_score)| {
+                        *lru_score == not_used_score || !lru_scores_used_before.contains(lru_score)
+                    })
                     .sorted_unstable_by(task_lru_comparator)
                     .map(|(kind, task, _)| (kind, task))
                     .collect(),
@@ -862,7 +868,7 @@ mod tests {
             inventory.add_source(
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    local_path: worktree_path_1.to_path_buf(),
+                    worktree_directory: worktree_path_1.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 |tx, cx| {
@@ -877,7 +883,7 @@ mod tests {
             inventory.add_source(
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    local_path: worktree_path_2.to_path_buf(),
+                    worktree_directory: worktree_path_2.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 |tx, cx| {
@@ -927,7 +933,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    local_path: worktree_path_1.to_path_buf(),
+                    worktree_directory: worktree_path_1.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 common_name.to_string(),
@@ -935,7 +941,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    local_path: worktree_path_1.to_path_buf(),
+                    worktree_directory: worktree_path_1.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 "worktree_1".to_string(),
@@ -945,7 +951,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    local_path: worktree_path_2.to_path_buf(),
+                    worktree_directory: worktree_path_2.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 common_name.to_string(),
@@ -953,7 +959,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    local_path: worktree_path_2.to_path_buf(),
+                    worktree_directory: worktree_path_2.to_path_buf(),
                     id_base: "test_source".into(),
                 },
                 "worktree_2".to_string(),

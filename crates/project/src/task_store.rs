@@ -139,10 +139,10 @@ impl TaskSettings {
                                 (
                                     TaskSourceKind::Worktree {
                                         id: worktree,
-                                        local_path: directory_path.to_path_buf(),
+                                        worktree_directory: directory_path.to_path_buf(),
                                         id_base: Cow::Owned(format!(
-                                        "worktree {worktree} tasks.json at path {directory_path:?}"
-                                    )),
+                                            "local worktree tasks from directory {directory_path:?}"
+                                        )),
                                     },
                                     template,
                                 )
@@ -153,11 +153,13 @@ impl TaskSettings {
 }
 
 impl TaskStore {
-    pub fn init(client: &AnyProtoClient, cx: &mut AppContext) {
+    pub fn init(client: Option<&AnyProtoClient>, cx: &mut AppContext) {
         cx.update_global::<SettingsStore, _>(|settings_store, cx| {
             settings_store.set_task_settings_store(Box::new(TaskSettings::default()), cx);
         });
-        client.add_model_request_handler(Self::handle_task_context_for_location);
+        if let Some(client) = client {
+            client.add_model_request_handler(Self::handle_task_context_for_location);
+        }
     }
 
     async fn handle_task_context_for_location(

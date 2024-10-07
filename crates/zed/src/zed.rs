@@ -752,7 +752,7 @@ pub fn handle_tasks_file_changes(
     SettingsStore::update_global(cx, |store, cx| {
         store.set_user_tasks(&user_tasks_content, cx).log_err();
     });
-    cx.spawn(move |mut cx| async move {
+    cx.spawn(move |cx| async move {
         while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_user_tasks(&user_tasks_content, cx);
