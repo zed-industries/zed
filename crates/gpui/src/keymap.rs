@@ -119,27 +119,28 @@ impl Keymap {
             }
         }
         bindings.sort_by(|a, b| a.1.cmp(&b.1).reverse());
-        let mut result: SmallVec<[KeyBinding; 1]> = SmallVec::new();
-        let mut peekable = bindings.into_iter().peekable();
-        while let Some(binding) = peekable.next() {
-            if binding.0.action.as_any().type_id() == (NoAction {}).type_id() {
-                if let Some(next_bind) = peekable.next() {
-                    if binding.1 == next_bind.1
-                        && binding.0.context_predicate == next_bind.0.context_predicate
-                    {
-                        continue;
-                    } else {
-                        result.push(binding.0);
-                    }
-                } else {
-                    result.push(binding.0);
-                }
-            } else {
-                result.push(binding.0);
+        let mut no_action_context = HashMap::default();
+        for (binding, depth) in bindings.iter() {
+            if binding.action.as_any().type_id() == (NoAction {}).type_id() {
+                no_action_context.insert(binding.context_predicate.clone(), depth.clone());
             }
         }
+        let bindings = bindings
+            .into_iter()
+            .map(|(binding, depth)| {
+                if no_action_context
+                    .get(&binding.context_predicate)
+                    .is_some_and(|&v| v == depth)
+                {
+                    None
+                } else {
+                    Some(binding)
+                }
+            })
+            .flatten()
+            .collect();
 
-        (result, is_pending.unwrap_or_default())
+        (bindings, is_pending.unwrap_or_default())
     }
 
     /// Check if the given binding is enabled, given a certain key context.
