@@ -11,5 +11,5 @@ runs:
     - name: Find modified migrations
       shell: bash -euxo pipefail {0}
       run: |
-        export SQUAWK_GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+        export SQUAWK_GITHUB_TOKEN=${{ github.token }}
         . ./script/squawk
