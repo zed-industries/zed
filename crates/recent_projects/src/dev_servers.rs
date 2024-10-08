@@ -775,6 +775,7 @@ impl DevServerProjects {
             .child(
                 h_flex()
                     .bg(theme.colors().editor_background)
+                    .rounded_b_md()
                     .w_full()
                     .map(|this| {
                         if let Some(ssh_prompt) = ssh_prompt {

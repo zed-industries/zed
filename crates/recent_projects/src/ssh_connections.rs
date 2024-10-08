@@ -216,6 +216,7 @@ impl Render for SshConnectionModal {
                 h_flex()
                     .relative()
                     .p_1()
+                    .rounded_t_md()
                     .border_b_1()
                     .border_color(theme.colors().border)
                     .bg(header_color)
