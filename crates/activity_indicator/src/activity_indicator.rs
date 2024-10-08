@@ -195,7 +195,8 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(move |this, cx| {
                     this.project.update(cx, |project, cx| {
                         project.remove_environment_error(cx, worktree_id);
-                    })
+                    });
+                    cx.dispatch_action(Box::new(workspace::OpenLog));
                 })),
             });
         }
