@@ -28,10 +28,6 @@ pub struct SshSettings {
 }
 
 impl SshSettings {
-    pub fn use_direct_ssh(&self) -> bool {
-        self.ssh_connections.is_some()
-    }
-
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> {
         self.ssh_connections.clone().into_iter().flatten()
     }
