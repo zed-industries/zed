@@ -134,7 +134,7 @@ impl ProjectEnvironment {
             let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
             cx.spawn(|this, mut cx| async move {
-                let (mut shell_env, error) = cx
+                let (mut shell_env, error_message) = cx
                     .background_executor()
                     .spawn({
                         let cwd = worktree_abs_path.clone();
@@ -152,7 +152,7 @@ impl ProjectEnvironment {
                     set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
                 }
 
-                if let Some(error) = error {
+                if let Some(error) = error_message {
                     this.update(&mut cx, |this, _| {
                         this.environment_error_messages.insert(worktree_id, error);
                     })
