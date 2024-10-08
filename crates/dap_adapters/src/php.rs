@@ -43,9 +43,6 @@ impl DebugAdapter for PhpDebugAdapter {
         &self,
         delegate: Box<dyn DapDelegate>,
     ) -> Result<DebugAdapterBinary> {
-        let adapter_path = paths::debug_adapters_dir().join(self.name());
-        let fs = delegate.fs();
-
         if let Some(adapter_path) = self.adapter_path.as_ref() {
             return Ok(DebugAdapterBinary {
                 start_command: Some("bun".into()),
@@ -54,6 +51,9 @@ impl DebugAdapter for PhpDebugAdapter {
                 env: None,
             });
         }
+
+        let adapter_path = paths::debug_adapters_dir().join(self.name());
+        let fs = delegate.fs();
 
         if fs.is_dir(adapter_path.as_path()).await {
             return Ok(DebugAdapterBinary {
@@ -128,10 +128,17 @@ impl DebugAdapter for PhpDebugAdapter {
                     .output()
                     .await?;
 
-                let _npm = delegate
+                let _ = delegate
                     .node_runtime()
                     .ok_or(anyhow!("Couldn't get npm runtime"))?
-                    .run_npm_subcommand(&adapter_path, "run", &["build"])
+                    .run_npm_subcommand(&adapter_path, "install", &[])
+                    .await
+                    .is_ok();
+
+                let _ = delegate
+                    .node_runtime()
+                    .ok_or(anyhow!("Couldn't get npm runtime"))?
+                    .run_npm_subcommand(&adapter_path, "build", &[])
                     .await
                     .is_ok();
 
