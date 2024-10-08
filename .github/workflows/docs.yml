@@ -30,7 +30,7 @@ jobs:
           }
 
       - name: Check for Typos with Typos-CLI
-        uses: crate-ci/typos@1.24.6
+        uses: crate-ci/typos@v1.24.6
         with:
           config: ./typos.toml
           files: ./docs/

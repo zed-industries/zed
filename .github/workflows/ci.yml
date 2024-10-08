@@ -43,7 +43,7 @@ jobs:
         run: git clean -df
 
       - name: Check spelling for Typos
-        uses: crate-ci/typos@1.24.6
+        uses: crate-ci/typos@v1.24.6
         with:
           config: ./typos.toml
 
