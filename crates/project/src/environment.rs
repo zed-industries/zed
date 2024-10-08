@@ -18,7 +18,7 @@ pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
-    shell_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
+    environment_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
 }
 
 impl ProjectEnvironment {
@@ -39,7 +39,7 @@ impl ProjectEnvironment {
                 cli_environment,
                 get_environment_task: None,
                 cached_shell_environments: Default::default(),
-                shell_error_messages: Default::default(),
+                environment_error_messages: Default::default(),
             }
         })
     }
@@ -57,7 +57,7 @@ impl ProjectEnvironment {
 
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
         self.cached_shell_environments.remove(&worktree_id);
-        self.shell_error_messages.remove(&worktree_id);
+        self.environment_error_messages.remove(&worktree_id);
     }
 
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
@@ -75,11 +75,11 @@ impl ProjectEnvironment {
     pub(crate) fn environment_errors(
         &self,
     ) -> impl Iterator<Item = (&WorktreeId, &EnvironmentErrorMessage)> {
-        self.shell_error_messages.iter()
+        self.environment_error_messages.iter()
     }
 
     pub(crate) fn remove_environment_error(&mut self, worktree_id: WorktreeId) {
-        self.shell_error_messages.remove(&worktree_id);
+        self.environment_error_messages.remove(&worktree_id);
     }
 
     /// Returns the project environment, if possible.
@@ -152,7 +152,7 @@ impl ProjectEnvironment {
                             .insert(worktree_id, shell_env.clone());
 
                         if let Some(error) = error.flatten() {
-                            this.shell_error_messages.insert(worktree_id, error);
+                            this.environment_error_messages.insert(worktree_id, error);
                         }
                     })
                     .log_err();
