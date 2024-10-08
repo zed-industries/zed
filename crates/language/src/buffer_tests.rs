@@ -2472,7 +2472,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
 
     // Merging the branch applies all of its changes to the base.
     branch_buffer.update(cx, |branch_buffer, cx| {
-        branch_buffer.merge_into_base(None, cx);
+        branch_buffer.merge_into_base(Vec::new(), cx);
     });
 
     branch_buffer.update(cx, |branch_buffer, cx| {
@@ -2494,7 +2494,7 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
     // Make 3 edits, merge one into the base.
     branch.update(cx, |branch, cx| {
         branch.edit([(0..3, "ABC"), (7..9, "HI"), (11..11, "LMN")], None, cx);
-        branch.merge_into_base(Some(5..8), cx);
+        branch.merge_into_base(vec![5..8], cx);
     });
 
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjkLMN"));
@@ -2503,13 +2503,13 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
     // Undo the one already-merged edit. Merge that into the base.
     branch.update(cx, |branch, cx| {
         branch.edit([(7..9, "hi")], None, cx);
-        branch.merge_into_base(Some(5..8), cx);
+        branch.merge_into_base(vec![5..8], cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
 
     // Merge an insertion into the base.
     branch.update(cx, |branch, cx| {
-        branch.merge_into_base(Some(11..11), cx);
+        branch.merge_into_base(vec![11..11], cx);
     });
 
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefghijkLMN"));
@@ -2518,7 +2518,7 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
     // Deleted the inserted text and merge that into the base.
     branch.update(cx, |branch, cx| {
         branch.edit([(11..14, "")], None, cx);
-        branch.merge_into_base(Some(10..11), cx);
+        branch.merge_into_base(vec![10..11], cx);
     });
 
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
@@ -2534,7 +2534,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
     // Make 2 edits, merge one into the base.
     branch.update(cx, |branch, cx| {
         branch.edit([(0..3, "ABC"), (7..9, "HI")], None, cx);
-        branch.merge_into_base(Some(7..7), cx);
+        branch.merge_into_base(vec![7..7], cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
@@ -2548,7 +2548,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 
     // Merge that operation into the base again.
     branch.update(cx, |branch, cx| {
-        branch.merge_into_base(Some(7..7), cx);
+        branch.merge_into_base(vec![7..7], cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
