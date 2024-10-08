@@ -219,7 +219,7 @@ impl DispatchTree {
         self.focusable_node_ids.insert(focus_id, node_id);
     }
 
-    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+    pub fn parent_view_id(&self) -> Option<EntityId> {
         self.view_stack.last().copied()
     }
 
@@ -484,7 +484,7 @@ impl DispatchTree {
 
     /// Converts the longest prefix of input to a replay event and returns the rest.
     fn replay_prefix(
-        &mut self,
+        &self,
         mut input: SmallVec<[Keystroke; 1]>,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {

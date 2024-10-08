@@ -1407,17 +1407,13 @@ impl Pane {
             self.pinned_tab_count -= 1;
         }
         if item_index == self.active_item_index {
-            let index_to_activate = self
-                .activation_history
-                .pop()
-                .and_then(|last_activated_item| {
-                    self.items.iter().enumerate().find_map(|(index, item)| {
-                        (item.item_id() == last_activated_item.entity_id).then_some(index)
-                    })
-                })
-                // We didn't have a valid activation history entry, so fallback
-                // to activating the item to the left
-                .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
+            self.activation_history.pop();
+
+            let index_to_activate = if item_index + 1 < self.items.len() {
+                item_index + 1
+            } else {
+                item_index.saturating_sub(1)
+            };
 
             let should_activate = activate_pane || self.has_focus(cx);
             if self.items.len() == 1 && should_activate {
@@ -1595,8 +1591,13 @@ impl Pane {
             }
 
             if can_save {
-                pane.update(cx, |_, cx| item.save(should_format, project, cx))?
-                    .await?;
+                pane.update(cx, |pane, cx| {
+                    if pane.is_active_preview_item(item.item_id()) {
+                        pane.set_preview_item_id(None, cx);
+                    }
+                    item.save(should_format, project, cx)
+                })?
+                .await?;
             } else if can_save_as {
                 let abs_path = pane.update(cx, |pane, cx| {
                     pane.workspace
@@ -3315,7 +3316,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+        assert_item_labels(&pane, ["A", "B", "C*", "D"], cx);
 
         pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
@@ -3326,7 +3327,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update(cx, |pane, cx| {
             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
@@ -3334,7 +3335,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A", "C*"], cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
 
         pane.update(cx, |pane, cx| {
             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)

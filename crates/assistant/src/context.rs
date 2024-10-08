@@ -46,7 +46,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -549,7 +549,7 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|_cx| {
-            let mut buffer = Buffer::remote(
+            let buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
                 capability,
@@ -1006,9 +1006,12 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::BufferEvent::Operation(operation) => cx.emit(ContextEvent::Operation(
-                ContextOperation::BufferOperation(operation.clone()),
-            )),
+            language::BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx.emit(ContextEvent::Operation(ContextOperation::BufferOperation(
+                operation.clone(),
+            ))),
             language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
@@ -1967,8 +1970,9 @@ impl Context {
     }
 
     pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let provider = model_registry.active_provider()?;
+        let model = model_registry.active_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
 
         if !provider.is_authenticated(cx) {
@@ -2129,14 +2133,21 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
-                        telemetry.report_assistant_event(
-                            Some(this.id.0.clone()),
-                            AssistantKind::Panel,
-                            AssistantPhase::Response,
-                            model.telemetry_id(),
+                        let language_name = this
+                            .buffer
+                            .read(cx)
+                            .language()
+                            .map(|language| language.name());
+                        telemetry.report_assistant_event(AssistantEvent {
+                            conversation_id: Some(this.id.0.clone()),
+                            kind: AssistantKind::Panel,
+                            phase: AssistantPhase::Response,
+                            model: model.telemetry_id(),
+                            model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
-                        );
+                            language_name,
+                        });
                     }
 
                     if let Ok(stop_reason) = result {
@@ -2180,7 +2191,7 @@ impl Context {
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

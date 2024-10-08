@@ -225,7 +225,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     if project.is_via_collab() && ssh_connection_string.is_none() {
                                         Task::ready((Vec::new(), Vec::new()))
                                     } else {
-                                        let remote_templates = if project.is_local_or_ssh() {
+                                        let remote_templates = if project.is_local() {
                                             None
                                         } else {
                                             project

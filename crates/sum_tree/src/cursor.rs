@@ -431,11 +431,9 @@ where
         aggregate: &mut dyn SeekAggregate<'a, T>,
         cx: &<T::Summary as Summary>::Context,
     ) -> bool {
-        debug_assert!(
+        assert!(
             target.cmp(&self.position, cx) >= Ordering::Equal,
-            "cannot seek backward from {:?} to {:?}",
-            self.position,
-            target
+            "cannot seek backward",
         );
 
         if !self.did_seek {

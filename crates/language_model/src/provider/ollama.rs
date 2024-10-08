@@ -235,7 +235,7 @@ impl OllamaLanguageModel {
             options: Some(ChatOptions {
                 num_ctx: Some(self.model.max_tokens),
                 stop: Some(request.stop),
-                temperature: Some(request.temperature),
+                temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
             tools: vec![],

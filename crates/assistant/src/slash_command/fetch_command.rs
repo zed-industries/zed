@@ -104,11 +104,11 @@ impl SlashCommand for FetchSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert URL contents".into()
+        "Insert fetched URL contents".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert fetched URL contents".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

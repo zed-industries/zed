@@ -23,7 +23,7 @@ use telemetry_events::{
 };
 use uuid::Uuid;
 
-static CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
+const CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
 
 pub fn router() -> Router {
     Router::new()
@@ -364,17 +364,19 @@ pub async fn post_panic(
 }
 
 fn report_to_slack(panic: &Panic) -> bool {
-    if panic.os_name == "Linux" {
-        if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
-            return false;
-        }
+    if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
+        return false;
+    }
 
-        if panic
-            .payload
-            .contains("GPU has crashed, and no debug information is available")
-        {
-            return false;
-        }
+    if panic.payload.contains("ERROR_INITIALIZATION_FAILED") {
+        return false;
+    }
+
+    if panic
+        .payload
+        .contains("GPU has crashed, and no debug information is available")
+    {
+        return false;
     }
 
     true
@@ -905,7 +907,6 @@ impl AssistantEventRow {
 
 #[derive(Debug, clickhouse::Row, Serialize)]
 pub struct CpuEventRow {
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -944,7 +945,6 @@ impl CpuEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -968,7 +968,6 @@ pub struct MemoryEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1000,7 +999,6 @@ impl MemoryEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1024,7 +1022,6 @@ pub struct AppEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1055,7 +1052,6 @@ impl AppEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1078,7 +1074,6 @@ pub struct SettingEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1109,7 +1104,6 @@ impl SettingEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1133,7 +1127,6 @@ pub struct ExtensionEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1169,7 +1162,6 @@ impl ExtensionEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1260,7 +1252,6 @@ pub struct EditEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     // Note: This column name has a typo in the ClickHouse table.
     #[serde(rename = "sesssion_id")]
@@ -1298,7 +1289,6 @@ impl EditEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,

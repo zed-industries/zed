@@ -71,7 +71,7 @@ impl Markdown {
         source: String,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &mut ViewContext<Self>,
+        cx: &ViewContext<Self>,
         fallback_code_block_language: Option<String>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -97,7 +97,7 @@ impl Markdown {
         source: String,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &mut ViewContext<Self>,
+        cx: &ViewContext<Self>,
         fallback_code_block_language: Option<String>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -119,12 +119,12 @@ impl Markdown {
         this
     }
 
-    pub fn append(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+    pub fn append(&mut self, text: &str, cx: &ViewContext<Self>) {
         self.source.push_str(text);
         self.parse(cx);
     }
 
-    pub fn reset(&mut self, source: String, cx: &mut ViewContext<Self>) {
+    pub fn reset(&mut self, source: String, cx: &ViewContext<Self>) {
         if source == self.source() {
             return;
         }
@@ -145,7 +145,7 @@ impl Markdown {
         &self.parsed_markdown
     }
 
-    fn copy(&self, text: &RenderedText, cx: &mut ViewContext<Self>) {
+    fn copy(&self, text: &RenderedText, cx: &ViewContext<Self>) {
         if self.selection.end <= self.selection.start {
             return;
         }
@@ -153,7 +153,7 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn parse(&mut self, cx: &mut ViewContext<Self>) {
+    fn parse(&mut self, cx: &ViewContext<Self>) {
         if self.source.is_empty() {
             return;
         }
@@ -319,7 +319,7 @@ impl MarkdownElement {
     }
 
     fn paint_selection(
-        &mut self,
+        &self,
         bounds: Bounds<Pixels>,
         rendered_text: &RenderedText,
         cx: &mut WindowContext,
@@ -382,7 +382,7 @@ impl MarkdownElement {
     }
 
     fn paint_mouse_listeners(
-        &mut self,
+        &self,
         hitbox: &Hitbox,
         rendered_text: &RenderedText,
         cx: &mut WindowContext,
@@ -487,7 +487,7 @@ impl MarkdownElement {
         });
     }
 
-    fn autoscroll(&mut self, rendered_text: &RenderedText, cx: &mut WindowContext) -> Option<()> {
+    fn autoscroll(&self, rendered_text: &RenderedText, cx: &mut WindowContext) -> Option<()> {
         let autoscroll_index = self
             .markdown
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;

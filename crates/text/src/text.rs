@@ -13,6 +13,7 @@ mod undo_map;
 pub use anchor::*;
 use anyhow::{anyhow, Context as _, Result};
 pub use clock::ReplicaId;
+use clock::LOCAL_BRANCH_REPLICA_ID;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;
@@ -713,6 +714,19 @@ impl Buffer {
 
     pub fn snapshot(&self) -> BufferSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn branch(&self) -> Self {
+        Self {
+            snapshot: self.snapshot.clone(),
+            history: History::new(self.base_text().clone()),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: HashSet::default(),
+            lamport_clock: clock::Lamport::new(LOCAL_BRANCH_REPLICA_ID),
+            subscriptions: Default::default(),
+            edit_id_resolvers: Default::default(),
+            wait_for_version_txs: Default::default(),
+        }
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -1416,16 +1430,22 @@ impl Buffer {
             counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
         }
 
+        let operation = self.undo_operations(counts);
+        self.history.push(operation.clone());
+        operation
+    }
+
+    pub fn undo_operations(&mut self, counts: HashMap<clock::Lamport, u32>) -> Operation {
+        let timestamp = self.lamport_clock.tick();
+        let version = self.version();
+        self.snapshot.version.observe(timestamp);
         let undo = UndoOperation {
-            timestamp: self.lamport_clock.tick(),
-            version: self.version(),
+            timestamp,
+            version,
             counts,
         };
         self.apply_undo(&undo);
-        self.snapshot.version.observe(undo.timestamp);
-        let operation = Operation::Undo(undo);
-        self.history.push(operation.clone());
-        operation
+        Operation::Undo(undo)
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
@@ -2603,7 +2623,7 @@ impl Fragment {
 impl sum_tree::Item for Fragment {
     type Summary = FragmentSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &Option<clock::Global>) -> Self::Summary {
         let mut max_version = clock::Global::new();
         max_version.observe(self.timestamp);
         for deletion in &self.deletions {
@@ -2674,7 +2694,7 @@ impl Default for FragmentSummary {
 impl sum_tree::Item for InsertionFragment {
     type Summary = InsertionFragmentKey;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         InsertionFragmentKey {
             timestamp: self.timestamp,
             split_offset: self.split_offset,
@@ -2686,7 +2706,7 @@ impl sum_tree::KeyedItem for InsertionFragment {
     type Key = InsertionFragmentKey;
 
     fn key(&self) -> Self::Key {
-        sum_tree::Item::summary(self)
+        sum_tree::Item::summary(self, &())
     }
 }
 

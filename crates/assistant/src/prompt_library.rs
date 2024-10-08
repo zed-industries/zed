@@ -796,7 +796,7 @@ impl PromptLibrary {
                                     }],
                                     tools: Vec::new(),
                                     stop: Vec::new(),
-                                    temperature: 1.,
+                                    temperature: None,
                                 },
                                 cx,
                             )
@@ -910,7 +910,7 @@ impl PromptLibrary {
                                                             .features
                                                             .clone(),
                                                         font_size: HeadlineSize::Large
-                                                            .size()
+                                                            .rems()
                                                             .into(),
                                                         font_weight: settings.ui_font.weight,
                                                         line_height: relative(
