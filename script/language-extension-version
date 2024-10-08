@@ -10,20 +10,20 @@ fi
 LANGUAGE=$1
 VERSION=${2:-}
 
-EXT_DIR="extensions/$LANGUAGE"
-EXT_TOML="$EXT_DIR/extension.toml"
-CARGO_TOML="$EXT_DIR/Cargo.toml"
+EXTENSION_DIR="extensions/$LANGUAGE"
+EXTENSION_TOML="$EXTENSION_DIR/extension.toml"
+CARGO_TOML="$EXTENSION_DIR/Cargo.toml"
 
-if [ ! -d "$EXT_DIR" ]; then
-  echo "Directory $EXT_DIR does not exist."
+if [ ! -d "$EXTENSION_DIR" ]; then
+  echo "Directory $EXTENSION_DIR does not exist."
   exit 1
 fi
 
 if [ -z "$VERSION" ]; then
-  grep -m 1 'version =' "$EXT_TOML" | awk -F\" '{print $2}'
+  grep -m 1 'version =' "$EXTENSION_TOML" | awk -F\" '{print $2}'
   exit 0
 fi
 
-sed -i '' -e "s/^version = \".*\"/version = \"$VERSION\"/" "$EXT_TOML"
+sed -i '' -e "s/^version = \".*\"/version = \"$VERSION\"/" "$EXTENSION_TOML"
 sed -i '' -e "s/^version = \".*\"/version = \"$VERSION\"/" "$CARGO_TOML"
-cargo update
+cargo check
