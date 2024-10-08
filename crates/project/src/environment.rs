@@ -57,6 +57,7 @@ impl ProjectEnvironment {
 
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
         self.cached_shell_environments.remove(&worktree_id);
+        self.shell_error_messages.remove(&worktree_id);
     }
 
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
@@ -70,11 +71,15 @@ impl ProjectEnvironment {
     }
 
     /// Returns an iterator over all pairs `(worktree_id, error_message)` of
-    /// shell errors associated with this project.
-    pub(crate) fn shell_errors(
+    /// environment errors associated with this project environment.
+    pub(crate) fn environment_errors(
         &self,
     ) -> impl Iterator<Item = (&WorktreeId, &EnvironmentErrorMessage)> {
         self.shell_error_messages.iter()
+    }
+
+    pub(crate) fn remove_environment_error(&mut self, worktree_id: WorktreeId) {
+        self.shell_error_messages.remove(&worktree_id);
     }
 
     /// Returns the project environment, if possible.

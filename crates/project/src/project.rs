@@ -1176,7 +1176,17 @@ impl Project {
         &'a self,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
-        self.environment.read(cx).shell_errors()
+        self.environment.read(cx).environment_errors()
+    }
+
+    pub fn remove_environment_error<'a>(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+        worktree_id: WorktreeId,
+    ) {
+        self.environment.update(cx, |environment, _| {
+            environment.remove_environment_error(worktree_id);
+        });
     }
 
     #[cfg(any(test, feature = "test-support"))]

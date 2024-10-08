@@ -12,7 +12,7 @@ use language::{
 };
 use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
-use std::{cmp::Reverse, collections::HashSet, fmt::Write, sync::Arc, time::Duration};
+use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -28,7 +28,6 @@ pub enum Event {
 pub struct ActivityIndicator {
     statuses: Vec<LspStatus>,
     project: Model<Project>,
-    ignored_environment_error_worktrees: HashSet<WorktreeId>,
     auto_updater: Option<Model<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -80,7 +79,6 @@ impl ActivityIndicator {
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
-                ignored_environment_error_worktrees: Default::default(),
                 auto_updater,
                 context_menu_handle: Default::default(),
             }
@@ -181,14 +179,7 @@ impl ActivityIndicator {
         &'a self,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
-        self.project
-            .read(cx)
-            .shell_environment_errors(cx)
-            .filter(|(worktree_id, _)| {
-                !self
-                    .ignored_environment_error_worktrees
-                    .contains(worktree_id)
-            })
+        self.project.read(cx).shell_environment_errors(cx)
     }
 
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
@@ -201,8 +192,10 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: error.0.clone(),
-                on_click: Some(Arc::new(move |this, _| {
-                    this.ignored_environment_error_worktrees.insert(worktree_id);
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.remove_environment_error(cx, worktree_id);
+                    })
                 })),
             });
         }
