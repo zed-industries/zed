@@ -22,6 +22,12 @@ pub struct LlmTokenClaims {
     pub is_staff: bool,
     #[serde(default)]
     pub has_llm_closed_beta_feature_flag: bool,
+    // This field is temporarily optional so it can be added
+    // in a backwards-compatible way. We can make it required
+    // once all of the LLM tokens have cycled (~1 hour after
+    // this change has been deployed).
+    #[serde(default)]
+    pub has_llm_subscription: Option<bool>,
     pub plan: rpc::proto::Plan,
 }
 
@@ -33,6 +39,7 @@ impl LlmTokenClaims {
         github_user_login: String,
         is_staff: bool,
         has_llm_closed_beta_feature_flag: bool,
+        has_llm_subscription: bool,
         plan: rpc::proto::Plan,
         config: &Config,
     ) -> Result<String> {
@@ -50,6 +57,7 @@ impl LlmTokenClaims {
             github_user_login: Some(github_user_login),
             is_staff,
             has_llm_closed_beta_feature_flag,
+            has_llm_subscription: Some(has_llm_subscription),
             plan,
         };
 

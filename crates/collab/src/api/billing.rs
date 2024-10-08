@@ -22,12 +22,15 @@ use stripe::{
 };
 use util::ResultExt;
 
-use crate::db::billing_subscription::StripeSubscriptionStatus;
+use crate::db::billing_subscription::{self, StripeSubscriptionStatus};
 use crate::db::{
     billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
     CreateBillingSubscriptionParams, CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
     UpdateBillingSubscriptionParams,
 };
+use crate::llm::db::LlmDatabase;
+use crate::llm::MONTHLY_SPENDING_LIMIT_IN_CENTS;
+use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
@@ -79,7 +82,7 @@ async fn list_billing_subscriptions(
             .into_iter()
             .map(|subscription| BillingSubscriptionJson {
                 id: subscription.id,
-                name: "Zed Pro".to_string(),
+                name: "Zed LLM Usage".to_string(),
                 status: subscription.stripe_subscription_status,
                 cancel_at: subscription.stripe_cancel_at.map(|cancel_at| {
                     cancel_at
@@ -117,7 +120,7 @@ async fn create_billing_subscription(
     let Some((stripe_client, stripe_price_id)) = app
         .stripe_client
         .clone()
-        .zip(app.config.stripe_price_id.clone())
+        .zip(app.config.stripe_llm_usage_price_id.clone())
     else {
         log::error!("failed to retrieve Stripe client or price ID");
         Err(Error::http(
@@ -150,7 +153,7 @@ async fn create_billing_subscription(
         params.client_reference_id = Some(user.github_login.as_str());
         params.line_items = Some(vec![CreateCheckoutSessionLineItems {
             price: Some(stripe_price_id.to_string()),
-            quantity: Some(1),
+            quantity: Some(0),
             ..Default::default()
         }]);
         let success_url = format!("{}/account", app.config.zed_dot_dev_url());
@@ -630,4 +633,96 @@ async fn find_or_create_billing_customer(
         .await?;
 
     Ok(Some(billing_customer))
+}
+
+const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>, llm_db: LlmDatabase) {
+    let Some(stripe_client) = app.stripe_client.clone() else {
+        log::warn!("failed to retrieve Stripe client");
+        return;
+    };
+    let Some(stripe_llm_usage_price_id) = app.config.stripe_llm_usage_price_id.clone() else {
+        log::warn!("failed to retrieve Stripe LLM usage price ID");
+        return;
+    };
+
+    let executor = app.executor.clone();
+    executor.spawn_detached({
+        let executor = executor.clone();
+        async move {
+            loop {
+                sync_with_stripe(
+                    &app,
+                    &llm_db,
+                    &stripe_client,
+                    stripe_llm_usage_price_id.clone(),
+                )
+                .await
+                .trace_err();
+
+                executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
+            }
+        }
+    });
+}
+
+async fn sync_with_stripe(
+    app: &Arc<AppState>,
+    llm_db: &LlmDatabase,
+    stripe_client: &stripe::Client,
+    stripe_llm_usage_price_id: Arc<str>,
+) -> anyhow::Result<()> {
+    let subscriptions = app.db.get_active_billing_subscriptions().await?;
+
+    for (customer, subscription) in subscriptions {
+        update_stripe_subscription(
+            llm_db,
+            stripe_client,
+            &stripe_llm_usage_price_id,
+            customer,
+            subscription,
+        )
+        .await
+        .log_err();
+    }
+
+    Ok(())
+}
+
+async fn update_stripe_subscription(
+    llm_db: &LlmDatabase,
+    stripe_client: &stripe::Client,
+    stripe_llm_usage_price_id: &Arc<str>,
+    customer: billing_customer::Model,
+    subscription: billing_subscription::Model,
+) -> Result<(), anyhow::Error> {
+    let monthly_spending = llm_db
+        .get_user_spending_for_month(customer.user_id, Utc::now())
+        .await?;
+    let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
+        .context("failed to parse subscription ID")?;
+
+    let monthly_spending_over_free_tier =
+        monthly_spending.saturating_sub(MONTHLY_SPENDING_LIMIT_IN_CENTS);
+
+    let new_quantity = (monthly_spending_over_free_tier as f32 / 100.).ceil();
+    Subscription::update(
+        stripe_client,
+        &subscription_id,
+        stripe::UpdateSubscription {
+            items: Some(vec![stripe::UpdateSubscriptionItems {
+                // TODO: Do we need to send up the `id` if a subscription item
+                // with this price already exists, or will Stripe take care of
+                // it?
+                id: None,
+                price: Some(stripe_llm_usage_price_id.to_string()),
+                quantity: Some(new_quantity as u64),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(())
 }

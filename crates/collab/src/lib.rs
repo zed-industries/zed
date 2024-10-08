@@ -174,7 +174,7 @@ pub struct Config {
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
     pub stripe_api_key: Option<String>,
-    pub stripe_price_id: Option<Arc<str>>,
+    pub stripe_llm_usage_price_id: Option<Arc<str>>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
     pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
@@ -191,6 +191,10 @@ impl Config {
             "staging" => "https://staging.zed.dev",
             _ => "https://zed.dev",
         }
+    }
+
+    pub fn is_llm_billing_enabled(&self) -> bool {
+        self.stripe_llm_usage_price_id.is_some()
     }
 
     #[cfg(test)]
@@ -231,7 +235,7 @@ impl Config {
             migrations_path: None,
             seed_path: None,
             stripe_api_key: None,
-            stripe_price_id: None,
+            stripe_llm_usage_price_id: None,
             supermaven_admin_api_key: None,
             user_backfiller_github_access_token: None,
         }
