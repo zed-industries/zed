@@ -438,7 +438,7 @@ impl SshRemoteClient {
                 Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
-                    connection_options: SshConnectionOptions::default(),
+                    connection_options: connection_options.clone(),
                     state: Arc::new(Mutex::new(Some(State::Connecting))),
                 }
             })?;
