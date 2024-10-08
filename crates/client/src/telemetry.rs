@@ -1,7 +1,7 @@
 mod event_coalescer;
 
 use crate::{ChannelId, TelemetrySettings};
-pub use anyhow::Result;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
@@ -23,13 +23,14 @@ use telemetry_events::{
     SettingEvent,
 };
 use tempfile::NamedTempFile;
-pub use url::Url;
+use url::Url;
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
+
 pub trait TelemetryClient: Send + Sync {
     fn prepare_telemetry_request(
         &self,
