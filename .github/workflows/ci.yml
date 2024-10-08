@@ -48,14 +48,6 @@ jobs:
           export SQUAWK_GITHUB_TOKEN=${{ github.token }}
           . ./script/squawk
 
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          version: v1.29.0
-      - uses: bufbuild/buf-breaking-action@v1
-        with:
-          input: "crates/proto/proto/"
-          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
-
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
         run: |
@@ -67,6 +59,14 @@ jobs:
             git merge -q origin/$GITHUB_BASE_REF -m "merge main into temp"
             echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> $GITHUB_ENV
           fi
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: v1.29.0
+      - uses: bufbuild/buf-breaking-action@v1
+        with:
+          input: "crates/proto/proto/"
+          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
   style:
     timeout-minutes: 60
