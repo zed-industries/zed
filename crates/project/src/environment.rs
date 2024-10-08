@@ -188,6 +188,7 @@ impl From<EnvironmentOrigin> for String {
 pub struct EnvironmentErrorMessage(pub String);
 
 impl EnvironmentErrorMessage {
+    #[allow(dead_code)]
     fn from_str(s: &str) -> Self {
         Self(String::from(s))
     }
@@ -204,7 +205,7 @@ async fn load_shell_environment(
     let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
         .into_iter()
         .collect();
-    Ok((fake_env, None))
+    (Some(fake_env), None)
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
