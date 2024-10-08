@@ -2831,7 +2831,7 @@ fn trimmed_text_in_range(buffer: &BufferSnapshot, range: Range<text::Anchor>) ->
         .text_for_range(range)
         .map(|mut chunk| {
             if is_start {
-                chunk = chunk.trim_start();
+                chunk = chunk.trim_start_matches('\n');
                 if !chunk.is_empty() {
                     is_start = false;
                 }
