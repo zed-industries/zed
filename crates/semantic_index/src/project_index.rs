@@ -250,9 +250,11 @@ impl ProjectIndex {
             let chunks_tx = chunks_tx.clone();
             worktree_scan_tasks.push(cx.spawn(|cx| async move {
                 let index = match worktree_index {
-                    WorktreeIndexHandle::Loading { index } => {
-                        index.clone().await.map_err(|error| anyhow!(error))?
-                    }
+                    WorktreeIndexHandle::Loading { index } => index
+                        .clone()
+                        .await
+                        .map_err(|error| anyhow!(error))
+                        .context("loading worktree index failure")?,
                     WorktreeIndexHandle::Loaded { index } => index.clone(),
                 };
 
@@ -279,12 +281,14 @@ impl ProjectIndex {
                                             db_embedded_file.path.clone(),
                                             chunk.clone(),
                                         ))
-                                        .await?;
+                                        .await
+                                        .context("failed to send chunks")?;
                                 }
                             }
                             anyhow::Ok(())
                         })
-                    })?
+                    })
+                    .context("read_with WorktreeIndex failed")?
                     .await
             }));
         }
