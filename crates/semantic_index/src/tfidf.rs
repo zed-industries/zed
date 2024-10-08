@@ -18,11 +18,14 @@ impl SimpleTokenizer {
         // Split on whitespace and punctuation
         text.split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
             .flat_map(|word| {
-                word.chars().fold(Vec::<String>::new(), |mut acc, c| {
+                word.chars().fold(vec![String::new()], |mut acc, c| {
                     // Split CamelCaps and camelCase
                     if c.is_uppercase()
                         && !acc.is_empty()
-                        && acc.last().unwrap().chars().last().unwrap().is_lowercase()
+                        && acc
+                            .last()
+                            .and_then(|s| s.chars().last())
+                            .map_or(false, |last_char| last_char.is_lowercase())
                     {
                         acc.push(String::new());
                     }
