@@ -80,9 +80,6 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
-      - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
-
       - name: Check licenses
         run: |
           script/check-licenses
@@ -137,6 +134,9 @@ jobs:
 
       - name: cargo clippy
         run: ./script/clippy
+
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
 
       - name: Run tests
         uses: ./.github/actions/run_tests
