@@ -679,6 +679,7 @@ pub struct EditorEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     checksum_matched: bool,
+    is_via_ssh: bool,
 }
 
 impl EditorEventRow {
@@ -720,6 +721,7 @@ impl EditorEventRow {
             region_code: "".to_string(),
             city: "".to_string(),
             historical_event: false,
+            is_via_ssh: event.is_via_ssh,
         }
     }
 }
