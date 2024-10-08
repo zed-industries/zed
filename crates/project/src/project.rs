@@ -1263,8 +1263,10 @@ impl Project {
             .clone()
     }
 
-    pub fn ssh_is_connected(&self, cx: &AppContext) -> Option<bool> {
-        Some(!self.ssh_client.as_ref()?.read(cx).is_reconnect_underway())
+    pub fn ssh_connection_state(&self, cx: &AppContext) -> Option<remote::ConnectionState> {
+        self.ssh_client
+            .as_ref()
+            .map(|ssh| ssh.read(cx).connection_state())
     }
 
     pub fn replica_id(&self) -> ReplicaId {
