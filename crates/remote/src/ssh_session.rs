@@ -521,11 +521,37 @@ impl SshRemoteClient {
 
         cx.spawn(|this, mut cx| async move {
             let new_state = reconnect_task.await;
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, cx| {
+                match new_state {
+                    State::Connecting | State::Reconnecting { .. } => {}
+                    State::Connected { .. } => {
+                        log::info!("Successfully reconnected");
+                    }
+                    State::ReconnectFailed {
+                        connection_attempts,
+                        ..
+                    } => {
+                        log::error!(
+                            "Reconnect attempt {} failed. Starting new attempt...",
+                            connection_attempts
+                        );
+                    }
+                    State::ReconnectExhausted => {
+                        log::error!("Reconnect attempt failed and all attempts exhausted");
+                    }
+                }
+
+                let reconnect_failed = matches!(new_state, State::ReconnectFailed { .. });
                 *this.state.lock() = Some(new_state);
+                if reconnect_failed {
+                    this.reconnect(cx)
+                } else {
+                    Ok(())
+                }
             })
         })
-        .detach();
+        .detach_and_log_err(cx);
+
         Ok(())
     }
 
