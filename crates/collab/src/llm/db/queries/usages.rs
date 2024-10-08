@@ -382,6 +382,10 @@ impl LlmDatabase {
                         user_id: ActiveValue::set(user_id),
                         model_id: ActiveValue::set(model.id),
                         input_tokens: ActiveValue::set(input_token_count as i64),
+                        cache_creation_input_tokens: ActiveValue::set(
+                            cache_creation_input_tokens as i64,
+                        ),
+                        cache_read_input_tokens: ActiveValue::set(cache_read_input_tokens as i64),
                         output_tokens: ActiveValue::set(output_token_count as i64),
                         ..Default::default()
                     }
