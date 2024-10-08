@@ -786,9 +786,8 @@ impl DevServerProjects {
                                 h_flex()
                                     .p_2()
                                     .w_full()
-                                    .content_center()
+                                    .justify_center()
                                     .gap_2()
-                                    .child(h_flex().w_full())
                                     .child(
                                         div().p_1().rounded_lg().bg(color).with_animation(
                                             "pulse-ssh-waiting-for-connection",
@@ -801,8 +800,7 @@ impl DevServerProjects {
                                     .child(
                                         Label::new("Waiting for connection…")
                                             .size(LabelSize::Small),
-                                    )
-                                    .child(h_flex().w_full()),
+                                    ),
                             )
                         }
                     }),
