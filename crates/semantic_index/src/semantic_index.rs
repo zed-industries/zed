@@ -29,6 +29,8 @@ pub use project_index::{LoadedSearchResult, ProjectIndex, SearchResult, Status};
 pub use project_index_debug_view::ProjectIndexDebugView;
 pub use summary_index::FileSummary;
 
+pub const SEMANTIC_INDEX_DB_VERSION: usize = 1;
+
 pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     db_connection: Option<heed::Env>,
