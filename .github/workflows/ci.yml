@@ -80,11 +80,6 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
-      - name: Check licenses
-        run: |
-          script/check-licenses
-          script/generate-licenses /tmp/zed_licenses_output
-
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
@@ -99,6 +94,14 @@ jobs:
 
       - name: cargo clippy
         run: ./script/clippy
+
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
+
+      - name: Check licenses
+        run: |
+          script/check-licenses
+          script/generate-licenses /tmp/zed_licenses_output
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -134,9 +137,6 @@ jobs:
 
       - name: cargo clippy
         run: ./script/clippy
-
-      - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
 
       - name: Run tests
         uses: ./.github/actions/run_tests
