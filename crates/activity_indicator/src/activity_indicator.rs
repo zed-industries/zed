@@ -10,7 +10,7 @@ use gpui::{
 use language::{
     LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
 };
-use project::{LanguageServerProgress, Project};
+use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
@@ -175,7 +175,31 @@ impl ActivityIndicator {
             .flatten()
     }
 
+    fn pending_environment_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+        self.project.read(cx).shell_environment_errors(cx)
+    }
+
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
+        // Show if any direnv calls failed
+        if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .into_any_element(),
+                ),
+                message: error.0.clone(),
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.remove_environment_error(cx, worktree_id);
+                    });
+                    cx.dispatch_action(Box::new(workspace::OpenLog));
+                })),
+            });
+        }
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {

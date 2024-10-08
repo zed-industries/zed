@@ -364,6 +364,7 @@ impl Telemetry {
         operation: &'static str,
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
+        is_via_ssh: bool,
     ) {
         let event = Event::Editor(EditorEvent {
             file_extension,
@@ -371,6 +372,7 @@ impl Telemetry {
             operation: operation.into(),
             copilot_enabled,
             copilot_enabled_for_language,
+            is_via_ssh,
         });
 
         self.report_event(event)

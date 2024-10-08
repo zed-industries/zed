@@ -350,7 +350,7 @@ impl Editor {
             .next()?;
 
         buffer.update(cx, |branch_buffer, cx| {
-            branch_buffer.merge_into_base(Some(range), cx);
+            branch_buffer.merge_into_base(vec![range], cx);
         });
 
         None
@@ -360,7 +360,7 @@ impl Editor {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
             branch_buffer.update(cx, |branch_buffer, cx| {
-                branch_buffer.merge_into_base(None, cx);
+                branch_buffer.merge_into_base(Vec::new(), cx);
             });
         }
     }
