@@ -20,7 +20,13 @@ use std::{
     sync::Arc,
 };
 
-pub fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
+pub fn init(log_file: Option<PathBuf>) -> Result<()> {
+    init_logging(log_file)?;
+    init_panic_hook();
+    Ok(())
+}
+
+fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
     if let Some(log_file) = log_file {
         let target = Box::new(if log_file.exists() {
             std::fs::OpenOptions::new()
@@ -44,6 +50,14 @@ pub fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
             .init();
     }
     Ok(())
+}
+
+fn init_panic_hook() {
+    let _hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|panic_info| {
+        let message = panic_info.to_string();
+        log::error!("server: panic occurred: {}", message);
+    }));
 }
 
 fn start_server(
