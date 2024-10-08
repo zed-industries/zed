@@ -174,7 +174,7 @@ pub struct ActionEvent {
 pub struct EditEvent {
     pub duration: i64,
     pub environment: String,
-    /// Whether the client is editing a local file or a remote file via SSH
+    /// Whether the edits occurred locally or remotely via SSH
     pub is_via_ssh: bool,
 }
 
