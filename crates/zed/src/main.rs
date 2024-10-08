@@ -528,6 +528,8 @@ fn main() {
             session_id,
             cx,
         );
+
+        // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
             match (&system_id, &installation_id) {
                 (IdType::New(_), IdType::New(_)) => {

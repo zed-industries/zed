@@ -11,6 +11,7 @@ use http::request::Builder;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
+    any::type_name,
     sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
@@ -72,6 +73,8 @@ impl HttpRequestExt for http::request::Builder {
 }
 
 pub trait HttpClient: 'static + Send + Sync {
+    fn type_name(&self) -> &'static str;
+
     fn send(
         &self,
         req: http::Request<AsyncBody>,
@@ -154,6 +157,10 @@ impl HttpClient for HttpClientWithProxy {
     fn proxy(&self) -> Option<&Uri> {
         self.proxy.as_ref()
     }
+
+    fn type_name(&self) -> &'static str {
+        self.client.type_name()
+    }
 }
 
 impl HttpClient for Arc<HttpClientWithProxy> {
@@ -166,6 +173,10 @@ impl HttpClient for Arc<HttpClientWithProxy> {
 
     fn proxy(&self) -> Option<&Uri> {
         self.proxy.as_ref()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.client.type_name()
     }
 }
 
@@ -278,6 +289,10 @@ impl HttpClient for Arc<HttpClientWithUrl> {
     fn proxy(&self) -> Option<&Uri> {
         self.client.proxy.as_ref()
     }
+
+    fn type_name(&self) -> &'static str {
+        self.client.type_name()
+    }
 }
 
 impl HttpClient for HttpClientWithUrl {
@@ -290,6 +305,10 @@ impl HttpClient for HttpClientWithUrl {
 
     fn proxy(&self) -> Option<&Uri> {
         self.client.proxy.as_ref()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.client.type_name()
     }
 }
 
@@ -330,6 +349,10 @@ impl HttpClient for BlockedHttpClient {
 
     fn proxy(&self) -> Option<&Uri> {
         None
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<Self>()
     }
 }
 
@@ -402,5 +425,9 @@ impl HttpClient for FakeHttpClient {
 
     fn proxy(&self) -> Option<&Uri> {
         None
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<Self>()
     }
 }

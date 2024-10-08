@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io::Read, pin::Pin, task::Poll};
+use std::{any::type_name, borrow::Cow, io::Read, pin::Pin, task::Poll};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -163,8 +163,12 @@ impl futures::stream::Stream for WrappedBody {
             WrappedBodyInner::SyncReader(cursor) => {
                 let mut buf = Vec::new();
                 match cursor.read_to_end(&mut buf) {
-                    Ok(_) => {
-                        return Poll::Ready(Some(Ok(Bytes::from(buf))));
+                    Ok(bytes) => {
+                        if bytes == 0 {
+                            return Poll::Ready(None);
+                        } else {
+                            return Poll::Ready(Some(Ok(Bytes::from(buf))));
+                        }
                     }
                     Err(e) => return Poll::Ready(Some(Err(e))),
                 }
@@ -181,6 +185,10 @@ impl futures::stream::Stream for WrappedBody {
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&http::Uri> {
         None
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<Self>()
     }
 
     fn send(
@@ -228,5 +236,24 @@ impl http_client::HttpClient for ReqwestClient {
             builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use core::str;
+
+    use http_client::AsyncBody;
+    use smol::stream::StreamExt;
+
+    use crate::WrappedBody;
+
+    #[tokio::test]
+    async fn test_sync_streaming_upload() {
+        let mut body = WrappedBody::new(AsyncBody::from("hello there".to_string())).fuse();
+        let result = body.next().await.unwrap().unwrap();
+        assert!(body.next().await.is_none());
+        assert_eq!(str::from_utf8(&result).unwrap(), "hello there");
     }
 }

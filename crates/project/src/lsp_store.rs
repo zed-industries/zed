@@ -158,7 +158,7 @@ impl LocalLspStore {
 
     async fn format_locally(
         lsp_store: WeakModel<LspStore>,
-        mut buffers_with_paths: Vec<(Model<Buffer>, Option<PathBuf>)>,
+        mut buffers: Vec<FormattableBuffer>,
         push_to_history: bool,
         trigger: FormatTrigger,
         mut cx: AsyncAppContext,
@@ -167,22 +167,22 @@ impl LocalLspStore {
         // same buffer.
         lsp_store.update(&mut cx, |this, cx| {
             let this = this.as_local_mut().unwrap();
-            buffers_with_paths.retain(|(buffer, _)| {
+            buffers.retain(|buffer| {
                 this.buffers_being_formatted
-                    .insert(buffer.read(cx).remote_id())
+                    .insert(buffer.handle.read(cx).remote_id())
             });
         })?;
 
         let _cleanup = defer({
             let this = lsp_store.clone();
             let mut cx = cx.clone();
-            let buffers = &buffers_with_paths;
+            let buffers = &buffers;
             move || {
                 this.update(&mut cx, |this, cx| {
                     let this = this.as_local_mut().unwrap();
-                    for (buffer, _) in buffers {
+                    for buffer in buffers {
                         this.buffers_being_formatted
-                            .remove(&buffer.read(cx).remote_id());
+                            .remove(&buffer.handle.read(cx).remote_id());
                     }
                 })
                 .ok();
@@ -190,10 +190,10 @@ impl LocalLspStore {
         });
 
         let mut project_transaction = ProjectTransaction::default();
-        for (buffer, buffer_abs_path) in &buffers_with_paths {
+        for buffer in &buffers {
             let (primary_adapter_and_server, adapters_and_servers) =
                 lsp_store.update(&mut cx, |lsp_store, cx| {
-                    let buffer = buffer.read(cx);
+                    let buffer = buffer.handle.read(cx);
 
                     let adapters_and_servers = lsp_store
                         .language_servers_for_buffer(buffer, cx)
@@ -207,7 +207,7 @@ impl LocalLspStore {
                     (primary_adapter, adapters_and_servers)
                 })?;
 
-            let settings = buffer.update(&mut cx, |buffer, cx| {
+            let settings = buffer.handle.update(&mut cx, |buffer, cx| {
                 language_settings(buffer.language(), buffer.file(), cx).clone()
             })?;
 
@@ -218,13 +218,14 @@ impl LocalLspStore {
             let trailing_whitespace_diff = if remove_trailing_whitespace {
                 Some(
                     buffer
+                        .handle
                         .update(&mut cx, |b, cx| b.remove_trailing_whitespace(cx))?
                         .await,
                 )
             } else {
                 None
             };
-            let whitespace_transaction_id = buffer.update(&mut cx, |buffer, cx| {
+            let whitespace_transaction_id = buffer.handle.update(&mut cx, |buffer, cx| {
                 buffer.finalize_last_transaction();
                 buffer.start_transaction();
                 if let Some(diff) = trailing_whitespace_diff {
@@ -246,7 +247,7 @@ impl LocalLspStore {
                     &lsp_store,
                     &adapters_and_servers,
                     code_actions,
-                    buffer,
+                    &buffer.handle,
                     push_to_history,
                     &mut project_transaction,
                     &mut cx,
@@ -261,9 +262,9 @@ impl LocalLspStore {
                 primary_adapter_and_server.map(|(_adapter, server)| server.clone());
             let server_and_buffer = primary_language_server
                 .as_ref()
-                .zip(buffer_abs_path.as_ref());
+                .zip(buffer.abs_path.as_ref());
 
-            let prettier_settings = buffer.read_with(&cx, |buffer, cx| {
+            let prettier_settings = buffer.handle.read_with(&cx, |buffer, cx| {
                 language_settings(buffer.language(), buffer.file(), cx)
                     .prettier
                     .clone()
@@ -288,7 +289,6 @@ impl LocalLspStore {
                                                     server_and_buffer,
                                                     lsp_store.clone(),
                                                     buffer,
-                                                    buffer_abs_path,
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
@@ -302,7 +302,6 @@ impl LocalLspStore {
                                                     server_and_buffer,
                                                     lsp_store.clone(),
                                                     buffer,
-                                                    buffer_abs_path,
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
@@ -325,7 +324,6 @@ impl LocalLspStore {
                                                 server_and_buffer,
                                                 lsp_store.clone(),
                                                 buffer,
-                                                buffer_abs_path,
                                                 &settings,
                                                 &adapters_and_servers,
                                                 push_to_history,
@@ -351,7 +349,6 @@ impl LocalLspStore {
                                         server_and_buffer,
                                         lsp_store.clone(),
                                         buffer,
-                                        buffer_abs_path,
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
@@ -379,7 +376,6 @@ impl LocalLspStore {
                                             server_and_buffer,
                                             lsp_store.clone(),
                                             buffer,
-                                            buffer_abs_path,
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
@@ -393,7 +389,6 @@ impl LocalLspStore {
                                             server_and_buffer,
                                             lsp_store.clone(),
                                             buffer,
-                                            buffer_abs_path,
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
@@ -418,7 +413,6 @@ impl LocalLspStore {
                                         server_and_buffer,
                                         lsp_store.clone(),
                                         buffer,
-                                        buffer_abs_path,
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
@@ -438,7 +432,7 @@ impl LocalLspStore {
                 }
             }
 
-            buffer.update(&mut cx, |b, cx| {
+            buffer.handle.update(&mut cx, |b, cx| {
                 // If the buffer had its whitespace formatted and was edited while the language-specific
                 // formatting was being computed, avoid applying the language-specific formatting, because
                 // it can't be grouped with the whitespace formatting in the undo history.
@@ -467,7 +461,7 @@ impl LocalLspStore {
 
                     if let Some(transaction_id) = whitespace_transaction_id {
                         b.group_until_transaction(transaction_id);
-                    } else if let Some(transaction) = project_transaction.0.get(buffer) {
+                    } else if let Some(transaction) = project_transaction.0.get(&buffer.handle) {
                         b.group_until_transaction(transaction.id)
                     }
                 }
@@ -476,7 +470,9 @@ impl LocalLspStore {
                     if !push_to_history {
                         b.forget_transaction(transaction.id);
                     }
-                    project_transaction.0.insert(buffer.clone(), transaction);
+                    project_transaction
+                        .0
+                        .insert(buffer.handle.clone(), transaction);
                 }
             })?;
         }
@@ -489,8 +485,7 @@ impl LocalLspStore {
         formatter: &Formatter,
         primary_server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
         lsp_store: WeakModel<LspStore>,
-        buffer: &Model<Buffer>,
-        buffer_abs_path: &Option<PathBuf>,
+        buffer: &FormattableBuffer,
         settings: &LanguageSettings,
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         push_to_history: bool,
@@ -514,7 +509,7 @@ impl LocalLspStore {
                     Some(FormatOperation::Lsp(
                         LspStore::format_via_lsp(
                             &lsp_store,
-                            buffer,
+                            &buffer.handle,
                             buffer_abs_path,
                             language_server,
                             settings,
@@ -531,27 +526,20 @@ impl LocalLspStore {
                 let prettier = lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.prettier_store().unwrap().downgrade()
                 })?;
-                prettier_store::format_with_prettier(&prettier, buffer, cx)
+                prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
                     .await
                     .transpose()
                     .ok()
                     .flatten()
             }
             Formatter::External { command, arguments } => {
-                let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
-                Self::format_via_external_command(
-                    buffer,
-                    buffer_abs_path,
-                    command,
-                    arguments.as_deref(),
-                    cx,
-                )
-                .await
-                .context(format!(
-                    "failed to format via external command {:?}",
-                    command
-                ))?
-                .map(FormatOperation::External)
+                Self::format_via_external_command(buffer, command, arguments.as_deref(), cx)
+                    .await
+                    .context(format!(
+                        "failed to format via external command {:?}",
+                        command
+                    ))?
+                    .map(FormatOperation::External)
             }
             Formatter::CodeActions(code_actions) => {
                 let code_actions = deserialize_code_actions(code_actions);
@@ -560,7 +548,7 @@ impl LocalLspStore {
                         &lsp_store,
                         adapters_and_servers,
                         code_actions,
-                        buffer,
+                        &buffer.handle,
                         push_to_history,
                         transaction,
                         cx,
@@ -574,13 +562,12 @@ impl LocalLspStore {
     }
 
     async fn format_via_external_command(
-        buffer: &Model<Buffer>,
-        buffer_abs_path: Option<&Path>,
+        buffer: &FormattableBuffer,
         command: &str,
         arguments: Option<&[String]>,
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Diff>> {
-        let working_dir_path = buffer.update(cx, |buffer, cx| {
+        let working_dir_path = buffer.handle.update(cx, |buffer, cx| {
             let file = File::from_dyn(buffer.file())?;
             let worktree = file.worktree.read(cx);
             let mut worktree_path = worktree.abs_path().to_path_buf();
@@ -597,13 +584,17 @@ impl LocalLspStore {
             child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
         }
 
+        if let Some(buffer_env) = buffer.env.as_ref() {
+            child.envs(buffer_env);
+        }
+
         if let Some(working_dir_path) = working_dir_path {
             child.current_dir(working_dir_path);
         }
 
         if let Some(arguments) = arguments {
             child.args(arguments.iter().map(|arg| {
-                if let Some(buffer_abs_path) = buffer_abs_path {
+                if let Some(buffer_abs_path) = buffer.abs_path.as_ref() {
                     arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
                 } else {
                     arg.replace("{buffer_path}", "Untitled")
@@ -621,7 +612,9 @@ impl LocalLspStore {
             .stdin
             .as_mut()
             .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
-        let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
+        let text = buffer
+            .handle
+            .update(cx, |buffer, _| buffer.as_rope().clone())?;
         for chunk in text.chunks() {
             stdin.write_all(chunk.as_bytes()).await?;
         }
@@ -640,10 +633,17 @@ impl LocalLspStore {
         let stdout = String::from_utf8(output.stdout)?;
         Ok(Some(
             buffer
+                .handle
                 .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
                 .await,
         ))
     }
+}
+
+pub struct FormattableBuffer {
+    handle: Model<Buffer>,
+    abs_path: Option<PathBuf>,
+    env: Option<HashMap<String, String>>,
 }
 
 pub struct RemoteLspStore {
@@ -5028,6 +5028,28 @@ impl LspStore {
             .and_then(|local| local.last_formatting_failure.as_deref())
     }
 
+    pub fn environment_for_buffer(
+        &self,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        let worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
+        let worktree_abs_path = worktree_id.and_then(|worktree_id| {
+            self.worktree_store
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .map(|entry| entry.read(cx).abs_path().clone())
+        });
+
+        if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
+            environment.update(cx, |env, cx| {
+                env.get_environment(worktree_id, worktree_abs_path, cx)
+            })
+        } else {
+            Task::ready(None).shared()
+        }
+    }
+
     pub fn format(
         &mut self,
         buffers: HashSet<Model<Buffer>>,
@@ -5042,14 +5064,31 @@ impl LspStore {
                     let buffer = buffer_handle.read(cx);
                     let buffer_abs_path = File::from_dyn(buffer.file())
                         .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+
                     (buffer_handle, buffer_abs_path)
                 })
                 .collect::<Vec<_>>();
 
             cx.spawn(move |lsp_store, mut cx| async move {
+                let mut formattable_buffers = Vec::with_capacity(buffers_with_paths.len());
+
+                for (handle, abs_path) in buffers_with_paths {
+                    let env = lsp_store
+                        .update(&mut cx, |lsp_store, cx| {
+                            lsp_store.environment_for_buffer(&handle, cx)
+                        })?
+                        .await;
+
+                    formattable_buffers.push(FormattableBuffer {
+                        handle,
+                        abs_path,
+                        env,
+                    });
+                }
+
                 let result = LocalLspStore::format_locally(
                     lsp_store.clone(),
-                    buffers_with_paths,
+                    formattable_buffers,
                     push_to_history,
                     trigger,
                     cx.clone(),

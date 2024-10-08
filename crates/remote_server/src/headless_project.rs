@@ -113,6 +113,7 @@ impl HeadlessProject {
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
         client.add_request_handler(cx.weak_model(), Self::handle_check_file_exists);
         client.add_request_handler(cx.weak_model(), Self::handle_shutdown_remote_server);
+        client.add_request_handler(cx.weak_model(), Self::handle_ping);
 
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
@@ -352,6 +353,15 @@ impl HeadlessProject {
         })
         .detach();
 
+        Ok(proto::Ack {})
+    }
+
+    pub async fn handle_ping(
+        _this: Model<Self>,
+        _envelope: TypedEnvelope<proto::Ping>,
+        _cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        log::debug!("Received ping from client");
         Ok(proto::Ack {})
     }
 }
