@@ -282,13 +282,8 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::{channel, stream::StreamExt};
-    use std::{
-        collections::HashMap,
-        future,
-        path::Path,
-        sync::{Arc, RwLock},
-    };
-    use tfidf::{SimpleTokenizer, WorktreeTermStats};
+    use std::{future, path::Path, sync::Arc};
+    use tfidf::SimpleTokenizer;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -498,14 +493,11 @@ mod tests {
 
         let tokenizer = SimpleTokenizer::new();
         let embedding_settings = EmbeddingIndexSettings::default();
-        let worktree_corpus_stats =
-            Arc::new(RwLock::new(WorktreeTermStats::new(HashMap::new(), 0, 0)));
 
         let embed_files_task = cx.update(|cx| {
             EmbeddingIndex::embed_files(
                 provider.clone(),
                 chunked_files_rx,
-                worktree_corpus_stats,
                 tokenizer,
                 embedding_settings,
                 cx,

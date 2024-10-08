@@ -2,7 +2,7 @@ use crate::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
-    tfidf::{ChunkTermCounts, SimpleTokenizer, WorktreeTermStats},
+    tfidf::{SimpleTokenizer, TermCounts, WorktreeTermStats},
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
@@ -103,7 +103,6 @@ impl EmbeddingIndex {
         let embed = Self::embed_files(
             self.embedding_provider.clone(),
             chunk.files,
-            self.worktree_corpus_stats.clone(),
             self.tokenizer.clone(),
             self.settings,
             cx,
@@ -127,7 +126,6 @@ impl EmbeddingIndex {
         let embed = Self::embed_files(
             self.embedding_provider.clone(),
             chunk.files,
-            self.worktree_corpus_stats.clone(),
             self.tokenizer.clone(),
             self.settings,
             cx,
@@ -167,7 +165,7 @@ impl EmbeddingIndex {
                     // initialize worktree_corpus_stats from embedded files in database
                     update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
                         for chunk in &embedded_file.chunks {
-                            stats.add_chunk_counts(chunk.term_frequencies.clone());
+                            stats.add_counts(&chunk.term_frequencies);
                         }
                     });
                 }
@@ -333,13 +331,11 @@ impl EmbeddingIndex {
     pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
-        worktree_corpus_stats: Arc<RwLock<WorktreeTermStats>>,
         tokenizer: SimpleTokenizer,
         settings: EmbeddingIndexSettings,
         cx: &AppContext,
     ) -> EmbedFiles {
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(settings.embed_files_bound);
-        let worktree_corpus_stats = worktree_corpus_stats.clone();
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
@@ -382,10 +378,6 @@ impl EmbeddingIndex {
                         mtime: chunked_file.mtime,
                         chunks: Vec::new(),
                     };
-                    // We're about to re-index all the chunks for this file, so let's remove them all from the tfidf corpus if they exist
-                    update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
-                        stats.remove_file(&chunked_file.path)
-                    });
 
                     let mut embedded_all_chunks = true;
                     for (chunk, embedding) in
@@ -393,7 +385,7 @@ impl EmbeddingIndex {
                     {
                         if let Some(embedding) = embedding {
                             let chunk_text = &chunked_file.text[chunk.range.clone()];
-                            let chunk_counts = ChunkTermCounts::from_text(chunk_text, &tokenizer);
+                            let chunk_counts = TermCounts::from_text(chunk_text, &tokenizer);
                             embedded_file
                                 .chunks
                                 .push(EmbeddedChunk { chunk, embedding, term_frequencies: chunk_counts });
@@ -439,18 +431,18 @@ impl EmbeddingIndex {
                             let end = deletion_range.1.as_ref().map(|end| end.as_str());
                             log::debug!("deleting embeddings in range {:?}", &(start, end));
                             db.delete_range(&mut txn, &(start, end))?;
-                            txn.commit()?;
                             for entry in db.range(&txn, &(start, end))? {
                                 if let Ok((_, embedded_file)) = entry {
                                     if let None = update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
                                         for chunk in &embedded_file.chunks {
-                                            stats.remove_chunk_counts(chunk.chunk.id);
+                                            stats.remove_counts(&chunk.term_frequencies);
                                         }
                                     }) {
                                         log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
                                     }
                                 }
                             }
+                            txn.commit()?;
                         }
                     },
                     file = embedded_files.next() => {
@@ -462,7 +454,7 @@ impl EmbeddingIndex {
                             txn.commit()?;
                             if let None = update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
                                 for chunk in &file.chunks {
-                                    stats.add_chunk_counts(chunk.term_frequencies.clone());
+                                    stats.add_counts(&chunk.term_frequencies);
                                 }
                             }) {
                                 log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
@@ -553,7 +545,7 @@ pub struct EmbeddedFile {
 pub struct EmbeddedChunk {
     pub chunk: Chunk,
     pub embedding: Embedding,
-    pub term_frequencies: ChunkTermCounts,
+    pub term_frequencies: TermCounts,
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {

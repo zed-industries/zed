@@ -299,13 +299,13 @@ impl ProjectIndex {
             #[cfg(debug_assertions)]
             let bm25_query_start = std::time::Instant::now();
             let tokenizer = SimpleTokenizer::new();
-            let terms_by_query: Vec<HashMap<Arc<str>, f32>> = queries
+            let terms_by_query: Vec<HashMap<Arc<str>, u32>> = queries
                 .iter()
                 .map(|query| {
                     tokenizer.tokenize_and_stem(query).into_iter().fold(
                         HashMap::new(),
                         |mut acc, term| {
-                            *acc.entry(term).or_insert(0.0) += 1.0;
+                            *acc.entry(term).or_insert(0) += 1;
                             acc
                         },
                     )
@@ -355,17 +355,12 @@ impl ProjectIndex {
                                         let bm25_score = {
                                             let corpus_stats =
                                                 worktree_corpus_stats.read().unwrap();
-                                            corpus_stats
-                                                .calculate_bm25_score(
-                                                    query_term,
-                                                    chunk.chunk_id,
-                                                    bm25_params.k1,
-                                                    bm25_params.b,
-                                                )
-                                                .unwrap_or_else(|| {
-                                                    log::error!("Missing chunk from WorktreeTermStats for chunk_id: {:?}, path: {:?}", chunk.chunk_id, path);
-                                                    0.0
-                                                })
+                                            corpus_stats.calculate_bm25_score(
+                                                query_term,
+                                                &chunk.term_frequencies.0,
+                                                bm25_params.k1,
+                                                bm25_params.b,
+                                            )
                                         };
                                         mixing_param * embedding_score
                                             + (1. - mixing_param) * bm25_score

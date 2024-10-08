@@ -1,4 +1,3 @@
-use anyhow::{anyhow, Result};
 use rust_stemmers::{Algorithm, Stemmer};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
@@ -85,9 +84,9 @@ pub trait Bm25Scorer {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ChunkTermCounts(HashMap<Arc<str>, u32>);
+pub struct TermCounts(pub HashMap<Arc<str>, u32>);
 
-impl ChunkTermCounts {
+impl TermCounts {
     pub fn from_text(text: &str, tokenizer: &SimpleTokenizer) -> Self {
         let tokens = tokenizer.tokenize_and_stem(text);
         let mut terms = HashMap::new();
@@ -96,7 +95,7 @@ impl ChunkTermCounts {
             *terms.entry(token).or_insert(0) += 1;
         }
 
-        ChunkTermCounts(terms)
+        TermCounts(terms)
     }
 }
 
@@ -123,7 +122,7 @@ impl WorktreeTermStats {
         }
     }
 
-    pub fn add_chunk_counts(&mut self, chunk_counts: ChunkTermCounts) {
+    pub fn add_counts(&mut self, chunk_counts: &TermCounts) {
         let mut chunk_length = 0;
         for (term, &freq) in &chunk_counts.0 {
             let counts = self.term_counts.entry(term.clone()).or_insert(0);
@@ -134,24 +133,22 @@ impl WorktreeTermStats {
         self.total_chunks += 1;
     }
 
-    pub fn remove_chunk_counts(&mut self, chunk_counts: ChunkTermCounts) -> Result<()> {
+    pub fn remove_counts(&mut self, chunk_counts: &TermCounts) -> () {
         debug_assert!(chunk_counts.0.len() <= self.term_counts.len());
+        debug_assert!(chunk_counts
+            .0
+            .keys()
+            .all(|k| self.term_counts.contains_key(k)));
 
         let mut chunk_length = 0;
         for (term, &freq) in &chunk_counts.0 {
             if let Some(stats) = self.term_counts.get_mut(term) {
                 *stats -= freq;
                 chunk_length += 0;
-            } else {
-                return Err(anyhow!(
-                    "Tried to remove ChunkTermCounts with term unknown to WorktreeTermStats: {:?}",
-                    term
-                ));
             }
         }
         self.total_length -= chunk_length;
         self.total_chunks -= 1;
-        Ok(())
     }
 }
 
