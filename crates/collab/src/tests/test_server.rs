@@ -677,7 +677,7 @@ impl TestServer {
                 migrations_path: None,
                 seed_path: None,
                 stripe_api_key: None,
-                stripe_price_id: None,
+                stripe_llm_usage_price_id: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
             },

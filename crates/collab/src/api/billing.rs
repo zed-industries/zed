@@ -79,7 +79,7 @@ async fn list_billing_subscriptions(
             .into_iter()
             .map(|subscription| BillingSubscriptionJson {
                 id: subscription.id,
-                name: "Zed Pro".to_string(),
+                name: "Zed LLM Usage".to_string(),
                 status: subscription.stripe_subscription_status,
                 cancel_at: subscription.stripe_cancel_at.map(|cancel_at| {
                     cancel_at
@@ -117,7 +117,7 @@ async fn create_billing_subscription(
     let Some((stripe_client, stripe_price_id)) = app
         .stripe_client
         .clone()
-        .zip(app.config.stripe_price_id.clone())
+        .zip(app.config.stripe_llm_usage_price_id.clone())
     else {
         log::error!("failed to retrieve Stripe client or price ID");
         Err(Error::http(
@@ -150,7 +150,7 @@ async fn create_billing_subscription(
         params.client_reference_id = Some(user.github_login.as_str());
         params.line_items = Some(vec![CreateCheckoutSessionLineItems {
             price: Some(stripe_price_id.to_string()),
-            quantity: Some(1),
+            quantity: Some(0),
             ..Default::default()
         }]);
         let success_url = format!("{}/account", app.config.zed_dot_dev_url());
