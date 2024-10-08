@@ -458,7 +458,7 @@ impl Telemetry {
         }))
     }
 
-    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
+    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
@@ -467,6 +467,7 @@ impl Telemetry {
             let event = Event::Edit(EditEvent {
                 duration: end.timestamp_millis() - start.timestamp_millis(),
                 environment: environment.to_string(),
+                is_via_ssh,
             });
 
             self.report_event(event);
