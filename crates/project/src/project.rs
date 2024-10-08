@@ -15,7 +15,9 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
+mod direnv;
 mod environment;
+pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
@@ -1183,6 +1185,23 @@ impl Project {
 
     pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
         self.environment.read(cx).get_cli_environment()
+    }
+
+    pub fn shell_environment_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+        self.environment.read(cx).environment_errors()
+    }
+
+    pub fn remove_environment_error(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+        worktree_id: WorktreeId,
+    ) {
+        self.environment.update(cx, |environment, _| {
+            environment.remove_environment_error(worktree_id);
+        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
