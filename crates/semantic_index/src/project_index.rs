@@ -368,24 +368,28 @@ impl ProjectIndex {
                                     .collect();
 
                                 for (query_index, score) in hybrid_scores.into_iter().enumerate() {
-                                    let ix = match results.binary_search_by(|probe| {
-                                        score.partial_cmp(&probe.score).unwrap_or(Ordering::Equal)
-                                    }) {
-                                        Ok(ix) | Err(ix) => ix,
-                                    };
-                                    if ix < limit {
-                                        results.insert(
-                                            ix,
-                                            WorktreeSearchResult {
-                                                worktree_id,
-                                                path: path.clone(),
-                                                range: chunk.chunk.range.clone(),
-                                                query_index,
-                                                score,
-                                            },
-                                        );
-                                        if results.len() > limit {
-                                            results.pop();
+                                    if score != 0.0 {
+                                        let ix = match results.binary_search_by(|probe| {
+                                            score
+                                                .partial_cmp(&probe.score)
+                                                .unwrap_or(Ordering::Equal)
+                                        }) {
+                                            Ok(ix) | Err(ix) => ix,
+                                        };
+                                        if ix < limit {
+                                            results.insert(
+                                                ix,
+                                                WorktreeSearchResult {
+                                                    worktree_id,
+                                                    path: path.clone(),
+                                                    range: chunk.chunk.range.clone(),
+                                                    query_index,
+                                                    score,
+                                                },
+                                            );
+                                            if results.len() > limit {
+                                                results.pop();
+                                            }
                                         }
                                     }
                                 }
