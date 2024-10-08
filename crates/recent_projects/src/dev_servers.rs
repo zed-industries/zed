@@ -556,23 +556,28 @@ impl DevServerProjects {
                     .w_full()
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .my_1()
+                    .mb_1()
                     .mx_1p5()
-                    .py_0p5()
-                    .px_3()
+                    .pl_2()
                     .child(
                         List::new()
                             .empty_message("No projects.")
                             .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
-                                self.render_ssh_project(ix, &ssh_connection, pix, p, cx)
+                                v_flex().gap_0p5().child(self.render_ssh_project(
+                                    ix,
+                                    &ssh_connection,
+                                    pix,
+                                    p,
+                                    cx,
+                                ))
                             }))
                             .child(
-                                h_flex().child(
+                                h_flex().mt_1().pl_1().child(
                                     Button::new("new-remote_project", "Open Folder…")
-                                        .icon(IconName::Plus)
                                         .size(ButtonSize::Default)
-                                        .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
+                                        .icon(IconName::Plus)
+                                        .icon_color(Color::Muted)
                                         .icon_position(IconPosition::Start)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.create_ssh_project(ix, ssh_connection.clone(), cx);
@@ -593,9 +598,15 @@ impl DevServerProjects {
     ) -> impl IntoElement {
         let project = project.clone();
         let server = server.clone();
+
         ListItem::new(("remote-project", ix))
+            .inset(true)
             .spacing(ui::ListItemSpacing::Sparse)
-            .start_slot(Icon::new(IconName::Folder).color(Color::Muted))
+            .start_slot(
+                Icon::new(IconName::Folder)
+                    .color(Color::Muted)
+                    .size(IconSize::Small),
+            )
             .child(Label::new(project.paths.join(", ")))
             .on_click(cx.listener(move |this, _, cx| {
                 let Some(app_state) = this
@@ -635,7 +646,7 @@ impl DevServerProjects {
                     .on_click(
                         cx.listener(move |this, _, cx| this.delete_ssh_project(server_ix, ix, cx)),
                     )
-                    .tooltip(|cx| Tooltip::text("Delete remote project", cx))
+                    .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
                     .into_any_element(),
             ))
     }
@@ -709,6 +720,7 @@ impl DevServerProjects {
             })
         });
         let theme = cx.theme();
+
         v_flex()
             .id("create-dev-server")
             .overflow_hidden()
@@ -763,6 +775,7 @@ impl DevServerProjects {
             .child(
                 h_flex()
                     .bg(theme.colors().editor_background)
+                    .rounded_b_md()
                     .w_full()
                     .map(|this| {
                         if let Some(ssh_prompt) = ssh_prompt {
@@ -773,9 +786,8 @@ impl DevServerProjects {
                                 h_flex()
                                     .p_2()
                                     .w_full()
-                                    .content_center()
-                                    .gap_2()
-                                    .child(h_flex().w_full())
+                                    .justify_center()
+                                    .gap_1p5()
                                     .child(
                                         div().p_1().rounded_lg().bg(color).with_animation(
                                             "pulse-ssh-waiting-for-connection",
@@ -788,8 +800,7 @@ impl DevServerProjects {
                                     .child(
                                         Label::new("Waiting for connection…")
                                             .size(LabelSize::Small),
-                                    )
-                                    .child(h_flex().w_full()),
+                                    ),
                             )
                         }
                     }),
