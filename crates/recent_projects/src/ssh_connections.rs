@@ -143,44 +143,43 @@ impl SshPrompt {
 impl Render for SshPrompt {
     fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .w_full()
             .key_context("PasswordPrompt")
+            .p_4()
+            .size_full()
             .justify_center()
             .child(
-                v_flex().size_full().p_4().child(
-                    h_flex()
-                        .gap_1p5()
-                        .justify_center()
-                        .child(if self.error_message.is_some() {
-                            Icon::new(IconName::XCircle)
-                                .size(IconSize::Medium)
-                                .color(Color::Error)
-                                .into_any_element()
-                        } else {
-                            Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Medium)
-                                .with_animation(
-                                    "arrow-circle",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                )
-                                .into_any_element()
-                        })
-                        .child(
-                            div()
-                                .when_some(self.error_message.as_ref(), |el, error| {
-                                    el.child(Label::new(error.clone()))
-                                })
-                                .when(
-                                    self.error_message.is_none() && self.status_message.is_some(),
-                                    |el| el.child(Label::new(self.status_message.clone().unwrap())),
-                                ),
-                        ),
-                ),
+                h_flex()
+                    .gap_1p5()
+                    .justify_center()
+                    .child(if self.error_message.is_some() {
+                        Icon::new(IconName::XCircle)
+                            .size(IconSize::Medium)
+                            .color(Color::Error)
+                            .into_any_element()
+                    } else {
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Medium)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            )
+                            .into_any_element()
+                    })
+                    .child(
+                        div()
+                            .when_some(self.error_message.as_ref(), |el, error| {
+                                el.child(Label::new(error.clone()))
+                            })
+                            .when(
+                                self.error_message.is_none() && self.status_message.is_some(),
+                                |el| el.child(Label::new(self.status_message.clone().unwrap())),
+                            ),
+                    ),
             )
-            .child(div().when_some(self.prompt.as_ref(), |el, prompt| {
+            .child(h_flex().when_some(self.prompt.as_ref(), |el, prompt| {
                 el.child(Label::new(prompt.0.clone()))
                     .child(self.editor.clone())
             }))
@@ -213,7 +212,10 @@ impl Render for SshConnectionModal {
             .elevation_3(cx)
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
-            .w(px(450.))
+            .w(px(500.))
+            .overflow_hidden()
+            .border_2()
+            .border_color(theme.colors().border_selected)
             .child(
                 h_flex()
                     .relative()
