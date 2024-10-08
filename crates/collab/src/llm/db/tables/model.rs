@@ -14,6 +14,8 @@ pub struct Model {
     pub max_tokens_per_minute: i64,
     pub max_tokens_per_day: i64,
     pub price_per_million_input_tokens: i32,
+    pub price_per_million_cache_creation_input_tokens: i32,
+    pub price_per_million_cache_read_input_tokens: i32,
     pub price_per_million_output_tokens: i32,
 }
 

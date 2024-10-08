@@ -10,6 +10,8 @@ pub enum UsageMeasure {
     TokensPerMinute,
     TokensPerDay,
     InputTokensPerMonth,
+    CacheCreationInputTokensPerMonth,
+    CacheReadInputTokensPerMonth,
     OutputTokensPerMonth,
 }
 
