@@ -302,15 +302,31 @@ impl State {
         }
     }
 
-    fn is_reconnecting(&self) -> bool {
-        matches!(self, State::Reconnecting { .. })
-    }
-
     fn can_reconnect(&self) -> bool {
         matches!(
             self,
             State::Connected { .. } | State::ReconnectFailed { .. }
         )
+    }
+}
+
+/// The state of the ssh connection.
+#[derive(Clone, Copy, Debug)]
+pub enum ConnectionState {
+    Connecting,
+    Connected,
+    Reconnecting,
+    Disconnected,
+}
+
+impl From<&State> for ConnectionState {
+    fn from(value: &State) -> Self {
+        match value {
+            State::Connecting => Self::Connecting,
+            State::Connected { .. } => Self::Connected,
+            State::Reconnecting | State::ReconnectFailed { .. } => Self::Reconnecting,
+            State::ReconnectExhausted => Self::Disconnected,
+        }
     }
 }
 
@@ -788,12 +804,12 @@ impl SshRemoteClient {
         self.connection_options.connection_string()
     }
 
-    pub fn is_reconnect_underway(&self) -> bool {
+    pub fn connection_state(&self) -> ConnectionState {
         self.state
             .lock()
             .as_ref()
-            .map(|state| state.is_reconnecting())
-            .unwrap_or(false)
+            .map(|state| ConnectionState::from(state))
+            .unwrap_or(ConnectionState::Disconnected)
     }
 
     #[cfg(any(test, feature = "test-support"))]
