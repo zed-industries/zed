@@ -429,8 +429,6 @@ pub async fn post_events(
                 country_code.clone(),
                 checksum_matched,
             )),
-            // Needed for clients sending old copilot_event types
-            Event::Copilot(_) => {}
             Event::InlineCompletion(event) => {
                 to_upload
                     .inline_completion_events
