@@ -574,10 +574,10 @@ impl DevServerProjects {
                             .child(
                                 h_flex().mt_1().pl_1().child(
                                     Button::new("new-remote_project", "Open Folder…")
-                                        .icon(IconName::Plus)
                                         .size(ButtonSize::Default)
-                                        .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
+                                        .icon(IconName::Plus)
+                                        .icon_color(Color::Muted)
                                         .icon_position(IconPosition::Start)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.create_ssh_project(ix, ssh_connection.clone(), cx);
