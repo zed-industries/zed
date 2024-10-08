@@ -82,7 +82,7 @@ fn init_panic_hook() {
         }
 
         log::error!(
-            "server: panic occured: {}\nBacktrace:\n{}",
+            "server: panic occurred: {}\nBacktrace:\n{}",
             payload,
             backtrace.join("\n")
         );
