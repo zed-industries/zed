@@ -139,12 +139,13 @@ impl SlashCommand for SearchSlashCommand {
         };
 
         cx.spawn(|cx| async move {
-            let results = project_index
+            let mut results = project_index
                 .read_with(&cx, |project_index, cx| {
                     project_index.search(vec![query.clone()], limit.unwrap_or(5), search_param, cx)
                 })?
                 .await?;
 
+            results = dbg!(results);
             let loaded_results = SemanticDb::load_results(results, &fs, &cx).await?;
 
             let output = cx

@@ -431,15 +431,13 @@ impl EmbeddingIndex {
                             let end = deletion_range.1.as_ref().map(|end| end.as_str());
                             log::debug!("deleting embeddings in range {:?}", &(start, end));
                             db.delete_range(&mut txn, &(start, end))?;
-                            for entry in db.range(&txn, &(start, end))? {
-                                if let Ok((_, embedded_file)) = entry {
-                                    if let None = update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
-                                        for chunk in &embedded_file.chunks {
-                                            stats.remove_counts(&chunk.term_frequencies);
-                                        }
-                                    }) {
-                                        log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
+                            for (_, embedded_file) in db.range(&txn, &(start, end))?.flatten() {
+                                if let None = update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
+                                    for chunk in &embedded_file.chunks {
+                                        stats.remove_counts(&chunk.term_frequencies);
                                     }
+                                }) {
+                                    log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
                                 }
                             }
                             txn.commit()?;
