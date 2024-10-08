@@ -102,7 +102,7 @@ impl LlmDatabase {
             .models
             .values()
             .find(|model| model.id == id)
-            .ok_or_else(|| anyhow!("no model for id {id:?}"))?)
+            .ok_or_else(|| anyhow!("no model for ID {id:?}"))?)
     }
 
     pub fn options(&self) -> &ConnectOptions {

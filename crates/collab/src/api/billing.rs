@@ -22,17 +22,15 @@ use stripe::{
 };
 use util::ResultExt;
 
-use crate::db::billing_subscription;
-use crate::llm::MONTHLY_SPENDING_LIMIT_IN_CENTS;
-use crate::{db::billing_subscription::StripeSubscriptionStatus, rpc::ResultExt as _};
-use crate::{
-    db::{
-        billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
-        CreateBillingSubscriptionParams, CreateProcessedStripeEventParams,
-        UpdateBillingCustomerParams, UpdateBillingSubscriptionParams,
-    },
-    llm::db::LlmDatabase,
+use crate::db::billing_subscription::{self, StripeSubscriptionStatus};
+use crate::db::{
+    billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
+    CreateBillingSubscriptionParams, CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
+    UpdateBillingSubscriptionParams,
 };
+use crate::llm::db::LlmDatabase;
+use crate::llm::MONTHLY_SPENDING_LIMIT_IN_CENTS;
+use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
