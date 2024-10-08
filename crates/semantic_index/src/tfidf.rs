@@ -68,17 +68,19 @@ pub trait Bm25Scorer {
         k1: f32,
         b: f32,
     ) -> f32 {
-        let avg_chunk_length = self.avg_chunk_length();
-        let chunk_length = chunk_terms.values().sum::<u32>() as f32;
+        // average doc length, current doc length, total docs
+        let avg_dl = self.avg_chunk_length();
+        let dl = chunk_terms.values().sum::<u32>() as f32;
+        let dn = self.total_chunks() as f32;
 
         query_terms
             .iter()
             .map(|(term, &query_tf)| {
                 let tf = self.term_frequency(term, chunk_terms) as f32;
                 let df = self.document_frequency(term) as f32;
-                let idf = ((self.total_chunks() as f32 - df + 0.5) / (df + 0.5)).ln();
+                let idf = ((dn - df + 0.5) / (df + 0.5) + 1.0).ln();
                 let numerator = tf * (k1 + 1.0);
-                let denominator = tf + k1 * (1.0 - b + b * chunk_length / avg_chunk_length);
+                let denominator = tf + k1 * (1.0 - b + b * dl / avg_dl);
 
                 query_tf as f32 * idf * (numerator / denominator)
             })
