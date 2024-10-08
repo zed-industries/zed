@@ -173,6 +173,8 @@ impl Render for SshPrompt {
                     )
                     .child(
                         div()
+                            .text_ellipsis()
+                            .overflow_x_hidden()
                             .when_some(self.error_message.as_ref(), |el, error| {
                                 el.child(Label::new(format!("－{}", error)).size(LabelSize::Small))
                             })
