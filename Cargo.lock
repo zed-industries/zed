@@ -9163,6 +9163,7 @@ name = "remote_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "cargo_toml",
  "clap",
  "client",
@@ -10998,6 +10999,7 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
+ "ureq_client",
 ]
 
 [[package]]
@@ -11884,6 +11886,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "remote",
  "rpc",
  "serde",
  "settings",
@@ -14747,7 +14750,7 @@ dependencies = [
 
 [[package]]
 name = "zed_dart"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14852,7 +14855,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14866,7 +14869,7 @@ dependencies = [
 
 [[package]]
 name = "zed_proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

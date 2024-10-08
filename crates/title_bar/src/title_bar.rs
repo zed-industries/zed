@@ -24,8 +24,8 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
-    Indicator, PopoverMenu, Tooltip,
+    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
+    IconButtonShape, IconName, IconSize, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -265,25 +265,28 @@ impl TitleBar {
     fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let host = self.project.read(cx).ssh_connection_string(cx)?;
         let meta = SharedString::from(format!("Connected to: {host}"));
-        let indicator_color = if self.project.read(cx).ssh_is_connected(cx)? {
-            Color::Success
-        } else {
-            Color::Warning
+        let indicator_color = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => Color::Info,
+            remote::ConnectionState::Connected => Color::Success,
+            remote::ConnectionState::HeartbeatMissed => Color::Warning,
+            remote::ConnectionState::Reconnecting => Color::Warning,
+            remote::ConnectionState::Disconnected => Color::Error,
         };
         let indicator = div()
             .absolute()
-            .w_1_4()
-            .h_1_4()
+            .size_1p5()
             .right_0p5()
             .bottom_0p5()
-            .p_1()
-            .rounded_2xl()
+            .rounded_full()
             .bg(indicator_color.color(cx));
 
         Some(
             div()
+                .relative()
                 .child(
                     IconButton::new("ssh-server-icon", IconName::Server)
+                        .icon_size(IconSize::Small)
+                        .shape(IconButtonShape::Square)
                         .tooltip(move |cx| {
                             Tooltip::with_meta(
                                 "Remote Project",
@@ -292,7 +295,6 @@ impl TitleBar {
                                 cx,
                             )
                         })
-                        .shape(ui::IconButtonShape::Square)
                         .on_click(|_, cx| {
                             cx.dispatch_action(OpenRemote.boxed_clone());
                         }),
