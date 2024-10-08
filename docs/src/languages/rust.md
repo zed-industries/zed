@@ -23,8 +23,8 @@ The following configuration can be used to change the inlay hint settings for `r
         "inlayHints": {
           "maxLength": null,
           "lifetimeElisionHints": {
-            "enable": "skip_trivial"
-            "useParameterNames": true,
+            "enable": "skip_trivial",
+            "useParameterNames": true
           },
           "closureReturnTypeHints": {
             "enable": "always"
@@ -64,14 +64,14 @@ You can configure which `rust-analyzer` binary Zed should use.
 
 By default, Zed will try to find a `rust-analyzer` in your `$PATH` and try to use that. If that binary successfully executes `rust-analyzer --help`, it's used. Otherwise, Zed will fall back to installing its own `rust-analyzer` version and using that.
 
-If you want to disable Zed looking for a `rust-analyzer` binary, you can set `path_lookup` to `false` in your `settings.json`:
+If you want to disable Zed looking for a `rust-analyzer` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
 
 ```json
 {
   "lsp": {
     "rust-analyzer": {
       "binary": {
-        "path_lookup": false
+        "ignore_system_version": true
       }
     }
   }

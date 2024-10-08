@@ -1,4 +1,6 @@
-/// Please see: [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional documentation.
+//! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
+
+use language::LanguageName;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, sync::Arc, time::Duration};
@@ -115,6 +117,8 @@ pub struct EditorEvent {
     pub copilot_enabled: bool,
     /// Whether the user has copilot enabled for the language of the file opened or saved
     pub copilot_enabled_for_language: bool,
+    /// Whether the client is editing a local file or a remote file via SSH
+    pub is_via_ssh: bool,
 }
 
 /// Deprecated since Zed v0.137.0 (2024-05-29). Replaced by InlineCompletionEvent.
@@ -152,8 +156,10 @@ pub struct AssistantEvent {
     pub phase: AssistantPhase,
     /// Name of the AI model used (gpt-4o, claude-3-5-sonnet, etc)
     pub model: String,
+    pub model_provider: String,
     pub response_latency: Option<Duration>,
     pub error_message: Option<String>,
+    pub language_name: Option<LanguageName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

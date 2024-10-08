@@ -9,7 +9,7 @@ use git::GitHostingProviderRegistry;
 use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
 use semantic_index::{
@@ -32,6 +32,7 @@ use std::{
         Arc,
     },
 };
+use ureq_client::UreqClient;
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
@@ -100,7 +101,11 @@ fn main() -> Result<()> {
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
-        let client = isahc_http_client::IsahcHttpClient::new(None, None);
+        let client = Arc::new(UreqClient::new(
+            None,
+            "Zed LLM evals".to_string(),
+            executor.clone(),
+        ));
         cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {
@@ -292,7 +297,7 @@ async fn run_evaluation(
     let user_store = cx
         .new_model(|cx| UserStore::new(client.clone(), cx))
         .unwrap();
-    let node_runtime = Arc::new(FakeNodeRuntime {});
+    let node_runtime = NodeRuntime::unavailable();
 
     let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
     let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).unwrap();

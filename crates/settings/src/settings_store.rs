@@ -157,13 +157,14 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
-/// A set of strongly-typed setting values defined via multiple JSON files.
+/// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
     raw_extension_settings: serde_json::Value,
-    raw_local_settings: BTreeMap<(WorktreeId, Arc<Path>), serde_json::Value>,
+    raw_local_settings:
+        BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
     tab_size_callback: Option<(
         TypeId,
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
@@ -172,6 +173,13 @@ pub struct SettingsStore {
     setting_file_updates_tx: mpsc::UnboundedSender<
         Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
     >,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LocalSettingsKind {
+    Settings,
+    Tasks,
+    Editorconfig,
 }
 
 impl Global for SettingsStore {}
@@ -520,19 +528,21 @@ impl SettingsStore {
     pub fn set_local_settings(
         &mut self,
         root_id: WorktreeId,
-        path: Arc<Path>,
+        directory_path: Arc<Path>,
+        kind: LocalSettingsKind,
         settings_content: Option<&str>,
         cx: &mut AppContext,
     ) -> Result<()> {
+        let raw_local_settings = self
+            .raw_local_settings
+            .entry((root_id, directory_path.clone()))
+            .or_default();
         if settings_content.is_some_and(|content| !content.is_empty()) {
-            self.raw_local_settings.insert(
-                (root_id, path.clone()),
-                parse_json_with_comments(settings_content.unwrap())?,
-            );
+            raw_local_settings.insert(kind, parse_json_with_comments(settings_content.unwrap())?);
         } else {
-            self.raw_local_settings.remove(&(root_id, path.clone()));
+            raw_local_settings.remove(&kind);
         }
-        self.recompute_values(Some((root_id, &path)), cx)?;
+        self.recompute_values(Some((root_id, &directory_path)), cx)?;
         Ok(())
     }
 
@@ -553,7 +563,8 @@ impl SettingsStore {
 
     /// Add or remove a set of local settings via a JSON string.
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut AppContext) -> Result<()> {
-        self.raw_local_settings.retain(|k, _| k.0 != root_id);
+        self.raw_local_settings
+            .retain(|(worktree_id, _), _| worktree_id != &root_id);
         self.recompute_values(Some((root_id, "".as_ref())), cx)?;
         Ok(())
     }
@@ -561,7 +572,7 @@ impl SettingsStore {
     pub fn local_settings(
         &self,
         root_id: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
+    ) -> impl '_ + Iterator<Item = (Arc<Path>, LocalSettingsKind, String)> {
         self.raw_local_settings
             .range(
                 (root_id, Path::new("").into())
@@ -570,7 +581,12 @@ impl SettingsStore {
                         Path::new("").into(),
                     ),
             )
-            .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
+            .flat_map(|((_, path), content)| {
+                content.iter().filter_map(|(&kind, raw_content)| {
+                    let parsed_content = serde_json::to_string(raw_content).log_err()?;
+                    Some((path.clone(), kind, parsed_content))
+                })
+            })
     }
 
     pub fn json_schema(
@@ -739,56 +755,63 @@ impl SettingsStore {
             // Reload the local values for the setting.
             paths_stack.clear();
             project_settings_stack.clear();
-            for ((root_id, path), local_settings) in &self.raw_local_settings {
-                // Build a stack of all of the local values for that setting.
-                while let Some(prev_entry) = paths_stack.last() {
-                    if let Some((prev_root_id, prev_path)) = prev_entry {
-                        if root_id != prev_root_id || !path.starts_with(prev_path) {
-                            paths_stack.pop();
-                            project_settings_stack.pop();
-                            continue;
+            for ((root_id, directory_path), local_settings) in &self.raw_local_settings {
+                if let Some(local_settings) = local_settings.get(&LocalSettingsKind::Settings) {
+                    // Build a stack of all of the local values for that setting.
+                    while let Some(prev_entry) = paths_stack.last() {
+                        if let Some((prev_root_id, prev_path)) = prev_entry {
+                            if root_id != prev_root_id || !directory_path.starts_with(prev_path) {
+                                paths_stack.pop();
+                                project_settings_stack.pop();
+                                continue;
+                            }
                         }
+                        break;
                     }
-                    break;
-                }
 
-                match setting_value.deserialize_setting(local_settings) {
-                    Ok(local_settings) => {
-                        paths_stack.push(Some((*root_id, path.as_ref())));
-                        project_settings_stack.push(local_settings);
+                    match setting_value.deserialize_setting(local_settings) {
+                        Ok(local_settings) => {
+                            paths_stack.push(Some((*root_id, directory_path.as_ref())));
+                            project_settings_stack.push(local_settings);
 
-                        // If a local settings file changed, then avoid recomputing local
-                        // settings for any path outside of that directory.
-                        if changed_local_path.map_or(
-                            false,
-                            |(changed_root_id, changed_local_path)| {
-                                *root_id != changed_root_id || !path.starts_with(changed_local_path)
-                            },
-                        ) {
-                            continue;
-                        }
-
-                        if let Some(value) = setting_value
-                            .load_setting(
-                                SettingsSources {
-                                    default: &default_settings,
-                                    extensions: extension_settings.as_ref(),
-                                    user: user_settings.as_ref(),
-                                    release_channel: release_channel_settings.as_ref(),
-                                    project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                            // If a local settings file changed, then avoid recomputing local
+                            // settings for any path outside of that directory.
+                            if changed_local_path.map_or(
+                                false,
+                                |(changed_root_id, changed_local_path)| {
+                                    *root_id != changed_root_id
+                                        || !directory_path.starts_with(changed_local_path)
                                 },
-                                cx,
-                            )
-                            .log_err()
-                        {
-                            setting_value.set_local_value(*root_id, path.clone(), value);
+                            ) {
+                                continue;
+                            }
+
+                            if let Some(value) = setting_value
+                                .load_setting(
+                                    SettingsSources {
+                                        default: &default_settings,
+                                        extensions: extension_settings.as_ref(),
+                                        user: user_settings.as_ref(),
+                                        release_channel: release_channel_settings.as_ref(),
+                                        project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                                    },
+                                    cx,
+                                )
+                                .log_err()
+                            {
+                                setting_value.set_local_value(
+                                    *root_id,
+                                    directory_path.clone(),
+                                    value,
+                                );
+                            }
                         }
-                    }
-                    Err(error) => {
-                        return Err(anyhow!(InvalidSettingsError::LocalSettings {
-                            path: path.join(local_settings_file_relative_path()),
-                            message: error.to_string()
-                        }));
+                        Err(error) => {
+                            return Err(anyhow!(InvalidSettingsError::LocalSettings {
+                                path: directory_path.join(local_settings_file_relative_path()),
+                                message: error.to_string()
+                            }));
+                        }
                     }
                 }
             }
@@ -1201,6 +1224,7 @@ mod tests {
             .set_local_settings(
                 WorktreeId::from_usize(1),
                 Path::new("/root1").into(),
+                LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "staff": true } }"#),
                 cx,
             )
@@ -1209,6 +1233,7 @@ mod tests {
             .set_local_settings(
                 WorktreeId::from_usize(1),
                 Path::new("/root1/subdir").into(),
+                LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "name": "Jane Doe" } }"#),
                 cx,
             )
@@ -1218,6 +1243,7 @@ mod tests {
             .set_local_settings(
                 WorktreeId::from_usize(1),
                 Path::new("/root2").into(),
+                LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
                 cx,
             )

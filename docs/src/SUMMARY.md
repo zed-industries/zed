@@ -17,11 +17,12 @@
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 <!-- - [Fonts](./fonts.md) -->
-- [Vim](./vim.md)
+- [Vim Mode](./vim.md)
 
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
+- [Outline Panel](./outline-panel.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)

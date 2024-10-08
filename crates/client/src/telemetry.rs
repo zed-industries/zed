@@ -16,9 +16,9 @@ use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, AssistantKind, AssistantPhase, CallEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent,
-    InlineCompletionEvent, MemoryEvent, ReplEvent, SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
+    SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -288,7 +288,7 @@ impl Telemetry {
         system_id: Option<String>,
         installation_id: Option<String>,
         session_id: String,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) {
         let mut state = self.state.lock();
         state.system_id = system_id.map(|id| id.into());
@@ -364,6 +364,7 @@ impl Telemetry {
         operation: &'static str,
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
+        is_via_ssh: bool,
     ) {
         let event = Event::Editor(EditorEvent {
             file_extension,
@@ -371,6 +372,7 @@ impl Telemetry {
             operation: operation.into(),
             copilot_enabled,
             copilot_enabled_for_language,
+            is_via_ssh,
         });
 
         self.report_event(event)
@@ -391,25 +393,8 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_assistant_event(
-        self: &Arc<Self>,
-        conversation_id: Option<String>,
-        kind: AssistantKind,
-        phase: AssistantPhase,
-        model: String,
-        response_latency: Option<Duration>,
-        error_message: Option<String>,
-    ) {
-        let event = Event::Assistant(AssistantEvent {
-            conversation_id,
-            kind,
-            phase,
-            model: model.to_string(),
-            response_latency,
-            error_message,
-        });
-
-        self.report_event(event)
+    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
+        self.report_event(Event::Assistant(event));
     }
 
     pub fn report_call_event(
@@ -502,7 +487,7 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_names: Vec<String> = {
+        let project_type_names: Vec<String> = {
             let mut state = self.state.lock();
             state
                 .worktree_id_map
@@ -538,8 +523,8 @@ impl Telemetry {
         };
 
         // Done on purpose to avoid calling `self.state.lock()` multiple times
-        for project_name in project_names {
-            self.report_app_event(format!("open {} project", project_name));
+        for project_type_name in project_type_names {
+            self.report_app_event(format!("open {} project", project_type_name));
         }
     }
 

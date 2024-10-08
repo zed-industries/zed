@@ -20,11 +20,14 @@ jobs:
         with:
           version: 9
 
-      - run: |
+      - name: Prettier Check on /docs
+        working-directory: ./docs
+        run: |
           pnpm dlx prettier . --check || {
             echo "To fix, run from the root of the zed repo:"
             echo "  cd docs && pnpm dlx prettier . --write && cd .."
             false
           }
 
-        working-directory: ./docs
+      - name: Check spelling
+        run: script/check-spelling docs/
