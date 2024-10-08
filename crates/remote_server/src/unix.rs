@@ -53,10 +53,41 @@ fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
 }
 
 fn init_panic_hook() {
-    let _hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|panic_info| {
-        let message = panic_info.to_string();
-        log::error!("server: panic occurred: {}", message);
+    std::panic::set_hook(Box::new(|info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "Box<Any>".to_string());
+
+        let backtrace = backtrace::Backtrace::new();
+        let mut backtrace = backtrace
+            .frames()
+            .iter()
+            .flat_map(|frame| {
+                frame
+                    .symbols()
+                    .iter()
+                    .filter_map(|frame| Some(format!("{:#}", frame.name()?)))
+            })
+            .collect::<Vec<_>>();
+
+        // Strip out leading stack frames for rust panic-handling.
+        if let Some(ix) = backtrace
+            .iter()
+            .position(|name| name == "rust_begin_unwind")
+        {
+            backtrace.drain(0..=ix);
+        }
+
+        log::error!(
+            "server: panic occured: {}\nBacktrace:\n{}",
+            payload,
+            backtrace.join("\n")
+        );
+
+        std::process::abort();
     }));
 }
 
