@@ -382,6 +382,7 @@ impl Telemetry {
         operation: &'static str,
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
+        is_via_ssh: bool,
     ) {
         let event = Event::Editor(EditorEvent {
             file_extension,
@@ -389,6 +390,7 @@ impl Telemetry {
             operation: operation.into(),
             copilot_enabled,
             copilot_enabled_for_language,
+            is_via_ssh,
         });
 
         self.report_event(event)
@@ -474,7 +476,7 @@ impl Telemetry {
         }))
     }
 
-    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
+    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
@@ -483,6 +485,7 @@ impl Telemetry {
             let event = Event::Edit(EditEvent {
                 duration: end.timestamp_millis() - start.timestamp_millis(),
                 environment: environment.to_string(),
+                is_via_ssh,
             });
 
             self.report_event(event);
@@ -503,7 +506,7 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_names: Vec<String> = {
+        let project_type_names: Vec<String> = {
             let mut state = self.state.lock();
             state
                 .worktree_id_map
@@ -539,8 +542,8 @@ impl Telemetry {
         };
 
         // Done on purpose to avoid calling `self.state.lock()` multiple times
-        for project_name in project_names {
-            self.report_app_event(format!("open {} project", project_name));
+        for project_type_name in project_type_names {
+            self.report_app_event(format!("open {} project", project_type_name));
         }
     }
 

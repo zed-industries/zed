@@ -9164,6 +9164,7 @@ name = "remote_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "cargo_toml",
  "clap",
  "client",
@@ -11886,6 +11887,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "remote",
  "rpc",
  "serde",
  "settings",
@@ -14749,7 +14751,7 @@ dependencies = [
 
 [[package]]
 name = "zed_dart"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
