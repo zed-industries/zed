@@ -68,7 +68,7 @@ pub(crate) struct DispatchNodeId(usize);
 
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
-    pub(crate) context_stack: Vec<KeyContext>,
+    context_stack: Vec<KeyContext>,
     view_stack: Vec<EntityId>,
     nodes: Vec<DispatchNode>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
@@ -396,13 +396,15 @@ impl DispatchTree {
     pub fn bindings_for_action(
         &self,
         action: &dyn Action,
-        context_stack: &[KeyContext],
+        context_path: &[KeyContext],
     ) -> Vec<KeyBinding> {
         let keymap = self.keymap.borrow();
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
+                dbg!(&binding);
+                let (bindings, _) =
+                    keymap.bindings_for_input(&binding.keystrokes, dbg!(context_path));
                 bindings
                     .iter()
                     .next()
@@ -517,6 +519,13 @@ impl DispatchTree {
         }
         dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         dispatch_path
+    }
+
+    pub fn context_path(&self, node_id: DispatchNodeId) -> SmallVec<[KeyContext; 32]> {
+        self.dispatch_path(node_id)
+            .into_iter()
+            .filter_map(|node_id| self.node(node_id).context.clone())
+            .collect()
     }
 
     pub fn focus_path(&self, focus_id: FocusId) -> SmallVec<[FocusId; 8]> {

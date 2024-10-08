@@ -3666,22 +3666,11 @@ impl<'a> WindowContext<'a> {
 
     /// Returns all available actions for the focused element.
     pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
-        let node_id = self
-            .window
-            .focus
-            .and_then(|focus_id| {
-                self.window
-                    .rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
-
         let mut actions = self
             .window
             .rendered_frame
             .dispatch_tree
-            .available_actions(node_id);
+            .available_actions(self.focused_node_id());
         for action_type in self.global_action_listeners.keys() {
             if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
                 let action = self.actions.build_action_type(action_type).ok();
@@ -3695,13 +3684,9 @@ impl<'a> WindowContext<'a> {
 
     /// Returns key bindings that invoke the given action on the currently focused element.
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
-        self.window
-            .rendered_frame
-            .dispatch_tree
-            .bindings_for_action(
-                action,
-                &self.window.rendered_frame.dispatch_tree.context_stack,
-            )
+        let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
+        dispatch_tree
+            .bindings_for_action(action, &dispatch_tree.context_path(self.focused_node_id()))
     }
 
     /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
@@ -3721,6 +3706,18 @@ impl<'a> WindowContext<'a> {
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
         dispatch_tree.bindings_for_action(action, &context_stack)
+    }
+
+    fn focused_node_id(&self) -> DispatchNodeId {
+        self.window
+            .focus
+            .and_then(|focus_id| {
+                self.window
+                    .rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id())
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
