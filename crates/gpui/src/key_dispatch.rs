@@ -402,9 +402,9 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                dbg!(&binding);
+                &binding;
                 let (bindings, _) =
-                    keymap.bindings_for_input(&binding.keystrokes, dbg!(context_path));
+                    keymap.bindings_for_input(&binding.keystrokes, context_path);
                 bindings
                     .iter()
                     .next()
