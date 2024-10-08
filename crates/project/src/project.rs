@@ -565,7 +565,7 @@ impl Project {
         BufferStore::init(&client);
         LspStore::init(&client);
         SettingsObserver::init(&client);
-        TaskStore::init(Some(&client), cx);
+        TaskStore::init(Some(&client));
     }
 
     pub fn local(
@@ -600,13 +600,28 @@ impl Project {
                 )
             });
 
+            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+
+            let task_store = cx.new_model(|cx| {
+                TaskStore::local(
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+
             let settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx)
+                SettingsObserver::new_local(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    cx,
+                )
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
@@ -620,15 +635,6 @@ impl Project {
                 )
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
-
-            let task_store = cx.new_model(|cx| {
-                TaskStore::local(
-                    buffer_store.downgrade(),
-                    worktree_store.clone(),
-                    environment.clone(),
-                    cx,
-                )
-            });
 
             Self {
                 buffer_ordered_messages_tx: tx,
@@ -701,8 +707,23 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
+            let task_store = cx.new_model(|cx| {
+                TaskStore::remote(
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    ssh.read(cx).to_proto_client(),
+                    SSH_PROJECT_ID,
+                    cx,
+                )
+            });
+
             let settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_ssh(ssh_proto.clone(), worktree_store.clone(), cx)
+                SettingsObserver::new_ssh(
+                    ssh_proto.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    cx,
+                )
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
@@ -730,16 +751,6 @@ impl Project {
                 }
             })
             .detach();
-
-            let task_store = cx.new_model(|cx| {
-                TaskStore::remote(
-                    buffer_store.downgrade(),
-                    worktree_store.clone(),
-                    ssh.read(cx).to_proto_client(),
-                    SSH_PROJECT_ID,
-                    cx,
-                )
-            });
 
             let this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -790,7 +801,7 @@ impl Project {
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
-            TaskStore::init(Some(&ssh_proto), cx);
+            TaskStore::init(Some(&ssh_proto));
 
             this
         })
@@ -905,12 +916,13 @@ impl Project {
                     cx,
                 )
             } else {
-                TaskStore::Empty
+                TaskStore::Noop
             }
         })?;
 
-        let settings_observer =
-            cx.new_model(|cx| SettingsObserver::new_remote(worktree_store.clone(), cx))?;
+        let settings_observer = cx.new_model(|cx| {
+            SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
+        })?;
 
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;

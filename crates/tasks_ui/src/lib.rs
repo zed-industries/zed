@@ -402,7 +402,7 @@ mod tests {
             editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
-            TaskStore::init(None, cx);
+            TaskStore::init(None);
             state
         })
     }

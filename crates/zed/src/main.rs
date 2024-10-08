@@ -59,8 +59,7 @@ use workspace::{
 };
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    handle_tasks_file_changes, initialize_workspace, open_paths_with_positions, OpenListener,
-    OpenRequest,
+    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -405,11 +404,6 @@ fn main() {
         fs.clone(),
         paths::keymap_file().clone(),
     );
-    let user_tasks_file_rx = watch_config_file(
-        &app.background_executor(),
-        fs.clone(),
-        paths::tasks_file().clone(),
-    );
 
     if !stdout_is_a_pty() {
         app.background_executor()
@@ -456,7 +450,6 @@ fn main() {
         }
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_tasks_file_changes(user_tasks_file_rx, cx, handle_tasks_file_changed);
         handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
         client::init_settings(cx);
         let user_agent = format!(

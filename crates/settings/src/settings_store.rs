@@ -157,30 +157,11 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
-/// A set of task templates, applicable in the current project.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RawTaskTemplates<'a> {
-    pub global: &'a [serde_json::Value],
-    pub worktree: Vec<(&'a Arc<Path>, &'a serde_json::Value)>,
-}
-
-/// TODO kb docs
-pub trait TaskSettingsStore {
-    fn as_any(&self) -> &dyn Any;
-
-    fn update_task_templates<'a>(
-        &'a mut self,
-        worktree: Option<WorktreeId>,
-        templates: RawTaskTemplates<'a>,
-    );
-}
-
 /// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
-    raw_user_tasks: Vec<serde_json::Value>,
     raw_extension_settings: serde_json::Value,
     raw_local_settings:
         BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
@@ -189,7 +170,6 @@ pub struct SettingsStore {
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
     )>,
     _setting_file_updates: Task<()>,
-    task_settings_store: Option<Box<dyn TaskSettingsStore>>,
     setting_file_updates_tx: mpsc::UnboundedSender<
         Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
     >,
@@ -239,12 +219,10 @@ impl SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
-            raw_user_tasks: Vec::new(),
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
             setting_file_updates_tx,
-            task_settings_store: None,
             _setting_file_updates: cx.spawn(|cx| async move {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
                     (setting_file_update)(cx.clone()).await.log_err();
@@ -343,26 +321,6 @@ impl SettingsStore {
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &serde_json::Value {
         &self.raw_user_settings
-    }
-
-    /// Get the user's tasks as a raw JSON value.
-    pub fn raw_user_tasks(&self) -> &[serde_json::Value] {
-        &self.raw_user_tasks
-    }
-
-    pub fn set_task_settings_store(
-        &mut self,
-        store: Box<dyn TaskSettingsStore>,
-        cx: &mut AppContext,
-    ) {
-        self.task_settings_store = Some(store);
-        self.recompute_tasks(None, cx);
-    }
-
-    pub fn get_task_settings_store<T: 'static>(&self) -> Option<&T> {
-        self.task_settings_store
-            .as_ref()
-            .and_then(|store| store.as_any().downcast_ref::<T>())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -564,20 +522,6 @@ impl SettingsStore {
         Ok(())
     }
 
-    /// Sets the user tasks via a JSON string.
-    pub fn set_user_tasks(&mut self, user_tasks_content: &str, cx: &mut AppContext) -> Result<()> {
-        let tasks: Vec<serde_json::Value> = if user_tasks_content.is_empty() {
-            parse_json_with_comments("[]")?
-        } else {
-            parse_json_with_comments(user_tasks_content)?
-        };
-        if tasks != self.raw_user_tasks {
-            self.raw_user_tasks = tasks;
-            self.recompute_tasks(None, cx);
-        }
-        Ok(())
-    }
-
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
@@ -607,9 +551,7 @@ impl SettingsStore {
                 LocalSettingsKind::Settings | LocalSettingsKind::Editorconfig => {
                     self.recompute_values(Some((root_id, &directory_path)), cx)?;
                 }
-                LocalSettingsKind::Tasks => {
-                    self.recompute_tasks(Some((root_id, &directory_path)), cx);
-                }
+                LocalSettingsKind::Tasks => {}
             }
         }
         Ok(())
@@ -886,41 +828,6 @@ impl SettingsStore {
             }
         }
         Ok(())
-    }
-
-    fn recompute_tasks(
-        &mut self,
-        changed_local_path: Option<(WorktreeId, &Path)>,
-        _cx: &mut AppContext,
-    ) {
-        if let Some(task_settings_store) = &mut self.task_settings_store {
-            let worktree = changed_local_path.map(|(worktree, _)| worktree);
-            task_settings_store.update_task_templates(
-                worktree,
-                RawTaskTemplates {
-                    global: &self.raw_user_tasks,
-                    worktree: worktree
-                        .into_iter()
-                        .flat_map(|worktree| {
-                            self.raw_local_settings.range(
-                                (worktree, Path::new("").into())
-                                    ..(
-                                        WorktreeId::from_usize(worktree.to_usize() + 1),
-                                        Path::new("").into(),
-                                    ),
-                            )
-                        })
-                        .filter_map(|((_, directory_path), settings)| {
-                            Some(directory_path)
-                                .zip(settings.get(&LocalSettingsKind::Tasks)?.as_array())
-                        })
-                        .flat_map(|(directory_path, local_tasks)| {
-                            local_tasks.iter().map(move |task| (directory_path, task))
-                        })
-                        .collect(),
-                },
-            );
-        }
     }
 }
 

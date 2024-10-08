@@ -94,7 +94,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
-    cx.update(|cx| TaskStore::init(None, cx));
+    cx.update(|cx| TaskStore::init(None));
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -222,26 +222,27 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             });
     });
 
-    cx.update_global::<SettingsStore, ()>(|s, cx| {
-        s.set_user_tasks(
-            json!([{
-                "label": "cargo check unstable",
-                "command": "cargo",
-                "args": [
-                    "check",
-                    "--all",
-                    "--all-targets"
-                ],
-                "env": {
-                    "RUSTFLAGS": "-Zunstable-options"
-                }
-            }])
-            .to_string()
-            .as_str(),
-            cx,
-        )
-        .unwrap();
-    });
+    // TODO kb tests
+    // cx.update_global::<SettingsStore, ()>(|s, cx| {
+    //     s.set_user_tasks(
+    //         json!([{
+    //             "label": "cargo check unstable",
+    //             "command": "cargo",
+    //             "args": [
+    //                 "check",
+    //                 "--all",
+    //                 "--all-targets"
+    //             ],
+    //             "env": {
+    //                 "RUSTFLAGS": "-Zunstable-options"
+    //             }
+    //         }])
+    //         .to_string()
+    //         .as_str(),
+    //         cx,
+    //     )
+    //     .unwrap();
+    // });
     cx.run_until_parked();
 
     let all_tasks = cx

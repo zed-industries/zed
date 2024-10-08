@@ -740,36 +740,6 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         .detach();
 }
 
-pub fn handle_tasks_file_changes(
-    mut user_tasks_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
-    tasks_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
-) {
-    let user_tasks_content = cx
-        .background_executor()
-        .block(user_tasks_file_rx.next())
-        .unwrap();
-    SettingsStore::update_global(cx, |store, cx| {
-        store.set_user_tasks(&user_tasks_content, cx).log_err();
-    });
-    cx.spawn(move |cx| async move {
-        while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-            let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let result = store.set_user_tasks(&user_tasks_content, cx);
-                if let Err(err) = &result {
-                    log::error!("Failed to load user tasks: {err}");
-                }
-                tasks_changed(result.err(), cx);
-                cx.refresh();
-            });
-            if result.is_err() {
-                break; // App dropped
-            }
-        }
-    })
-    .detach();
-}
-
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,

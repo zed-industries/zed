@@ -13,7 +13,6 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{AppContext, Context, Model};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
-use settings::SettingsStore;
 use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
@@ -23,11 +22,17 @@ use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
 
-use super::task_store::TaskSettings;
-
 /// Inventory tracks available tasks for a given project.
+#[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    pub(super) templates_from_settings: ParsedTemplates,
+}
+
+#[derive(Debug, Default)]
+struct ParsedTemplates {
+    global: Vec<TaskTemplate>,
+    worktree: HashMap<WorktreeId, Vec<(Arc<Path>, TaskTemplate)>>,
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -74,9 +79,7 @@ impl TaskSourceKind {
 
 impl Inventory {
     pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self {
-            last_scheduled_tasks: VecDeque::new(),
-        })
+        cx.new_model(|_| Self::default())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -97,7 +100,7 @@ impl Inventory {
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
 
-        self.templates_from_settings(worktree, cx)
+        self.templates_from_settings(worktree)
             .chain(language_tasks)
             .collect()
     }
@@ -170,7 +173,7 @@ impl Inventory {
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
         let new_resolved_tasks = self
-            .templates_from_settings(worktree, cx)
+            .templates_from_settings(worktree)
             .chain(language_tasks)
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
@@ -234,15 +237,49 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
+    /// Returns every user task template defined in tasks.json files.
+    /// If a worktree is provided, local, worktree-specific tasks will be returned as well.
+    /// No deduplication or sorting is performed.
     fn templates_from_settings<'a>(
         &'a self,
         worktree: Option<WorktreeId>,
-        cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        cx.global::<SettingsStore>()
-            .get_task_settings_store::<TaskSettings>()
+        self.templates_from_settings
+            .global
+            .clone()
             .into_iter()
-            .flat_map(move |settings| settings.task_templates(worktree))
+            .map(|template| {
+                (
+                    TaskSourceKind::AbsPath {
+                        id_base: Cow::Borrowed("global tasks.json"),
+                        abs_path: paths::tasks_file().clone(),
+                    },
+                    template,
+                )
+            })
+            .chain(worktree.into_iter().flat_map(|worktree| {
+                self.templates_from_settings
+                    .worktree
+                    .get(&worktree)
+                    .cloned()
+                    .into_iter()
+                    .flat_map(move |templates| {
+                        templates
+                            .into_iter()
+                            .map(move |(directory_path, template)| {
+                                (
+                                    TaskSourceKind::Worktree {
+                                        id: worktree,
+                                        directory_in_worktree: directory_path.to_path_buf(),
+                                        id_base: Cow::Owned(format!(
+                                            "local worktree tasks from directory {directory_path:?}"
+                                        )),
+                                    },
+                                    template,
+                                )
+                            })
+                    })
+            }))
     }
 }
 
@@ -477,10 +514,9 @@ impl ContextProvider for ContextProviderWithTasks {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, TestAppContext};
+    use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
     use serde_json::json;
-    use settings::LocalSettingsKind;
 
     use crate::task_store::TaskStore;
 
@@ -508,18 +544,19 @@ mod tests {
             "2_task".to_string(),
             "3_task".to_string(),
         ];
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, ()>(|store, cx| {
-                store
-                    .set_user_tasks(
-                        &mock_tasks_from_names(
-                            expected_initial_state.iter().map(|name| name.as_str()),
-                        ),
-                        cx,
-                    )
-                    .unwrap();
-            })
-        });
+        // TODO kb tests
+        // cx.update(|cx| {
+        //     cx.update_global::<SettingsStore, ()>(|store, cx| {
+        //         store
+        //             .set_user_tasks(
+        //                 &mock_tasks_from_names(
+        //                     expected_initial_state.iter().map(|name| name.as_str()),
+        //                 ),
+        //                 cx,
+        //             )
+        //             .unwrap();
+        //     })
+        // });
         assert_eq!(
             task_template_names(&inventory, None, cx),
             &expected_initial_state,
@@ -563,20 +600,21 @@ mod tests {
             ],
         );
 
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, ()>(|store, cx| {
-                store
-                    .set_user_tasks(
-                        &mock_tasks_from_names(
-                            ["10_hello", "11_hello"]
-                                .into_iter()
-                                .chain(expected_initial_state.iter().map(|name| name.as_str())),
-                        ),
-                        cx,
-                    )
-                    .unwrap();
-            })
-        });
+        // TODO kb tests
+        // cx.update(|cx| {
+        //     cx.update_global::<SettingsStore, ()>(|store, cx| {
+        //         store
+        //             .set_user_tasks(
+        //                 &mock_tasks_from_names(
+        //                     ["10_hello", "11_hello"]
+        //                         .into_iter()
+        //                         .chain(expected_initial_state.iter().map(|name| name.as_str())),
+        //                 ),
+        //                 cx,
+        //             )
+        //             .unwrap();
+        //     })
+        // });
         cx.run_until_parked();
         let expected_updated_state = [
             "10_hello".to_string(),
@@ -689,42 +727,43 @@ mod tests {
             ),
         ];
 
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, ()>(|store, cx| {
-                store
-                    .set_user_tasks(
-                        &mock_tasks_from_names(
-                            worktree_independent_tasks
-                                .iter()
-                                .map(|(_, name)| name.as_str()),
-                        ),
-                        cx,
-                    )
-                    .unwrap();
-                store
-                    .set_local_settings(
-                        worktree_1,
-                        Arc::from(Path::new(".zed")),
-                        LocalSettingsKind::Tasks,
-                        Some(&mock_tasks_from_names(
-                            worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
-                        )),
-                        cx,
-                    )
-                    .unwrap();
-                store
-                    .set_local_settings(
-                        worktree_2,
-                        Arc::from(Path::new(".zed")),
-                        LocalSettingsKind::Tasks,
-                        Some(&mock_tasks_from_names(
-                            worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
-                        )),
-                        cx,
-                    )
-                    .unwrap();
-            })
-        });
+        // TODO kb tests
+        // cx.update(|cx| {
+        //     cx.update_global::<SettingsStore, ()>(|store, cx| {
+        //         store
+        //             .set_user_tasks(
+        //                 &mock_tasks_from_names(
+        //                     worktree_independent_tasks
+        //                         .iter()
+        //                         .map(|(_, name)| name.as_str()),
+        //                 ),
+        //                 cx,
+        //             )
+        //             .unwrap();
+        //         store
+        //             .set_local_settings(
+        //                 worktree_1,
+        //                 Arc::from(Path::new(".zed")),
+        //                 LocalSettingsKind::Tasks,
+        //                 Some(&mock_tasks_from_names(
+        //                     worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
+        //                 )),
+        //                 cx,
+        //             )
+        //             .unwrap();
+        //         store
+        //             .set_local_settings(
+        //                 worktree_2,
+        //                 Arc::from(Path::new(".zed")),
+        //                 LocalSettingsKind::Tasks,
+        //                 Some(&mock_tasks_from_names(
+        //                     worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
+        //                 )),
+        //                 cx,
+        //             )
+        //             .unwrap();
+        //     })
+        // });
 
         assert_eq!(
             list_tasks(&inventory_with_statics, None, cx).await,
@@ -756,9 +795,7 @@ mod tests {
             env_logger::try_init().ok();
         }
         cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            TaskStore::init(None, cx);
+            TaskStore::init(None);
         });
     }
 

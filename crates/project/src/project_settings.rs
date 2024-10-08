@@ -23,7 +23,10 @@ use task::{TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
-use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
+use crate::{
+    task_store::TaskStore,
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
@@ -208,6 +211,7 @@ pub struct SettingsObserver {
     mode: SettingsObserverMode,
     downstream_client: Option<AnyProtoClient>,
     worktree_store: Model<WorktreeStore>,
+    task_store: Model<TaskStore>,
     project_id: u64,
 }
 
@@ -225,6 +229,7 @@ impl SettingsObserver {
     pub fn new_local(
         fs: Arc<dyn Fs>,
         worktree_store: Model<WorktreeStore>,
+        task_store: Model<TaskStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -232,6 +237,7 @@ impl SettingsObserver {
 
         Self {
             worktree_store,
+            task_store,
             mode: SettingsObserverMode::Local(fs),
             downstream_client: None,
             project_id: 0,
@@ -241,10 +247,12 @@ impl SettingsObserver {
     pub fn new_ssh(
         client: AnyProtoClient,
         worktree_store: Model<WorktreeStore>,
+        task_store: Model<TaskStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let this = Self {
             worktree_store,
+            task_store,
             mode: SettingsObserverMode::Ssh(client.clone()),
             downstream_client: None,
             project_id: 0,
@@ -253,9 +261,14 @@ impl SettingsObserver {
         this
     }
 
-    pub fn new_remote(worktree_store: Model<WorktreeStore>, _: &mut ModelContext<Self>) -> Self {
+    pub fn new_remote(
+        worktree_store: Model<WorktreeStore>,
+        task_store: Model<TaskStore>,
+        _: &mut ModelContext<Self>,
+    ) -> Self {
         Self {
             worktree_store,
+            task_store,
             mode: SettingsObserverMode::Remote,
             downstream_client: None,
             project_id: 0,
@@ -326,25 +339,31 @@ impl SettingsObserver {
     }
 
     pub async fn handle_update_user_settings(
-        _: Model<Self>,
+        settings_observer: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateUserSettings>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> anyhow::Result<()> {
-        cx.update_global(move |settings_store: &mut SettingsStore, cx| {
-            match envelope.payload.kind() {
-                proto::update_user_settings::Kind::Settings => {
+        match envelope.payload.kind() {
+            proto::update_user_settings::Kind::Settings => {
+                cx.update_global(move |settings_store: &mut SettingsStore, cx| {
                     settings_store.set_user_settings(&envelope.payload.content, cx)
-                }
-                proto::update_user_settings::Kind::Tasks => {
-                    settings_store.set_user_tasks(&envelope.payload.content, cx)
-                }
+                })
             }
-        })??;
+            proto::update_user_settings::Kind::Tasks => {
+                settings_observer.update(&mut cx, |settings_observer, cx| {
+                    settings_observer.task_store.update(cx, |task_store, cx| {
+                        task_store.update_user_tasks(&envelope.payload.content, cx)
+                    })
+                })
+            }
+        }??;
+
         Ok(())
     }
 
     pub fn maintain_ssh_settings(&self, ssh: AnyProtoClient, cx: &mut ModelContext<Self>) {
         let settings_store = cx.global::<SettingsStore>();
+        let task_store = &self.task_store;
 
         let mut settings = settings_store.raw_user_settings().clone();
         if let Some(content) = serde_json::to_string(&settings).log_err() {
@@ -356,15 +375,16 @@ impl SettingsObserver {
             .log_err();
         }
 
-        let mut tasks = settings_store.raw_user_tasks().to_vec();
-        if let Some(content) = serde_json::to_string(&tasks).log_err() {
-            ssh.send(proto::UpdateUserSettings {
-                project_id: 0,
-                content,
-                kind: Some(proto::LocalSettingsKind::Tasks.into()),
-            })
-            .log_err();
-        }
+        // TODO kb need to send this into the store
+        // let mut tasks = settings_store.raw_user_tasks().to_vec();
+        // if let Some(content) = serde_json::to_string(&tasks).log_err() {
+        //     ssh.send(proto::UpdateUserSettings {
+        //         project_id: 0,
+        //         content,
+        //         kind: Some(proto::LocalSettingsKind::Tasks.into()),
+        //     })
+        //     .log_err();
+        // }
 
         let weak_client = ssh.downgrade();
         cx.observe_global::<SettingsStore>(move |_, cx| {
@@ -383,20 +403,21 @@ impl SettingsObserver {
                 }
             }
 
-            let new_tasks = cx.global::<SettingsStore>().raw_user_tasks();
-            if tasks != new_tasks {
-                tasks = new_tasks.to_vec();
-            }
-            if let Some(content) = serde_json::to_string(&new_tasks).log_err() {
-                if let Some(ssh) = weak_client.upgrade() {
-                    ssh.send(proto::UpdateUserSettings {
-                        project_id: 0,
-                        content,
-                        kind: Some(proto::LocalSettingsKind::Tasks.into()),
-                    })
-                    .log_err();
-                }
-            }
+            // TODO kb update settings in the store
+            // let new_tasks = cx.global::<SettingsStore>().raw_user_tasks();
+            // if tasks != new_tasks {
+            //     tasks = new_tasks.to_vec();
+            // }
+            // if let Some(content) = serde_json::to_string(&new_tasks).log_err() {
+            //     if let Some(ssh) = weak_client.upgrade() {
+            //         ssh.send(proto::UpdateUserSettings {
+            //             project_id: 0,
+            //             content,
+            //             kind: Some(proto::LocalSettingsKind::Tasks.into()),
+            //         })
+            //         .log_err();
+            //     }
+            // }
         })
         .detach();
     }

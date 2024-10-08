@@ -70,18 +70,33 @@ impl HeadlessProject {
             )
         });
 
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let task_store = cx.new_model(|cx| {
+            let mut task_store = TaskStore::local(
+                buffer_store.downgrade(),
+                worktree_store.clone(),
+                environment.clone(),
+                cx,
+            );
+            task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            task_store
+        });
         let settings_observer = cx.new_model(|cx| {
-            let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
+            let mut observer = SettingsObserver::new_local(
+                fs.clone(),
+                worktree_store.clone(),
+                task_store.clone(),
+                cx,
+            );
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
-                environment.clone(),
+                environment,
                 languages.clone(),
                 None,
                 fs.clone(),
@@ -92,17 +107,6 @@ impl HeadlessProject {
         });
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
-
-        let task_store = cx.new_model(|cx| {
-            let mut task_store = TaskStore::local(
-                buffer_store.downgrade(),
-                worktree_store.clone(),
-                environment,
-                cx,
-            );
-            task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
-            task_store
-        });
 
         cx.subscribe(
             &buffer_store,
@@ -139,7 +143,7 @@ impl HeadlessProject {
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
         LspStore::init(&client);
-        TaskStore::init(Some(&client), cx);
+        TaskStore::init(Some(&client));
 
         HeadlessProject {
             session: client,
