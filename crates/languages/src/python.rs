@@ -7,7 +7,6 @@ use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelega
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
-use project::Project;
 use serde_json::Value;
 
 use std::{
