@@ -339,7 +339,7 @@ impl TerminalBuilder {
         // modification so that we don't have to re-implement the logic here.
         alacritty_terminal::tty::setup_env();
         env.insert("TERM".to_string(), std::env::var("TERM").unwrap());
-        env.insert("COLORTERM".to_string(),  std::env::var("COLORTERM").unwrap());
+        env.insert("COLORTERM".to_string(), std::env::var("COLORTERM").unwrap());
         env.remove("DESKTOP_STARTUP_ID");
         env.remove("XDG_ACTIVATION_TOKEN");
 
