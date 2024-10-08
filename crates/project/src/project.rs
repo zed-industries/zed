@@ -1179,7 +1179,7 @@ impl Project {
         self.environment.read(cx).environment_errors()
     }
 
-    pub fn remove_environment_error<'a>(
+    pub fn remove_environment_error(
         &mut self,
         cx: &mut ModelContext<Self>,
         worktree_id: WorktreeId,
