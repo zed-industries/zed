@@ -687,14 +687,29 @@ impl EditorElement {
             scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
         }
 
+        // Not entirely sure what this is for, experimenting with this
+        // For now, the `horizontal_scroll_margin` is in `scroll_margin_x`
         let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
+
+        // We need horizontal width of text
+        let style = editor.style.clone().unwrap_or_default();
+        let font_id = cx.text_system().resolve_font(&style.text.font());
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+
+        let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
 
         // Testing bounds for scroll
         // [TODO] Add a configuration setting for this
-        let scroll_space: f32 = 150.0;
+        let scroll_space: Pixels = scroll_margin_x * em_width;
 
-        let left = text_bounds.origin.x + horizontal_margin + Pixels(scroll_space);
-        let right = text_bounds.upper_right().x - horizontal_margin - Pixels(scroll_space);
+        let left = text_bounds.origin.x + horizontal_margin + scroll_space;
+        let right = text_bounds.upper_right().x - horizontal_margin - scroll_space;
 
         if event.position.x < left {
             scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
