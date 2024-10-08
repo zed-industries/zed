@@ -146,9 +146,9 @@ impl Render for SshPrompt {
             .justify_center()
             .child(
                 h_flex()
-                    .py_2()
-                    .px_4()
+                    .p_2()
                     .justify_center()
+                    .flex_wrap()
                     .child(if self.error_message.is_some() {
                         Icon::new(IconName::XCircle)
                             .size(IconSize::Medium)
@@ -173,6 +173,8 @@ impl Render for SshPrompt {
                     )
                     .child(
                         div()
+                            .text_ellipsis()
+                            .overflow_x_hidden()
                             .when_some(self.error_message.as_ref(), |el, error| {
                                 el.child(Label::new(format!("－{}", error)).size(LabelSize::Small))
                             })
