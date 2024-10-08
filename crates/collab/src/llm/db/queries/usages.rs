@@ -202,6 +202,18 @@ impl LlmDatabase {
                 .all(&*tx)
                 .await?;
 
+            let month = now.date_naive().month() as i32;
+            let year = now.date_naive().year();
+            let monthly_usage = monthly_usage::Entity::find()
+                .filter(
+                    monthly_usage::Column::UserId
+                        .eq(user_id)
+                        .and(monthly_usage::Column::ModelId.eq(model.id))
+                        .and(monthly_usage::Column::Month.eq(month))
+                        .and(monthly_usage::Column::Year.eq(year)),
+                )
+                .one(&*tx)
+                .await?;
             let lifetime_usage = lifetime_usage::Entity::find()
                 .filter(
                     lifetime_usage::Column::UserId
@@ -217,28 +229,18 @@ impl LlmDatabase {
                 self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerMinute)?;
             let tokens_this_day =
                 self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerDay)?;
-            let input_tokens_this_month =
-                self.get_usage_for_measure(&usages, now, UsageMeasure::InputTokensPerMonth)?;
-            let cache_creation_input_tokens_this_month = self.get_usage_for_measure(
-                &usages,
-                now,
-                UsageMeasure::CacheCreationInputTokensPerMonth,
-            )?;
-            let cache_read_input_tokens_this_month = self.get_usage_for_measure(
-                &usages,
-                now,
-                UsageMeasure::CacheReadInputTokensPerMonth,
-            )?;
-            let output_tokens_this_month =
-                self.get_usage_for_measure(&usages, now, UsageMeasure::OutputTokensPerMonth)?;
-            let spending_this_month = calculate_spending(
-                model,
-                input_tokens_this_month,
-                cache_creation_input_tokens_this_month,
-                cache_read_input_tokens_this_month,
-                output_tokens_this_month,
-            );
-            let lifetime_spending = if let Some(lifetime_usage) = lifetime_usage {
+            let spending_this_month = if let Some(monthly_usage) = &monthly_usage {
+                calculate_spending(
+                    model,
+                    monthly_usage.input_tokens as usize,
+                    monthly_usage.cache_creation_input_tokens as usize,
+                    monthly_usage.cache_read_input_tokens as usize,
+                    monthly_usage.output_tokens as usize,
+                )
+            } else {
+                0
+            };
+            let lifetime_spending = if let Some(lifetime_usage) = &lifetime_usage {
                 calculate_spending(
                     model,
                     lifetime_usage.input_tokens as usize,
@@ -254,10 +256,18 @@ impl LlmDatabase {
                 requests_this_minute,
                 tokens_this_minute,
                 tokens_this_day,
-                input_tokens_this_month,
-                cache_creation_input_tokens_this_month,
-                cache_read_input_tokens_this_month,
-                output_tokens_this_month,
+                input_tokens_this_month: monthly_usage
+                    .as_ref()
+                    .map_or(0, |usage| usage.input_tokens as usize),
+                cache_creation_input_tokens_this_month: monthly_usage
+                    .as_ref()
+                    .map_or(0, |usage| usage.cache_creation_input_tokens as usize),
+                cache_read_input_tokens_this_month: monthly_usage
+                    .as_ref()
+                    .map_or(0, |usage| usage.cache_read_input_tokens as usize),
+                output_tokens_this_month: monthly_usage
+                    .as_ref()
+                    .map_or(0, |usage| usage.output_tokens as usize),
                 spending_this_month,
                 lifetime_spending,
             })
@@ -646,7 +656,6 @@ fn calculate_spending(
 
 const MINUTE_BUCKET_COUNT: usize = 12;
 const DAY_BUCKET_COUNT: usize = 48;
-const MONTH_BUCKET_COUNT: usize = 30;
 
 impl UsageMeasure {
     fn bucket_count(&self) -> usize {
@@ -654,10 +663,6 @@ impl UsageMeasure {
             UsageMeasure::RequestsPerMinute => MINUTE_BUCKET_COUNT,
             UsageMeasure::TokensPerMinute => MINUTE_BUCKET_COUNT,
             UsageMeasure::TokensPerDay => DAY_BUCKET_COUNT,
-            UsageMeasure::InputTokensPerMonth => MONTH_BUCKET_COUNT,
-            UsageMeasure::CacheCreationInputTokensPerMonth => MONTH_BUCKET_COUNT,
-            UsageMeasure::CacheReadInputTokensPerMonth => MONTH_BUCKET_COUNT,
-            UsageMeasure::OutputTokensPerMonth => MONTH_BUCKET_COUNT,
         }
     }
 
@@ -666,10 +671,6 @@ impl UsageMeasure {
             UsageMeasure::RequestsPerMinute => Duration::minutes(1),
             UsageMeasure::TokensPerMinute => Duration::minutes(1),
             UsageMeasure::TokensPerDay => Duration::hours(24),
-            UsageMeasure::InputTokensPerMonth => Duration::days(30),
-            UsageMeasure::CacheCreationInputTokensPerMonth => Duration::days(30),
-            UsageMeasure::CacheReadInputTokensPerMonth => Duration::days(30),
-            UsageMeasure::OutputTokensPerMonth => Duration::days(30),
         }
     }
 
