@@ -91,7 +91,6 @@ impl Display for AssistantPhase {
 #[serde(tag = "type")]
 pub enum Event {
     Editor(EditorEvent),
-    Copilot(CopilotEvent), // Needed for clients sending old copilot_event types
     InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
@@ -119,15 +118,6 @@ pub struct EditorEvent {
     pub copilot_enabled_for_language: bool,
     /// Whether the client is editing a local file or a remote file via SSH
     pub is_via_ssh: bool,
-}
-
-/// Deprecated since Zed v0.137.0 (2024-05-29). Replaced by InlineCompletionEvent.
-// Needed for clients sending old copilot_event types
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CopilotEvent {
-    pub suggestion_id: Option<String>,
-    pub suggestion_accepted: bool,
-    pub file_extension: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
