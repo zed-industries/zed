@@ -3697,15 +3697,11 @@ impl<'a> WindowContext<'a> {
     ) -> Vec<KeyBinding> {
         let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
 
-        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
-            return vec![];
-        };
-        let context_stack: Vec<_> = dispatch_tree
-            .dispatch_path(node_id)
-            .into_iter()
-            .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
-            .collect();
-        dispatch_tree.bindings_for_action(action, &context_stack)
+        if let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) {
+            dispatch_tree.bindings_for_action(action, &dispatch_tree.context_path(node_id))
+        } else {
+            vec![]
+        }
     }
 
     fn focused_node_id(&self) -> DispatchNodeId {
