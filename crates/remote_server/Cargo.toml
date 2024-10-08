@@ -22,6 +22,7 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+backtrace = "0.3"
 clap.workspace = true
 client.workspace = true
 env_logger.workspace = true

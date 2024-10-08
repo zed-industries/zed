@@ -827,25 +827,45 @@ impl Buffer {
         })
     }
 
-    /// Applies all of the changes in this buffer that intersect the given `range`
-    /// to its base buffer. This buffer must be a branch buffer to call this method.
-    pub fn merge_into_base(&mut self, range: Option<Range<usize>>, cx: &mut ModelContext<Self>) {
+    /// Applies all of the changes in this buffer that intersect any of the
+    /// given `ranges` to its base buffer.
+    ///
+    /// If `ranges` is empty, then all changes will be applied. This buffer must
+    /// be a branch buffer to call this method.
+    pub fn merge_into_base(&mut self, ranges: Vec<Range<usize>>, cx: &mut ModelContext<Self>) {
         let Some(base_buffer) = self.diff_base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
         };
 
+        let mut ranges = if ranges.is_empty() {
+            &[0..usize::MAX]
+        } else {
+            ranges.as_slice()
+        }
+        .into_iter()
+        .peekable();
+
         let mut edits = Vec::new();
         for edit in self.edits_since::<usize>(&base_buffer.read(cx).version()) {
-            if let Some(range) = &range {
-                if range.start > edit.new.end || edit.new.start > range.end {
-                    continue;
+            let mut is_included = false;
+            while let Some(range) = ranges.peek() {
+                if range.end < edit.new.start {
+                    ranges.next().unwrap();
+                } else {
+                    if range.start <= edit.new.end {
+                        is_included = true;
+                    }
+                    break;
                 }
             }
-            edits.push((
-                edit.old.clone(),
-                self.text_for_range(edit.new.clone()).collect::<String>(),
-            ));
+
+            if is_included {
+                edits.push((
+                    edit.old.clone(),
+                    self.text_for_range(edit.new.clone()).collect::<String>(),
+                ));
+            }
         }
 
         let operation = base_buffer.update(cx, |base_buffer, cx| {
