@@ -31,6 +31,7 @@ use smol::{
 use std::{
     any::TypeId,
     ffi::OsStr,
+    fmt,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering::SeqCst},
@@ -271,12 +272,25 @@ enum State {
     },
     Reconnecting,
     ReconnectFailed {
-        connection_attempts: usize,
+        error: anyhow::Error,
+        attempts: usize,
         ssh_connection: SshRemoteConnection,
         delegate: Arc<dyn SshClientDelegate>,
         forwarder: ChannelForwarder,
     },
     ReconnectExhausted,
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            State::Connecting => write!(f, "connecting"),
+            State::Connected { .. } => write!(f, "connected"),
+            State::Reconnecting => write!(f, "reconnecting"),
+            State::ReconnectFailed { .. } => write!(f, "reconnect failed"),
+            State::ReconnectExhausted => write!(f, "reconnect exhausted"),
+        }
+    }
 }
 
 impl State {
@@ -290,6 +304,13 @@ impl State {
 
     fn is_reconnecting(&self) -> bool {
         matches!(self, State::Reconnecting { .. })
+    }
+
+    fn can_reconnect(&self) -> bool {
+        matches!(
+            self,
+            State::Connected { .. } | State::ReconnectFailed { .. }
+        )
     }
 }
 
@@ -398,16 +419,21 @@ impl SshRemoteClient {
     fn reconnect(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         let mut lock = self.state.lock();
 
-        let state = lock.take();
-        let Some(state) = state else {
-            return Err(anyhow!("Invalid"));
-        };
+        let can_reconnect = lock
+            .as_ref()
+            .map(|state| state.can_reconnect())
+            .unwrap_or(false);
+        if !can_reconnect {
+            let error = if let Some(state) = lock.as_ref() {
+                format!("invalid state, cannot reconnect while in state {state}")
+            } else {
+                "no state set".to_string()
+            };
+            return Err(anyhow!(error));
+        }
 
-        let (connection_attempts, mut ssh_connection, delegate, forwarder) = match state {
-            State::Connecting | State::Reconnecting { .. } => return Err(anyhow!("Invalid")),
-            State::ReconnectExhausted => {
-                return Err(anyhow!("Reconnect exhausted"));
-            }
+        let state = lock.take().unwrap();
+        let (attempts, mut ssh_connection, delegate, forwarder) = match state {
             State::Connected {
                 ssh_connection,
                 delegate,
@@ -420,15 +446,17 @@ impl SshRemoteClient {
                 (0, ssh_connection, delegate, forwarder)
             }
             State::ReconnectFailed {
-                connection_attempts,
+                attempts,
                 ssh_connection,
                 delegate,
                 forwarder,
-            } => (connection_attempts, ssh_connection, delegate, forwarder),
+                ..
+            } => (attempts, ssh_connection, delegate, forwarder),
+            _ => unreachable!(),
         };
 
-        let connection_attempts = connection_attempts + 1;
-        if connection_attempts > MAX_RECONNECT_ATTEMPTS {
+        let attempts = attempts + 1;
+        if attempts > MAX_RECONNECT_ATTEMPTS {
             log::error!(
                 "Failed to reconnect to after {} attempts, giving up",
                 MAX_RECONNECT_ATTEMPTS
@@ -436,39 +464,37 @@ impl SshRemoteClient {
             *lock = Some(State::ReconnectExhausted);
             return Ok(());
         }
-
-        log::info!(
-            "Trying to reconnect to ssh server... Attempt {}",
-            connection_attempts
-        );
-
         *lock = Some(State::Reconnecting);
         drop(lock);
 
-        let workspace_identifier = self.unique_identifier.clone();
+        log::info!("Trying to reconnect to ssh server... Attempt {}", attempts);
+
+        let identifier = self.unique_identifier.clone();
         let client = self.client.clone();
         let reconnect_task = cx.spawn(|this, mut cx| async move {
-            if ssh_connection.master_process.kill().is_err() {
-                return State::ReconnectFailed {
-                    connection_attempts,
-                    ssh_connection,
-                    delegate,
-                    forwarder,
+            macro_rules! failed {
+                ($error:expr, $attempts:expr, $ssh_connection:expr, $delegate:expr, $forwarder:expr) => {
+                    return State::ReconnectFailed {
+                        error: anyhow!($error),
+                        attempts: $attempts,
+                        ssh_connection: $ssh_connection,
+                        delegate: $delegate,
+                        forwarder: $forwarder,
+                    };
                 };
+            }
+
+            if let Err(error) = ssh_connection.master_process.kill() {
+                failed!(error, attempts, ssh_connection, delegate, forwarder);
             };
-            if ssh_connection
+
+            if let Err(error) = ssh_connection
                 .master_process
                 .status()
                 .await
                 .context("Failed to kill ssh process")
-                .is_err()
             {
-                return State::ReconnectFailed {
-                    connection_attempts,
-                    ssh_connection,
-                    delegate,
-                    forwarder,
-                };
+                failed!(error, attempts, ssh_connection, delegate, forwarder);
             }
 
             let connection_options = ssh_connection.socket.connection_options.clone();
@@ -477,20 +503,18 @@ impl SshRemoteClient {
             let (forwarder, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
 
-            let Ok((ssh_connection, ssh_process)) = Self::establish_connection(
-                workspace_identifier,
+            let (ssh_connection, ssh_process) = match Self::establish_connection(
+                identifier,
                 connection_options,
                 delegate.clone(),
                 &mut cx,
             )
             .await
-            else {
-                return State::ReconnectFailed {
-                    connection_attempts,
-                    ssh_connection,
-                    delegate,
-                    forwarder,
-                };
+            {
+                Ok((ssh_connection, ssh_process)) => (ssh_connection, ssh_process),
+                Err(error) => {
+                    failed!(error, attempts, ssh_connection, delegate, forwarder);
+                }
             };
 
             let multiplex_task = Self::multiplex(
@@ -501,13 +525,8 @@ impl SshRemoteClient {
                 &mut cx,
             );
 
-            let Ok(_) = client.ping(HEARTBEAT_TIMEOUT).await else {
-                return State::ReconnectFailed {
-                    connection_attempts,
-                    ssh_connection,
-                    delegate,
-                    forwarder,
-                };
+            if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
+                failed!(error, attempts, ssh_connection, delegate, forwarder);
             };
 
             State::Connected {
@@ -522,18 +541,18 @@ impl SshRemoteClient {
         cx.spawn(|this, mut cx| async move {
             let new_state = reconnect_task.await;
             this.update(&mut cx, |this, cx| {
-                match new_state {
+                match &new_state {
                     State::Connecting | State::Reconnecting { .. } => {}
                     State::Connected { .. } => {
                         log::info!("Successfully reconnected");
                     }
                     State::ReconnectFailed {
-                        connection_attempts,
-                        ..
+                        error, attempts, ..
                     } => {
                         log::error!(
-                            "Reconnect attempt {} failed. Starting new attempt...",
-                            connection_attempts
+                            "Reconnect attempt {} failed: {:?}. Starting new attempt...",
+                            attempts,
+                            error
                         );
                     }
                     State::ReconnectExhausted => {
