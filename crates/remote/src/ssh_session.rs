@@ -728,7 +728,7 @@ impl SshRemoteClient {
 
         if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
             log::error!(
-                "Missed last {} hearbeats. Reconnecting...",
+                "Missed last {} heartbeats. Reconnecting...",
                 missed_heartbeats
             );
 
