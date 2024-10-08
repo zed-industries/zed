@@ -7,8 +7,6 @@ use gpui::{AppContext, Context, Model, ModelContext, Task};
 use settings::Settings as _;
 use worktree::WorktreeId;
 
-use anyhow::Result;
-
 use crate::{
     project_settings::{DirenvSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -142,22 +140,23 @@ impl ProjectEnvironment {
                         let cwd = worktree_abs_path.clone();
                         async move { load_shell_environment(&cwd, &load_direnv).await }
                     })
-                    .await
-                    .log_err()
-                    .unzip();
+                    .await;
 
                 if let Some(shell_env) = shell_env.as_mut() {
                     this.update(&mut cx, |this, _| {
                         this.cached_shell_environments
                             .insert(worktree_id, shell_env.clone());
-
-                        if let Some(error) = error.flatten() {
-                            this.environment_error_messages.insert(worktree_id, error);
-                        }
                     })
                     .log_err();
 
                     set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
+                }
+
+                if let Some(error) = error {
+                    this.update(&mut cx, |this, _| {
+                        this.environment_error_messages.insert(worktree_id, error);
+                    })
+                    .log_err();
                 }
 
                 shell_env
@@ -188,11 +187,20 @@ impl From<EnvironmentOrigin> for String {
 
 pub struct EnvironmentErrorMessage(pub String);
 
+impl EnvironmentErrorMessage {
+    fn from_str(s: &str) -> Self {
+        Self(String::from(s))
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 async fn load_shell_environment(
     _dir: &Path,
     _load_direnv: &DirenvSettings,
-) -> Result<(HashMap<String, String>, Option<EnvironmentErrorMessage>)> {
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
     let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
         .into_iter()
         .collect();
@@ -203,11 +211,18 @@ async fn load_shell_environment(
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
-) -> Result<(HashMap<String, String>, Option<EnvironmentErrorMessage>)> {
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
     use crate::direnv::{load_direnv_environment, DirenvError};
-    use anyhow::{anyhow, Context};
     use std::path::PathBuf;
     use util::parse_env_output;
+
+    fn message<T>(with: &str) -> (Option<T>, Option<EnvironmentErrorMessage>) {
+        let message = EnvironmentErrorMessage::from_str(with);
+        (None, Some(message))
+    }
 
     let (direnv_environment, direnv_error) = match load_direnv {
         DirenvSettings::ShellHook => (None, None),
@@ -222,9 +237,9 @@ async fn load_shell_environment(
     let direnv_environment = direnv_environment.unwrap_or(HashMap::default());
 
     let marker = "ZED_SHELL_START";
-    let shell = std::env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
+    let Some(shell) = std::env::var("SHELL").log_err() else {
+        return message("Failed to get login environment. SHELL environment variable is not set");
+    };
 
     // What we're doing here is to spawn a shell and then `cd` into
     // the project directory to get the env in there as if the user
@@ -261,26 +276,26 @@ async fn load_shell_environment(
         additional_command.unwrap_or("")
     );
 
-    let output = smol::process::Command::new(&shell)
+    let Some(output) = smol::process::Command::new(&shell)
         .args(["-l", "-i", "-c", &command])
         .envs(direnv_environment)
         .output()
         .await
-        .context("failed to spawn login shell to source login environment variables")?;
+        .log_err()
+    else {
+        return message("Failed to spawn login shell to source login environment variables. See logs for details");
+    };
 
-    anyhow::ensure!(
-        output.status.success(),
-        "login shell exited with error {:?}",
-        output.status
-    );
+    if !output.status.success() {
+        log::error!("login shell exited with {}", output.status);
+        return message("Login shell exited with nonzero exit code. See logs for details");
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let env_output_start = stdout.find(marker).ok_or_else(|| {
-        anyhow!(
-            "failed to parse output of `env` command in login shell: {}",
-            stdout
-        )
-    })?;
+    let Some(env_output_start) = stdout.find(marker) else {
+        log::error!("failed to parse output of `env` command in login shell: {stdout}");
+        return message("Failed to parse stdout of env command. See logs for the output");
+    };
 
     let mut parsed_env = HashMap::default();
     let env_output = &stdout[env_output_start + marker.len()..];
@@ -289,5 +304,5 @@ async fn load_shell_environment(
         parsed_env.insert(key, value);
     });
 
-    Ok((parsed_env, direnv_error))
+    (Some(parsed_env), direnv_error)
 }
