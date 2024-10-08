@@ -9163,6 +9163,7 @@ name = "remote_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "cargo_toml",
  "clap",
  "client",
@@ -11885,6 +11886,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "remote",
  "rpc",
  "serde",
  "settings",

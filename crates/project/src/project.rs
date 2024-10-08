@@ -15,7 +15,9 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
+mod direnv;
 mod environment;
+pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
@@ -1185,6 +1187,23 @@ impl Project {
         self.environment.read(cx).get_cli_environment()
     }
 
+    pub fn shell_environment_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+        self.environment.read(cx).environment_errors()
+    }
+
+    pub fn remove_environment_error(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+        worktree_id: WorktreeId,
+    ) {
+        self.environment.update(cx, |environment, _| {
+            environment.remove_environment_error(worktree_id);
+        });
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
         self.buffer_store
@@ -1244,8 +1263,10 @@ impl Project {
             .clone()
     }
 
-    pub fn ssh_is_connected(&self, cx: &AppContext) -> Option<bool> {
-        Some(!self.ssh_client.as_ref()?.read(cx).is_reconnect_underway())
+    pub fn ssh_connection_state(&self, cx: &AppContext) -> Option<remote::ConnectionState> {
+        self.ssh_client
+            .as_ref()
+            .map(|ssh| ssh.read(cx).connection_state())
     }
 
     pub fn replica_id(&self) -> ReplicaId {

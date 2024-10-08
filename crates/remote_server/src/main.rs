@@ -37,7 +37,7 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() -> Result<()> {
-    use remote_server::unix::{execute_proxy, execute_run, init_logging};
+    use remote_server::unix::{execute_proxy, execute_run, init};
 
     let cli = Cli::parse();
 
@@ -48,11 +48,11 @@ fn main() -> Result<()> {
             stdin_socket,
             stdout_socket,
         }) => {
-            init_logging(Some(log_file))?;
+            init(Some(log_file))?;
             execute_run(pid_file, stdin_socket, stdout_socket)
         }
         Some(Commands::Proxy { identifier }) => {
-            init_logging(None)?;
+            init(None)?;
             execute_proxy(identifier)
         }
         Some(Commands::Version) => {
