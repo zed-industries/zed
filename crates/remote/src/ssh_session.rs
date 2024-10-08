@@ -808,7 +808,7 @@ impl SshRemoteClient {
         self.state
             .lock()
             .as_ref()
-            .map(|state| ConnectionState::from(state))
+            .map(ConnectionState::from)
             .unwrap_or(ConnectionState::Disconnected)
     }
 
