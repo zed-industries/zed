@@ -6219,7 +6219,7 @@ impl Editor {
                 if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
                     ranges_by_buffer
                         .entry(buffer.clone())
-                        .or_insert_with(|| Vec::new())
+                        .or_insert_with(Vec::new)
                         .push(hunk.buffer_range.to_offset(buffer.read(cx)));
                 }
             }
