@@ -1,12 +1,14 @@
 mod event_coalescer;
 
 use crate::{ChannelId, TelemetrySettings};
+pub use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http_client::{self, HttpClient, HttpClientWithUrl, Method};
+use http::{self, Request};
+use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -21,16 +23,24 @@ use telemetry_events::{
     SettingEvent,
 };
 use tempfile::NamedTempFile;
+pub use url::Url;
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
+pub trait TelemetryClient: Send + Sync {
+    fn prepare_telemetry_request(
+        &self,
+        event_request: EventRequestBody,
+    ) -> Result<Request<AsyncBody>>;
+}
 
 pub struct Telemetry {
     clock: Arc<dyn SystemClock>,
     http_client: Arc<HttpClientWithUrl>,
+    telemetry_client: Arc<dyn TelemetryClient + Send + Sync>,
     executor: BackgroundExecutor,
     state: Arc<Mutex<TelemetryState>>,
 }
@@ -247,10 +257,18 @@ impl Telemetry {
         })
         .detach();
 
+        let telemetry_client: Arc<dyn TelemetryClient + Send + Sync> = {
+            let url = client
+                .build_zed_api_url("/telemetry/events", &[])
+                .expect("Failed to build telemetry URL");
+            Arc::new(DefaultTelemetryClient::new(url))
+        };
+
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             clock,
             http_client: client,
+            telemetry_client,
             executor: cx.background_executor().clone(),
             state,
         });
@@ -620,7 +638,7 @@ impl Telemetry {
                         }
                     }
 
-                    {
+                    let request = {
                         let state = this.state.lock();
 
                         let request_body = EventRequestBody {
@@ -633,28 +651,15 @@ impl Telemetry {
                             os_name: state.os_name.clone(),
                             os_version: state.os_version.clone(),
                             architecture: state.architecture.to_string(),
-
                             release_channel: state.release_channel.map(Into::into),
                             events,
                         };
-                        json_bytes.clear();
-                        serde_json::to_writer(&mut json_bytes, &request_body)?;
-                    }
 
-                    let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
+                        this.telemetry_client
+                            .prepare_telemetry_request(request_body)?
+                    };
 
-                    let request = http_client::Request::builder()
-                        .method(Method::POST)
-                        .uri(
-                            this.http_client
-                                .build_zed_api_url("/telemetry/events", &[])?
-                                .as_ref(),
-                        )
-                        .header("Content-Type", "text/plain")
-                        .header("x-zed-checksum", checksum)
-                        .body(json_bytes.into());
-
-                    let response = this.http_client.send(request?).await?;
+                    let response = this.http_client.send(request).await?;
                     if response.status() != 200 {
                         log::error!("Failed to send events: HTTP {:?}", response.status());
                     }
@@ -682,6 +687,36 @@ pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
     }
 
     Some(checksum)
+}
+
+#[derive(Clone)]
+pub struct DefaultTelemetryClient {
+    url: Arc<Url>,
+}
+
+impl DefaultTelemetryClient {
+    pub fn new(url: Url) -> Self {
+        Self { url: Arc::new(url) }
+    }
+}
+
+impl TelemetryClient for DefaultTelemetryClient {
+    fn prepare_telemetry_request(
+        &self,
+        event_request: EventRequestBody,
+    ) -> Result<Request<AsyncBody>> {
+        let json_bytes = serde_json::to_vec(&event_request)?;
+        let checksum = calculate_json_checksum(&json_bytes).unwrap_or_default();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(self.url.as_str())
+            .header("Content-Type", "text/plain")
+            .header("x-zed-checksum", checksum)
+            .body(json_bytes.into())?;
+
+        Ok(request)
+    }
 }
 
 #[cfg(test)]
