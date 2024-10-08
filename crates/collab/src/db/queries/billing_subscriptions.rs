@@ -112,7 +112,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_billing_subscriptions_with_price(
+    pub async fn get_active_billing_subscription_with_price(
         &self,
         price_id: &str,
     ) -> Result<Vec<billing_subscription::Model>> {
