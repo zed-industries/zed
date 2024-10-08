@@ -32,6 +32,7 @@ use std::{
     any::TypeId,
     ffi::OsStr,
     fmt,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering::SeqCst},
@@ -40,6 +41,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
+use util::ResultExt;
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -267,16 +269,28 @@ enum State {
         ssh_connection: SshRemoteConnection,
         delegate: Arc<dyn SshClientDelegate>,
         forwarder: ChannelForwarder,
+
+        multiplex_task: Task<Result<()>>,
+        heartbeat_task: Task<Result<()>>,
+    },
+    HeartbeatMissed {
+        missed_heartbeats: usize,
+
+        ssh_connection: SshRemoteConnection,
+        delegate: Arc<dyn SshClientDelegate>,
+        forwarder: ChannelForwarder,
+
         multiplex_task: Task<Result<()>>,
         heartbeat_task: Task<Result<()>>,
     },
     Reconnecting,
     ReconnectFailed {
-        error: anyhow::Error,
-        attempts: usize,
         ssh_connection: SshRemoteConnection,
         delegate: Arc<dyn SshClientDelegate>,
         forwarder: ChannelForwarder,
+
+        error: anyhow::Error,
+        attempts: usize,
     },
     ReconnectExhausted,
 }
@@ -284,11 +298,12 @@ enum State {
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            State::Connecting => write!(f, "connecting"),
-            State::Connected { .. } => write!(f, "connected"),
-            State::Reconnecting => write!(f, "reconnecting"),
-            State::ReconnectFailed { .. } => write!(f, "reconnect failed"),
-            State::ReconnectExhausted => write!(f, "reconnect exhausted"),
+            Self::Connecting => write!(f, "connecting"),
+            Self::Connected { .. } => write!(f, "connected"),
+            Self::Reconnecting => write!(f, "reconnecting"),
+            Self::ReconnectFailed { .. } => write!(f, "reconnect failed"),
+            Self::ReconnectExhausted => write!(f, "reconnect exhausted"),
+            Self::HeartbeatMissed { .. } => write!(f, "heartbeat missed"),
         }
     }
 }
@@ -296,8 +311,9 @@ impl fmt::Display for State {
 impl State {
     fn ssh_connection(&self) -> Option<&SshRemoteConnection> {
         match self {
-            State::Connected { ssh_connection, .. } => Some(ssh_connection),
-            State::ReconnectFailed { ssh_connection, .. } => Some(ssh_connection),
+            Self::Connected { ssh_connection, .. } => Some(ssh_connection),
+            Self::HeartbeatMissed { ssh_connection, .. } => Some(ssh_connection),
+            Self::ReconnectFailed { ssh_connection, .. } => Some(ssh_connection),
             _ => None,
         }
     }
@@ -305,8 +321,63 @@ impl State {
     fn can_reconnect(&self) -> bool {
         matches!(
             self,
-            State::Connected { .. } | State::ReconnectFailed { .. }
+            Self::Connected { .. } | Self::HeartbeatMissed { .. } | Self::ReconnectFailed { .. }
         )
+    }
+
+    fn heartbeat_recovered(self) -> Self {
+        match self {
+            Self::HeartbeatMissed {
+                ssh_connection,
+                delegate,
+                forwarder,
+                multiplex_task,
+                heartbeat_task,
+                ..
+            } => Self::Connected {
+                ssh_connection,
+                delegate,
+                forwarder,
+                multiplex_task,
+                heartbeat_task,
+            },
+            _ => self,
+        }
+    }
+
+    fn heartbeat_missed(self) -> Self {
+        match self {
+            Self::Connected {
+                ssh_connection,
+                delegate,
+                forwarder,
+                multiplex_task,
+                heartbeat_task,
+            } => Self::HeartbeatMissed {
+                missed_heartbeats: 1,
+                ssh_connection,
+                delegate,
+                forwarder,
+                multiplex_task,
+                heartbeat_task,
+            },
+            Self::HeartbeatMissed {
+                missed_heartbeats,
+                ssh_connection,
+                delegate,
+                forwarder,
+                multiplex_task,
+                heartbeat_task,
+            } => Self::HeartbeatMissed {
+                missed_heartbeats: missed_heartbeats + 1,
+                ssh_connection,
+                delegate,
+                forwarder,
+                multiplex_task,
+                heartbeat_task,
+            },
+            _ => self,
+        }
     }
 }
 
@@ -315,6 +386,7 @@ impl State {
 pub enum ConnectionState {
     Connecting,
     Connected,
+    HeartbeatMissed,
     Reconnecting,
     Disconnected,
 }
@@ -325,6 +397,7 @@ impl From<&State> for ConnectionState {
             State::Connecting => Self::Connecting,
             State::Connected { .. } => Self::Connected,
             State::Reconnecting | State::ReconnectFailed { .. } => Self::Reconnecting,
+            State::HeartbeatMissed { .. } => Self::HeartbeatMissed,
             State::ReconnectExhausted => Self::Disconnected,
         }
     }
@@ -456,6 +529,14 @@ impl SshRemoteClient {
                 forwarder,
                 multiplex_task,
                 heartbeat_task,
+            }
+            | State::HeartbeatMissed {
+                ssh_connection,
+                delegate,
+                forwarder,
+                multiplex_task,
+                heartbeat_task,
+                ..
             } => {
                 drop(multiplex_task);
                 drop(heartbeat_task);
@@ -468,7 +549,7 @@ impl SshRemoteClient {
                 forwarder,
                 ..
             } => (attempts, ssh_connection, delegate, forwarder),
-            _ => unreachable!(),
+            State::Connecting | State::Reconnecting | State::ReconnectExhausted => unreachable!(),
         };
 
         let attempts = attempts + 1;
@@ -558,7 +639,9 @@ impl SshRemoteClient {
             let new_state = reconnect_task.await;
             this.update(&mut cx, |this, cx| {
                 match &new_state {
-                    State::Connecting | State::Reconnecting { .. } => {}
+                    State::Connecting
+                    | State::Reconnecting { .. }
+                    | State::HeartbeatMissed { .. } => {}
                     State::Connected { .. } => {
                         log::info!("Successfully reconnected");
                     }
@@ -578,6 +661,7 @@ impl SshRemoteClient {
 
                 let reconnect_failed = matches!(new_state, State::ReconnectFailed { .. });
                 *this.state.lock() = Some(new_state);
+                cx.notify();
                 if reconnect_failed {
                     this.reconnect(cx)
                 } else {
@@ -618,22 +702,43 @@ impl SshRemoteClient {
                         missed_heartbeats = 0;
                     }
 
-                    if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
-                        log::error!(
-                            "Missed last {} hearbeats. Reconnecting...",
-                            missed_heartbeats
-                        );
-
-                        this.update(&mut cx, |this, cx| {
-                            this.reconnect(cx)
-                                .context("failed to reconnect after missing heartbeats")
-                        })
-                        .context("failed to update weak reference, SshRemoteClient lost?")??;
+                    let result = this.update(&mut cx, |this, mut cx| {
+                        this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                    })?;
+                    if result.is_break() {
                         return Ok(());
                     }
                 }
             }
         })
+    }
+
+    fn handle_heartbeat_result(
+        &mut self,
+        missed_heartbeats: usize,
+        cx: &mut ModelContext<Self>,
+    ) -> ControlFlow<()> {
+        let state = self.state.lock().take().unwrap();
+        self.state.lock().replace(if missed_heartbeats > 0 {
+            state.heartbeat_missed()
+        } else {
+            state.heartbeat_recovered()
+        });
+        cx.notify();
+
+        if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
+            log::error!(
+                "Missed last {} hearbeats. Reconnecting...",
+                missed_heartbeats
+            );
+
+            self.reconnect(cx)
+                .context("failed to start reconnect process after missing heartbeats")
+                .log_err();
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
     }
 
     fn multiplex(

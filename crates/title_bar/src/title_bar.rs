@@ -268,6 +268,7 @@ impl TitleBar {
         let indicator_color = match self.project.read(cx).ssh_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
             remote::ConnectionState::Connected => Color::Success,
+            remote::ConnectionState::HeartbeatMissed => Color::Warning,
             remote::ConnectionState::Reconnecting => Color::Warning,
             remote::ConnectionState::Disconnected => Color::Error,
         };
