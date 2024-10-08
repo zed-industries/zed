@@ -112,19 +112,25 @@ impl Database {
         .await
     }
 
-    pub async fn get_active_billing_subscription_with_price(
+    pub async fn get_active_billing_subscriptions(
         &self,
-        price_id: &str,
-    ) -> Result<Vec<billing_subscription::Model>> {
+    ) -> Result<Vec<(billing_customer::Model, billing_subscription::Model)>> {
         self.transaction(|tx| async move {
-            let subscriptions = billing_subscription::Entity::find()
+            let mut result = Vec::new();
+            let mut rows = billing_subscription::Entity::find()
                 .inner_join(billing_customer::Entity)
-                .filter(billing_customer::Column::UserId.eq(user_id))
+                .select_also(billing_customer::Entity)
                 .order_by_asc(billing_subscription::Column::Id)
-                .all(&*tx)
+                .stream(&*tx)
                 .await?;
 
-            Ok(subscriptions)
+            while let Some(row) = rows.next().await {
+                if let (subscription, Some(customer)) = row? {
+                    result.push((customer, subscription));
+                }
+            }
+
+            Ok(result)
         })
         .await
     }

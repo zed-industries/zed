@@ -22,6 +22,7 @@ use stripe::{
 };
 use util::ResultExt;
 
+use crate::db::billing_subscription;
 use crate::{db::billing_subscription::StripeSubscriptionStatus, rpc::ResultExt as _};
 use crate::{
     db::{
@@ -673,11 +674,52 @@ async fn sync_with_stripe(
     stripe_client: &stripe::Client,
     stripe_llm_usage_price_id: Arc<str>,
 ) -> anyhow::Result<()> {
-    let user_ids = app.db.user_ids_with_llm_subscription().await?;
+    let subscriptions = app.db.get_active_billing_subscriptions().await?;
 
-    // for user_id in user_ids {
+    for (customer, subscription) in subscriptions {
+        update_stripe_subscription(
+            llm_db,
+            stripe_client,
+            &stripe_llm_usage_price_id,
+            customer,
+            subscription,
+        )
+        .await
+        .log_err();
+    }
 
-    // }
+    Ok(())
+}
 
+async fn update_stripe_subscription(
+    llm_db: &LlmDatabase,
+    stripe_client: &stripe::Client,
+    stripe_llm_usage_price_id: &Arc<str>,
+    customer: billing_customer::Model,
+    subscription: billing_subscription::Model,
+) -> Result<(), anyhow::Error> {
+    let monthly_spending = llm_db
+        .get_user_spending_for_month(customer.user_id, Utc::now())
+        .await?;
+    let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
+        .context("failed to parse subscription ID")?;
+    let new_quantity = (monthly_spending as f32 / 100.).ceil();
+    Subscription::update(
+        stripe_client,
+        &subscription_id,
+        stripe::UpdateSubscription {
+            items: Some(vec![stripe::UpdateSubscriptionItems {
+                // TODO: Do we need to send up the `id` if a subscription item
+                // with this price already exists, or will Stripe take care of
+                // it?
+                id: None,
+                price: Some(stripe_llm_usage_price_id.to_string()),
+                quantity: Some(new_quantity as u64),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        },
+    )
+    .await?;
     Ok(())
 }

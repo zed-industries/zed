@@ -18,7 +18,6 @@ pub struct Usage {
     pub cache_read_input_tokens_this_month: usize,
     pub output_tokens_this_month: usize,
     pub spending_this_month: usize,
-    pub monthly_spending: usize,
     pub lifetime_spending: usize,
 }
 
@@ -146,7 +145,39 @@ impl LlmDatabase {
         user_id: UserId,
         now: DateTimeUtc,
     ) -> Result<usize> {
-        todo!()
+        self.transaction(|tx| async move {
+            let month = now.date_naive().month() as i32;
+            let year = now.date_naive().year();
+
+            let mut monthly_usages = monthly_usage::Entity::find()
+                .filter(
+                    monthly_usage::Column::UserId
+                        .eq(user_id)
+                        .and(monthly_usage::Column::Month.eq(month))
+                        .and(monthly_usage::Column::Year.eq(year)),
+                )
+                .stream(&*tx)
+                .await?;
+            let mut monthly_spending_in_cents = 0;
+
+            while let Some(usage) = monthly_usages.next().await {
+                let usage = usage?;
+                let Ok(model) = self.model_by_id(usage.model_id) else {
+                    continue;
+                };
+
+                monthly_spending_in_cents += calculate_spending(
+                    model,
+                    usage.input_tokens as usize,
+                    usage.cache_creation_input_tokens as usize,
+                    usage.cache_read_input_tokens as usize,
+                    usage.output_tokens as usize,
+                );
+            }
+
+            Ok(monthly_spending_in_cents)
+        })
+        .await
     }
 
     pub async fn get_usage(
@@ -299,78 +330,18 @@ impl LlmDatabase {
                     &tx,
                 )
                 .await?;
-            let input_tokens_this_month = self
-                .update_usage_for_measure(
-                    user_id,
-                    is_staff,
-                    model.id,
-                    &usages,
-                    UsageMeasure::InputTokensPerMonth,
-                    now,
-                    input_token_count,
-                    &tx,
-                )
-                .await?;
-            let cache_creation_input_tokens_this_month = self
-                .update_usage_for_measure(
-                    user_id,
-                    is_staff,
-                    model.id,
-                    &usages,
-                    UsageMeasure::CacheCreationInputTokensPerMonth,
-                    now,
-                    cache_creation_input_tokens,
-                    &tx,
-                )
-                .await?;
-            let cache_read_input_tokens_this_month = self
-                .update_usage_for_measure(
-                    user_id,
-                    is_staff,
-                    model.id,
-                    &usages,
-                    UsageMeasure::CacheReadInputTokensPerMonth,
-                    now,
-                    cache_read_input_tokens,
-                    &tx,
-                )
-                .await?;
-            let output_tokens_this_month = self
-                .update_usage_for_measure(
-                    user_id,
-                    is_staff,
-                    model.id,
-                    &usages,
-                    UsageMeasure::OutputTokensPerMonth,
-                    now,
-                    output_token_count,
-                    &tx,
-                )
-                .await?;
-            let spending_this_month = calculate_spending(
-                model,
-                input_tokens_this_month,
-                cache_creation_input_tokens_this_month,
-                cache_read_input_tokens_this_month,
-                output_tokens_this_month,
-            );
 
-            // Update lifetime usage
-            let lifetime_usage = lifetime_usage::Entity::find()
-                .filter(
-                    lifetime_usage::Column::UserId
-                        .eq(user_id)
-                        .and(lifetime_usage::Column::ModelId.eq(model.id)),
-                )
-                .one(&*tx)
-                .await?;
+            let month = now.date_naive().month() as i32;
+            let year = now.date_naive().year();
 
             // Update monthly usage
             let monthly_usage = monthly_usage::Entity::find()
                 .filter(
                     monthly_usage::Column::UserId
                         .eq(user_id)
-                        .and(monthly_usage::Column::ModelId.eq(model.id)),
+                        .and(monthly_usage::Column::ModelId.eq(model.id))
+                        .and(monthly_usage::Column::Month.eq(month))
+                        .and(monthly_usage::Column::Year.eq(year)),
                 )
                 .one(&*tx)
                 .await?;
@@ -400,9 +371,13 @@ impl LlmDatabase {
                     monthly_usage::ActiveModel {
                         user_id: ActiveValue::set(user_id),
                         model_id: ActiveValue::set(model.id),
-                        month: ActiveValue::set(now.date_naive().month() as i32),
-                        year: ActiveValue::set(now.date_naive().year()),
+                        month: ActiveValue::set(month),
+                        year: ActiveValue::set(year),
                         input_tokens: ActiveValue::set(input_token_count as i64),
+                        cache_creation_input_tokens: ActiveValue::set(
+                            cache_creation_input_tokens as i64,
+                        ),
+                        cache_read_input_tokens: ActiveValue::set(cache_read_input_tokens as i64),
                         output_tokens: ActiveValue::set(output_token_count as i64),
                         ..Default::default()
                     }
@@ -411,7 +386,7 @@ impl LlmDatabase {
                 }
             };
 
-            let monthly_spending = calculate_spending(
+            let spending_this_month = calculate_spending(
                 model,
                 monthly_usage.input_tokens as usize,
                 monthly_usage.cache_creation_input_tokens as usize,
@@ -479,12 +454,12 @@ impl LlmDatabase {
                 requests_this_minute,
                 tokens_this_minute,
                 tokens_this_day,
-                input_tokens_this_month,
-                cache_creation_input_tokens_this_month,
-                cache_read_input_tokens_this_month,
-                output_tokens_this_month,
+                input_tokens_this_month: monthly_usage.input_tokens as usize,
+                cache_creation_input_tokens_this_month: monthly_usage.cache_creation_input_tokens
+                    as usize,
+                cache_read_input_tokens_this_month: monthly_usage.cache_read_input_tokens as usize,
+                output_tokens_this_month: monthly_usage.output_tokens as usize,
                 spending_this_month,
-                monthly_spending,
                 lifetime_spending,
             })
         })

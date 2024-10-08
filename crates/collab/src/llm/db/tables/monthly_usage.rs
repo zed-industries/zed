@@ -2,7 +2,7 @@ use crate::{db::UserId, llm::db::ModelId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "lifetime_usages")]
+#[sea_orm(table_name = "monthly_usages")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,

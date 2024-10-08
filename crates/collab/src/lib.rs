@@ -22,7 +22,6 @@ use axum::{
 };
 use db::{ChannelId, Database};
 use executor::Executor;
-use llm::db::LlmDatabase;
 pub use rate_limiter::*;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
