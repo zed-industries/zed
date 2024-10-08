@@ -5,6 +5,8 @@ create table monthly_usages (
     month integer not null,
     year integer not null,
     input_tokens bigint not null default 0,
+    cache_creation_input_tokens bigint not null default 0,
+    cache_read_input_tokens bigint not null default 0,
     output_tokens bigint not null default 0
 );
 
