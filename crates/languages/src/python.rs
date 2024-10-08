@@ -343,7 +343,7 @@ impl ContextProvider for PythonContextProvider {
             }
         });
 
-        return Some(TaskTemplates(tasks));
+        Some(TaskTemplates(tasks))
     }
 }
 
