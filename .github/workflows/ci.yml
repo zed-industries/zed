@@ -26,37 +26,35 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  style:
+  migration_checks:
+    name: Check Postgres and Protobuf migrations, mergability
     timeout-minutes: 60
-    name: Check formatting and spelling
     runs-on:
-      - buildjet-8vcpu-ubuntu-2204
+      - self-hosted
+      - test
     steps:
       - name: Checkout repo
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
-          fetch-depth: 0
+          fetch-depth: 0 # fetch full history
 
       - name: Remove untracked files
         run: git clean -df
 
-      - name: Check spelling for Typos
-        uses: crate-ci/typos@v1.24.6
+      - name: Find modified migrations
+        shell: bash -euxo pipefail {0}
+        run: |
+          export SQUAWK_GITHUB_TOKEN=${{ github.token }}
+          . ./script/squawk
+
+      - uses: bufbuild/buf-setup-action@v1
         with:
-          config: ./typos.toml
-
-      - name: Run style checks
-        uses: ./.github/actions/check_style
-
-      - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
-
-      - name: Check licenses are present
-        run: script/check-licenses
-
-      - name: Check license generation
-        run: script/generate-licenses /tmp/zed_licenses_output
+          version: v1.29.0
+      - uses: bufbuild/buf-breaking-action@v1
+        with:
+          input: "crates/proto/proto/"
+          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
@@ -70,13 +68,25 @@ jobs:
             echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> $GITHUB_ENV
           fi
 
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          version: v1.29.0
-      - uses: bufbuild/buf-breaking-action@v1
-        with:
-          input: "crates/proto/proto/"
-          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
+  style:
+    timeout-minutes: 60
+    name: Check formatting and spelling
+    runs-on:
+      - buildjet-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+
+      - name: Run style checks
+        uses: ./.github/actions/check_style
+
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
+
+      - name: Check licenses
+        run: |
+          script/check-licenses
+          script/generate-licenses /tmp/zed_licenses_output
 
   macos_tests:
     timeout-minutes: 60
