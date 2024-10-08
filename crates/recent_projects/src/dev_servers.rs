@@ -787,7 +787,7 @@ impl DevServerProjects {
                                     .p_2()
                                     .w_full()
                                     .justify_center()
-                                    .gap_2()
+                                    .gap_1p5()
                                     .child(
                                         div().p_1().rounded_lg().bg(color).with_animation(
                                             "pulse-ssh-waiting-for-connection",

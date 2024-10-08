@@ -16,9 +16,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    div, h_flex, prelude::*, v_flex, ActiveTheme, ButtonCommon, Clickable, Color,
-    FluentBuilder as _, Icon, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon, Styled, StyledExt as _, Tooltip, ViewContext, VisualContext, WindowContext,
+    div, h_flex, prelude::*, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, Icon, IconButton,
+    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, Styled, Tooltip,
+    ViewContext, VisualContext, WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
