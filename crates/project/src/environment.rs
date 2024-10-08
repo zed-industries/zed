@@ -69,7 +69,8 @@ impl ProjectEnvironment {
         }
     }
 
-    /// Returns all errors with associated worktree ids
+    /// Returns an iterator over all pairs `(worktree_id, error_message)` of
+    /// shell errors associated with this project.
     pub(crate) fn shell_errors(
         &self,
     ) -> impl Iterator<Item = (&WorktreeId, &EnvironmentErrorMessage)> {
