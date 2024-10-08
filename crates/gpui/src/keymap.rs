@@ -122,12 +122,12 @@ impl Keymap {
         let mut no_action_context = HashMap::default();
         for (binding, depth) in bindings.iter() {
             if binding.action.as_any().type_id() == (NoAction {}).type_id() {
-                no_action_context.insert(binding.context_predicate.clone(), depth.clone());
+                no_action_context.insert(binding.context_predicate.clone(), *depth);
             }
         }
         let bindings = bindings
             .into_iter()
-            .map(|(binding, depth)| {
+            .filter_map(|(binding, depth)| {
                 if no_action_context
                     .get(&binding.context_predicate)
                     .is_some_and(|&v| v == depth)
@@ -137,7 +137,6 @@ impl Keymap {
                     Some(binding)
                 }
             })
-            .flatten()
             .collect();
 
         (bindings, is_pending.unwrap_or_default())
