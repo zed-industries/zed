@@ -265,10 +265,12 @@ impl TitleBar {
     fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let host = self.project.read(cx).ssh_connection_string(cx)?;
         let meta = SharedString::from(format!("Connected to: {host}"));
-        let indicator_color = if self.project.read(cx).ssh_is_connected(cx)? {
-            Color::Success
-        } else {
-            Color::Warning
+        let indicator_color = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => Color::Info,
+            remote::ConnectionState::Connected => Color::Success,
+            remote::ConnectionState::HeartbeatMissed => Color::Warning,
+            remote::ConnectionState::Reconnecting => Color::Warning,
+            remote::ConnectionState::Disconnected => Color::Error,
         };
         let indicator = div()
             .absolute()

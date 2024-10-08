@@ -17,7 +17,7 @@ jobs:
             We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. Are you able to reproduce this issue in the latest version of Zed? If so, please let us know by commenting on this issue and we will keep it open; otherwise, we'll close it in 7 days. Feel free to open a new issue if you're seeing this message after the issue has been closed.
 
             Thanks for your help!
-          close-issue-message: "This issue was closed due to inactivity; feel free to open a new issue if you're still experiencing this problem!"
+          close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, feel free to ping a Zed team member to reopen this issue or open a new one."
           # We will increase `days-before-stale` to 365 on or after Jan 24th,
           # 2024. This date marks one year since migrating issues from
           # 'community' to 'zed' repository. The migration added activity to all
