@@ -224,8 +224,9 @@ impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
         let connection_string = self.prompt.read(cx).connection_string.clone();
         let theme = cx.theme();
-        let header_color = theme.colors().terminal_background;
-        let body_color = theme.colors().background;
+        let mut header_color = cx.theme().colors().text;
+        header_color.fade_out(0.96);
+        let body_color = theme.colors().editor_background;
 
         v_flex()
             .elevation_3(cx)
