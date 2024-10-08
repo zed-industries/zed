@@ -19,8 +19,7 @@ use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
-    ReadGlobal, TitlebarOptions, UpdateGlobal as _, View, ViewContext, VisualContext, WindowKind,
-    WindowOptions,
+    ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 

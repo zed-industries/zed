@@ -26,7 +26,7 @@ use crate::worktree_store::WorktreeStore;
 #[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    pub(super) templates_from_settings: ParsedTemplates,
+    templates_from_settings: ParsedTemplates,
 }
 
 #[derive(Debug, Default)]

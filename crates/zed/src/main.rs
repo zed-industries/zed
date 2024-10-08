@@ -628,31 +628,6 @@ fn main() {
     });
 }
 
-fn handle_tasks_file_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
-    struct TasksParseErrorNotification;
-    let id = NotificationId::unique::<TasksParseErrorNotification>();
-
-    for workspace in workspace::local_workspace_windows(cx) {
-        workspace
-            .update(cx, |workspace, cx| match error.as_ref() {
-                Some(error) => {
-                    workspace.show_notification(id.clone(), cx, |cx| {
-                        cx.new_view(|_| {
-                            MessageNotification::new(format!("Invalid user tasks file\n{error}"))
-                                .with_click_message("Open tasks file")
-                                .on_click(|cx| {
-                                    cx.dispatch_action(zed::OpenTasks.boxed_clone());
-                                    cx.emit(DismissEvent);
-                                })
-                        })
-                    });
-                }
-                None => workspace.dismiss_notification(&id, cx),
-            })
-            .log_err();
-    }
-}
-
 fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     struct KeymapParseErrorNotification;
     let id = NotificationId::unique::<KeymapParseErrorNotification>();

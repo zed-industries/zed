@@ -719,6 +719,7 @@ impl Project {
 
             let settings_observer = cx.new_model(|cx| {
                 SettingsObserver::new_ssh(
+                    fs.clone(),
                     ssh_proto.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
@@ -921,7 +922,7 @@ impl Project {
         })?;
 
         let settings_observer = cx.new_model(|cx| {
-            SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
+            SettingsObserver::new_remote(fs.clone(), worktree_store.clone(), task_store.clone(), cx)
         })?;
 
         let this = cx.new_model(|cx| {

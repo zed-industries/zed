@@ -6,7 +6,7 @@ use std::{
 use anyhow::Context as _;
 use collections::HashMap;
 use futures::{channel::mpsc, StreamExt as _};
-use gpui::{AppContext, AsyncAppContext, Model, ModelContext, Subscription, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, Location,
@@ -31,12 +31,11 @@ pub enum TaskStore {
     Noop,
 }
 
-struct StoreState {
+pub struct StoreState {
     mode: StoreMode,
     task_inventory: Model<Inventory>,
     buffer_store: WeakModel<BufferStore>,
     worktree_store: Model<WorktreeStore>,
-    _global_task_file_changes: Subscription,
 }
 
 enum StoreMode {
@@ -176,7 +175,6 @@ impl TaskStore {
             task_inventory: Inventory::new(cx),
             buffer_store,
             worktree_store,
-            _global_task_file_changes: todo!("TODO kb"),
         })
     }
 
@@ -195,7 +193,6 @@ impl TaskStore {
             task_inventory: Inventory::new(cx),
             buffer_store,
             worktree_store,
-            _global_task_file_changes: todo!("TODO kb"),
         })
     }
 
@@ -334,6 +331,7 @@ fn subscribe_to_global_task_file_changes(fs: Arc<dyn fs::Fs>, cx: &mut AppContex
         watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
 
     handle_tasks_file_changes(user_tasks_file_rx, cx, handle_tasks_file_changed);
+    todo!("TODO kb")
 }
 
 pub fn handle_tasks_file_changes(

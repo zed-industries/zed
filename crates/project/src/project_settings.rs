@@ -1,7 +1,9 @@
 use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use gpui::{
+    AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext, Subscription,
+};
 use language::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
@@ -211,14 +213,15 @@ pub struct SettingsObserver {
     mode: SettingsObserverMode,
     downstream_client: Option<AnyProtoClient>,
     worktree_store: Model<WorktreeStore>,
-    task_store: Model<TaskStore>,
     project_id: u64,
+    task_store: Model<TaskStore>,
+    _global_task_file_changes: Subscription,
 }
 
-/// SettingsObserver observers changes to .zed/settings.json files in local worktrees
+/// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
 /// (or the equivalent protobuf messages from upstream) and updates local settings
 /// and sends notifications downstream.
-/// In ssh mode it also monitors ~/.config/zed/settings.json and sends the content
+/// In ssh mode it also monitors ~/.config/zed/{settings, task}.json and sends the content
 /// upstream.
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
@@ -241,10 +244,12 @@ impl SettingsObserver {
             mode: SettingsObserverMode::Local(fs),
             downstream_client: None,
             project_id: 0,
+            _global_task_file_changes: todo!("TODO kb"),
         }
     }
 
     pub fn new_ssh(
+        fs: Arc<dyn Fs>,
         client: AnyProtoClient,
         worktree_store: Model<WorktreeStore>,
         task_store: Model<TaskStore>,
@@ -256,12 +261,14 @@ impl SettingsObserver {
             mode: SettingsObserverMode::Ssh(client.clone()),
             downstream_client: None,
             project_id: 0,
+            _global_task_file_changes: todo!("TODO kb"),
         };
         this.maintain_ssh_settings(client, cx);
         this
     }
 
     pub fn new_remote(
+        fs: Arc<dyn Fs>,
         worktree_store: Model<WorktreeStore>,
         task_store: Model<TaskStore>,
         _: &mut ModelContext<Self>,
@@ -272,6 +279,7 @@ impl SettingsObserver {
             mode: SettingsObserverMode::Remote,
             downstream_client: None,
             project_id: 0,
+            _global_task_file_changes: todo!("TODO kb"),
         }
     }
 
