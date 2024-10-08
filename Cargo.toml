@@ -398,11 +398,11 @@ rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
-rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
+rust-stemmers = "1.2"
+rustc-demangle = "0.1.23"
 rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
-rust-stemmers = "1.2"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
