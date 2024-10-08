@@ -20,7 +20,13 @@ use std::{
     sync::Arc,
 };
 
-pub fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
+pub fn init(log_file: Option<PathBuf>) -> Result<()> {
+    init_logging(log_file)?;
+    init_panic_hook();
+    Ok(())
+}
+
+fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
     if let Some(log_file) = log_file {
         let target = Box::new(if log_file.exists() {
             std::fs::OpenOptions::new()
@@ -44,6 +50,45 @@ pub fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
             .init();
     }
     Ok(())
+}
+
+fn init_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "Box<Any>".to_string());
+
+        let backtrace = backtrace::Backtrace::new();
+        let mut backtrace = backtrace
+            .frames()
+            .iter()
+            .flat_map(|frame| {
+                frame
+                    .symbols()
+                    .iter()
+                    .filter_map(|frame| Some(format!("{:#}", frame.name()?)))
+            })
+            .collect::<Vec<_>>();
+
+        // Strip out leading stack frames for rust panic-handling.
+        if let Some(ix) = backtrace
+            .iter()
+            .position(|name| name == "rust_begin_unwind")
+        {
+            backtrace.drain(0..=ix);
+        }
+
+        log::error!(
+            "server: panic occurred: {}\nBacktrace:\n{}",
+            payload,
+            backtrace.join("\n")
+        );
+
+        std::process::abort();
+    }));
 }
 
 fn start_server(
