@@ -116,7 +116,7 @@ pub struct EditorEvent {
     pub copilot_enabled: bool,
     /// Whether the user has copilot enabled for the language of the file opened or saved
     pub copilot_enabled_for_language: bool,
-    /// Whether the client is editing a local file or a remote file via SSH
+    /// Whether the client is opening/saving a local file or a remote file via SSH
     pub is_via_ssh: bool,
 }
 
@@ -174,6 +174,8 @@ pub struct ActionEvent {
 pub struct EditEvent {
     pub duration: i64,
     pub environment: String,
+    /// Whether the edits occurred locally or remotely via SSH
+    pub is_via_ssh: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
