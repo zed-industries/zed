@@ -42,8 +42,10 @@ jobs:
       - name: Remove untracked files
         run: git clean -df
 
-      - name: Check spelling
-        run: script/check-spelling
+      - name: Check spelling for Typos
+        uses: crate-ci/typos@1.24.6
+        with:
+          config: ./typos.toml
 
       - name: Run style checks
         uses: ./.github/actions/check_style
