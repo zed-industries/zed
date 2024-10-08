@@ -14,7 +14,6 @@ use node_runtime::NodeRuntime;
 use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
-use project::Project;
 use serde_json::Value;
 
 use std::{

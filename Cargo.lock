@@ -6411,7 +6411,6 @@ dependencies = [
  "rope",
  "rust-embed",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smol",
