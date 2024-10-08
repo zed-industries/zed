@@ -438,10 +438,9 @@ impl DapStore {
                 .unwrap_or_default();
 
             if support_configuration_done_request {
-                let res = client
+                client
                     .request::<ConfigurationDone>(ConfigurationDoneArguments)
-                    .await;
-                res
+                    .await
             } else {
                 Ok(())
             }
