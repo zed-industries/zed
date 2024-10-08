@@ -112,6 +112,23 @@ impl Database {
         .await
     }
 
+    pub async fn get_billing_subscriptions_with_price(
+        &self,
+        price_id: &str,
+    ) -> Result<Vec<billing_subscription::Model>> {
+        self.transaction(|tx| async move {
+            let subscriptions = billing_subscription::Entity::find()
+                .inner_join(billing_customer::Entity)
+                .filter(billing_customer::Column::UserId.eq(user_id))
+                .order_by_asc(billing_subscription::Column::Id)
+                .all(&*tx)
+                .await?;
+
+            Ok(subscriptions)
+        })
+        .await
+    }
+
     /// Returns whether the user has an active billing subscription.
     pub async fn has_active_billing_subscription(&self, user_id: UserId) -> Result<bool> {
         Ok(self.count_active_billing_subscriptions(user_id).await? > 0)

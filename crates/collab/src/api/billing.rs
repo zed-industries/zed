@@ -675,11 +675,9 @@ async fn sync_with_stripe(
 ) -> anyhow::Result<()> {
     let user_ids = app.db.user_ids_with_llm_subscription().await?;
 
-    for user_id in user_ids {
+    // for user_id in user_ids {
 
-
-    }
-
+    // }
 
     Ok(())
 }
