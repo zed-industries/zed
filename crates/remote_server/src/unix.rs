@@ -106,6 +106,7 @@ fn start_server(
     cx.on_app_quit(move |_| {
         let mut app_quit_tx = app_quit_tx.clone();
         async move {
+            log::info!("app quitting. sending signal to server main loop");
             app_quit_tx.send(()).await.ok();
         }
     })
@@ -195,6 +196,13 @@ fn start_server(
 }
 
 pub fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf) -> Result<()> {
+    log::info!(
+        "server: starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}",
+        pid_file,
+        stdin_socket,
+        stdout_socket
+    );
+
     write_pid_file(&pid_file)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
@@ -202,10 +210,12 @@ pub fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: Path
     let stdout_listener =
         UnixListener::bind(stdout_socket).context("failed to bind stdout socket")?;
 
+    log::debug!("server: starting gpui app");
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
         HeadlessProject::init(cx);
 
+        log::info!("server: gpui app started, initializing server");
         let session = start_server(stdin_listener, stdout_listener, cx);
         let project = cx.new_model(|cx| {
             HeadlessProject::new(session, Arc::new(RealFs::new(Default::default(), None)), cx)
@@ -343,8 +353,9 @@ fn write_pid_file(path: &Path) -> Result<()> {
     if path.exists() {
         std::fs::remove_file(path)?;
     }
-
-    std::fs::write(path, std::process::id().to_string()).context("Failed to write PID file")
+    let pid = std::process::id().to_string();
+    log::debug!("server: writing PID {} to file {:?}", pid, path);
+    std::fs::write(path, pid).context("Failed to write PID file")
 }
 
 async fn handle_io<R, W>(mut reader: R, mut writer: W, socket_name: &str) -> Result<()>
