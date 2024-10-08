@@ -1634,7 +1634,7 @@ impl Render for ProjectSearchBar {
                             let focus_handle = focus_handle.clone();
                             move |cx| {
                                 Tooltip::for_action_in(
-                                    "Toggle replace",
+                                    "Toggle Replace",
                                     &ToggleReplace,
                                     &focus_handle,
                                     cx,

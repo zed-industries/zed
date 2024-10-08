@@ -123,16 +123,25 @@ If Vulkan is configured correctly, and Zed is still slow for you, please [file a
 
 ### I can't open any files
 
-### Zed isn't remembering my login
-
 ### Clicking links isn't working
 
-All of these features are provided by XDG desktop portals, specifically:
+These features are provided by XDG desktop portals, specifically:
 
 - `org.freedesktop.portal.FileChooser`
 - `org.freedesktop.portal.OpenURI`
 
 Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives.
+
+### Zed isn't remembering my API keys
+
+### Zed isn't remembering my login
+
+These feature also requires XDG desktop portals, specifically:
+
+- `org.freedesktop.portal.Secret` or
+- `org.freedesktop.Secrets`
+
+Zed needs a place to securely store secrets such as your Zed login cookie or your OpenAI API Keys and we use a system provided keychain to do this. Examples of packages that provide this are `gnome-keyring`, `KWallet` and `keepassxc` among others.
 
 ### Could not start inotify
 
@@ -144,3 +153,20 @@ If you are seeing "too many open files" then first try `sysctl fs.inotify`.
 - You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
 
 It is also possible that you are running out of file descriptors. You can check the limits with `ulimit` and update them by editing `/etc/security/limits.conf`.
+
+### FIPS Mode OpenSSL internal error {#fips}
+
+If your machine is running in FIPS mode (`cat /proc/sys/crypto/fips_enabled` is set to `1`) Zed may fail to start and output the following when launched with `zed --foreground`:
+
+```
+crypto/fips/fips.c:154: OpenSSL internal error: FATAL FIPS SELFTEST FAILURE
+```
+
+As a workaround, remove the bundled `libssl` and `libcrypto` libraries from the `zed.app/lib` directory:
+
+```
+rm ~/.local/zed.app/lib/libssl.so.1.1
+rm ~/.local/zed.app/lib/libcrypto.so.1.1
+```
+
+This will force zed to fallback to the system `libssl` and `libcrypto` libraries.

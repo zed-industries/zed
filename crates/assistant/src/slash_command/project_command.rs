@@ -47,11 +47,11 @@ impl SlashCommand for ProjectSlashCommand {
     }
 
     fn description(&self) -> String {
-        "Generate semantic searches based on the current context".into()
+        "Generate a semantic search based on context".into()
     }
 
     fn menu_text(&self) -> String {
-        "Project Context".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

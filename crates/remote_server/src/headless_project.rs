@@ -10,7 +10,7 @@ use project::{
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
-use remote::SshSession;
+use remote::ssh_session::ChannelClient;
 use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
@@ -41,7 +41,7 @@ impl HeadlessProject {
         project::Project::init_settings(cx);
     }
 
-    pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(session: Arc<ChannelClient>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
         let node_runtime = NodeRuntime::unavailable();
@@ -112,6 +112,8 @@ impl HeadlessProject {
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
         client.add_request_handler(cx.weak_model(), Self::handle_check_file_exists);
+        client.add_request_handler(cx.weak_model(), Self::handle_shutdown_remote_server);
+        client.add_request_handler(cx.weak_model(), Self::handle_ping);
 
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
@@ -334,5 +336,32 @@ impl HeadlessProject {
             exists,
             path: expanded,
         })
+    }
+
+    pub async fn handle_shutdown_remote_server(
+        _this: Model<Self>,
+        _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        cx.spawn(|cx| async move {
+            cx.update(|cx| {
+                // TODO: This is a hack, because in a headless project, shutdown isn't executed
+                // when calling quit, but it should be.
+                cx.shutdown();
+                cx.quit();
+            })
+        })
+        .detach();
+
+        Ok(proto::Ack {})
+    }
+
+    pub async fn handle_ping(
+        _this: Model<Self>,
+        _envelope: TypedEnvelope<proto::Ping>,
+        _cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        log::debug!("Received ping from client");
+        Ok(proto::Ack {})
     }
 }

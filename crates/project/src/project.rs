@@ -1,4 +1,5 @@
 pub mod buffer_store;
+mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
@@ -38,7 +39,7 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Model,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Hsla, Model,
     ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
@@ -49,14 +50,16 @@ use language::{
     Documentation, File as _, Language, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset,
     ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
+use lsp::{
+    CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
+};
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_path};
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
-use remote::SshSession;
+use remote::SshRemoteClient;
 use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
@@ -140,7 +143,7 @@ pub struct Project {
     join_project_response_message_id: u32,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
-    ssh_session: Option<Arc<SshSession>>,
+    ssh_client: Option<Model<SshRemoteClient>>,
     client_state: ProjectClientState,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
@@ -645,7 +648,7 @@ impl Project {
                 user_store,
                 settings_observer,
                 fs,
-                ssh_session: None,
+                ssh_client: None,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -666,7 +669,7 @@ impl Project {
     }
 
     pub fn ssh(
-        ssh: Arc<SshSession>,
+        ssh: Model<SshRemoteClient>,
         client: Arc<Client>,
         node: NodeRuntime,
         user_store: Model<UserStore>,
@@ -683,15 +686,16 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
+            let ssh_proto = ssh.read(cx).to_proto_client();
             let worktree_store =
-                cx.new_model(|_| WorktreeStore::remote(false, ssh.clone().into(), 0, None));
+                cx.new_model(|_| WorktreeStore::remote(false, ssh_proto.clone(), 0, None));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
             let buffer_store = cx.new_model(|cx| {
                 BufferStore::remote(
                     worktree_store.clone(),
-                    ssh.clone().into(),
+                    ssh.read(cx).to_proto_client(),
                     SSH_PROJECT_ID,
                     cx,
                 )
@@ -700,7 +704,7 @@ impl Project {
                 .detach();
 
             let settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_ssh(ssh.clone().into(), worktree_store.clone(), cx)
+                SettingsObserver::new_ssh(ssh_proto.clone(), worktree_store.clone(), cx)
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
@@ -711,12 +715,23 @@ impl Project {
                     buffer_store.clone(),
                     worktree_store.clone(),
                     languages.clone(),
-                    ssh.clone().into(),
+                    ssh_proto.clone(),
                     SSH_PROJECT_ID,
                     cx,
                 )
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+            cx.on_release(|this, cx| {
+                if let Some(ssh_client) = this.ssh_client.as_ref() {
+                    ssh_client
+                        .read(cx)
+                        .to_proto_client()
+                        .send(proto::ShutdownRemoteServer {})
+                        .log_err();
+                }
+            })
+            .detach();
 
             let this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -735,7 +750,7 @@ impl Project {
                 user_store,
                 settings_observer,
                 fs,
-                ssh_session: Some(ssh.clone()),
+                ssh_client: Some(ssh.clone()),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -753,20 +768,20 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
             };
 
-            let client: AnyProtoClient = ssh.clone().into();
-
+            let ssh = ssh.read(cx);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
-            client.add_model_message_handler(Self::handle_create_buffer_for_peer);
-            client.add_model_message_handler(Self::handle_update_worktree);
-            client.add_model_message_handler(Self::handle_update_project);
-            client.add_model_request_handler(BufferStore::handle_update_buffer);
-            BufferStore::init(&client);
-            LspStore::init(&client);
-            SettingsObserver::init(&client);
+
+            ssh_proto.add_model_message_handler(Self::handle_create_buffer_for_peer);
+            ssh_proto.add_model_message_handler(Self::handle_update_worktree);
+            ssh_proto.add_model_message_handler(Self::handle_update_project);
+            ssh_proto.add_model_request_handler(BufferStore::handle_update_buffer);
+            BufferStore::init(&ssh_proto);
+            LspStore::init(&ssh_proto);
+            SettingsObserver::init(&ssh_proto);
 
             this
         })
@@ -909,7 +924,7 @@ impl Project {
                 user_store: user_store.clone(),
                 snippets,
                 fs,
-                ssh_session: None,
+                ssh_client: None,
                 settings_observer: settings_observer.clone(),
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
@@ -1236,7 +1251,10 @@ impl Project {
         server.ssh_connection_string.is_some()
     }
 
-    pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
+    pub fn ssh_connection_string(&self, cx: &AppContext) -> Option<SharedString> {
+        if let Some(ssh_state) = &self.ssh_client {
+            return Some(ssh_state.read(cx).connection_string().into());
+        }
         let dev_server_id = self.dev_server_project_id()?;
         dev_server_projects::Store::global(cx)
             .read(cx)
@@ -1245,11 +1263,15 @@ impl Project {
             .clone()
     }
 
+    pub fn ssh_is_connected(&self, cx: &AppContext) -> Option<bool> {
+        Some(!self.ssh_client.as_ref()?.read(cx).is_reconnect_underway())
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
             _ => {
-                if self.ssh_session.is_some() {
+                if self.ssh_client.is_some() {
                     1
                 } else {
                     0
@@ -1657,7 +1679,7 @@ impl Project {
     pub fn is_local(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
-                self.ssh_session.is_none()
+                self.ssh_client.is_none()
             }
             ProjectClientState::Remote { .. } => false,
         }
@@ -1666,7 +1688,7 @@ impl Project {
     pub fn is_via_ssh(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
-                self.ssh_session.is_some()
+                self.ssh_client.is_some()
             }
             ProjectClientState::Remote { .. } => false,
         }
@@ -1952,8 +1974,10 @@ impl Project {
             }
             BufferStoreEvent::BufferChangedFilePath { .. } => {}
             BufferStoreEvent::BufferDropped(buffer_id) => {
-                if let Some(ref ssh_session) = self.ssh_session {
-                    ssh_session
+                if let Some(ref ssh_client) = self.ssh_client {
+                    ssh_client
+                        .read(cx)
+                        .to_proto_client()
                         .send(proto::CloseBuffer {
                             project_id: 0,
                             buffer_id: buffer_id.to_proto(),
@@ -2158,13 +2182,15 @@ impl Project {
             } => {
                 let operation = language::proto::serialize_operation(operation);
 
-                if let Some(ssh) = &self.ssh_session {
-                    ssh.send(proto::UpdateBuffer {
-                        project_id: 0,
-                        buffer_id: buffer_id.to_proto(),
-                        operations: vec![operation.clone()],
-                    })
-                    .ok();
+                if let Some(ssh) = &self.ssh_client {
+                    ssh.read(cx)
+                        .to_proto_client()
+                        .send(proto::UpdateBuffer {
+                            project_id: 0,
+                            buffer_id: buffer_id.to_proto(),
+                            operations: vec![operation.clone()],
+                        })
+                        .ok();
                 }
 
                 self.enqueue_buffer_ordered_message(BufferOrderedMessage::Operation {
@@ -2844,14 +2870,13 @@ impl Project {
     ) -> Receiver<Model<Buffer>> {
         let (tx, rx) = smol::channel::unbounded();
 
-        let (client, remote_id): (AnyProtoClient, _) =
-            if let Some(ssh_session) = self.ssh_session.clone() {
-                (ssh_session.into(), 0)
-            } else if let Some(remote_id) = self.remote_id() {
-                (self.client.clone().into(), remote_id)
-            } else {
-                return rx;
-            };
+        let (client, remote_id): (AnyProtoClient, _) = if let Some(ssh_client) = &self.ssh_client {
+            (ssh_client.read(cx).to_proto_client(), 0)
+        } else if let Some(remote_id) = self.remote_id() {
+            (self.client.clone().into(), remote_id)
+        } else {
+            return rx;
+        };
 
         let request = client.request(proto::FindSearchCandidates {
             project_id: remote_id,
@@ -2980,11 +3005,15 @@ impl Project {
 
                     exists.then(|| ResolvedPath::AbsPath(expanded))
                 })
-            } else if let Some(ssh_session) = self.ssh_session.as_ref() {
-                let request = ssh_session.request(proto::CheckFileExists {
-                    project_id: SSH_PROJECT_ID,
-                    path: path.to_string(),
-                });
+            } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+                let request =
+                    ssh_client
+                        .read(cx)
+                        .to_proto_client()
+                        .request(proto::CheckFileExists {
+                            project_id: SSH_PROJECT_ID,
+                            path: path.to_string(),
+                        });
                 cx.background_executor().spawn(async move {
                     let response = request.await.log_err()?;
                     if response.exists {
@@ -3054,13 +3083,13 @@ impl Project {
     ) -> Task<Result<Vec<PathBuf>>> {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
-        } else if let Some(session) = self.ssh_session.as_ref() {
+        } else if let Some(session) = self.ssh_client.as_ref() {
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
                 path: query,
             };
 
-            let response = session.request(request);
+            let response = session.read(cx).to_proto_client().request(request);
             cx.background_executor().spawn(async move {
                 let response = response.await?;
                 Ok(response.entries.into_iter().map(PathBuf::from).collect())
@@ -3484,11 +3513,11 @@ impl Project {
         cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         let buffer_store = this.read_with(&cx, |this, cx| {
-            if let Some(ssh) = &this.ssh_session {
+            if let Some(ssh) = &this.ssh_client {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = 0;
                 cx.background_executor()
-                    .spawn(ssh.request(payload))
+                    .spawn(ssh.read(cx).to_proto_client().request(payload))
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
@@ -4453,6 +4482,16 @@ impl Completion {
     /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
         self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+    }
+
+    /// Returns the corresponding color for this completion.
+    ///
+    /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
+    pub fn color(&self) -> Option<Hsla> {
+        match self.lsp_completion.kind {
+            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
+            _ => None,
+        }
     }
 }
 
