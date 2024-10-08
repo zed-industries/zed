@@ -1263,6 +1263,7 @@ pub struct EditEventRow {
     period_start: i64,
     period_end: i64,
     environment: String,
+    is_via_ssh: bool,
 }
 
 impl EditEventRow {
@@ -1296,6 +1297,7 @@ impl EditEventRow {
             period_start: period_start.timestamp_millis(),
             period_end: period_end.timestamp_millis(),
             environment: event.environment,
+            is_via_ssh: event.is_via_ssh,
         }
     }
 }
