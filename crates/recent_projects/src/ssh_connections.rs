@@ -16,9 +16,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, FluentBuilder as _, Icon,
-    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, Styled,
-    StyledExt as _, Tooltip, ViewContext, VisualContext, WindowContext,
+    div, h_flex, prelude::*, v_flex, ActiveTheme, ButtonCommon, Clickable, Color,
+    FluentBuilder as _, Icon, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
+    Label, LabelCommon, Styled, StyledExt as _, Tooltip, ViewContext, VisualContext, WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -137,15 +137,17 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let cx = cx.window_context();
+        let theme = cx.theme();
         v_flex()
             .key_context("PasswordPrompt")
-            .p_4()
             .size_full()
             .justify_center()
             .child(
                 h_flex()
-                    .gap_1p5()
+                    .py_2()
+                    .px_4()
                     .justify_center()
                     .child(if self.error_message.is_some() {
                         Icon::new(IconName::XCircle)
@@ -166,18 +168,38 @@ impl Render for SshPrompt {
                     })
                     .child(
                         div()
+                            .ml_1()
+                            .child(Label::new("SSH Connection").size(LabelSize::Small)),
+                    )
+                    .child(
+                        div()
                             .when_some(self.error_message.as_ref(), |el, error| {
-                                el.child(Label::new(error.clone()))
+                                el.child(Label::new(format!("－{}", error)).size(LabelSize::Small))
                             })
                             .when(
                                 self.error_message.is_none() && self.status_message.is_some(),
-                                |el| el.child(Label::new(self.status_message.clone().unwrap())),
+                                |el| {
+                                    el.child(
+                                        Label::new(format!(
+                                            "－{}",
+                                            self.status_message.clone().unwrap()
+                                        ))
+                                        .size(LabelSize::Small),
+                                    )
+                                },
                             ),
                     ),
             )
-            .child(h_flex().when_some(self.prompt.as_ref(), |el, prompt| {
-                el.child(Label::new(prompt.0.clone()))
-                    .child(self.editor.clone())
+            .child(div().when_some(self.prompt.as_ref(), |el, prompt| {
+                el.child(
+                    h_flex()
+                        .p_4()
+                        .border_t_1()
+                        .border_color(theme.colors().border_variant)
+                        .font_buffer(cx)
+                        .child(Label::new(prompt.0.clone()))
+                        .child(self.editor.clone()),
+                )
             }))
     }
 }
@@ -204,14 +226,14 @@ impl Render for SshConnectionModal {
         let theme = cx.theme();
         let header_color = theme.colors().terminal_background;
         let body_color = theme.colors().background;
+
         v_flex()
             .elevation_3(cx)
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .w(px(500.))
-            .overflow_hidden()
-            .border_2()
-            .border_color(theme.colors().border_selected)
+            .border_1()
+            .border_color(theme.colors().border)
             .child(
                 h_flex()
                     .relative()
@@ -240,10 +262,15 @@ impl Render for SshConnectionModal {
                                     .size(ui::LabelSize::Small)
                                     .single_line(),
                             ),
-                    )
-                    .child(div()),
+                    ),
             )
-            .child(h_flex().bg(body_color).w_full().child(self.prompt.clone()))
+            .child(
+                h_flex()
+                    .rounded_b_md()
+                    .bg(body_color)
+                    .w_full()
+                    .child(self.prompt.clone()),
+            )
     }
 }
 
