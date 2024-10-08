@@ -22,6 +22,7 @@ use axum::{
 };
 use db::{ChannelId, Database};
 use executor::Executor;
+use llm::db::LlmDatabase;
 pub use rate_limiter::*;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
@@ -191,6 +192,10 @@ impl Config {
             "staging" => "https://staging.zed.dev",
             _ => "https://zed.dev",
         }
+    }
+
+    pub fn is_llm_billing_enabled(&self) -> bool {
+        self.stripe_llm_usage_price_id.is_some()
     }
 
     #[cfg(test)]

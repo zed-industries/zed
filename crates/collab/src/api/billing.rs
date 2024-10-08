@@ -22,11 +22,14 @@ use stripe::{
 };
 use util::ResultExt;
 
-use crate::db::billing_subscription::StripeSubscriptionStatus;
-use crate::db::{
-    billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
-    CreateBillingSubscriptionParams, CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
-    UpdateBillingSubscriptionParams,
+use crate::{db::billing_subscription::StripeSubscriptionStatus, rpc::ResultExt as _};
+use crate::{
+    db::{
+        billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
+        CreateBillingSubscriptionParams, CreateProcessedStripeEventParams,
+        UpdateBillingCustomerParams, UpdateBillingSubscriptionParams,
+    },
+    llm::db::LlmDatabase,
 };
 use crate::{AppState, Error, Result};
 
@@ -630,4 +633,53 @@ async fn find_or_create_billing_customer(
         .await?;
 
     Ok(Some(billing_customer))
+}
+
+const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>, llm_db: LlmDatabase) {
+    let Some(stripe_client) = app.stripe_client.clone() else {
+        log::warn!("failed to retrieve Stripe client");
+        return;
+    };
+    let Some(stripe_llm_usage_price_id) = app.config.stripe_llm_usage_price_id.clone() else {
+        log::warn!("failed to retrieve Stripe LLM usage price ID");
+        return;
+    };
+
+    let executor = app.executor.clone();
+    executor.spawn_detached({
+        let executor = executor.clone();
+        async move {
+            loop {
+                sync_with_stripe(
+                    &app,
+                    &llm_db,
+                    &stripe_client,
+                    stripe_llm_usage_price_id.clone(),
+                )
+                .await
+                .trace_err();
+
+                executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
+            }
+        }
+    });
+}
+
+async fn sync_with_stripe(
+    app: &Arc<AppState>,
+    llm_db: &LlmDatabase,
+    stripe_client: &stripe::Client,
+    stripe_llm_usage_price_id: Arc<str>,
+) -> anyhow::Result<()> {
+    let user_ids = app.db.user_ids_with_llm_subscription().await?;
+
+    for user_id in user_ids {
+
+
+    }
+
+
+    Ok(())
 }

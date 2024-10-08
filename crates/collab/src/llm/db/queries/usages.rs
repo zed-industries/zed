@@ -140,6 +140,72 @@ impl LlmDatabase {
         .await
     }
 
+    pub async fn get_overall_usage(&self, user_id: UserId, now: DateTimeUtc) -> Result<Usage> {
+        self.transaction(|tx| async move {
+            let usages = usage::Entity::find()
+                .filter(usage::Column::UserId.eq(user_id))
+                .all(&*tx)
+                .await?;
+
+            let lifetime_usage = lifetime_usage::Entity::find()
+                .filter(lifetime_usage::Column::UserId.eq(user_id))
+                .one(&*tx)
+                .await?;
+
+            let requests_this_minute =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::RequestsPerMinute)?;
+            let tokens_this_minute =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerMinute)?;
+            let tokens_this_day =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerDay)?;
+            let input_tokens_this_month =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::InputTokensPerMonth)?;
+            let cache_creation_input_tokens_this_month = self.get_usage_for_measure(
+                &usages,
+                now,
+                UsageMeasure::CacheCreationInputTokensPerMonth,
+            )?;
+            let cache_read_input_tokens_this_month = self.get_usage_for_measure(
+                &usages,
+                now,
+                UsageMeasure::CacheReadInputTokensPerMonth,
+            )?;
+            let output_tokens_this_month =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::OutputTokensPerMonth)?;
+            let spending_this_month = calculate_spending(
+                model,
+                input_tokens_this_month,
+                cache_creation_input_tokens_this_month,
+                cache_read_input_tokens_this_month,
+                output_tokens_this_month,
+            );
+            let lifetime_spending = if let Some(lifetime_usage) = lifetime_usage {
+                calculate_spending(
+                    model,
+                    lifetime_usage.input_tokens as usize,
+                    lifetime_usage.cache_creation_input_tokens as usize,
+                    lifetime_usage.cache_read_input_tokens as usize,
+                    lifetime_usage.output_tokens as usize,
+                )
+            } else {
+                0
+            };
+
+            Ok(Usage {
+                requests_this_minute,
+                tokens_this_minute,
+                tokens_this_day,
+                input_tokens_this_month,
+                cache_creation_input_tokens_this_month,
+                cache_read_input_tokens_this_month,
+                output_tokens_this_month,
+                spending_this_month,
+                lifetime_spending,
+            })
+        })
+        .await
+    }
+
     pub async fn get_usage(
         &self,
         user_id: UserId,
