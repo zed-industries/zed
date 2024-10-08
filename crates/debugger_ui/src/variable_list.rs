@@ -730,7 +730,7 @@ impl VariableList {
                                 div()
                                     .text_ui_xs(cx)
                                     .text_color(cx.theme().colors().text_muted)
-                                    .child(variable.value.clone()),
+                                    .child(variable.value.replace("\n", " ").clone()),
                             ),
                     ),
             )
