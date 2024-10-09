@@ -442,6 +442,12 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
 /// before they have to pay.
 pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
 
+/// The default value to use for maximum spend per month if the user did not
+/// explicitly set a maximum spend.
+///
+/// Used to prevent surprise bills.
+pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
+
 /// The maximum lifetime spending an individual user can reach before being cut off.
 const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
 

@@ -26,15 +26,19 @@ use crate::db::billing_subscription::{self, StripeSubscriptionStatus};
 use crate::db::{
     billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
     CreateBillingSubscriptionParams, CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
-    UpdateBillingSubscriptionParams,
+    UpdateBillingPreferencesParams, UpdateBillingSubscriptionParams,
 };
 use crate::llm::db::LlmDatabase;
-use crate::llm::FREE_TIER_MONTHLY_SPENDING_LIMIT;
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
     Router::new()
+        .route(
+            "/billing/preferences",
+            get(get_billing_preferences).put(update_billing_preferences),
+        )
         .route(
             "/billing/subscriptions",
             get(list_billing_subscriptions).post(create_billing_subscription),
@@ -43,6 +47,82 @@ pub fn router() -> Router {
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
         )
+}
+
+#[derive(Debug, Deserialize)]
+struct GetBillingPreferencesParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct BillingPreferencesResponse {
+    max_monthly_llm_usage_spending_in_cents: i32,
+}
+
+async fn get_billing_preferences(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<GetBillingPreferencesParams>,
+) -> Result<Json<BillingPreferencesResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(params.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let preferences = app.db.get_billing_preferences(user.id).await?;
+
+    Ok(Json(BillingPreferencesResponse {
+        max_monthly_llm_usage_spending_in_cents: preferences
+            .map_or(DEFAULT_MAX_MONTHLY_SPEND.0 as i32, |preferences| {
+                preferences.max_monthly_llm_usage_spending_in_cents
+            }),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateBillingPreferencesBody {
+    github_user_id: i32,
+    max_monthly_llm_usage_spending_in_cents: i32,
+}
+
+async fn update_billing_preferences(
+    Extension(app): Extension<Arc<AppState>>,
+    extract::Json(body): extract::Json<UpdateBillingPreferencesBody>,
+) -> Result<Json<BillingPreferencesResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(body.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let billing_preferences =
+        if let Some(_billing_preferences) = app.db.get_billing_preferences(user.id).await? {
+            app.db
+                .update_billing_preferences(
+                    user.id,
+                    &UpdateBillingPreferencesParams {
+                        max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
+                            body.max_monthly_llm_usage_spending_in_cents,
+                        ),
+                    },
+                )
+                .await?
+        } else {
+            app.db
+                .create_billing_preferences(
+                    user.id,
+                    &crate::db::CreateBillingPreferencesParams {
+                        max_monthly_llm_usage_spending_in_cents: body
+                            .max_monthly_llm_usage_spending_in_cents,
+                    },
+                )
+                .await?
+        };
+
+    Ok(Json(BillingPreferencesResponse {
+        max_monthly_llm_usage_spending_in_cents: billing_preferences
+            .max_monthly_llm_usage_spending_in_cents,
+    }))
 }
 
 #[derive(Debug, Deserialize)]

@@ -422,6 +422,15 @@ CREATE TABLE dev_server_projects (
     paths TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS billing_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX "uix_billing_preferences_on_user_id" ON billing_preferences (user_id);
+
 CREATE TABLE IF NOT EXISTS billing_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
