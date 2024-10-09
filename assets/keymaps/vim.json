@@ -154,15 +154,6 @@
       "8": ["vim::Number", 8],
       "9": ["vim::Number", 9],
       // window related commands (ctrl-w X)
-      "ctrl-w": null,
-      "ctrl-w left": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w up": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w down": ["workspace::ActivatePaneInDirection", "Down"],
-      "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"],
       "ctrl-w ctrl-h": ["workspace::ActivatePaneInDirection", "Left"],
       "ctrl-w ctrl-l": ["workspace::ActivatePaneInDirection", "Right"],
       "ctrl-w ctrl-k": ["workspace::ActivatePaneInDirection", "Up"],
@@ -527,6 +518,20 @@
       "k": "menu::SelectPrev",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst"
+    }
+  },
+  {
+    "context": "VimControl && !menu || MarkdownPreview",
+    "bindings": {
+      "ctrl-w": null,
+      "ctrl-w left": ["workspace::ActivatePaneInDirection", "Left"],
+      "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],
+      "ctrl-w up": ["workspace::ActivatePaneInDirection", "Up"],
+      "ctrl-w down": ["workspace::ActivatePaneInDirection", "Down"],
+      "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
+      "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
+      "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
+      "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"]
     }
   }
 ]
