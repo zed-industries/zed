@@ -1,6 +1,8 @@
-use crate::db::billing_preference;
 use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
-use crate::{db::UserId, Config};
+use crate::{
+    db::{billing_preference, UserId},
+    Config,
+};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
@@ -36,6 +38,7 @@ pub struct LlmTokenClaims {
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
 impl LlmTokenClaims {
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         user_id: UserId,
         github_user_login: String,
