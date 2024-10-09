@@ -22,8 +22,7 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-
-use reqwest_client::ReqwestClient;
+use isahc_http_client::IsahcHttpClient;
 use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -44,7 +43,7 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: ReqwestClient,
+    pub http_client: IsahcHttpClient,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -70,8 +69,11 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client =
-            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
+        let http_client = IsahcHttpClient::builder()
+            .default_header("User-Agent", user_agent)
+            .build()
+            .map(IsahcHttpClient::from)
+            .context("failed to construct http client")?;
 
         let this = Self {
             executor,
@@ -436,6 +438,9 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
+/// The maximum monthly spending an individual user can reach before they have to pay.
+pub const MONTHLY_SPENDING_LIMIT_IN_CENTS: usize = 5 * 100;
+
 /// The maximum lifetime spending an individual user can reach before being cut off.
 ///
 /// Represented in cents.
@@ -458,6 +463,18 @@ async fn check_usage_limit(
         )
         .await?;
 
+    if state.config.is_llm_billing_enabled() {
+        if usage.spending_this_month >= MONTHLY_SPENDING_LIMIT_IN_CENTS {
+            if !claims.has_llm_subscription.unwrap_or(false) {
+                return Err(Error::http(
+                    StatusCode::PAYMENT_REQUIRED,
+                    "Maximum spending limit reached for this month.".to_string(),
+                ));
+            }
+        }
+    }
+
+    // TODO: Remove this once we've rolled out monthly spending limits.
     if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
         return Err(Error::http(
             StatusCode::FORBIDDEN,
@@ -505,7 +522,6 @@ async fn check_usage_limit(
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
                 UsageMeasure::TokensPerMinute => "tokens_per_minute",
                 UsageMeasure::TokensPerDay => "tokens_per_day",
-                _ => "",
             };
 
             if let Some(client) = state.clickhouse_client.as_ref() {

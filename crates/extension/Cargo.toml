@@ -56,6 +56,7 @@ wit-component.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+isahc_http_client.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
@@ -63,7 +64,5 @@ gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
-reqwest_client.workspace = true
 tokio.workspace = true
-ureq_client.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

@@ -1,5 +1,5 @@
 [package]
-name = "ureq_client"
+name = "isahc_http_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,20 +12,11 @@ workspace = true
 test-support = []
 
 [lib]
-path = "src/ureq_client.rs"
-doctest = true
-
-[[example]]
-name = "client"
-path = "examples/client.rs"
+path = "src/isahc_http_client.rs"
 
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-gpui.workspace = true
 http_client.workspace = true
-parking_lot.workspace = true
-serde.workspace = true
-smol.workspace = true
-ureq = "=2.9.1"
+isahc.workspace = true
 util.workspace = true
