@@ -4438,14 +4438,19 @@ impl Editor {
         let mut resolve_task_store = completions_menu
             .selected_completion_documentation_resolve_debounce
             .lock();
-        let resolve_task = resolve_task_store
-            .take()
-            .or_else(|| self.completion_documentation_pre_resolve_debounce.take());
+        let selected_completion_resolve = resolve_task_store.start_now();
+        let menu_pre_resolve = self
+            .completion_documentation_pre_resolve_debounce
+            .start_now();
         drop(resolve_task_store);
 
         Some(cx.spawn(|editor, mut cx| async move {
-            if let Some(resolve_task) = resolve_task {
-                resolve_task.await;
+            match (selected_completion_resolve, menu_pre_resolve) {
+                (None, None) => {}
+                (Some(resolve), None) | (None, Some(resolve)) => resolve.await,
+                (Some(resolve_1), Some(resolve_2)) => {
+                    futures::join!(resolve_1, resolve_2);
+                }
             }
             if let Some(apply_edits_task) = editor.update(&mut cx, |editor, cx| {
                 editor.apply_resolved_completion(completions_menu, item_ix, intent, cx)
