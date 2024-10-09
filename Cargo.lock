@@ -10115,6 +10115,7 @@ dependencies = [
  "settings",
  "sha2",
  "smol",
+ "stop-words",
  "tempfile",
  "theme",
  "tree-sitter",
@@ -10974,6 +10975,15 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "stop-words"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8500024d809de02ecbf998472b7bed3c4fca380df2be68917f6a473bdb28ddcc"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "story"

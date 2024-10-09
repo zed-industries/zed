@@ -1,16 +1,20 @@
 use rust_stemmers::{Algorithm, Stemmer};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
+use stop_words;
 
 #[derive(Clone)]
 pub struct SimpleTokenizer {
     stemmer: Arc<Stemmer>,
+    stopwords: Vec<String>,
 }
 
 impl SimpleTokenizer {
     pub fn new() -> Self {
         Self {
-            stemmer: Arc::new(Stemmer::create(Algorithm::English)), // We can make this configurable later
+            // TODO: handle non-English
+            stemmer: Arc::new(Stemmer::create(Algorithm::English)),
+            stopwords: stop_words::get(stop_words::LANGUAGE::English),
         }
     }
 
@@ -35,7 +39,7 @@ impl SimpleTokenizer {
                     acc
                 })
             })
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty() && !self.stopwords.contains(s))
             .map(|word| {
                 // Stem each word and convert to Arc<str>
                 let stemmed = self.stemmer.stem(&word).to_string();

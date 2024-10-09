@@ -422,6 +422,7 @@ simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 sqlformat = "0.2"
+stop-words = "0.8"
 strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"
