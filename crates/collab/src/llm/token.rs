@@ -1,3 +1,4 @@
+use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
 use crate::{db::UserId, Config};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -58,6 +59,7 @@ impl LlmTokenClaims {
             is_staff,
             has_llm_closed_beta_feature_flag,
             has_llm_subscription: Some(has_llm_subscription),
+            max_monthly_spend_in_cents: Some(DEFAULT_MAX_MONTHLY_SPEND.0),
             plan,
         };
 

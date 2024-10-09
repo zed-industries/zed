@@ -30,7 +30,7 @@ use crate::db::{
     UpdateBillingSubscriptionParams,
 };
 use crate::llm::db::LlmDatabase;
-use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND_IN_CENTS, MONTHLY_SPENDING_LIMIT_IN_CENTS};
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, MONTHLY_SPENDING_LIMIT};
 use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
@@ -99,7 +99,7 @@ async fn list_billing_subscriptions(
                     && subscription.stripe_cancel_at.is_none(),
                 max_monthly_spend_in_cents: subscription
                     .max_monthly_spend_in_cents
-                    .unwrap_or(DEFAULT_MAX_MONTHLY_SPEND_IN_CENTS),
+                    .unwrap_or(DEFAULT_MAX_MONTHLY_SPEND.0),
             })
             .collect(),
     }))
@@ -602,7 +602,7 @@ async fn handle_customer_subscription_event(
                 billing_customer_id: billing_customer.id,
                 stripe_subscription_id: subscription.id.to_string(),
                 stripe_subscription_status: subscription.status.into(),
-                max_monthly_spend_in_cents: DEFAULT_MAX_MONTHLY_SPEND_IN_CENTS,
+                max_monthly_spend_in_cents: DEFAULT_MAX_MONTHLY_SPEND.0,
             })
             .await?;
     }
@@ -740,10 +740,9 @@ async fn update_stripe_subscription(
     let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
         .context("failed to parse subscription ID")?;
 
-    let monthly_spending_over_free_tier =
-        monthly_spending.saturating_sub(MONTHLY_SPENDING_LIMIT_IN_CENTS);
+    let monthly_spending_over_free_tier = monthly_spending.saturating_sub(MONTHLY_SPENDING_LIMIT);
 
-    let new_quantity = (monthly_spending_over_free_tier as f32 / 100.).ceil();
+    let new_quantity = (monthly_spending_over_free_tier.0 as f32 / 100.).ceil();
     let current_subscription = Subscription::retrieve(stripe_client, &subscription_id, &[]).await?;
 
     let mut update_params = stripe::UpdateSubscription {
@@ -761,6 +760,7 @@ async fn update_stripe_subscription(
         update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
             id: Some(existing_item.id.to_string()),
             quantity: Some(new_quantity as u64),
+
             ..Default::default()
         }]);
     } else {
