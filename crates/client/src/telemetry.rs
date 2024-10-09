@@ -7,8 +7,7 @@ use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http::{self, Request};
-use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method};
+use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -599,14 +598,14 @@ impl Telemetry {
         self.state.lock().is_staff
     }
 
-    fn prepare_request(
+    fn build_request(
         self: &Arc<Self>,
         event_request: EventRequestBody,
     ) -> Result<Request<AsyncBody>> {
         let json_bytes = serde_json::to_vec(&event_request)?;
         let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
-        Ok(http_client::Request::builder()
+        Ok(Request::builder()
             .method(Method::POST)
             .uri(
                 self.http_client
@@ -663,8 +662,8 @@ impl Telemetry {
                         }
                     };
 
-                    let request = this.prepare_request(request_body);
-                    let response = this.http_client.send(request?).await?;
+                    let request = this.build_request(request_body)?;
+                    let response = this.http_client.send(request).await?;
                     if response.status() != 200 {
                         log::error!("Failed to send events: HTTP {:?}", response.status());
                     }

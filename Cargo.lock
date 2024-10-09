@@ -2410,7 +2410,6 @@ dependencies = [
  "feature_flags",
  "futures 0.3.30",
  "gpui",
- "http 1.1.0",
  "http_client",
  "log",
  "once_cell",
