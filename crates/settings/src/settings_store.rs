@@ -531,9 +531,10 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &mut AppContext,
     ) -> Result<()> {
-        if kind == LocalSettingsKind::Tasks {
-            anyhow::bail!("Attempted to submit tasks into the settings store")
-        }
+        anyhow::ensure!(
+            kind != LocalSettingsKind::Tasks,
+            "Attempted to submit tasks into the settings store"
+        );
 
         let raw_local_settings = self
             .raw_local_settings

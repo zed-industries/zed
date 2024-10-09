@@ -54,8 +54,6 @@ pub enum TaskSourceKind {
     },
     /// Languages-specific tasks coming from extensions.
     Language { name: Arc<str> },
-    /// Global tasks, synchronized from the remote server.
-    RemoteGlobal,
 }
 
 impl TaskSourceKind {
@@ -68,12 +66,11 @@ impl TaskSourceKind {
             TaskSourceKind::Worktree {
                 id,
                 id_base,
-                directory_in_worktree: abs_path,
+                directory_in_worktree,
             } => {
-                format!("{id_base}_{id}_{}", abs_path.display())
+                format!("{id_base}_{id}_{}", directory_in_worktree.display())
             }
             TaskSourceKind::Language { name } => format!("language_{name}"),
-            Self::RemoteGlobal => "remote global".to_string(),
         }
     }
 }
@@ -99,7 +96,7 @@ impl Inventory {
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
+            .flat_map(|task| Some((task_source_kind.clone()?, task)));
 
         self.templates_from_settings(worktree)
             .chain(language_tasks)
@@ -172,7 +169,7 @@ impl Inventory {
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.as_ref()?.clone(), task)));
+            .flat_map(|task| Some((task_source_kind.clone()?, task)));
         let new_resolved_tasks = self
             .templates_from_settings(worktree)
             .chain(language_tasks)
@@ -238,9 +235,6 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
-    /// Returns every user task template defined in tasks.json files.
-    /// If a worktree is provided, local, worktree-specific tasks will be returned as well.
-    /// No deduplication or sorting is performed.
     fn templates_from_settings(
         &self,
         worktree: Option<WorktreeId>,
@@ -282,6 +276,10 @@ impl Inventory {
             }))
     }
 
+    /// Updates in-memory task metadata from the JSON string given.
+    /// Will fail if the JSON is not a valid array of objects, but will continue if any object will not parse into a [`TaskTemplate`].
+    ///
+    /// Global tasks are updated for no worktree provided, otherwise the worktree metadata for a given path will be updated.
     pub(crate) fn update_file_based_tasks(
         &mut self,
         location: Option<SettingsLocation<'_>>,
@@ -346,8 +344,7 @@ fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
         TaskSourceKind::Language { .. } => 1,
         TaskSourceKind::UserInput => 2,
         TaskSourceKind::Worktree { .. } => 3,
-        TaskSourceKind::RemoteGlobal { .. } => 4,
-        TaskSourceKind::AbsPath { .. } => 5,
+        TaskSourceKind::AbsPath { .. } => 4,
     }
 }
 

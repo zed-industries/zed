@@ -20,7 +20,6 @@ use crate::{
     ProjectEnvironment,
 };
 
-/// TODO kb docs
 pub enum TaskStore {
     Functional(StoreState),
     Noop,
@@ -258,7 +257,6 @@ impl TaskStore {
         }
     }
 
-    /// TODO kb docs
     pub(super) fn update_user_tasks(
         &self,
         location: Option<SettingsLocation<'_>>,
