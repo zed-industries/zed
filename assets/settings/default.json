@@ -840,6 +840,9 @@
         "allowed": true
       }
     },
+    "Dart": {
+      "tab_size": 2
+    },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },

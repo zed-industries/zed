@@ -5605,6 +5605,12 @@ pub fn open_ssh_project(
             cx.replace_root_view(|cx| {
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), cx);
+
+                workspace
+                    .client()
+                    .telemetry()
+                    .report_app_event("open ssh project".to_string());
+
                 workspace.set_serialized_ssh_project(serialized_ssh_project);
                 workspace
             });

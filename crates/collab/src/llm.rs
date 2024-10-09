@@ -22,8 +22,7 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-
-use reqwest_client::ReqwestClient;
+use isahc_http_client::IsahcHttpClient;
 use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -44,7 +43,7 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: ReqwestClient,
+    pub http_client: IsahcHttpClient,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -70,8 +69,11 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client =
-            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
+        let http_client = IsahcHttpClient::builder()
+            .default_header("User-Agent", user_agent)
+            .build()
+            .map(IsahcHttpClient::from)
+            .context("failed to construct http client")?;
 
         let this = Self {
             executor,
@@ -318,22 +320,31 @@ async fn perform_completion(
             chunks
                 .map(move |event| {
                     let chunk = event?;
-                    let (input_tokens, output_tokens) = match &chunk {
+                    let (
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens,
+                    ) = match &chunk {
                         anthropic::Event::MessageStart {
                             message: anthropic::Response { usage, .. },
                         }
                         | anthropic::Event::MessageDelta { usage, .. } => (
                             usage.input_tokens.unwrap_or(0) as usize,
                             usage.output_tokens.unwrap_or(0) as usize,
+                            usage.cache_creation_input_tokens.unwrap_or(0) as usize,
+                            usage.cache_read_input_tokens.unwrap_or(0) as usize,
                         ),
-                        _ => (0, 0),
+                        _ => (0, 0, 0, 0),
                     };
 
-                    anyhow::Ok((
-                        serde_json::to_vec(&chunk).unwrap(),
+                    anyhow::Ok(CompletionChunk {
+                        bytes: serde_json::to_vec(&chunk).unwrap(),
                         input_tokens,
                         output_tokens,
-                    ))
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens,
+                    })
                 })
                 .boxed()
         }
@@ -359,11 +370,13 @@ async fn perform_completion(
                             chunk.usage.as_ref().map_or(0, |u| u.prompt_tokens) as usize;
                         let output_tokens =
                             chunk.usage.as_ref().map_or(0, |u| u.completion_tokens) as usize;
-                        (
-                            serde_json::to_vec(&chunk).unwrap(),
+                        CompletionChunk {
+                            bytes: serde_json::to_vec(&chunk).unwrap(),
                             input_tokens,
                             output_tokens,
-                        )
+                            cache_creation_input_tokens: 0,
+                            cache_read_input_tokens: 0,
+                        }
                     })
                 })
                 .boxed()
@@ -387,13 +400,13 @@ async fn perform_completion(
                 .map(|event| {
                     event.map(|chunk| {
                         // TODO - implement token counting for Google AI
-                        let input_tokens = 0;
-                        let output_tokens = 0;
-                        (
-                            serde_json::to_vec(&chunk).unwrap(),
-                            input_tokens,
-                            output_tokens,
-                        )
+                        CompletionChunk {
+                            bytes: serde_json::to_vec(&chunk).unwrap(),
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            cache_creation_input_tokens: 0,
+                            cache_read_input_tokens: 0,
+                        }
                     })
                 })
                 .boxed()
@@ -407,6 +420,8 @@ async fn perform_completion(
         model,
         input_tokens: 0,
         output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
         inner_stream: stream,
     })))
 }
@@ -422,6 +437,9 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
         name
     }
 }
+
+/// The maximum monthly spending an individual user can reach before they have to pay.
+pub const MONTHLY_SPENDING_LIMIT_IN_CENTS: usize = 5 * 100;
 
 /// The maximum lifetime spending an individual user can reach before being cut off.
 ///
@@ -445,6 +463,18 @@ async fn check_usage_limit(
         )
         .await?;
 
+    if state.config.is_llm_billing_enabled() {
+        if usage.spending_this_month >= MONTHLY_SPENDING_LIMIT_IN_CENTS {
+            if !claims.has_llm_subscription.unwrap_or(false) {
+                return Err(Error::http(
+                    StatusCode::PAYMENT_REQUIRED,
+                    "Maximum spending limit reached for this month.".to_string(),
+                ));
+            }
+        }
+    }
+
+    // TODO: Remove this once we've rolled out monthly spending limits.
     if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
         return Err(Error::http(
             StatusCode::FORBIDDEN,
@@ -492,7 +522,6 @@ async fn check_usage_limit(
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
                 UsageMeasure::TokensPerMinute => "tokens_per_minute",
                 UsageMeasure::TokensPerDay => "tokens_per_day",
-                _ => "",
             };
 
             if let Some(client) = state.clickhouse_client.as_ref() {
@@ -551,6 +580,14 @@ async fn check_usage_limit(
     Ok(())
 }
 
+struct CompletionChunk {
+    bytes: Vec<u8>,
+    input_tokens: usize,
+    output_tokens: usize,
+    cache_creation_input_tokens: usize,
+    cache_read_input_tokens: usize,
+}
+
 struct TokenCountingStream<S> {
     state: Arc<LlmState>,
     claims: LlmTokenClaims,
@@ -558,22 +595,26 @@ struct TokenCountingStream<S> {
     model: String,
     input_tokens: usize,
     output_tokens: usize,
+    cache_creation_input_tokens: usize,
+    cache_read_input_tokens: usize,
     inner_stream: S,
 }
 
 impl<S> Stream for TokenCountingStream<S>
 where
-    S: Stream<Item = Result<(Vec<u8>, usize, usize), anyhow::Error>> + Unpin,
+    S: Stream<Item = Result<CompletionChunk, anyhow::Error>> + Unpin,
 {
     type Item = Result<Vec<u8>, anyhow::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.inner_stream).poll_next(cx) {
-            Poll::Ready(Some(Ok((mut bytes, input_tokens, output_tokens)))) => {
-                bytes.push(b'\n');
-                self.input_tokens += input_tokens;
-                self.output_tokens += output_tokens;
-                Poll::Ready(Some(Ok(bytes)))
+            Poll::Ready(Some(Ok(mut chunk))) => {
+                chunk.bytes.push(b'\n');
+                self.input_tokens += chunk.input_tokens;
+                self.output_tokens += chunk.output_tokens;
+                self.cache_creation_input_tokens += chunk.cache_creation_input_tokens;
+                self.cache_read_input_tokens += chunk.cache_read_input_tokens;
+                Poll::Ready(Some(Ok(chunk.bytes)))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
             Poll::Ready(None) => Poll::Ready(None),
@@ -590,6 +631,8 @@ impl<S> Drop for TokenCountingStream<S> {
         let model = std::mem::take(&mut self.model);
         let input_token_count = self.input_tokens;
         let output_token_count = self.output_tokens;
+        let cache_creation_input_token_count = self.cache_creation_input_tokens;
+        let cache_read_input_token_count = self.cache_read_input_tokens;
         self.state.executor.spawn_detached(async move {
             let usage = state
                 .db
@@ -599,6 +642,8 @@ impl<S> Drop for TokenCountingStream<S> {
                     provider,
                     &model,
                     input_token_count,
+                    cache_creation_input_token_count,
+                    cache_read_input_token_count,
                     output_token_count,
                     Utc::now(),
                 )
@@ -630,11 +675,20 @@ impl<S> Drop for TokenCountingStream<S> {
                             model,
                             provider: provider.to_string(),
                             input_token_count: input_token_count as u64,
+                            cache_creation_input_token_count: cache_creation_input_token_count
+                                as u64,
+                            cache_read_input_token_count: cache_read_input_token_count as u64,
                             output_token_count: output_token_count as u64,
                             requests_this_minute: usage.requests_this_minute as u64,
                             tokens_this_minute: usage.tokens_this_minute as u64,
                             tokens_this_day: usage.tokens_this_day as u64,
                             input_tokens_this_month: usage.input_tokens_this_month as u64,
+                            cache_creation_input_tokens_this_month: usage
+                                .cache_creation_input_tokens_this_month
+                                as u64,
+                            cache_read_input_tokens_this_month: usage
+                                .cache_read_input_tokens_this_month
+                                as u64,
                             output_tokens_this_month: usage.output_tokens_this_month as u64,
                             spending_this_month: usage.spending_this_month as u64,
                             lifetime_spending: usage.lifetime_spending as u64,

@@ -142,8 +142,8 @@ Depending on your hardware or use-case you may wish to limit or increase the con
       "low_speed_timeout_in_seconds": 120,
       "available_models": [
         {
-          "provider": "ollama",
-          "name": "mistral:latest",
+          "name": "qwen2.5-coder",
+          "display_name": "qwen 2.5 coder 32K",
           "max_tokens": 32768
         }
       ]

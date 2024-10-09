@@ -22,6 +22,7 @@ editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 indoc.workspace = true
+isahc_http_client.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
@@ -35,7 +36,6 @@ strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
-ureq_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
