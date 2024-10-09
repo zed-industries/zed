@@ -22,6 +22,12 @@ pub struct LlmTokenClaims {
     // this change has been deployed).
     #[serde(default)]
     pub has_llm_subscription: Option<bool>,
+    // This field is temporarily optional so it can be added
+    // in a backwards-compatible way. We can make it required
+    // once all of the LLM tokens have cycled (~1 hour after
+    // this change has been deployed).
+    #[serde(default)]
+    pub max_monthly_spend_in_cents: Option<u32>,
     pub plan: rpc::proto::Plan,
 }
 

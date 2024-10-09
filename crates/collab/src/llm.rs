@@ -24,10 +24,10 @@ use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
 
 use reqwest_client::ReqwestClient;
-use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
+use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
 use std::{
     pin::Pin,
     sync::Arc,
@@ -437,12 +437,18 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
 }
 
 /// The maximum monthly spending an individual user can reach before they have to pay.
-pub const MONTHLY_SPENDING_LIMIT_IN_CENTS: usize = 5 * 100;
+pub const MONTHLY_SPENDING_LIMIT_IN_CENTS: u32 = 5 * 100;
+
+/// The default value to use for maximum spend per month if the user did not
+/// explicitly set a maximum spend.
+///
+/// Used to prevent surprise bills.
+pub const DEFAULT_MAX_MONTHLY_SPEND_IN_CENTS: u32 = 10 * 100;
 
 /// The maximum lifetime spending an individual user can reach before being cut off.
 ///
 /// Represented in cents.
-const LIFETIME_SPENDING_LIMIT_IN_CENTS: usize = 1_000 * 100;
+const LIFETIME_SPENDING_LIMIT_IN_CENTS: u32 = 1_000 * 100;
 
 async fn check_usage_limit(
     state: &Arc<LlmState>,
@@ -467,6 +473,23 @@ async fn check_usage_limit(
                 return Err(Error::http(
                     StatusCode::PAYMENT_REQUIRED,
                     "Maximum spending limit reached for this month.".to_string(),
+                ));
+            }
+
+            if usage.spending_this_month
+                >= claims
+                    .max_monthly_spend_in_cents
+                    .unwrap_or(DEFAULT_MAX_MONTHLY_SPEND_IN_CENTS)
+            {
+                return Err(Error::Http(
+                    StatusCode::FORBIDDEN,
+                    "Maximum spending limit reached for this month.".to_string(),
+                    [(
+                        HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
+                        HeaderValue::from_static("true"),
+                    )]
+                    .into_iter()
+                    .collect(),
                 ));
             }
         }

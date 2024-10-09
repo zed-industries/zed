@@ -17,8 +17,8 @@ pub struct Usage {
     pub cache_creation_input_tokens_this_month: usize,
     pub cache_read_input_tokens_this_month: usize,
     pub output_tokens_this_month: usize,
-    pub spending_this_month: usize,
-    pub lifetime_spending: usize,
+    pub spending_this_month: u32,
+    pub lifetime_spending: u32,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -144,7 +144,7 @@ impl LlmDatabase {
         &self,
         user_id: UserId,
         now: DateTimeUtc,
-    ) -> Result<usize> {
+    ) -> Result<u32> {
         self.transaction(|tx| async move {
             let month = now.date_naive().month() as i32;
             let year = now.date_naive().year();
@@ -637,7 +637,7 @@ fn calculate_spending(
     cache_creation_input_tokens_this_month: usize,
     cache_read_input_tokens_this_month: usize,
     output_tokens_this_month: usize,
-) -> usize {
+) -> u32 {
     let input_token_cost =
         input_tokens_this_month * model.price_per_million_input_tokens as usize / 1_000_000;
     let cache_creation_input_token_cost = cache_creation_input_tokens_this_month
@@ -648,10 +648,11 @@ fn calculate_spending(
         / 1_000_000;
     let output_token_cost =
         output_tokens_this_month * model.price_per_million_output_tokens as usize / 1_000_000;
-    input_token_cost
+    let spending = input_token_cost
         + cache_creation_input_token_cost
         + cache_read_input_token_cost
-        + output_token_cost
+        + output_token_cost;
+    spending as u32
 }
 
 const MINUTE_BUCKET_COUNT: usize = 12;

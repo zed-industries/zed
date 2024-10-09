@@ -438,7 +438,8 @@ CREATE TABLE IF NOT EXISTS billing_subscriptions (
     billing_customer_id INTEGER NOT NULL REFERENCES billing_customers(id),
     stripe_subscription_id TEXT NOT NULL,
     stripe_subscription_status TEXT NOT NULL,
-    stripe_cancel_at TIMESTAMP
+    stripe_cancel_at TIMESTAMP,
+    max_monthly_spend_in_cents INTEGER
 );
 
 CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscriptions (billing_customer_id);

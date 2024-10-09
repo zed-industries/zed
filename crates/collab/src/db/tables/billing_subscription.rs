@@ -12,6 +12,7 @@ pub struct Model {
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
     pub stripe_cancel_at: Option<DateTime>,
+    pub max_monthly_spend_in_cents: Option<u32>,
     pub created_at: DateTime,
 }
 

@@ -7,6 +7,7 @@ pub struct CreateBillingSubscriptionParams {
     pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
+    pub max_monthly_spend_in_cents: u32,
 }
 
 #[derive(Debug, Default)]
@@ -15,6 +16,7 @@ pub struct UpdateBillingSubscriptionParams {
     pub stripe_subscription_id: ActiveValue<String>,
     pub stripe_subscription_status: ActiveValue<StripeSubscriptionStatus>,
     pub stripe_cancel_at: ActiveValue<Option<DateTime>>,
+    pub max_monthly_spend_in_cents: ActiveValue<u32>,
 }
 
 impl Database {
@@ -28,6 +30,9 @@ impl Database {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
                 stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
+                max_monthly_spend_in_cents: ActiveValue::set(Some(
+                    params.max_monthly_spend_in_cents,
+                )),
                 ..Default::default()
             })
             .exec_without_returning(&*tx)
@@ -51,6 +56,15 @@ impl Database {
                 stripe_subscription_id: params.stripe_subscription_id.clone(),
                 stripe_subscription_status: params.stripe_subscription_status.clone(),
                 stripe_cancel_at: params.stripe_cancel_at.clone(),
+                max_monthly_spend_in_cents: match params.max_monthly_spend_in_cents.clone() {
+                    ActiveValue::Set(max_monthly_spend_in_cents) => {
+                        ActiveValue::Set(Some(max_monthly_spend_in_cents))
+                    }
+                    ActiveValue::Unchanged(max_monthly_spend_in_cents) => {
+                        ActiveValue::Unchanged(Some(max_monthly_spend_in_cents))
+                    }
+                    ActiveValue::NotSet => ActiveValue::NotSet,
+                },
                 ..Default::default()
             })
             .exec(&*tx)
