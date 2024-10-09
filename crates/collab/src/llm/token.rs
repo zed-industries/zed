@@ -1,3 +1,4 @@
+use crate::db::billing_preference;
 use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
 use crate::{db::UserId, Config};
 use anyhow::{anyhow, Result};
@@ -39,6 +40,7 @@ impl LlmTokenClaims {
         user_id: UserId,
         github_user_login: String,
         is_staff: bool,
+        billing_preferences: Option<billing_preference::Model>,
         has_llm_closed_beta_feature_flag: bool,
         has_llm_subscription: bool,
         plan: rpc::proto::Plan,
@@ -59,7 +61,11 @@ impl LlmTokenClaims {
             is_staff,
             has_llm_closed_beta_feature_flag,
             has_llm_subscription: Some(has_llm_subscription),
-            max_monthly_spend_in_cents: Some(DEFAULT_MAX_MONTHLY_SPEND.0),
+            max_monthly_spend_in_cents: Some(
+                billing_preferences.map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
+                    preferences.max_monthly_llm_usage_spending_in_cents as u32
+                }),
+            ),
             plan,
         };
 
