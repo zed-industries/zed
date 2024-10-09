@@ -36,8 +36,8 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
+use isahc_http_client::IsahcHttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
-use reqwest_client::ReqwestClient;
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -964,8 +964,8 @@ impl Server {
             tracing::info!("connection opened");
 
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-            let http_client = match ReqwestClient::user_agent(&user_agent) {
-                Ok(http_client) => Arc::new(http_client),
+            let http_client = match IsahcHttpClient::builder().default_header("User-Agent", user_agent).build() {
+                Ok(http_client) => Arc::new(IsahcHttpClient::from(http_client)),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;
