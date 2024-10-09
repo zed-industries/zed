@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use ::util::ResultExt;
+use ::util::{command, ResultExt};
 use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
@@ -284,7 +284,7 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
-        let restart_process = std::process::Command::new("powershell.exe")
+        let restart_process = command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
             .spawn();

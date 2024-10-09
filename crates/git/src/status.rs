@@ -2,9 +2,10 @@ use crate::repository::{GitFileStatus, RepoPath};
 use anyhow::{anyhow, Result};
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
 };
+use util::command;
 
 #[derive(Clone)]
 pub struct GitStatus {
@@ -17,7 +18,7 @@ impl GitStatus {
         working_directory: &Path,
         path_prefixes: &[PathBuf],
     ) -> Result<Self> {
-        let mut child = Command::new(git_binary);
+        let mut child = command::new_std_command(git_binary);
 
         child
             .current_dir(working_directory)
@@ -38,12 +39,6 @@ impl GitStatus {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        }
 
         let child = child
             .spawn()

@@ -14,11 +14,8 @@ use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{self, Child},
+    process::Child,
 };
-
-#[cfg(target_os = "windows")]
-use smol::process::windows::CommandExt;
 
 use std::{
     ffi::OsString,
@@ -35,7 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
-use util::{ResultExt, TryFutureExt};
+use util::{command, ResultExt, TryFutureExt};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -287,7 +284,7 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut command = process::Command::new(&binary.path);
+        let mut command = command::new_smol_command(&binary.path);
         command
             .current_dir(working_dir)
             .args(&binary.arguments)
@@ -296,8 +293,6 @@ impl LanguageServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        #[cfg(windows)]
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
         let mut server = command.spawn().with_context(|| {
             format!(
                 "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",

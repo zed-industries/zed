@@ -7,7 +7,7 @@ pub use language::*;
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{command, fs::remove_matching, maybe, ResultExt};
 
 pub struct CLspAdapter;
 
@@ -85,7 +85,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = smol::process::Command::new("unzip")
+            let unzip_status = command::new_smol_command("unzip")
                 .current_dir(&container_dir)
                 .arg(&zip_path)
                 .output()

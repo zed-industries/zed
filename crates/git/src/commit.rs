@@ -2,10 +2,7 @@ use crate::Oid;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use std::path::Path;
-use std::process::Command;
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use util::command;
 
 pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
     if shas.is_empty() {
@@ -14,7 +11,7 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
 
     const MARKER: &str = "<MARKER>";
 
-    let mut command = Command::new("git");
+    let mut command = command::new_std_command("git");
 
     command
         .current_dir(working_directory)
@@ -22,9 +19,6 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))
         .args(shas.iter().map(ToString::to_string));
-
-    #[cfg(windows)]
-    command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
 
     let output = command
         .output()

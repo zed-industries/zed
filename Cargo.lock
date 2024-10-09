@@ -4043,6 +4043,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "util",
 ]
 
 [[package]]
@@ -12607,10 +12608,12 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "smol",
  "take-until",
  "tempfile",
  "tendril",
  "unicase",
+ "windows 0.58.0",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::{ops::Range, path::Path};
 use text::Rope;
@@ -12,6 +12,7 @@ use time::macros::format_description;
 use time::OffsetDateTime;
 use time::UtcOffset;
 use url::Url;
+use util::command;
 
 pub use git2 as libgit;
 
@@ -80,7 +81,7 @@ fn run_git_blame(
     path: &Path,
     contents: &Rope,
 ) -> Result<String> {
-    let mut child = Command::new(git_binary);
+    let mut child = command::new_std_command(git_binary);
 
     child
         .current_dir(working_directory)
@@ -92,12 +93,6 @@ fn run_git_blame(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-    }
 
     let child = child
         .spawn()
