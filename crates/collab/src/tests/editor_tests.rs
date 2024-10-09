@@ -379,51 +379,75 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .next()
         .await
         .unwrap();
-    cx_a.executor().finish_waiting();
-
     // Open the buffer on the host.
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    cx_a.executor().run_until_parked();
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.text(), "fn main() { a. }")
-    });
-
-    // Confirm a completion on the guest.
-    editor_b.update(cx_b, |editor, cx| {
-        assert!(editor.context_menu_visible());
-        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
-        assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
     });
 
     // Return a resolved completion from the host's language server.
     // The resolved completion has an additional text edit.
     fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _, _>(
         |params, _| async move {
-            assert_eq!(params.label, "first_method(…)");
-            Ok(lsp::CompletionItem {
-                label: "first_method(…)".into(),
-                detail: Some("fn(&mut self, B) -> C".into()),
-                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                    new_text: "first_method($1)".to_string(),
-                    range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
-                })),
-                additional_text_edits: Some(vec![lsp::TextEdit {
-                    new_text: "use d::SomeTrait;\n".to_string(),
-                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                }]),
-                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                ..Default::default()
+            Ok(match params.label.as_str() {
+                "first_method(…)" => lsp::CompletionItem {
+                    label: "first_method(…)".into(),
+                    detail: Some("fn(&mut self, B) -> C".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "first_method($1)".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    additional_text_edits: Some(vec![lsp::TextEdit {
+                        new_text: "use d::SomeTrait;\n".to_string(),
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                    }]),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+                "second_method(…)" => lsp::CompletionItem {
+                    label: "second_method(…)".into(),
+                    detail: Some("fn(&mut self, C) -> D<E>".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "second_method()".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    additional_text_edits: Some(vec![lsp::TextEdit {
+                        new_text: "use d::SomeTrait;\n".to_string(),
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                    }]),
+                    ..Default::default()
+                },
+                _ => panic!("unexpected completion label: {:?}", params.label),
             })
         },
     );
-
-    // The additional edit is applied.
+    cx_a.executor().finish_waiting();
     cx_a.executor().run_until_parked();
 
+    // Confirm a completion on the guest.
+    editor_b
+        .update(cx_b, |editor, cx| {
+            assert!(editor.context_menu_visible());
+            editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+
+    // The additional edit is applied.
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(
             buffer.text(),
@@ -516,9 +540,15 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     cx_b.executor().run_until_parked();
 
     // When accepting the completion, the snippet is insert.
+    editor_b
+        .update(cx_b, |editor, cx| {
+            assert!(editor.context_menu_visible());
+            editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
     editor_b.update(cx_b, |editor, cx| {
-        assert!(editor.context_menu_visible());
-        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
         assert_eq!(
             editor.text(cx),
             "use d::SomeTrait;\nfn main() { a.first_method(); a.third_method(, , ) }"

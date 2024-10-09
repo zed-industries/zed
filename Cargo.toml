@@ -52,6 +52,7 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
+    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -87,7 +88,6 @@ members = [
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
-    "crates/reqwest_client",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -122,7 +122,6 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
-    "crates/ureq_client",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -230,6 +229,7 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
+isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
@@ -266,7 +266,6 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
-reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -301,7 +300,6 @@ title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
-ureq_client = { path = "crates/ureq_client" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
@@ -329,7 +327,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.28"
+async-tungstenite = "0.23"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
@@ -369,6 +367,10 @@ ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
+# We explicitly disable http2 support in isahc.
+isahc = { version = "1.7.2", default-features = false, features = [
+    "text-decoding",
+] }
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
@@ -393,14 +395,13 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29" }
 rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-rustls = "0.21.12"
+rustls = "0.20.3"
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"

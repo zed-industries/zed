@@ -1,7 +1,6 @@
 mod dev_servers;
 pub mod disconnected_overlay;
 mod ssh_connections;
-mod ssh_remotes;
 use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
