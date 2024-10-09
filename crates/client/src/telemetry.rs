@@ -653,7 +653,7 @@ impl Telemetry {
                                 .build_zed_api_url("/telemetry/events", &[])?
                                 .as_ref(),
                         )
-                        .header("Content-Type", "text/plain")
+                        .header("Content-Type", "application/json")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());
 

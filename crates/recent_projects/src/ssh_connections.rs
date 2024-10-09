@@ -5,9 +5,9 @@ use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, px, Action, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext,
-    DismissEvent, EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion,
-    SharedString, Task, Transformation, View,
+    percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
+    EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
+    Transformation, View,
 };
 use gpui::{AppContext, Model};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -83,6 +83,7 @@ pub struct SshPrompt {
 
 pub struct SshConnectionModal {
     pub(crate) prompt: View<SshPrompt>,
+    is_separate_window: bool,
 }
 
 impl SshPrompt {
@@ -207,9 +208,14 @@ impl Render for SshPrompt {
 }
 
 impl SshConnectionModal {
-    pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        connection_options: &SshConnectionOptions,
+        is_separate_window: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
             prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
+            is_separate_window,
         }
     }
 
@@ -218,7 +224,10 @@ impl SshConnectionModal {
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.remove_window();
+        cx.emit(DismissEvent);
+        if self.is_separate_window {
+            cx.remove_window();
+        }
     }
 }
 
@@ -232,6 +241,7 @@ impl Render for SshConnectionModal {
 
         v_flex()
             .elevation_3(cx)
+            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .w(px(500.))
@@ -250,7 +260,9 @@ impl Render for SshConnectionModal {
                         div().absolute().left_0p5().top_0p5().child(
                             IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
                                 .icon_size(IconSize::XSmall)
-                                .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.dismiss(&Default::default(), cx);
+                                }))
                                 .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
                         ),
                     )
@@ -464,11 +476,10 @@ pub async fn open_ssh_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
-
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
+        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
         cx.open_window(options, |cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
@@ -485,7 +496,9 @@ pub async fn open_ssh_project(
 
     let delegate = window.update(cx, |workspace, cx| {
         cx.activate_window();
-        workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+        workspace.toggle_modal(cx, |cx| {
+            SshConnectionModal::new(&connection_options, true, cx)
+        });
         let ui = workspace
             .active_modal::<SshConnectionModal>(cx)
             .unwrap()
@@ -500,8 +513,11 @@ pub async fn open_ssh_project(
         })
     })?;
 
-    cx.update(|cx| {
-        workspace::open_ssh_project(window, connection_options, delegate, app_state, paths, cx)
-    })?
-    .await
+    let did_open_ssh_project = cx
+        .update(|cx| {
+            workspace::open_ssh_project(window, connection_options, delegate, app_state, paths, cx)
+        })?
+        .await;
+
+    did_open_ssh_project
 }

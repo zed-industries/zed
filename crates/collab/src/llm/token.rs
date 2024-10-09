@@ -13,14 +13,8 @@ pub struct LlmTokenClaims {
     pub exp: u64,
     pub jti: String,
     pub user_id: u64,
-    // This field is temporarily optional so it can be added
-    // in a backwards-compatible way. We can make it required
-    // once all of the LLM tokens have cycled (~1 hour after
-    // this change has been deployed).
-    #[serde(default)]
-    pub github_user_login: Option<String>,
+    pub github_user_login: String,
     pub is_staff: bool,
-    #[serde(default)]
     pub has_llm_closed_beta_feature_flag: bool,
     // This field is temporarily optional so it can be added
     // in a backwards-compatible way. We can make it required
@@ -54,7 +48,7 @@ impl LlmTokenClaims {
             exp: (now + LLM_TOKEN_LIFETIME).timestamp() as u64,
             jti: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_proto(),
-            github_user_login: Some(github_user_login),
+            github_user_login,
             is_staff,
             has_llm_closed_beta_feature_flag,
             has_llm_subscription: Some(has_llm_subscription),
