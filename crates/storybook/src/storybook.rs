@@ -4,14 +4,13 @@ mod assets;
 mod stories;
 mod story_selector;
 
-use std::sync::Arc;
-
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
     div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowBounds,
     WindowOptions,
 };
+use isahc_http_client::IsahcHttpClient;
 use log::LevelFilter;
 use project::Project;
 use settings::{KeymapFile, Settings};
@@ -19,7 +18,6 @@ use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
-use ureq_client::UreqClient;
 
 use crate::app_menus::app_menus;
 use crate::assets::Assets;
@@ -68,12 +66,8 @@ fn main() {
     gpui::App::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
-        let http_client = UreqClient::new(
-            None,
-            "zed_storybook".to_string(),
-            cx.background_executor().clone(),
-        );
-        cx.set_http_client(Arc::new(http_client));
+        let http_client = IsahcHttpClient::new(None, Some("zed_storybook".to_string()));
+        cx.set_http_client(http_client);
 
         settings::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
