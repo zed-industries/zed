@@ -695,7 +695,7 @@ impl SshRemoteClient {
                 loop {
                     timer.next().await;
 
-                    log::info!("Sending heartbeat to server...");
+                    log::debug!("Sending heartbeat to server...");
 
                     let result = client.ping(HEARTBEAT_TIMEOUT).await;
                     if result.is_err() {
