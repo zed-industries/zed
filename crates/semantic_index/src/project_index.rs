@@ -359,12 +359,14 @@ impl ProjectIndex {
                                         let bm25_score = {
                                             let corpus_stats =
                                                 worktree_corpus_stats.read().unwrap();
-                                            corpus_stats.calculate_bm25_score(
+                                            let score = corpus_stats.calculate_bm25_score(
                                                 query_term,
                                                 &chunk.term_frequencies.0,
                                                 bm25_params.k1,
                                                 bm25_params.b,
-                                            )
+                                            );
+                                            // quick hack to bound the score for long queries
+                                            score / query_term.values().sum::<u32>() as f32
                                         };
                                         mixing_param * embedding_score
                                             + (1. - mixing_param) * bm25_score

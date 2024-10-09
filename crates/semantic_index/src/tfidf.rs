@@ -86,7 +86,7 @@ pub trait Bm25Scorer {
                 let numerator = tf * (k1 + 1.0);
                 let denominator = tf + k1 * (1.0 - b + b * dl / avg_dl);
 
-                query_tf as f32 * idf * (numerator / denominator)
+                idf * (numerator / denominator)
             })
             .sum()
     }
