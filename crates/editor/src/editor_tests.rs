@@ -7996,7 +7996,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             .unwrap()
     });
     cx.assert_editor_state(indoc! {"
-        one.second_completionˇ
+        one.ˇ
         two
         three
     "});
@@ -8029,9 +8029,9 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state(indoc! {"
         one.second_completionˇ
         two
-        three
-        additional edit
-    "});
+        thoverlapping additional editree
+
+        additional edit"});
 
     cx.set_state(indoc! {"
         one.second_completion
@@ -8091,8 +8091,8 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(indoc! {"
         one.second_completion
-        two sixth_completionˇ
-        three sixth_completionˇ
+        two siˇ
+        three siˇ
         additional edit
     "});
 
@@ -8133,9 +8133,11 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), cx)
             .unwrap()
     });
-    cx.assert_editor_state("editor.closeˇ");
+    cx.assert_editor_state("editor.cloˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
+    cx.assert_editor_state(indoc! {"
+    editor.closeˇ"});
 }
 
 #[gpui::test]
@@ -10140,7 +10142,7 @@ async fn test_completions_with_additional_edits(cx: &mut gpui::TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), cx)
             .unwrap()
     });
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Some(2)ˇ; }"});
+    cx.assert_editor_state(indoc! {"fn main() { let a = 2.ˇ; }"});
 
     cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
         let task_completion_item = completion_item.clone();
