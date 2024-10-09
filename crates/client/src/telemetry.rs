@@ -1,12 +1,14 @@
 mod event_coalescer;
 
 use crate::{ChannelId, TelemetrySettings};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http_client::{self, HttpClient, HttpClientWithUrl, Method};
+use http::{self, Request};
+use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -597,6 +599,25 @@ impl Telemetry {
         self.state.lock().is_staff
     }
 
+    fn prepare_request(
+        self: &Arc<Self>,
+        event_request: EventRequestBody,
+    ) -> Result<Request<AsyncBody>> {
+        let json_bytes = serde_json::to_vec(&event_request)?;
+        let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
+
+        Ok(http_client::Request::builder()
+            .method(Method::POST)
+            .uri(
+                self.http_client
+                    .build_zed_api_url("/telemetry/events", &[])?
+                    .as_ref(),
+            )
+            .header("Content-Type", "application/json")
+            .header("x-zed-checksum", checksum)
+            .body(json_bytes.into())?)
+    }
+
     pub fn flush_events(self: &Arc<Self>) {
         let mut state = self.state.lock();
         state.first_event_date_time = None;
@@ -623,10 +644,10 @@ impl Telemetry {
                         }
                     }
 
-                    {
+                    let request_body = {
                         let state = this.state.lock();
 
-                        let request_body = EventRequestBody {
+                        EventRequestBody {
                             system_id: state.system_id.as_deref().map(Into::into),
                             installation_id: state.installation_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
@@ -639,24 +660,10 @@ impl Telemetry {
 
                             release_channel: state.release_channel.map(Into::into),
                             events,
-                        };
-                        json_bytes.clear();
-                        serde_json::to_writer(&mut json_bytes, &request_body)?;
-                    }
+                        }
+                    };
 
-                    let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
-
-                    let request = http_client::Request::builder()
-                        .method(Method::POST)
-                        .uri(
-                            this.http_client
-                                .build_zed_api_url("/telemetry/events", &[])?
-                                .as_ref(),
-                        )
-                        .header("Content-Type", "application/json")
-                        .header("x-zed-checksum", checksum)
-                        .body(json_bytes.into());
-
+                    let request = this.prepare_request(request_body);
                     let response = this.http_client.send(request?).await?;
                     if response.status() != 200 {
                         log::error!("Failed to send events: HTTP {:?}", response.status());
