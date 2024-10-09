@@ -1879,10 +1879,17 @@ impl Editor {
                         }
                     }
                 }));
-                let task_inventory = project.read(cx).task_inventory().clone();
-                project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
-                    editor.tasks_update_task = Some(editor.refresh_runnables(cx));
-                }));
+                if let Some(task_inventory) = project
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .cloned()
+                {
+                    project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
+                        editor.tasks_update_task = Some(editor.refresh_runnables(cx));
+                    }));
+                }
             }
         }
 
@@ -4717,11 +4724,13 @@ impl Editor {
                                     );
                                 }
                                 project.update(cx, |project, cx| {
-                                    project.task_context_for_location(
-                                        captured_task_variables,
-                                        location,
-                                        cx,
-                                    )
+                                    project.task_store().update(cx, |task_store, cx| {
+                                        task_store.task_context_for_location(
+                                            captured_task_variables,
+                                            location,
+                                            cx,
+                                        )
+                                    })
                                 })
                             });
 
@@ -9134,23 +9143,29 @@ impl Editor {
                 .map(|file| (file.worktree_id(cx), file.clone()))
                 .unzip();
 
-            (project.task_inventory().clone(), worktree_id, file)
+            (
+                project.task_store().read(cx).task_inventory().cloned(),
+                worktree_id,
+                file,
+            )
         });
 
-        let inventory = inventory.read(cx);
         let tags = mem::take(&mut runnable.tags);
         let mut tags: Vec<_> = tags
             .into_iter()
             .flat_map(|tag| {
                 let tag = tag.0.clone();
                 inventory
-                    .list_tasks(
-                        file.clone(),
-                        Some(runnable.language.clone()),
-                        worktree_id,
-                        cx,
-                    )
+                    .as_ref()
                     .into_iter()
+                    .flat_map(|inventory| {
+                        inventory.read(cx).list_tasks(
+                            file.clone(),
+                            Some(runnable.language.clone()),
+                            worktree_id,
+                            cx,
+                        )
+                    })
                     .filter(move |(_, template)| {
                         template.tags.iter().any(|source_tag| source_tag == &tag)
                     })

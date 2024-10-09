@@ -7,6 +7,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
     search::SearchQuery,
+    task_store::TaskStore,
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
@@ -29,6 +30,7 @@ pub struct HeadlessProject {
     pub worktree_store: Model<WorktreeStore>,
     pub buffer_store: Model<BufferStore>,
     pub lsp_store: Model<LspStore>,
+    pub task_store: Model<TaskStore>,
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
@@ -68,12 +70,28 @@ impl HeadlessProject {
             )
         });
 
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let task_store = cx.new_model(|cx| {
+            let mut task_store = TaskStore::local(
+                fs.clone(),
+                buffer_store.downgrade(),
+                worktree_store.clone(),
+                environment.clone(),
+                cx,
+            );
+            task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            task_store
+        });
         let settings_observer = cx.new_model(|cx| {
-            let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
+            let mut observer = SettingsObserver::new_local(
+                fs.clone(),
+                worktree_store.clone(),
+                task_store.clone(),
+                cx,
+            );
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
@@ -108,6 +126,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
@@ -126,6 +145,7 @@ impl HeadlessProject {
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
         LspStore::init(&client);
+        TaskStore::init(Some(&client));
 
         HeadlessProject {
             session: client,
@@ -134,6 +154,7 @@ impl HeadlessProject {
             worktree_store,
             buffer_store,
             lsp_store,
+            task_store,
             next_entry_id: Default::default(),
             languages,
         }
