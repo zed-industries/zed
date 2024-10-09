@@ -18,7 +18,7 @@ use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
     Subscription, Task,
 };
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -27,12 +27,14 @@ use smol::{
     io::{AsyncReadExt, BufReader},
     lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
 };
+use std::fmt;
 use std::time::Duration;
 use std::{
     future,
     sync::{Arc, LazyLock},
 };
 use strum::IntoEnumIterator;
+use thiserror::Error;
 use ui::{prelude::*, TintColor};
 
 use crate::{LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider};
@@ -377,6 +379,18 @@ pub struct CloudLanguageModel {
 #[derive(Clone, Default)]
 struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
+#[derive(Error, Debug)]
+pub struct PaymentRequiredError;
+
+impl fmt::Display for PaymentRequiredError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Payment required to use this language model. Please upgrade your account."
+        )
+    }
+}
+
 impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
@@ -411,6 +425,8 @@ impl CloudLanguageModel {
             {
                 did_retry = true;
                 token = llm_api_token.refresh(&client).await?;
+            } else if response.status() == StatusCode::PAYMENT_REQUIRED {
+                break Err(anyhow!(PaymentRequiredError))?;
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;
