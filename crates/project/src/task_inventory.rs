@@ -33,7 +33,7 @@ pub struct Inventory {
 #[derive(Debug, Default)]
 struct ParsedTemplates {
     global: Vec<TaskTemplate>,
-    worktree: HashMap<WorktreeId, Vec<(Arc<Path>, TaskTemplate)>>,
+    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<TaskTemplate>>>,
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -241,10 +241,10 @@ impl Inventory {
     /// Returns every user task template defined in tasks.json files.
     /// If a worktree is provided, local, worktree-specific tasks will be returned as well.
     /// No deduplication or sorting is performed.
-    fn templates_from_settings<'a>(
-        &'a self,
+    fn templates_from_settings(
+        &self,
         worktree: Option<WorktreeId>,
-    ) -> impl 'a + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
         self.templates_from_settings
             .global
             .clone()
@@ -262,35 +262,34 @@ impl Inventory {
                 self.templates_from_settings
                     .worktree
                     .get(&worktree)
-                    .cloned()
                     .into_iter()
-                    .flat_map(move |templates| {
-                        templates
-                            .into_iter()
-                            .map(move |(directory_path, template)| {
-                                (
-                                    TaskSourceKind::Worktree {
-                                        id: worktree,
-                                        directory_in_worktree: directory_path.to_path_buf(),
-                                        id_base: Cow::Owned(format!(
-                                            "local worktree tasks from directory {directory_path:?}"
-                                        )),
-                                    },
-                                    template,
-                                )
-                            })
+                    .flatten()
+                    .flat_map(|(directory, templates)| {
+                        templates.iter().map(move |template| (directory, template))
+                    })
+                    .map(move |(directory, template)| {
+                        (
+                            TaskSourceKind::Worktree {
+                                id: worktree,
+                                directory_in_worktree: directory.to_path_buf(),
+                                id_base: Cow::Owned(format!(
+                                    "local worktree tasks from directory {directory:?}"
+                                )),
+                            },
+                            template.clone(),
+                        )
                     })
             }))
     }
 
-    pub(crate) fn update_file_based_tasks<'a>(
+    pub(crate) fn update_file_based_tasks(
         &mut self,
-        location: Option<SettingsLocation<'a>>,
+        location: Option<SettingsLocation<'_>>,
         raw_tasks_json: Option<&str>,
     ) -> anyhow::Result<()> {
         let raw_tasks =
             parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json.unwrap_or("[]"))
-                .with_context(|| format!("Unable to parse tasks file content as a JSON array"))?;
+                .context("parsing tasks file content as a JSON array")?;
         let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
             serde_json::from_value::<TaskTemplate>(raw_template).log_err()
         });
@@ -298,15 +297,19 @@ impl Inventory {
         let parsed_templates = &mut self.templates_from_settings;
         match location {
             Some(location) => {
-                let new_templates = new_templates
-                    .map(|template| (Arc::<Path>::from(location.path), template))
-                    .collect::<Vec<_>>();
+                let new_templates = new_templates.collect::<Vec<_>>();
                 if new_templates.is_empty() {
-                    parsed_templates.worktree.remove(&location.worktree_id);
+                    if let Some(worktree_tasks) =
+                        parsed_templates.worktree.get_mut(&location.worktree_id)
+                    {
+                        worktree_tasks.remove(location.path);
+                    }
                 } else {
                     parsed_templates
                         .worktree
-                        .insert(location.worktree_id, new_templates);
+                        .entry(location.worktree_id)
+                        .or_default()
+                        .insert(Arc::from(location.path), new_templates);
                 }
             }
             None => parsed_templates.global = new_templates.collect(),
@@ -576,19 +579,17 @@ mod tests {
             "2_task".to_string(),
             "3_task".to_string(),
         ];
-        // TODO kb tests
-        // cx.update(|cx| {
-        //     cx.update_global::<SettingsStore, ()>(|store, cx| {
-        //         store
-        //             .set_user_tasks(
-        //                 &mock_tasks_from_names(
-        //                     expected_initial_state.iter().map(|name| name.as_str()),
-        //                 ),
-        //                 cx,
-        //             )
-        //             .unwrap();
-        //     })
-        // });
+
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    None,
+                    Some(&mock_tasks_from_names(
+                        expected_initial_state.iter().map(|name| name.as_str()),
+                    )),
+                )
+                .unwrap();
+        });
         assert_eq!(
             task_template_names(&inventory, None, cx),
             &expected_initial_state,
@@ -632,21 +633,18 @@ mod tests {
             ],
         );
 
-        // TODO kb tests
-        // cx.update(|cx| {
-        //     cx.update_global::<SettingsStore, ()>(|store, cx| {
-        //         store
-        //             .set_user_tasks(
-        //                 &mock_tasks_from_names(
-        //                     ["10_hello", "11_hello"]
-        //                         .into_iter()
-        //                         .chain(expected_initial_state.iter().map(|name| name.as_str())),
-        //                 ),
-        //                 cx,
-        //             )
-        //             .unwrap();
-        //     })
-        // });
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    None,
+                    Some(&mock_tasks_from_names(
+                        ["10_hello", "11_hello"]
+                            .into_iter()
+                            .chain(expected_initial_state.iter().map(|name| name.as_str())),
+                    )),
+                )
+                .unwrap();
+        });
         cx.run_until_parked();
         let expected_updated_state = [
             "10_hello".to_string(),
@@ -693,7 +691,7 @@ mod tests {
     #[gpui::test]
     async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
         init_test(cx);
-        let inventory_with_statics = cx.update(Inventory::new);
+        let inventory = cx.update(Inventory::new);
         let common_name = "common_task_name";
         let worktree_1 = WorktreeId::from_usize(1);
         let worktree_2 = WorktreeId::from_usize(2);
@@ -759,51 +757,48 @@ mod tests {
             ),
         ];
 
-        // TODO kb tests
-        // cx.update(|cx| {
-        //     cx.update_global::<SettingsStore, ()>(|store, cx| {
-        //         store
-        //             .set_user_tasks(
-        //                 &mock_tasks_from_names(
-        //                     worktree_independent_tasks
-        //                         .iter()
-        //                         .map(|(_, name)| name.as_str()),
-        //                 ),
-        //                 cx,
-        //             )
-        //             .unwrap();
-        //         store
-        //             .set_local_settings(
-        //                 worktree_1,
-        //                 Arc::from(Path::new(".zed")),
-        //                 LocalSettingsKind::Tasks,
-        //                 Some(&mock_tasks_from_names(
-        //                     worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
-        //                 )),
-        //                 cx,
-        //             )
-        //             .unwrap();
-        //         store
-        //             .set_local_settings(
-        //                 worktree_2,
-        //                 Arc::from(Path::new(".zed")),
-        //                 LocalSettingsKind::Tasks,
-        //                 Some(&mock_tasks_from_names(
-        //                     worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
-        //                 )),
-        //                 cx,
-        //             )
-        //             .unwrap();
-        //     })
-        // });
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    None,
+                    Some(&mock_tasks_from_names(
+                        worktree_independent_tasks
+                            .iter()
+                            .map(|(_, name)| name.as_str()),
+                    )),
+                )
+                .unwrap();
+            inventory
+                .update_file_based_tasks(
+                    Some(SettingsLocation {
+                        worktree_id: worktree_1,
+                        path: Path::new(".zed"),
+                    }),
+                    Some(&mock_tasks_from_names(
+                        worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
+                    )),
+                )
+                .unwrap();
+            inventory
+                .update_file_based_tasks(
+                    Some(SettingsLocation {
+                        worktree_id: worktree_2,
+                        path: Path::new(".zed"),
+                    }),
+                    Some(&mock_tasks_from_names(
+                        worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
+                    )),
+                )
+                .unwrap();
+        });
 
         assert_eq!(
-            list_tasks(&inventory_with_statics, None, cx).await,
+            list_tasks(&inventory, None, cx).await,
             worktree_independent_tasks,
             "Without a worktree, only worktree-independent tasks should be listed"
         );
         assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_1), cx).await,
+            list_tasks(&inventory, Some(worktree_1), cx).await,
             worktree_1_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -812,7 +807,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_2), cx).await,
+            list_tasks(&inventory, Some(worktree_2), cx).await,
             worktree_2_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())

@@ -211,38 +211,36 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
     project.update(cx, |project, cx| {
-        project
+        let task_inventory = project
             .task_store
             .read(cx)
             .task_inventory()
             .cloned()
-            .unwrap()
-            .update(cx, |inventory, _| {
-                inventory.task_scheduled(topmost_local_task_source_kind.clone(), resolved_task);
-            });
+            .unwrap();
+        task_inventory.update(cx, |inventory, _| {
+            inventory.task_scheduled(topmost_local_task_source_kind.clone(), resolved_task);
+            inventory
+                .update_file_based_tasks(
+                    None,
+                    Some(
+                        &json!([{
+                            "label": "cargo check unstable",
+                            "command": "cargo",
+                            "args": [
+                                "check",
+                                "--all",
+                                "--all-targets"
+                            ],
+                            "env": {
+                                "RUSTFLAGS": "-Zunstable-options"
+                            }
+                        }])
+                        .to_string(),
+                    ),
+                )
+                .unwrap();
+        });
     });
-
-    // TODO kb tests
-    // cx.update_global::<SettingsStore, ()>(|s, cx| {
-    //     s.set_user_tasks(
-    //         json!([{
-    //             "label": "cargo check unstable",
-    //             "command": "cargo",
-    //             "args": [
-    //                 "check",
-    //                 "--all",
-    //                 "--all-targets"
-    //             ],
-    //             "env": {
-    //                 "RUSTFLAGS": "-Zunstable-options"
-    //             }
-    //         }])
-    //         .to_string()
-    //         .as_str(),
-    //         cx,
-    //     )
-    //     .unwrap();
-    // });
     cx.run_until_parked();
 
     let all_tasks = cx

@@ -259,9 +259,9 @@ impl TaskStore {
     }
 
     /// TODO kb docs
-    pub(super) fn update_user_tasks<'a>(
+    pub(super) fn update_user_tasks(
         &self,
-        location: Option<SettingsLocation<'a>>,
+        location: Option<SettingsLocation<'_>>,
         raw_tasks_json: Option<&str>,
         cx: &mut ModelContext<'_, Self>,
     ) -> anyhow::Result<()> {
