@@ -311,6 +311,14 @@ impl State {
         }
     }
 
+    fn is_reconnect_failed(&self) -> bool {
+        matches!(self, Self::ReconnectFailed { .. })
+    }
+
+    fn is_reconnecting(&self) -> bool {
+        matches!(self, Self::Reconnecting { .. })
+    }
+
     fn heartbeat_recovered(self) -> Self {
         match self {
             Self::HeartbeatMissed {
@@ -632,45 +640,37 @@ impl SshRemoteClient {
         cx.spawn(|this, mut cx| async move {
             let new_state = reconnect_task.await;
             this.update(&mut cx, |this, cx| {
-                // We can only transition out of the Reconnecting state into our new state,
-                // if nothing else has updated the state in the meantime.
-                let can_transition_into_new_state =
-                    this.state.lock().as_ref().map_or(false, |current_state| {
-                        matches!(current_state, &State::Reconnecting { .. })
-                    });
-
-                if can_transition_into_new_state {
-                    match &new_state {
-                        State::Connecting
-                        | State::Reconnecting { .. }
-                        | State::HeartbeatMissed { .. }
-                        | State::ServerNotRunning => {}
-                        State::Connected { .. } => {
-                            log::info!("Successfully reconnected");
+                this.try_set_state(cx, |old_state| {
+                    if old_state.is_reconnecting() {
+                        match &new_state {
+                            State::Connecting
+                            | State::Reconnecting { .. }
+                            | State::HeartbeatMissed { .. }
+                            | State::ServerNotRunning => {}
+                            State::Connected { .. } => {
+                                log::info!("Successfully reconnected");
+                            }
+                            State::ReconnectFailed {
+                                error, attempts, ..
+                            } => {
+                                log::error!(
+                                    "Reconnect attempt {} failed: {:?}. Starting new attempt...",
+                                    attempts,
+                                    error
+                                );
+                            }
+                            State::ReconnectExhausted => {
+                                log::error!("Reconnect attempt failed and all attempts exhausted");
+                            }
                         }
-                        State::ReconnectFailed {
-                            error, attempts, ..
-                        } => {
-                            log::error!(
-                                "Reconnect attempt {} failed: {:?}. Starting new attempt...",
-                                attempts,
-                                error
-                            );
-                        }
-                        State::ReconnectExhausted => {
-                            log::error!("Reconnect attempt failed and all attempts exhausted");
-                        }
-                    }
-
-                    let reconnect_failed = matches!(new_state, State::ReconnectFailed { .. });
-
-                    *this.state.lock() = Some(new_state);
-                    cx.notify();
-                    if reconnect_failed {
-                        this.reconnect(cx)
+                        Some(new_state)
                     } else {
-                        Ok(())
+                        None
                     }
+                });
+
+                if this.state_is(State::is_reconnect_failed) {
+                    this.reconnect(cx)
                 } else {
                     log::debug!("State has transition from Reconnecting into new state while attempting reconnect. Ignoring new state.");
                     Ok(())
@@ -866,6 +866,20 @@ impl SshRemoteClient {
             }
             Ok(())
         })
+    }
+
+    fn state_is(&self, check: impl FnOnce(&State) -> bool) -> bool {
+        self.state.lock().as_ref().map_or(false, check)
+    }
+
+    fn try_set_state(
+        &self,
+        cx: &mut ModelContext<Self>,
+        map: impl FnOnce(&State) -> Option<State>,
+    ) {
+        if let Some(new_state) = self.state.lock().as_ref().and_then(map) {
+            self.set_state(new_state, cx);
+        }
     }
 
     fn set_state(&self, state: State, cx: &mut ModelContext<Self>) {
