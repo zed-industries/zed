@@ -29,7 +29,7 @@ use crate::db::{
     UpdateBillingPreferencesParams, UpdateBillingSubscriptionParams,
 };
 use crate::llm::db::LlmDatabase;
-use crate::llm::FREE_TIER_MONTHLY_SPENDING_LIMIT;
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
@@ -49,6 +49,11 @@ pub fn router() -> Router {
         )
 }
 
+#[derive(Debug, Deserialize)]
+struct GetBillingPreferencesParams {
+    github_user_id: i32,
+}
+
 #[derive(Debug, Serialize)]
 struct BillingPreferencesResponse {
     max_monthly_llm_usage_spending_in_cents: i32,
@@ -56,7 +61,7 @@ struct BillingPreferencesResponse {
 
 async fn get_billing_preferences(
     Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<ListBillingSubscriptionsParams>,
+    Query(params): Query<GetBillingPreferencesParams>,
 ) -> Result<Json<BillingPreferencesResponse>> {
     let user = app
         .db
@@ -64,15 +69,13 @@ async fn get_billing_preferences(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
-    let preferences = app
-        .db
-        .get_billing_preferences(user.id)
-        .await?
-        .ok_or_else(|| anyhow!("billing preferences not found"))?;
+    let preferences = app.db.get_billing_preferences(user.id).await?;
 
     Ok(Json(BillingPreferencesResponse {
         max_monthly_llm_usage_spending_in_cents: preferences
-            .max_monthly_llm_usage_spending_in_cents,
+            .map_or(DEFAULT_MAX_MONTHLY_SPEND.0 as i32, |preferences| {
+                preferences.max_monthly_llm_usage_spending_in_cents
+            }),
     }))
 }
 

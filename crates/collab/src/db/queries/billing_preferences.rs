@@ -54,17 +54,21 @@ impl Database {
         params: &UpdateBillingPreferencesParams,
     ) -> Result<billing_preference::Model> {
         self.transaction(|tx| async move {
-            let preferences = billing_preference::Entity::update(billing_preference::ActiveModel {
-                user_id: ActiveValue::set(user_id),
-                max_monthly_llm_usage_spending_in_cents: params
-                    .max_monthly_llm_usage_spending_in_cents
-                    .clone(),
-                ..Default::default()
-            })
-            .exec(&*tx)
-            .await?;
+            let preferences = billing_preference::Entity::update_many()
+                .set(billing_preference::ActiveModel {
+                    max_monthly_llm_usage_spending_in_cents: params
+                        .max_monthly_llm_usage_spending_in_cents
+                        .clone(),
+                    ..Default::default()
+                })
+                .filter(billing_preference::Column::UserId.eq(user_id))
+                .exec_with_returning(&*tx)
+                .await?;
 
-            Ok(preferences)
+            Ok(preferences
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("billing preferences not found"))?)
         })
         .await
     }
