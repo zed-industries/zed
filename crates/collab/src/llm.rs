@@ -22,8 +22,7 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-
-use reqwest_client::ReqwestClient;
+use isahc_http_client::IsahcHttpClient;
 use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -44,7 +43,7 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: ReqwestClient,
+    pub http_client: IsahcHttpClient,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -70,8 +69,11 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client =
-            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
+        let http_client = IsahcHttpClient::builder()
+            .default_header("User-Agent", user_agent)
+            .build()
+            .map(IsahcHttpClient::from)
+            .context("failed to construct http client")?;
 
         let this = Self {
             executor,
