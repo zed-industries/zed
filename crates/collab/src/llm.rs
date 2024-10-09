@@ -470,7 +470,7 @@ async fn check_usage_limit(
 
     if state.config.is_llm_billing_enabled() {
         if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
-            if !claims.has_llm_subscription.unwrap_or(false) {
+            if !claims.has_llm_subscription {
                 return Err(Error::http(
                     StatusCode::PAYMENT_REQUIRED,
                     "Maximum spending limit reached for this month.".to_string(),
