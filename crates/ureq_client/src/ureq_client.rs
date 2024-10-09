@@ -1,7 +1,4 @@
 use std::any::type_name;
-use std::collections::HashMap;
-use std::io::Read;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{pin::Pin, task::Poll};
 
@@ -9,20 +6,14 @@ use anyhow::Error;
 use futures::channel::mpsc;
 use futures::future::BoxFuture;
 use futures::{AsyncRead, SinkExt, StreamExt};
-use http_client::{http, AsyncBody, HttpClient, RedirectPolicy, Uri};
+use http_client::http::Response;
+use http_client::{http, AsyncBody, HttpClient, RedirectPolicy, Request, Uri};
 use smol::future::FutureExt;
+use ureq::{Agent, Proxy, SendBody, Timeouts};
 use util::ResultExt;
 
 pub struct UreqClient {
-    // Note in ureq 2.x the options are stored on the Agent.
-    // In ureq 3.x we'll be able to set these on the request.
-    // In practice it's probably "fine" to have many clients, the number of distinct options
-    // is low; and most requests to the same connection will have the same options so the
-    // connection pool will work.
-    clients: Arc<parking_lot::Mutex<HashMap<(Duration, RedirectPolicy), ureq::Agent>>>,
-    proxy_url: Option<Uri>,
-    proxy: Option<ureq::Proxy>,
-    user_agent: String,
+    agent: ureq::Agent,
     background_executor: gpui::BackgroundExecutor,
 }
 
@@ -32,47 +23,28 @@ impl UreqClient {
         user_agent: String,
         background_executor: gpui::BackgroundExecutor,
     ) -> Self {
+        let agent: ureq::Agent = ureq::Config {
+            http_status_as_error: false,
+            proxy: proxy_url.and_then(|url| Proxy::new(&url.to_string()).log_err()),
+            timeouts: Timeouts {
+                connect: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+            user_agent: Some(user_agent),
+            ..Default::default()
+        }
+        .into();
+
         Self {
-            clients: Arc::default(),
-            proxy_url: proxy_url.clone(),
-            proxy: proxy_url.and_then(|url| ureq::Proxy::new(url.to_string()).log_err()),
-            user_agent,
+            agent,
             background_executor,
         }
     }
-
-    fn agent_for(&self, redirect_policy: RedirectPolicy, timeout: Duration) -> ureq::Agent {
-        let mut clients = self.clients.lock();
-        // in case our assumption of distinct options is wrong, we'll sporadically clean it out.
-        if clients.len() > 50 {
-            clients.clear()
-        }
-
-        clients
-            .entry((timeout, redirect_policy.clone()))
-            .or_insert_with(|| {
-                let mut builder = ureq::AgentBuilder::new()
-                    .timeout_connect(Duration::from_secs(5))
-                    .timeout_read(timeout)
-                    .timeout_write(timeout)
-                    .user_agent(&self.user_agent)
-                    .tls_config(http_client::TLS_CONFIG.clone())
-                    .redirects(match redirect_policy {
-                        RedirectPolicy::NoFollow => 0,
-                        RedirectPolicy::FollowLimit(limit) => limit,
-                        RedirectPolicy::FollowAll => 100,
-                    });
-                if let Some(proxy) = &self.proxy {
-                    builder = builder.proxy(proxy.clone());
-                }
-                builder.build()
-            })
-            .clone()
-    }
 }
+
 impl HttpClient for UreqClient {
     fn proxy(&self) -> Option<&Uri> {
-        self.proxy_url.as_ref()
+        self.agent.config().proxy.as_ref().map(|proxy| proxy.uri())
     }
 
     fn type_name(&self) -> &'static str {
@@ -83,51 +55,43 @@ impl HttpClient for UreqClient {
         &self,
         request: http::Request<AsyncBody>,
     ) -> BoxFuture<'static, Result<http::Response<AsyncBody>, Error>> {
-        let agent = self.agent_for(
-            request
-                .extensions()
-                .get::<RedirectPolicy>()
-                .cloned()
-                .unwrap_or_default(),
-            request
-                .extensions()
-                .get::<http_client::ReadTimeout>()
-                .cloned()
-                .unwrap_or_default()
-                .0,
-        );
-        let mut req = agent.request(&request.method().as_ref(), &request.uri().to_string());
-        for (name, value) in request.headers().into_iter() {
-            req = req.set(name.as_str(), value.to_str().unwrap());
-        }
-        let body = request.into_body();
-        let executor = self.background_executor.clone();
+        let redirect_policy = request
+            .extensions()
+            .get::<RedirectPolicy>()
+            .cloned()
+            .unwrap_or_default();
 
+        let timeout = request
+            .extensions()
+            .get::<http_client::ReadTimeout>()
+            .cloned()
+            .unwrap_or_default()
+            .0;
+        let agent = self.agent.clone();
+        let executor = self.background_executor.clone();
         self.background_executor
             .spawn(async move {
-                let response = match req.send(body) {
-                    Ok(response) => response,
-                    Err(e) => match e {
-                        ureq::Error::Status(_, response) => response,
-                        ureq::Error::Transport(transport) => {
-                            anyhow::bail!(transport)
-                        }
-                    },
+                let (parts, body) = request.into_parts();
+                let body = match body.0 {
+                    http_client::Inner::Empty => SendBody::none(),
+                    _ => SendBody::from_owned_reader(body),
                 };
+                let mut request = Request::from_parts(parts, body);
 
-                let mut builder = http::Response::builder()
-                    .status(response.status())
-                    .version(http::Version::HTTP_11);
-                for name in response.headers_names() {
-                    if let Some(value) = response.header(&name) {
-                        builder = builder.header(name, value);
-                    }
-                }
+                let config = agent.configure_request(&mut request);
+                config.max_redirects = match redirect_policy {
+                    RedirectPolicy::NoFollow => 0,
+                    RedirectPolicy::FollowLimit(limit) => limit,
+                    RedirectPolicy::FollowAll => 100,
+                };
+                config.timeouts.recv_body = Some(timeout);
 
-                let body = AsyncBody::from_reader(UreqResponseReader::new(executor, response));
-                let http_response = builder.body(body)?;
+                let response = agent.run(request)?;
 
-                Ok(http_response)
+                let (parts, response_body) = response.into_parts();
+                let response_body =
+                    AsyncBody::from_reader(UreqResponseReader::new(executor, response_body));
+                Ok(Response::from_parts(parts, response_body))
             })
             .boxed()
     }
@@ -141,13 +105,14 @@ struct UreqResponseReader {
 }
 
 impl UreqResponseReader {
-    fn new(background_executor: gpui::BackgroundExecutor, response: ureq::Response) -> Self {
+    fn new(background_executor: gpui::BackgroundExecutor, response: ureq::Body) -> Self {
         let (mut sender, receiver) = mpsc::channel(1);
         let mut reader = response.into_reader();
+
         let task = background_executor.spawn(async move {
             let mut buffer = vec![0; 8192];
             loop {
-                let n = match reader.read(&mut buffer) {
+                let n = match std::io::Read::read(&mut reader, &mut buffer) {
                     Ok(0) => break,
                     Ok(n) => n,
                     Err(e) => {
@@ -195,6 +160,7 @@ impl AsyncRead for UreqResponseReader {
             self.buffer.clear();
             self.idx = 0;
         }
+
         Poll::Ready(Ok(n))
     }
 }

@@ -16,8 +16,8 @@ path = "src/reqwest_client.rs"
 doctest = true
 
 [[example]]
-name = "client"
-path = "examples/client.rs"
+name = "reqwest_example"
+path = "examples/reqwest_example.rs"
 
 [dependencies]
 anyhow.workspace = true

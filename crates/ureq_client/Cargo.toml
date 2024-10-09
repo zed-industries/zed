@@ -16,8 +16,8 @@ path = "src/ureq_client.rs"
 doctest = true
 
 [[example]]
-name = "client"
-path = "examples/client.rs"
+name = "ureq_example"
+path = "examples/ureq_example.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -27,5 +27,9 @@ http_client.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 smol.workspace = true
-ureq = "=2.9.1"
+ureq = "3.0.0-rc1"
 util.workspace = true
+
+
+[dev-dependencies]
+gpui = {workspace = true, features = ["test-support"]}

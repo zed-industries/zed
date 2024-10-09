@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io::Read, pin::Pin, task::Poll};
+use std::{any::type_name, borrow::Cow, fmt::Debug, io::Read, pin::Pin, task::Poll};
 
 use futures::{AsyncRead, AsyncReadExt};
 
@@ -31,6 +31,21 @@ impl AsyncBody {
         R: AsyncRead + Send + Sync + 'static,
     {
         Self(Inner::AsyncReader(Box::pin(read)))
+    }
+}
+
+impl Debug for AsyncBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(type_name::<Self>())
+            .field(
+                "Kind",
+                &match self.0 {
+                    Inner::Empty => "Empty",
+                    Inner::SyncReader(_) => "SyncReader",
+                    Inner::AsyncReader(_) => "AsyncReader",
+                },
+            )
+            .finish()
     }
 }
 
