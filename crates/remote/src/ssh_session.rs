@@ -272,6 +272,7 @@ enum State {
         attempts: usize,
     },
     ReconnectExhausted,
+    ServerNotRunning,
 }
 
 impl fmt::Display for State {
@@ -283,6 +284,7 @@ impl fmt::Display for State {
             Self::ReconnectFailed { .. } => write!(f, "reconnect failed"),
             Self::ReconnectExhausted => write!(f, "reconnect exhausted"),
             Self::HeartbeatMissed { .. } => write!(f, "heartbeat missed"),
+            Self::ServerNotRunning { .. } => write!(f, "server not running"),
         }
     }
 }
@@ -298,10 +300,15 @@ impl State {
     }
 
     fn can_reconnect(&self) -> bool {
-        matches!(
-            self,
-            Self::Connected { .. } | Self::HeartbeatMissed { .. } | Self::ReconnectFailed { .. }
-        )
+        match self {
+            Self::Connected { .. }
+            | Self::HeartbeatMissed { .. }
+            | Self::ReconnectFailed { .. } => true,
+            State::Connecting
+            | State::Reconnecting
+            | State::ReconnectExhausted
+            | State::ServerNotRunning => false,
+        }
     }
 
     fn heartbeat_recovered(self) -> Self {
@@ -378,6 +385,7 @@ impl From<&State> for ConnectionState {
             State::Reconnecting | State::ReconnectFailed { .. } => Self::Reconnecting,
             State::HeartbeatMissed { .. } => Self::HeartbeatMissed,
             State::ReconnectExhausted => Self::Disconnected,
+            State::ServerNotRunning => Self::Disconnected,
         }
     }
 }
@@ -530,7 +538,10 @@ impl SshRemoteClient {
                 forwarder,
                 ..
             } => (attempts, ssh_connection, delegate, forwarder),
-            State::Connecting | State::Reconnecting | State::ReconnectExhausted => unreachable!(),
+            State::Connecting
+            | State::Reconnecting
+            | State::ReconnectExhausted
+            | State::ServerNotRunning => unreachable!(),
         };
 
         let attempts = attempts + 1;
@@ -632,7 +643,8 @@ impl SshRemoteClient {
                     match &new_state {
                         State::Connecting
                         | State::Reconnecting { .. }
-                        | State::HeartbeatMissed { .. } => {}
+                        | State::HeartbeatMissed { .. }
+                        | State::ServerNotRunning => {}
                         State::Connected { .. } => {
                             log::info!("Successfully reconnected");
                         }
@@ -831,13 +843,12 @@ impl SshRemoteClient {
 
             match result {
                 Ok(Some(exit_code)) => {
-                    dbg!(exit_code);
                     if let Some(error) = ProxyLaunchError::from_exit_code(exit_code) {
                         match error {
                             ProxyLaunchError::ServerNotRunning => {
                                 log::error!("failed to reconnect because server is not running");
                                 this.update(&mut cx, |this, cx| {
-                                    this.set_state(State::ReconnectExhausted, cx);
+                                    this.set_state(State::ServerNotRunning, cx);
                                 })?;
                             }
                         }
