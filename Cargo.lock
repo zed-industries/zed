@@ -9089,6 +9089,7 @@ dependencies = [
  "serde_json",
  "smol",
  "tempfile",
+ "thiserror",
  "util",
 ]
 
