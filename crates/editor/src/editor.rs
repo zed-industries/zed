@@ -547,7 +547,7 @@ pub struct Editor {
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     project: Option<Model<Project>>,
-    semantics_provider: Option<Arc<dyn SemanticsProvider>>,
+    semantics_provider: Option<Rc<dyn SemanticsProvider>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
@@ -1946,7 +1946,7 @@ impl Editor {
             active_diagnostics: None,
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
-            semantics_provider: project.clone().map(|project| Arc::new(project) as _),
+            semantics_provider: project.clone().map(|project| Rc::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -2319,11 +2319,11 @@ impl Editor {
         self.completion_provider = provider;
     }
 
-    pub fn semantics_provider(&self) -> Option<Arc<dyn SemanticsProvider>> {
+    pub fn semantics_provider(&self) -> Option<Rc<dyn SemanticsProvider>> {
         self.semantics_provider.clone()
     }
 
-    pub fn set_semantics_provider(&mut self, provider: Option<Arc<dyn SemanticsProvider>>) {
+    pub fn set_semantics_provider(&mut self, provider: Option<Rc<dyn SemanticsProvider>>) {
         self.semantics_provider = provider;
     }
 

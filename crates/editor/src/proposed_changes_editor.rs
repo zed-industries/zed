@@ -6,7 +6,7 @@ use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::Project;
 use smol::stream::StreamExt;
-use std::{any::TypeId, ops::Range, sync::Arc, time::Duration};
+use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
 use ui::prelude::*;
 use workspace::{
@@ -39,7 +39,7 @@ struct RecalculateDiff {
 ///
 /// Requests in edited regions will return nothing, but requests in unchanged
 /// regions will be translated into the base buffer's coordinates.
-struct BranchBufferSemanticsProvider(Arc<dyn SemanticsProvider>);
+struct BranchBufferSemanticsProvider(Rc<dyn SemanticsProvider>);
 
 impl ProposedChangesEditor {
     pub fn new<T: ToOffset>(
@@ -77,7 +77,7 @@ impl ProposedChangesEditor {
                 editor.set_semantics_provider(
                     editor
                         .semantics_provider()
-                        .map(|provider| Arc::new(BranchBufferSemanticsProvider(provider)) as _),
+                        .map(|provider| Rc::new(BranchBufferSemanticsProvider(provider)) as _),
                 );
                 editor
             }),
