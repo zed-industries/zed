@@ -11,22 +11,13 @@ use http::request::Builder;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
-    any::type_name,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 pub use url::Url;
 
-#[derive(Clone)]
 pub struct ReadTimeout(pub Duration);
-impl Default for ReadTimeout {
-    fn default() -> Self {
-        Self(Duration::from_secs(5))
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
-
+#[derive(Default, Debug, Clone)]
 pub enum RedirectPolicy {
     #[default]
     NoFollow,
@@ -34,23 +25,6 @@ pub enum RedirectPolicy {
     FollowAll,
 }
 pub struct FollowRedirects(pub bool);
-
-pub static TLS_CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
-    let mut root_store = rustls::RootCertStore::empty();
-
-    let root_certs = rustls_native_certs::load_native_certs();
-    for error in root_certs.errors {
-        log::warn!("error loading native certs: {:?}", error);
-    }
-    root_store.add_parsable_certificates(&root_certs.certs);
-
-    Arc::new(
-        rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(root_store)
-            .with_no_client_auth(),
-    )
-});
 
 pub trait HttpRequestExt {
     /// Set a read timeout on the request.
@@ -73,8 +47,6 @@ impl HttpRequestExt for http::request::Builder {
 }
 
 pub trait HttpClient: 'static + Send + Sync {
-    fn type_name(&self) -> &'static str;
-
     fn send(
         &self,
         req: http::Request<AsyncBody>,
@@ -157,10 +129,6 @@ impl HttpClient for HttpClientWithProxy {
     fn proxy(&self) -> Option<&Uri> {
         self.proxy.as_ref()
     }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
 }
 
 impl HttpClient for Arc<HttpClientWithProxy> {
@@ -173,10 +141,6 @@ impl HttpClient for Arc<HttpClientWithProxy> {
 
     fn proxy(&self) -> Option<&Uri> {
         self.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
     }
 }
 
@@ -289,10 +253,6 @@ impl HttpClient for Arc<HttpClientWithUrl> {
     fn proxy(&self) -> Option<&Uri> {
         self.client.proxy.as_ref()
     }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
 }
 
 impl HttpClient for HttpClientWithUrl {
@@ -305,10 +265,6 @@ impl HttpClient for HttpClientWithUrl {
 
     fn proxy(&self) -> Option<&Uri> {
         self.client.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
     }
 }
 
@@ -349,10 +305,6 @@ impl HttpClient for BlockedHttpClient {
 
     fn proxy(&self) -> Option<&Uri> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
 
@@ -425,9 +377,5 @@ impl HttpClient for FakeHttpClient {
 
     fn proxy(&self) -> Option<&Uri> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
