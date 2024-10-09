@@ -364,6 +364,7 @@ impl Telemetry {
         operation: &'static str,
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
+        is_via_ssh: bool,
     ) {
         let event = Event::Editor(EditorEvent {
             file_extension,
@@ -371,6 +372,7 @@ impl Telemetry {
             operation: operation.into(),
             copilot_enabled,
             copilot_enabled_for_language,
+            is_via_ssh,
         });
 
         self.report_event(event)
@@ -456,7 +458,7 @@ impl Telemetry {
         }))
     }
 
-    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
+    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
@@ -465,6 +467,7 @@ impl Telemetry {
             let event = Event::Edit(EditEvent {
                 duration: end.timestamp_millis() - start.timestamp_millis(),
                 environment: environment.to_string(),
+                is_via_ssh,
             });
 
             self.report_event(event);
@@ -650,7 +653,7 @@ impl Telemetry {
                                 .build_zed_api_url("/telemetry/events", &[])?
                                 .as_ref(),
                         )
-                        .header("Content-Type", "text/plain")
+                        .header("Content-Type", "application/json")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());
 

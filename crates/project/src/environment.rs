@@ -1,4 +1,3 @@
-use anyhow::Result;
 use futures::{future::Shared, FutureExt};
 use std::{path::Path, sync::Arc};
 use util::ResultExt;
@@ -17,6 +16,7 @@ pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
+    environment_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
 }
 
 impl ProjectEnvironment {
@@ -37,6 +37,7 @@ impl ProjectEnvironment {
                 cli_environment,
                 get_environment_task: None,
                 cached_shell_environments: Default::default(),
+                environment_error_messages: Default::default(),
             }
         })
     }
@@ -54,6 +55,7 @@ impl ProjectEnvironment {
 
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
         self.cached_shell_environments.remove(&worktree_id);
+        self.environment_error_messages.remove(&worktree_id);
     }
 
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
@@ -64,6 +66,18 @@ impl ProjectEnvironment {
         } else {
             None
         }
+    }
+
+    /// Returns an iterator over all pairs `(worktree_id, error_message)` of
+    /// environment errors associated with this project environment.
+    pub(crate) fn environment_errors(
+        &self,
+    ) -> impl Iterator<Item = (&WorktreeId, &EnvironmentErrorMessage)> {
+        self.environment_error_messages.iter()
+    }
+
+    pub(crate) fn remove_environment_error(&mut self, worktree_id: WorktreeId) {
+        self.environment_error_messages.remove(&worktree_id);
     }
 
     /// Returns the project environment, if possible.
@@ -120,23 +134,29 @@ impl ProjectEnvironment {
             let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
             cx.spawn(|this, mut cx| async move {
-                let mut shell_env = cx
+                let (mut shell_env, error_message) = cx
                     .background_executor()
                     .spawn({
                         let cwd = worktree_abs_path.clone();
                         async move { load_shell_environment(&cwd, &load_direnv).await }
                     })
-                    .await
-                    .ok();
+                    .await;
 
                 if let Some(shell_env) = shell_env.as_mut() {
                     this.update(&mut cx, |this, _| {
                         this.cached_shell_environments
-                            .insert(worktree_id, shell_env.clone())
+                            .insert(worktree_id, shell_env.clone());
                     })
                     .log_err();
 
                     set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
+                }
+
+                if let Some(error) = error_message {
+                    this.update(&mut cx, |this, _| {
+                        this.environment_error_messages.insert(worktree_id, error);
+                    })
+                    .log_err();
                 }
 
                 shell_env
@@ -165,64 +185,62 @@ impl From<EnvironmentOrigin> for String {
     }
 }
 
+pub struct EnvironmentErrorMessage(pub String);
+
+impl EnvironmentErrorMessage {
+    #[allow(dead_code)]
+    fn from_str(s: &str) -> Self {
+        Self(String::from(s))
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 async fn load_shell_environment(
     _dir: &Path,
     _load_direnv: &DirenvSettings,
-) -> Result<HashMap<String, String>> {
-    Ok([("ZED_FAKE_TEST_ENV".into(), "true".into())]
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
+    let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
         .into_iter()
-        .collect())
+        .collect();
+    (Some(fake_env), None)
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
-) -> Result<HashMap<String, String>> {
-    use anyhow::{anyhow, Context};
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
+    use crate::direnv::{load_direnv_environment, DirenvError};
     use std::path::PathBuf;
     use util::parse_env_output;
 
-    async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
-        let Ok(direnv_path) = which::which("direnv") else {
-            return Ok(None);
-        };
-
-        let direnv_output = smol::process::Command::new(direnv_path)
-            .args(["export", "json"])
-            .current_dir(dir)
-            .output()
-            .await
-            .context("failed to spawn direnv to get local environment variables")?;
-
-        anyhow::ensure!(
-            direnv_output.status.success(),
-            "direnv exited with error {:?}. Stderr:\n{}",
-            direnv_output.status,
-            String::from_utf8_lossy(&direnv_output.stderr)
-        );
-
-        let output = String::from_utf8_lossy(&direnv_output.stdout);
-        if output.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(
-            serde_json::from_str(&output).context("failed to parse direnv output")?,
-        ))
+    fn message<T>(with: &str) -> (Option<T>, Option<EnvironmentErrorMessage>) {
+        let message = EnvironmentErrorMessage::from_str(with);
+        (None, Some(message))
     }
 
-    let direnv_environment = match load_direnv {
-        DirenvSettings::ShellHook => None,
-        DirenvSettings::Direct => load_direnv_environment(dir).await.log_err().flatten(),
-    }
-    .unwrap_or(HashMap::default());
+    let (direnv_environment, direnv_error) = match load_direnv {
+        DirenvSettings::ShellHook => (None, None),
+        DirenvSettings::Direct => match load_direnv_environment(dir).await {
+            Ok(env) => (Some(env), None),
+            Err(err) => (
+                None,
+                <Option<EnvironmentErrorMessage> as From<DirenvError>>::from(err),
+            ),
+        },
+    };
+    let direnv_environment = direnv_environment.unwrap_or(HashMap::default());
 
     let marker = "ZED_SHELL_START";
-    let shell = std::env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
+    let Some(shell) = std::env::var("SHELL").log_err() else {
+        return message("Failed to get login environment. SHELL environment variable is not set");
+    };
 
     // What we're doing here is to spawn a shell and then `cd` into
     // the project directory to get the env in there as if the user
@@ -259,26 +277,26 @@ async fn load_shell_environment(
         additional_command.unwrap_or("")
     );
 
-    let output = smol::process::Command::new(&shell)
+    let Some(output) = smol::process::Command::new(&shell)
         .args(["-l", "-i", "-c", &command])
         .envs(direnv_environment)
         .output()
         .await
-        .context("failed to spawn login shell to source login environment variables")?;
+        .log_err()
+    else {
+        return message("Failed to spawn login shell to source login environment variables. See logs for details");
+    };
 
-    anyhow::ensure!(
-        output.status.success(),
-        "login shell exited with error {:?}",
-        output.status
-    );
+    if !output.status.success() {
+        log::error!("login shell exited with {}", output.status);
+        return message("Login shell exited with nonzero exit code. See logs for details");
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let env_output_start = stdout.find(marker).ok_or_else(|| {
-        anyhow!(
-            "failed to parse output of `env` command in login shell: {}",
-            stdout
-        )
-    })?;
+    let Some(env_output_start) = stdout.find(marker) else {
+        log::error!("failed to parse output of `env` command in login shell: {stdout}");
+        return message("Failed to parse stdout of env command. See logs for the output");
+    };
 
     let mut parsed_env = HashMap::default();
     let env_output = &stdout[env_output_start + marker.len()..];
@@ -287,5 +305,5 @@ async fn load_shell_environment(
         parsed_env.insert(key, value);
     });
 
-    Ok(parsed_env)
+    (Some(parsed_env), direnv_error)
 }

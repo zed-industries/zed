@@ -191,16 +191,26 @@ impl Session {
         }
     }
 
-    pub async fn current_plan(&self, db: MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
+    pub async fn has_llm_subscription(
+        &self,
+        db: &MutexGuard<'_, DbHandle>,
+    ) -> anyhow::Result<bool> {
         if self.is_staff() {
-            return Ok(proto::Plan::ZedPro);
+            return Ok(true);
         }
 
         let Some(user_id) = self.user_id() else {
-            return Ok(proto::Plan::Free);
+            return Ok(false);
         };
 
-        if db.has_active_billing_subscription(user_id).await? {
+        Ok(db.has_active_billing_subscription(user_id).await?)
+    }
+
+    pub async fn current_plan(
+        &self,
+        _db: &MutexGuard<'_, DbHandle>,
+    ) -> anyhow::Result<proto::Plan> {
+        if self.is_staff() {
             Ok(proto::Plan::ZedPro)
         } else {
             Ok(proto::Plan::Free)
@@ -3471,7 +3481,7 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
 }
 
 async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
-    let plan = session.current_plan(session.db().await).await?;
+    let plan = session.current_plan(&session.db().await).await?;
 
     session
         .peer
@@ -4471,7 +4481,7 @@ async fn count_language_model_tokens(
     };
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
         proto::Plan::Free => Box::new(FreeCountLanguageModelTokensRateLimit),
     };
@@ -4592,7 +4602,7 @@ async fn compute_embeddings(
     let api_key = api_key.context("no OpenAI API key configured on the server")?;
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
         proto::Plan::Free => Box::new(FreeComputeEmbeddingsRateLimit),
     };
@@ -4915,7 +4925,8 @@ async fn get_llm_api_token(
         user.github_login.clone(),
         session.is_staff(),
         has_llm_closed_beta_feature_flag,
-        session.current_plan(db).await?,
+        session.has_llm_subscription(&db).await?,
+        session.current_plan(&db).await?,
         &session.app_state.config,
     )?;
     response.send(proto::GetLlmTokenResponse { token })?;
