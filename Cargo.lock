@@ -2553,6 +2553,7 @@ dependencies = [
  "collections",
  "ctor",
  "dashmap 6.0.1",
+ "derive_more",
  "dev_server_projects",
  "editor",
  "env_logger",
