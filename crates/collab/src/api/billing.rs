@@ -804,7 +804,6 @@ async fn update_stripe_subscription(
         update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
             id: Some(existing_item.id.to_string()),
             quantity: Some(new_quantity as u64),
-
             ..Default::default()
         }]);
     } else {
