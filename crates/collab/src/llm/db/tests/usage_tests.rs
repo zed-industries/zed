@@ -4,7 +4,7 @@ use crate::{
         queries::{providers::ModelParams, usages::Usage},
         LlmDatabase,
     },
-    test_llm_db,
+    test_llm_db, Cents,
 };
 use chrono::{DateTime, Duration, Utc};
 use pretty_assertions::assert_eq;
@@ -56,8 +56,8 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             cache_creation_input_tokens_this_month: 0,
             cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -73,8 +73,8 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             cache_creation_input_tokens_this_month: 0,
             cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -94,8 +94,8 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             cache_creation_input_tokens_this_month: 0,
             cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -112,8 +112,8 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             cache_creation_input_tokens_this_month: 0,
             cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -132,8 +132,8 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             cache_creation_input_tokens_this_month: 0,
             cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -158,8 +158,8 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             cache_creation_input_tokens_this_month: 500,
             cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -179,8 +179,8 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             cache_creation_input_tokens_this_month: 500,
             cache_read_input_tokens_this_month: 300,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 }
