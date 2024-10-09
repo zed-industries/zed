@@ -730,7 +730,6 @@ impl SshRemoteClient {
                 missed_heartbeats
             );
 
-            println!("heartbeat starting reconnect");
             self.reconnect(cx)
                 .context("failed to start reconnect process after missing heartbeats")
                 .log_err();
@@ -852,7 +851,6 @@ impl SshRemoteClient {
                 Err(error) => {
                     log::warn!("ssh io task died with error: {:?}. reconnecting...", error);
                     this.update(&mut cx, |this, cx| {
-                        println!("multiplex starting reconnect");
                         this.reconnect(cx).ok();
                     })?;
                 }
