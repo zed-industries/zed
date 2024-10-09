@@ -12356,14 +12356,22 @@ impl Editor {
 
         let mut new_selections_by_buffer = HashMap::default();
         for selection in self.selections.all::<usize>(cx) {
-            for (buffer, mut range, _) in
-                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            for (mut buffer_handle, mut range, _) in
+                buffer.range_to_buffer_ranges(selection.range(), cx)
             {
+                // When editing branch buffers, jump to the corresponding location
+                // in their base buffer.
+                let buffer = buffer_handle.read(cx);
+                if let Some(base_buffer) = buffer.diff_base_buffer() {
+                    range = buffer.range_to_version(range, &base_buffer.read(cx).version());
+                    buffer_handle = base_buffer;
+                }
+
                 if selection.reversed {
                     mem::swap(&mut range.start, &mut range.end);
                 }
                 new_selections_by_buffer
-                    .entry(buffer)
+                    .entry(buffer_handle)
                     .or_insert(Vec::new())
                     .push(range)
             }
