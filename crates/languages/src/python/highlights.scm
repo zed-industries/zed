@@ -54,7 +54,7 @@
 
 (comment) @comment
 (string) @string
-(escape_sequence) @escape
+(escape_sequence) @string.escape
 
 [
   "("
