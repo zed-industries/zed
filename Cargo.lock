@@ -3476,6 +3476,7 @@ dependencies = [
  "parking_lot",
  "project",
  "serde",
+ "serde_json",
  "settings",
  "task",
  "tasks_ui",

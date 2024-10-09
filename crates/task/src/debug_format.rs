@@ -84,7 +84,7 @@ pub struct DebugAdapterConfig {
     /// The path to the adapter
     pub adapter_path: Option<String>,
     /// Additional initialization arguments to be sent on DAP initialization
-    pub initialize_args: Option<Vec<String>>,
+    pub initialize_args: Option<serde_json::Value>,
 }
 
 /// Represents the type of the debugger adapter connection
@@ -110,7 +110,7 @@ pub struct DebugTaskDefinition {
     /// The adapter to run
     adapter: DebugAdapterKind,
     /// Additional initialization arguments to be sent on DAP initialization
-    initialize_args: Option<Vec<String>>,
+    initialize_args: Option<serde_json::Value>,
     /// The path of the debug adapter to use
     adapter_path: Option<String>,
 }

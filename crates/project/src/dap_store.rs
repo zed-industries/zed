@@ -15,8 +15,9 @@ use dap::{
     InitializeRequestArgumentsPathFormat, LaunchRequestArguments, Module, ModulesArguments,
     NextArguments, PauseArguments, Scope, ScopesArguments, SetBreakpointsArguments,
     SetExpressionArguments, SetVariableArguments, Source, SourceBreakpoint, StackFrame,
-    StackTraceArguments, StepInArguments, StepOutArguments, SteppingGranularity,
-    TerminateArguments, TerminateThreadsArguments, Variable, VariablesArguments,
+    StackTraceArguments, StartDebuggingRequestArguments, StepInArguments, StepOutArguments,
+    SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
+    VariablesArguments,
 };
 use dap_adapters::build_adapter;
 use fs::Fs;
@@ -24,7 +25,7 @@ use gpui::{EventEmitter, Model, ModelContext, Task};
 use http_client::HttpClient;
 use language::{Buffer, BufferSnapshot};
 use node_runtime::NodeRuntime;
-use serde_json::Value;
+use serde_json::{json, Value};
 use settings::WorktreeId;
 use std::{
     collections::BTreeMap,
@@ -37,7 +38,7 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugRequestType};
 use text::Point;
-use util::ResultExt;
+use util::{merge_json_value_into, ResultExt};
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
@@ -229,7 +230,12 @@ impl DapStore {
         }
     }
 
-    pub fn start_client(&mut self, config: DebugAdapterConfig, cx: &mut ModelContext<Self>) {
+    pub fn start_client(
+        &mut self,
+        config: DebugAdapterConfig,
+        args: Option<StartDebuggingRequestArguments>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let client_id = self.next_client_id();
         let adapter_delegate = Box::new(DapAdapterDelegate::new(
             self.http_client.clone(),
@@ -249,7 +255,18 @@ impl DapStore {
                 .context("Failed to get debug adapter binary")
                 .log_err()?;
             let transport_params = adapter.connect(binary, &mut cx).await.log_err()?;
-            let request_args = adapter.request_args();
+
+            let mut request_args = json!({});
+            if let Some(config_args) = config.initialize_args.clone() {
+                merge_json_value_into(config_args, &mut request_args);
+            }
+
+            merge_json_value_into(adapter.request_args(), &mut request_args);
+
+            if let Some(args) = args {
+                merge_json_value_into(args.configuration.clone(), &mut request_args);
+            }
+
             let adapter_id = adapter.id();
 
             let client = DebugAdapterClient::new(

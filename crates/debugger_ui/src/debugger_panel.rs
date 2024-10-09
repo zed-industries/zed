@@ -14,6 +14,7 @@ use gpui::{
     FontWeight, Model, Subscription, Task, View, ViewContext, WeakView,
 };
 use project::dap_store::DapStore;
+use serde_json::Value;
 use settings::Settings;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -101,7 +102,12 @@ impl DebugPanel {
                                 }
                                 Message::Request(request) => {
                                     if StartDebugging::COMMAND == request.command {
-                                        Self::handle_start_debugging_request(this, client, cx);
+                                        Self::handle_start_debugging_request(
+                                            this,
+                                            client,
+                                            request.arguments.clone(),
+                                            cx,
+                                        );
                                     }
                                 }
                                 _ => unreachable!(),
@@ -222,10 +228,17 @@ impl DebugPanel {
     fn handle_start_debugging_request(
         this: &mut Self,
         client: Arc<DebugAdapterClient>,
+        request_args: Option<Value>,
         cx: &mut ViewContext<Self>,
     ) {
+        let start_args = if let Some(args) = request_args {
+            serde_json::from_value(args.clone()).ok()
+        } else {
+            None
+        };
+
         this.dap_store.update(cx, |store, cx| {
-            store.start_client(client.config(), cx);
+            store.start_client(client.config(), start_args, cx);
         });
     }
 

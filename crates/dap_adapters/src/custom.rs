@@ -3,7 +3,7 @@ use crate::*;
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) struct CustomDebugAdapter {
     start_command: String,
-    initialize_args: Option<Vec<String>>,
+    initialize_args: Option<serde_json::Value>,
     program: String,
     connection: DebugConnectionType,
 }

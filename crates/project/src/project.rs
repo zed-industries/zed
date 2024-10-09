@@ -1185,7 +1185,7 @@ impl Project {
     ) {
         if let Some(adapter_config) = debug_task.debug_adapter_config() {
             self.dap_store
-                .update(cx, |store, cx| store.start_client(adapter_config, cx));
+                .update(cx, |store, cx| store.start_client(adapter_config, None, cx));
         }
     }
 
