@@ -670,7 +670,6 @@ pub struct EditorEventRow {
     time: i64,
     copilot_enabled: bool,
     copilot_enabled_for_language: bool,
-    historical_event: bool,
     architecture: String,
     is_staff: Option<bool>,
     major: Option<i32>,
@@ -718,7 +717,6 @@ impl EditorEventRow {
             country_code: country_code.unwrap_or("XX".to_string()),
             region_code: "".to_string(),
             city: "".to_string(),
-            historical_event: false,
             is_via_ssh: event.is_via_ssh,
         }
     }
