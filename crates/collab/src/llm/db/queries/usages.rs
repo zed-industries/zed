@@ -159,7 +159,7 @@ impl LlmDatabase {
                 )
                 .stream(&*tx)
                 .await?;
-            let mut monthly_spending_in_cents = Cents::ZERO;
+            let mut monthly_spending = Cents::ZERO;
 
             while let Some(usage) = monthly_usages.next().await {
                 let usage = usage?;
@@ -167,7 +167,7 @@ impl LlmDatabase {
                     continue;
                 };
 
-                monthly_spending_in_cents += calculate_spending(
+                monthly_spending += calculate_spending(
                     model,
                     usage.input_tokens as usize,
                     usage.cache_creation_input_tokens as usize,
@@ -176,7 +176,7 @@ impl LlmDatabase {
                 );
             }
 
-            Ok(monthly_spending_in_cents)
+            Ok(monthly_spending)
         })
         .await
     }
