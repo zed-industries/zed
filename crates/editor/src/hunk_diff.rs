@@ -209,19 +209,20 @@ impl Editor {
 
                         retain
                     });
-                    for remaining_hunk in hunks_to_toggle {
-                        let remaining_hunk_point_range =
-                            Point::new(remaining_hunk.row_range.start.0, 0)
-                                ..Point::new(remaining_hunk.row_range.end.0, 0);
+                    for hunk in hunks_to_toggle {
+                        let remaining_hunk_point_range = Point::new(hunk.row_range.start.0, 0)
+                            ..Point::new(hunk.row_range.end.0, 0);
+                        let hunk_start = snapshot
+                            .buffer_snapshot
+                            .anchor_before(remaining_hunk_point_range.start);
+                        let hunk_end = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(hunk_start.excerpt_id, hunk.buffer_range.end)
+                            .unwrap();
                         hunks_to_expand.push(HoveredHunk {
-                            status: hunk_status(&remaining_hunk),
-                            multi_buffer_range: snapshot
-                                .buffer_snapshot
-                                .anchor_before(remaining_hunk_point_range.start)
-                                ..snapshot
-                                    .buffer_snapshot
-                                    .anchor_after(remaining_hunk_point_range.end),
-                            diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
+                            status: hunk_status(&hunk),
+                            multi_buffer_range: hunk_start..hunk_end,
+                            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         });
                     }
 
