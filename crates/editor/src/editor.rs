@@ -4427,15 +4427,48 @@ impl Editor {
         &mut self,
         item_ix: Option<usize>,
         intent: CompletionIntent,
-        cx: &mut ViewContext<Editor>,
-    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
-        use language::ToOffset as _;
-
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
             menu
         } else {
             return None;
         };
+
+        let mut resolve_task_store = completions_menu
+            .selected_completion_documentation_resolve_debounce
+            .lock();
+        let selected_completion_resolve = resolve_task_store.start_now();
+        let menu_pre_resolve = self
+            .completion_documentation_pre_resolve_debounce
+            .start_now();
+        drop(resolve_task_store);
+
+        Some(cx.spawn(|editor, mut cx| async move {
+            match (selected_completion_resolve, menu_pre_resolve) {
+                (None, None) => {}
+                (Some(resolve), None) | (None, Some(resolve)) => resolve.await,
+                (Some(resolve_1), Some(resolve_2)) => {
+                    futures::join!(resolve_1, resolve_2);
+                }
+            }
+            if let Some(apply_edits_task) = editor.update(&mut cx, |editor, cx| {
+                editor.apply_resolved_completion(completions_menu, item_ix, intent, cx)
+            })? {
+                apply_edits_task.await?;
+            }
+            Ok(())
+        }))
+    }
+
+    fn apply_resolved_completion(
+        &mut self,
+        completions_menu: CompletionsMenu,
+        item_ix: Option<usize>,
+        intent: CompletionIntent,
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> Option<Task<anyhow::Result<Option<language::Transaction>>>> {
+        use language::ToOffset as _;
 
         let mat = completions_menu
             .matches
@@ -4595,11 +4628,7 @@ impl Editor {
             // so we should automatically call signature_help
             self.show_signature_help(&ShowSignatureHelp, cx);
         }
-
-        Some(cx.foreground_executor().spawn(async move {
-            apply_edits.await?;
-            Ok(())
-        }))
+        Some(apply_edits)
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
@@ -6213,13 +6242,21 @@ impl Editor {
     fn apply_selected_diff_hunks(&mut self, _: &ApplyDiffHunk, cx: &mut ViewContext<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
+        let mut ranges_by_buffer = HashMap::default();
         self.transact(cx, |editor, cx| {
             for hunk in hunks {
                 if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.merge_into_base(Some(hunk.buffer_range.to_offset(buffer)), cx);
-                    });
+                    ranges_by_buffer
+                        .entry(buffer.clone())
+                        .or_insert_with(Vec::new)
+                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
                 }
+            }
+
+            for (buffer, ranges) in ranges_by_buffer {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.merge_into_base(ranges, cx);
+                });
             }
         });
     }
@@ -12138,9 +12175,14 @@ impl Editor {
                 }
 
                 let Some(project) = &self.project else { return };
-                let telemetry = project.read(cx).client().telemetry().clone();
+                let (telemetry, is_via_ssh) = {
+                    let project = project.read(cx);
+                    let telemetry = project.client().telemetry().clone();
+                    let is_via_ssh = project.is_via_ssh();
+                    (telemetry, is_via_ssh)
+                };
                 refresh_linked_ranges(self, cx);
-                telemetry.log_edit_event("editor");
+                telemetry.log_edit_event("editor", is_via_ssh);
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
@@ -12481,13 +12523,15 @@ impl Editor {
             .settings_at(0, cx)
             .show_inline_completions;
 
-        let telemetry = project.read(cx).client().telemetry().clone();
+        let project = project.read(cx);
+        let telemetry = project.client().telemetry().clone();
         telemetry.report_editor_event(
             file_extension,
             vim_mode,
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
+            project.is_via_ssh(),
         )
     }
 

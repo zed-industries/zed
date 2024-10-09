@@ -732,6 +732,7 @@ impl Project {
                 }
             })
             .detach();
+            cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
 
             let this = Self {
                 buffer_ordered_messages_tx: tx,
