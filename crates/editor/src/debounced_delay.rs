@@ -42,4 +42,8 @@ impl DebouncedDelay {
             }
         }));
     }
+
+    pub fn take(&mut self) -> Option<Task<()>> {
+        self.task.take()
+    }
 }
