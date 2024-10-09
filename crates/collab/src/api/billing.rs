@@ -29,7 +29,7 @@ use crate::db::{
     UpdateBillingSubscriptionParams,
 };
 use crate::llm::db::LlmDatabase;
-use crate::llm::MONTHLY_SPENDING_LIMIT_IN_CENTS;
+use crate::llm::MONTHLY_SPENDING_LIMIT;
 use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
@@ -703,10 +703,9 @@ async fn update_stripe_subscription(
     let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
         .context("failed to parse subscription ID")?;
 
-    let monthly_spending_over_free_tier =
-        monthly_spending.saturating_sub(MONTHLY_SPENDING_LIMIT_IN_CENTS);
+    let monthly_spending_over_free_tier = monthly_spending.saturating_sub(MONTHLY_SPENDING_LIMIT);
 
-    let new_quantity = (monthly_spending_over_free_tier as f32 / 100.).ceil();
+    let new_quantity = (monthly_spending_over_free_tier.0 as f32 / 100.).ceil();
     Subscription::update(
         stripe_client,
         &subscription_id,
