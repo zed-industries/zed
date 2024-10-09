@@ -20,18 +20,8 @@ pub struct LlmTokenClaims {
     pub github_user_login: String,
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
-    // This field is temporarily optional so it can be added
-    // in a backwards-compatible way. We can make it required
-    // once all of the LLM tokens have cycled (~1 hour after
-    // this change has been deployed).
-    #[serde(default)]
-    pub has_llm_subscription: Option<bool>,
-    // This field is temporarily optional so it can be added
-    // in a backwards-compatible way. We can make it required
-    // once all of the LLM tokens have cycled (~1 hour after
-    // this change has been deployed).
-    #[serde(default)]
-    pub max_monthly_spend_in_cents: Option<u32>,
+    pub has_llm_subscription: bool,
+    pub max_monthly_spend_in_cents: u32,
     pub plan: rpc::proto::Plan,
 }
 
@@ -63,12 +53,11 @@ impl LlmTokenClaims {
             github_user_login,
             is_staff,
             has_llm_closed_beta_feature_flag,
-            has_llm_subscription: Some(has_llm_subscription),
-            max_monthly_spend_in_cents: Some(
-                billing_preferences.map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
+            has_llm_subscription,
+            max_monthly_spend_in_cents: billing_preferences
+                .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
                     preferences.max_monthly_llm_usage_spending_in_cents as u32
                 }),
-            ),
             plan,
         };
 
