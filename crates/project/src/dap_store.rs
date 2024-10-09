@@ -264,14 +264,12 @@ impl DapStore {
             merge_json_value_into(adapter.request_args(), &mut request_args);
 
             if let Some(args) = args {
-                merge_json_value_into(args.configuration.clone(), &mut request_args);
+                merge_json_value_into(args.configuration, &mut request_args);
             }
-
-            let adapter_id = adapter.id();
 
             let client = DebugAdapterClient::new(
                 client_id,
-                adapter_id,
+                adapter.id(),
                 request_args,
                 config,
                 transport_params,
