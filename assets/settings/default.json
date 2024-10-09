@@ -68,9 +68,17 @@
   "ui_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
-  // The factor to grow the active pane by. Defaults to 1.0
-  // which gives the same size as all other panes.
-  "active_pane_magnification": 1.0,
+  // Active pane styling settings.
+  "active_pane_modifiers": {
+    // The factor to grow the active pane by. Defaults to 1.0
+    // which gives the same size as all other panes.
+    "magnification": 1.0,
+    // Inset border size of the active pane, in pixels.
+    "border_size": 0.0,
+    // Opacity of the inactive panes. 0 means transparent, 1 means opaque.
+    // Values are clamped to the [0.0, 1.0] range.
+    "inactive_opacity": 1.0
+  },
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
