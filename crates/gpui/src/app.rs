@@ -1533,8 +1533,4 @@ impl HttpClient for NullHttpClient {
     fn proxy(&self) -> Option<&http_client::Uri> {
         None
     }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
-    }
 }

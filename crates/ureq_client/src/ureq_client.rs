@@ -1,4 +1,3 @@
-use std::any::type_name;
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
@@ -75,10 +74,6 @@ impl HttpClient for UreqClient {
         self.proxy_url.as_ref()
     }
 
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
-    }
-
     fn send(
         &self,
         request: http::Request<AsyncBody>,
@@ -105,15 +100,7 @@ impl HttpClient for UreqClient {
 
         self.background_executor
             .spawn(async move {
-                let response = match req.send(body) {
-                    Ok(response) => response,
-                    Err(e) => match e {
-                        ureq::Error::Status(_, response) => response,
-                        ureq::Error::Transport(transport) => {
-                            anyhow::bail!(transport)
-                        }
-                    },
-                };
+                let response = req.send(body)?;
 
                 let mut builder = http::Response::builder()
                     .status(response.status())
