@@ -1,23 +1,18 @@
+use serde_json::Value;
+use task::DebugAdapterConfig;
+
 use crate::*;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) struct CustomDebugAdapter {
-    start_command: String,
-    initialize_args: Option<serde_json::Value>,
-    program: String,
-    connection: DebugConnectionType,
+    custom_args: CustomArgs,
 }
 
 impl CustomDebugAdapter {
     const _ADAPTER_NAME: &'static str = "custom_dap";
 
-    pub(crate) fn new(adapter_config: &DebugAdapterConfig, custom_args: CustomArgs) -> Self {
-        CustomDebugAdapter {
-            start_command: custom_args.start_command,
-            program: adapter_config.program.clone(),
-            connection: custom_args.connection,
-            initialize_args: adapter_config.initialize_args.clone(),
-        }
+    pub(crate) fn new(custom_args: CustomArgs) -> Self {
+        CustomDebugAdapter { custom_args }
     }
 }
 
@@ -29,10 +24,10 @@ impl DebugAdapter for CustomDebugAdapter {
 
     async fn connect(
         &self,
-        adapter_binary: DebugAdapterBinary,
+        adapter_binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
-        match &self.connection {
+        match &self.custom_args.connection {
             DebugConnectionType::STDIO => create_stdio_client(adapter_binary),
             DebugConnectionType::TCP(tcp_host) => {
                 create_tcp_client(tcp_host.clone(), adapter_binary, cx).await
@@ -40,24 +35,19 @@ impl DebugAdapter for CustomDebugAdapter {
         }
     }
 
-    async fn install_or_fetch_binary(
-        &self,
-        _delegate: Box<dyn DapDelegate>,
-    ) -> Result<DebugAdapterBinary> {
-        bail!("Install or fetch not implemented for custom debug adapter (yet)");
+    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+        json!({"program": config.program})
     }
 
-    fn request_args(&self) -> Value {
-        let base_args = json!({
-            "program": format!("{}", &self.program)
-        });
+    async fn install_binary(&self, _: &dyn DapDelegate) -> Result<()> {
+        bail!("Install or fetch not implemented for custom debug adapter (yet)")
+    }
 
-        // TODO Debugger: Figure out a way to combine this with base args
-        // if let Some(args) = &self.initialize_args {
-        //     let args = json!(args.clone()).as_object().into_iter();
-        //     base_args.as_object_mut().unwrap().extend(args);
-        // }
-
-        base_args
+    async fn fetch_binary(
+        &self,
+        _: &dyn DapDelegate,
+        _: &DebugAdapterConfig,
+    ) -> Result<DebugAdapterBinary> {
+        bail!("Install or fetch not implemented for custom debug adapter (yet)")
     }
 }

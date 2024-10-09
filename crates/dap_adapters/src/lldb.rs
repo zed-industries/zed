@@ -1,19 +1,17 @@
+use anyhow::Result;
+use async_trait::async_trait;
+use task::DebugAdapterConfig;
+
 use crate::*;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub(crate) struct LldbDebugAdapter {
-    program: String,
-    adapter_path: Option<String>,
-}
+pub(crate) struct LldbDebugAdapter {}
 
 impl LldbDebugAdapter {
     const _ADAPTER_NAME: &'static str = "lldb";
 
-    pub(crate) fn new(adapter_config: &DebugAdapterConfig) -> Self {
-        LldbDebugAdapter {
-            program: adapter_config.program.clone(),
-            adapter_path: adapter_config.adapter_path.clone(),
-        }
+    pub(crate) fn new() -> Self {
+        LldbDebugAdapter {}
     }
 }
 
@@ -25,20 +23,25 @@ impl DebugAdapter for LldbDebugAdapter {
 
     async fn connect(
         &self,
-        adapter_binary: DebugAdapterBinary,
+        adapter_binary: &DebugAdapterBinary,
         _: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
         create_stdio_client(adapter_binary)
     }
 
-    async fn install_or_fetch_binary(
-        &self,
-        _delegate: Box<dyn DapDelegate>,
-    ) -> Result<DebugAdapterBinary> {
-        bail!("Install or fetch binary not implemented for lldb debug adapter (yet)");
+    async fn install_binary(&self, _: &dyn DapDelegate) -> Result<()> {
+        bail!("Install or fetch not implemented for lldb debug adapter (yet)")
     }
 
-    fn request_args(&self) -> Value {
-        json!({"program": format!("{}", &self.program)})
+    async fn fetch_binary(
+        &self,
+        _: &dyn DapDelegate,
+        _: &DebugAdapterConfig,
+    ) -> Result<DebugAdapterBinary> {
+        bail!("Install or fetch not implemented for lldb debug adapter (yet)")
+    }
+
+    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+        json!({"program": config.program})
     }
 }

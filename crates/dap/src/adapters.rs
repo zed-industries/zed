@@ -24,10 +24,10 @@ use std::{
     time::Duration,
 };
 
-use task::TCPHost;
+use task::{DebugAdapterConfig, TCPHost};
 
 /// Get an open port to use with the tcp client when not supplied by debug config
-async fn get_port(host: Ipv4Addr) -> Option<u16> {
+async fn get_open_port(host: Ipv4Addr) -> Option<u16> {
     Some(
         TcpListener::bind(SocketAddrV4::new(host, 0))
             .await
@@ -51,25 +51,25 @@ pub trait DapDelegate {
 /// - `cx`: The context that the new client belongs too
 pub async fn create_tcp_client(
     host: TCPHost,
-    adapter_binary: DebugAdapterBinary,
+    adapter_binary: &DebugAdapterBinary,
     cx: &mut AsyncAppContext,
 ) -> Result<TransportParams> {
     let host_address = host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1));
 
     let mut port = host.port;
     if port.is_none() {
-        port = get_port(host_address).await;
+        port = get_open_port(host_address).await;
     }
     let mut command = if let Some(start_command) = &adapter_binary.start_command {
         let mut command = process::Command::new(start_command);
-        command.arg(adapter_binary.path);
+        command.arg(adapter_binary.path.clone());
         command
     } else {
-        process::Command::new(adapter_binary.path)
+        process::Command::new(adapter_binary.path.clone())
     };
 
     command
-        .args(adapter_binary.arguments)
+        .args(adapter_binary.arguments.clone())
         .envs(adapter_binary.env.clone().unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -108,18 +108,18 @@ pub async fn create_tcp_client(
 ///
 /// # Parameters
 /// - `adapter_binary`: The debug adapter binary to start
-pub fn create_stdio_client(adapter_binary: DebugAdapterBinary) -> Result<TransportParams> {
+pub fn create_stdio_client(adapter_binary: &DebugAdapterBinary) -> Result<TransportParams> {
     let mut command = if let Some(start_command) = &adapter_binary.start_command {
         let mut command = process::Command::new(start_command);
-        command.arg(adapter_binary.path);
+        command.arg(adapter_binary.path.clone());
         command
     } else {
-        let command = process::Command::new(adapter_binary.path);
+        let command = process::Command::new(adapter_binary.path.clone());
         command
     };
 
     command
-        .args(adapter_binary.arguments)
+        .args(adapter_binary.arguments.clone())
         .envs(adapter_binary.env.clone().unwrap_or_default())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -176,7 +176,7 @@ pub struct DebugAdapterBinary {
 }
 
 #[async_trait(?Send)]
-pub trait DebugAdapter: Debug + Send + Sync + 'static {
+pub trait DebugAdapter: 'static + Send + Sync {
     fn id(&self) -> String {
         "".to_string()
     }
@@ -185,14 +185,21 @@ pub trait DebugAdapter: Debug + Send + Sync + 'static {
 
     async fn connect(
         &self,
-        adapter_binary: DebugAdapterBinary,
+        adapter_binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<TransportParams>;
 
-    async fn install_or_fetch_binary(
+    /// Installs the binary for the debug adapter.
+    /// This method is called when the adapter binary is not found or needs to be updated.
+    /// It should download and install the necessary files for the debug adapter to function.
+    async fn install_binary(&self, delegate: &dyn DapDelegate) -> Result<()>;
+
+    async fn fetch_binary(
         &self,
-        delegate: Box<dyn DapDelegate>,
+        delegate: &dyn DapDelegate,
+        config: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary>;
 
-    fn request_args(&self) -> Value;
+    /// Should return base configuration to make the debug adapter work
+    fn request_args(&self, config: &DebugAdapterConfig) -> Value;
 }

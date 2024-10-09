@@ -237,11 +237,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) {
         let client_id = self.next_client_id();
-        let adapter_delegate = Box::new(DapAdapterDelegate::new(
+        let adapter_delegate = DapAdapterDelegate::new(
             self.http_client.clone(),
             self.node_runtime.clone(),
             self.fs.clone(),
-        ));
+        );
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
             let adapter = Arc::new(
@@ -249,23 +249,30 @@ impl DapStore {
                     .context("Creating debug adapter")
                     .log_err()?,
             );
+            let _ = adapter
+                .install_binary(&adapter_delegate)
+                .await
+                .context("Failed to install debug adapter binary")
+                .log_err()?;
+
             let binary = adapter
-                .install_or_fetch_binary(adapter_delegate)
+                .fetch_binary(&adapter_delegate, &config)
                 .await
                 .context("Failed to get debug adapter binary")
                 .log_err()?;
-            let transport_params = adapter.connect(binary, &mut cx).await.log_err()?;
 
             let mut request_args = json!({});
             if let Some(config_args) = config.initialize_args.clone() {
                 merge_json_value_into(config_args, &mut request_args);
             }
 
-            merge_json_value_into(adapter.request_args(), &mut request_args);
+            merge_json_value_into(adapter.request_args(&config), &mut request_args);
 
             if let Some(args) = args {
                 merge_json_value_into(args.configuration, &mut request_args);
             }
+
+            let transport_params = adapter.connect(&binary, &mut cx).await.log_err()?;
 
             let client = DebugAdapterClient::new(
                 client_id,

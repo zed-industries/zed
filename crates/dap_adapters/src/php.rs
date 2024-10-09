@@ -3,19 +3,14 @@ use std::str::FromStr;
 use crate::*;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub(crate) struct PhpDebugAdapter {
-    program: String,
-    adapter_path: Option<String>,
-}
+pub(crate) struct PhpDebugAdapter {}
 
 impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "vscode-php-debug";
+    const ADAPTER_PATH: &'static str = "out/phpDebug.js";
 
-    pub(crate) fn new(adapter_config: &DebugAdapterConfig) -> Self {
-        PhpDebugAdapter {
-            program: adapter_config.program.clone(),
-            adapter_path: adapter_config.adapter_path.clone(),
-        }
+    pub(crate) fn new() -> Self {
+        PhpDebugAdapter {}
     }
 }
 
@@ -27,7 +22,7 @@ impl DebugAdapter for PhpDebugAdapter {
 
     async fn connect(
         &self,
-        adapter_binary: DebugAdapterBinary,
+        adapter_binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
         let host = TCPHost {
@@ -39,13 +34,24 @@ impl DebugAdapter for PhpDebugAdapter {
         create_tcp_client(host, adapter_binary, cx).await
     }
 
-    async fn install_or_fetch_binary(
+    async fn fetch_binary(
         &self,
-        delegate: Box<dyn DapDelegate>,
+        delegate: &dyn DapDelegate,
+        config: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary> {
-        if let Some(adapter_path) = self.adapter_path.as_ref() {
+        let node_runtime = delegate
+            .node_runtime()
+            .ok_or(anyhow!("Couldn't get npm runtime"))?;
+
+        if let Some(adapter_path) = config.adapter_path.as_ref() {
             return Ok(DebugAdapterBinary {
-                start_command: Some("bun".into()),
+                start_command: Some(
+                    node_runtime
+                        .binary_path()
+                        .await?
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
                 path: std::path::PathBuf::from_str(adapter_path)?,
                 arguments: vec!["--server=8132".into()],
                 env: None,
@@ -53,16 +59,30 @@ impl DebugAdapter for PhpDebugAdapter {
         }
 
         let adapter_path = paths::debug_adapters_dir().join(self.name());
+
+        Ok(DebugAdapterBinary {
+            start_command: Some(
+                node_runtime
+                    .binary_path()
+                    .await?
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            path: adapter_path.join(Self::ADAPTER_PATH),
+            arguments: vec!["--server=8132".into()],
+            env: None,
+        })
+    }
+
+    async fn install_binary(&self, delegate: &dyn DapDelegate) -> Result<()> {
+        let adapter_path = paths::debug_adapters_dir().join(self.name());
         let fs = delegate.fs();
 
         if fs.is_dir(adapter_path.as_path()).await {
-            return Ok(DebugAdapterBinary {
-                start_command: Some("bun".into()),
-                path: adapter_path.join("out/phpDebug.js"),
-                arguments: vec!["--server=8132".into()],
-                env: None,
-            });
-        } else if let Some(http_client) = delegate.http_client() {
+            return Ok(());
+        }
+
+        if let Some(http_client) = delegate.http_client() {
             if !adapter_path.exists() {
                 fs.create_dir(&adapter_path.as_path()).await?;
             }
@@ -138,23 +158,18 @@ impl DebugAdapter for PhpDebugAdapter {
                 let _ = delegate
                     .node_runtime()
                     .ok_or(anyhow!("Couldn't get npm runtime"))?
-                    .run_npm_subcommand(&adapter_path, "build", &[])
+                    .run_npm_subcommand(&adapter_path, "run", &["build"])
                     .await
                     .is_ok();
 
-                return Ok(DebugAdapterBinary {
-                    start_command: Some("bun".into()),
-                    path: adapter_path.join("out/phpDebug.js"),
-                    arguments: vec!["--server=8132".into()],
-                    env: None,
-                });
+                return Ok(());
             }
         }
 
-        bail!("Install or fetch not implemented for Php debug adapter (yet)");
+        bail!("Install or fetch not implemented for PHP debug adapter (yet)");
     }
 
-    fn request_args(&self) -> Value {
-        json!({"program": format!("{}", &self.program)})
+    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+        json!({"program": config.program})
     }
 }

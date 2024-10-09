@@ -3,19 +3,14 @@ use std::str::FromStr;
 use crate::*;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub(crate) struct PythonDebugAdapter {
-    program: String,
-    adapter_path: Option<String>,
-}
+pub(crate) struct PythonDebugAdapter {}
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "debugpy";
+    const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
 
-    pub(crate) fn new(adapter_config: &DebugAdapterConfig) -> Self {
-        PythonDebugAdapter {
-            program: adapter_config.program.clone(),
-            adapter_path: adapter_config.adapter_path.clone(),
-        }
+    pub(crate) fn new() -> Self {
+        PythonDebugAdapter {}
     }
 }
 
@@ -27,20 +22,18 @@ impl DebugAdapter for PythonDebugAdapter {
 
     async fn connect(
         &self,
-        adapter_binary: DebugAdapterBinary,
-        _cx: &mut AsyncAppContext,
+        adapter_binary: &DebugAdapterBinary,
+        _: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
         create_stdio_client(adapter_binary)
     }
 
-    async fn install_or_fetch_binary(
+    async fn fetch_binary(
         &self,
-        delegate: Box<dyn DapDelegate>,
+        _: &dyn DapDelegate,
+        config: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary> {
-        let adapter_path = paths::debug_adapters_dir().join("debugpy/src/debugpy/adapter");
-        let fs = delegate.fs();
-
-        if let Some(adapter_path) = self.adapter_path.as_ref() {
+        if let Some(adapter_path) = config.adapter_path.as_ref() {
             return Ok(DebugAdapterBinary {
                 start_command: Some("python3".to_string()),
                 path: std::path::PathBuf::from_str(&adapter_path)?,
@@ -49,14 +42,25 @@ impl DebugAdapter for PythonDebugAdapter {
             });
         }
 
+        let adapter_path = paths::debug_adapters_dir().join(self.name());
+
+        Ok(DebugAdapterBinary {
+            start_command: Some("python3".to_string()),
+            path: adapter_path.join(Self::ADAPTER_PATH),
+            arguments: vec![],
+            env: None,
+        })
+    }
+
+    async fn install_binary(&self, delegate: &dyn DapDelegate) -> Result<()> {
+        let adapter_path = paths::debug_adapters_dir().join(self.name());
+        let fs = delegate.fs();
+
         if fs.is_dir(adapter_path.as_path()).await {
-            return Ok(DebugAdapterBinary {
-                start_command: Some("python3".to_string()),
-                path: adapter_path,
-                arguments: vec![],
-                env: None,
-            });
-        } else if let Some(http_client) = delegate.http_client() {
+            return Ok(());
+        }
+
+        if let Some(http_client) = delegate.http_client() {
             let debugpy_dir = paths::debug_adapters_dir().join("debugpy");
 
             if !debugpy_dir.exists() {
@@ -123,22 +127,14 @@ impl DebugAdapter for PythonDebugAdapter {
                     .output()
                     .await?;
 
-                return Ok(DebugAdapterBinary {
-                    start_command: Some("python3".to_string()),
-                    path: adapter_path,
-                    arguments: vec![],
-                    env: None,
-                });
+                return Ok(());
             }
-            return Err(anyhow!("Failed to download debugpy"));
-        } else {
-            return Err(anyhow!(
-                "Could not find debugpy in paths or connect to http"
-            ));
         }
+
+        bail!("Install or fetch not implemented for Python debug adapter (yet)");
     }
 
-    fn request_args(&self) -> Value {
-        json!({"program": format!("{}", &self.program)})
+    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+        json!({"program": config.program})
     }
 }

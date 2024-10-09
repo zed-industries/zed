@@ -44,6 +44,8 @@ pub enum DebugAdapterKind {
     Python,
     /// Use vscode-php-debug
     PHP,
+    /// Use vscode-js-debug
+    Javascript,
     /// Use lldb
     Lldb,
 }
