@@ -79,6 +79,7 @@ actions!(
         ScrollPageDown,
         ScrollToTop,
         ScrollToBottom,
+        ToggleViMode,
     ]
 );
 
@@ -451,7 +452,7 @@ impl TerminalBuilder {
             hovered_word: false,
             url_regex,
             word_regex,
-            vi_mode: false,
+            vi_mode_enabled: false,
         };
 
         Ok(TerminalBuilder {
@@ -607,7 +608,7 @@ pub struct Terminal {
     url_regex: RegexSearch,
     word_regex: RegexSearch,
     task: Option<TaskState>,
-    vi_mode: bool,
+    vi_mode_enabled: bool,
 }
 
 pub struct TaskState {
@@ -774,7 +775,7 @@ impl Terminal {
                 term.scroll_display(*scroll);
                 self.refresh_hovered_word();
 
-                if self.vi_mode {
+                if self.vi_mode_enabled {
                     match *scroll {
                         AlacScroll::Delta(delta) => {
                             term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, delta);
@@ -842,6 +843,7 @@ impl Terminal {
                 self.refresh_hovered_word();
             }
             InternalEvent::ToggleViMode => {
+                self.vi_mode_enabled = !self.vi_mode_enabled;
                 term.toggle_vi_mode();
             }
             InternalEvent::ViMotion(motion) => {
@@ -1129,11 +1131,14 @@ impl Terminal {
     }
 
     pub fn toggle_vi_mode(&mut self) {
-        self.vi_mode = !self.vi_mode;
         self.events.push_back(InternalEvent::ToggleViMode);
     }
 
     pub fn vi_motion(&mut self, keystroke: &Keystroke) {
+        if !self.vi_mode_enabled {
+            return;
+        }
+
         let mut key = keystroke.key.clone();
         if keystroke.modifiers.shift {
             key = key.to_uppercase();
@@ -1157,76 +1162,6 @@ impl Terminal {
             _ => None,
         };
 
-        let scroll_motion = match key.as_str() {
-            "g" => Some(AlacScroll::Top),
-            "G" => Some(AlacScroll::Bottom),
-            "b" => {
-                if keystroke.modifiers.control {
-                    Some(AlacScroll::PageUp)
-                } else {
-                    None
-                }
-            }
-            "f" => {
-                if keystroke.modifiers.control {
-                    Some(AlacScroll::PageDown)
-                } else {
-                    None
-                }
-            }
-            "d" => {
-                if keystroke.modifiers.control {
-                    let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
-                    Some(AlacScroll::Delta(-amount))
-                } else {
-                    None
-                }
-            }
-            "u" => {
-                if keystroke.modifiers.control {
-                    let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
-                    Some(AlacScroll::Delta(amount))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(scroll_motion) = scroll_motion {
-            self.events.push_back(InternalEvent::Scroll(scroll_motion));
-            return;
-        }
-
-        if keystroke.key.as_str() == "v" {
-            let point = self.last_content.cursor.point;
-            let selection_type = SelectionType::Simple;
-            let side = AlacDirection::Right;
-            let selection = Selection::new(selection_type, point, side);
-            self.events
-                .push_back(InternalEvent::SetSelection(Some((selection, point))));
-            return;
-        }
-
-        if keystroke.key.as_str() == "escape" {
-            self.events.push_back(InternalEvent::SetSelection(None));
-            return;
-        }
-
-        if keystroke.key.as_str() == "y" {
-            self.events.push_back(InternalEvent::Copy);
-            self.events.push_back(InternalEvent::SetSelection(None));
-            return;
-        }
-
-        if keystroke.key.as_str() == "i" {
-            if self.vi_mode {
-                self.scroll_to_bottom();
-                self.toggle_vi_mode();
-            }
-            return;
-        }
-
         if let Some(motion) = motion {
             let cursor = self.last_content.cursor.point;
             let cursor_pos = Point {
@@ -1236,19 +1171,63 @@ impl Terminal {
             self.events
                 .push_back(InternalEvent::UpdateSelection(cursor_pos));
             self.events.push_back(InternalEvent::ViMotion(motion));
+            return;
+        }
+
+        let scroll_motion = match key.as_str() {
+            "g" => Some(AlacScroll::Top),
+            "G" => Some(AlacScroll::Bottom),
+            "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
+            "f" if keystroke.modifiers.control => Some(AlacScroll::PageDown),
+            "d" if keystroke.modifiers.control => {
+                let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
+                Some(AlacScroll::Delta(-amount))
+            }
+            "u" if keystroke.modifiers.control => {
+                let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
+                Some(AlacScroll::Delta(amount))
+            }
+            _ => None,
+        };
+
+        if let Some(scroll_motion) = scroll_motion {
+            self.events.push_back(InternalEvent::Scroll(scroll_motion));
+            return;
+        }
+
+        match key.as_str() {
+            "v" => {
+                let point = self.last_content.cursor.point;
+                let selection_type = SelectionType::Simple;
+                let side = AlacDirection::Right;
+                let selection = Selection::new(selection_type, point, side);
+                self.events
+                    .push_back(InternalEvent::SetSelection(Some((selection, point))));
+                return;
+            }
+
+            "escape" => {
+                self.events.push_back(InternalEvent::SetSelection(None));
+                return;
+            }
+
+            "y" => {
+                self.events.push_back(InternalEvent::Copy);
+                self.events.push_back(InternalEvent::SetSelection(None));
+                return;
+            }
+
+            "i" => {
+                self.scroll_to_bottom();
+                self.toggle_vi_mode();
+                return;
+            }
+            _ => {}
         }
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
-        if keystroke.modifiers.control
-            && keystroke.modifiers.shift
-            && keystroke.key.as_str() == "space"
-        {
-            self.toggle_vi_mode();
-            return true;
-        }
-
-        if self.vi_mode {
+        if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
         }
