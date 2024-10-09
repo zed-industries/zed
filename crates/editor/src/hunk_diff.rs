@@ -209,19 +209,20 @@ impl Editor {
 
                         retain
                     });
-                    for remaining_hunk in hunks_to_toggle {
-                        let remaining_hunk_point_range =
-                            Point::new(remaining_hunk.row_range.start.0, 0)
-                                ..Point::new(remaining_hunk.row_range.end.0, 0);
+                    for hunk in hunks_to_toggle {
+                        let remaining_hunk_point_range = Point::new(hunk.row_range.start.0, 0)
+                            ..Point::new(hunk.row_range.end.0, 0);
+                        let hunk_start = snapshot
+                            .buffer_snapshot
+                            .anchor_before(remaining_hunk_point_range.start);
+                        let hunk_end = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(hunk_start.excerpt_id, hunk.buffer_range.end)
+                            .unwrap();
                         hunks_to_expand.push(HoveredHunk {
-                            status: hunk_status(&remaining_hunk),
-                            multi_buffer_range: snapshot
-                                .buffer_snapshot
-                                .anchor_before(remaining_hunk_point_range.start)
-                                ..snapshot
-                                    .buffer_snapshot
-                                    .anchor_after(remaining_hunk_point_range.end),
-                            diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
+                            status: hunk_status(&hunk),
+                            multi_buffer_range: hunk_start..hunk_end,
+                            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         });
                     }
 
@@ -246,33 +247,22 @@ impl Editor {
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let buffer = self.buffer.clone();
+        let multi_buffer_snapshot = buffer.read(cx).snapshot(cx);
         let hunk_range = hunk.multi_buffer_range.clone();
-        let hunk_point_range = hunk_range.to_point(&multi_buffer_snapshot);
-
-        let buffer = self.buffer().clone();
-        let snapshot = self.snapshot(cx);
         let (diff_base_buffer, deleted_text_lines) = buffer.update(cx, |buffer, cx| {
-            let hunk = buffer_diff_hunk(&snapshot.buffer_snapshot, hunk_point_range.clone())?;
-            let mut buffer_ranges = buffer.range_to_buffer_ranges(hunk_point_range, cx);
-            if buffer_ranges.len() == 1 {
-                let (buffer, _, _) = buffer_ranges.pop()?;
-                let diff_base_buffer = diff_base_buffer
-                    .or_else(|| self.current_diff_base_buffer(&buffer, cx))
-                    .or_else(|| create_diff_base_buffer(&buffer, cx))?;
-                let buffer = buffer.read(cx);
-                let deleted_text_lines = buffer.diff_base().map(|diff_base| {
-                    let diff_start_row = diff_base
-                        .offset_to_point(hunk.diff_base_byte_range.start)
-                        .row;
-                    let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
-
-                    diff_end_row - diff_start_row
-                })?;
-                Some((diff_base_buffer, deleted_text_lines))
-            } else {
-                None
-            }
+            let buffer = buffer.buffer(hunk_range.start.buffer_id?)?;
+            let diff_base_buffer = diff_base_buffer
+                .or_else(|| self.current_diff_base_buffer(&buffer, cx))
+                .or_else(|| create_diff_base_buffer(&buffer, cx))?;
+            let deleted_text_lines = buffer.read(cx).diff_base().map(|diff_base| {
+                let diff_start_row = diff_base
+                    .offset_to_point(hunk.diff_base_byte_range.start)
+                    .row;
+                let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
+                diff_end_row - diff_start_row
+            })?;
+            Some((diff_base_buffer, deleted_text_lines))
         })?;
 
         let block_insert_index = match self.expanded_hunks.hunks.binary_search_by(|probe| {
@@ -350,7 +340,7 @@ impl Editor {
             .next()?;
 
         buffer.update(cx, |branch_buffer, cx| {
-            branch_buffer.merge_into_base(Some(range), cx);
+            branch_buffer.merge_into_base(vec![range], cx);
         });
 
         None
@@ -360,7 +350,7 @@ impl Editor {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
             branch_buffer.update(cx, |branch_buffer, cx| {
-                branch_buffer.merge_into_base(None, cx);
+                branch_buffer.merge_into_base(Vec::new(), cx);
             });
         }
     }
@@ -1128,21 +1118,6 @@ fn editor_with_deleted_text(
     (editor_height, editor)
 }
 
-fn buffer_diff_hunk(
-    buffer_snapshot: &MultiBufferSnapshot,
-    row_range: Range<Point>,
-) -> Option<MultiBufferDiffHunk> {
-    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(
-        MultiBufferRow(row_range.start.row)..MultiBufferRow(row_range.end.row),
-    );
-    let hunk = hunks.next()?;
-    let second_hunk = hunks.next();
-    if second_hunk.is_none() {
-        return Some(hunk);
-    }
-    None
-}
-
 impl DisplayDiffHunk {
     pub fn start_display_row(&self) -> DisplayRow {
         match self {
@@ -1209,7 +1184,10 @@ pub fn diff_hunk_to_display(
         let hunk_end_point = Point::new(hunk_end_row.0, 0);
 
         let multi_buffer_start = snapshot.buffer_snapshot.anchor_before(hunk_start_point);
-        let multi_buffer_end = snapshot.buffer_snapshot.anchor_after(hunk_end_point);
+        let multi_buffer_end = snapshot
+            .buffer_snapshot
+            .anchor_in_excerpt(multi_buffer_start.excerpt_id, hunk.buffer_range.end)
+            .unwrap();
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {

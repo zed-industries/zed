@@ -97,6 +97,14 @@ impl LlmDatabase {
             .ok_or_else(|| anyhow!("unknown model {provider:?}:{name}"))?)
     }
 
+    pub fn model_by_id(&self, id: ModelId) -> Result<&model::Model> {
+        Ok(self
+            .models
+            .values()
+            .find(|model| model.id == id)
+            .ok_or_else(|| anyhow!("no model for ID {id:?}"))?)
+    }
+
     pub fn options(&self) -> &ConnectOptions {
         &self.options
     }

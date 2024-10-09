@@ -363,10 +363,12 @@ mod tests {
 
             // Confirming a completion inserts it and hides the context menu, without showing
             // the copilot suggestion afterwards.
-            editor
-                .confirm_completion(&Default::default(), cx)
-                .unwrap()
-                .detach();
+            editor.confirm_completion(&Default::default(), cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+        cx.update_editor(|editor, cx| {
             assert!(!editor.context_menu_visible());
             assert!(!editor.has_active_inline_completion(cx));
             assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
