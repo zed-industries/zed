@@ -76,7 +76,7 @@ impl ProposedChangesEditor {
 
                     while recalculate_diff.debounce {
                         cx.background_executor()
-                            .timer(Duration::from_millis(250))
+                            .timer(Duration::from_millis(50))
                             .await;
                         let mut had_further_changes = false;
                         while let Ok(next_recalculate_diff) = recalculate_diffs_rx.try_next() {
