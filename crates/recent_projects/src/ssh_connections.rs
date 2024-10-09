@@ -5,9 +5,9 @@ use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, px, Action, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext,
-    DismissEvent, EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion,
-    SharedString, Task, Transformation, View,
+    percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
+    EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
+    Transformation, View,
 };
 use gpui::{AppContext, Model};
 use release_channel::{AppVersion, ReleaseChannel};
