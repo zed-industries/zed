@@ -856,9 +856,7 @@ impl SshRemoteClient {
                         log::error!("proxy process terminated unexpectedly");
                     }
                 }
-                Ok(None) => {
-                    log::debug!("shutting down IO tasks");
-                }
+                Ok(None) => {}
                 Err(error) => {
                     log::warn!("ssh io task died with error: {:?}. reconnecting...", error);
                     this.update(&mut cx, |this, cx| {
