@@ -477,12 +477,7 @@ async fn check_usage_limit(
                 ));
             }
 
-            if usage.spending_this_month
-                >= claims
-                    .max_monthly_spend_in_cents
-                    .map(Cents)
-                    .unwrap_or(DEFAULT_MAX_MONTHLY_SPEND)
-            {
+            if usage.spending_this_month >= Cents(claims.max_monthly_spend_in_cents) {
                 return Err(Error::Http(
                     StatusCode::FORBIDDEN,
                     "Maximum spending limit reached for this month.".to_string(),
