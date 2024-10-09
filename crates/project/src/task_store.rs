@@ -1,21 +1,16 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
 use collections::HashMap;
-use futures::{channel::mpsc, StreamExt as _};
-use gpui::{AppContext, AsyncAppContext, Model, ModelContext, Task, WeakModel};
+use fs::Fs;
+use futures::StreamExt as _;
+use gpui::{AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, Task, WeakModel};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, Location,
 };
-use rpc::{
-    proto::{self, SSH_PROJECT_ID},
-    AnyProtoClient, TypedEnvelope,
-};
-use settings::{watch_config_file, WorktreeId};
+use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use settings::{watch_config_file, SettingsLocation};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::BufferId;
 use util::ResultExt;
@@ -25,7 +20,7 @@ use crate::{
     ProjectEnvironment,
 };
 
-///
+/// TODO kb docs
 pub enum TaskStore {
     Functional(StoreState),
     Noop,
@@ -36,6 +31,7 @@ pub struct StoreState {
     task_inventory: Model<Inventory>,
     buffer_store: WeakModel<BufferStore>,
     worktree_store: Model<WorktreeStore>,
+    _global_task_config_watcher: Task<()>,
 }
 
 enum StoreMode {
@@ -49,12 +45,7 @@ enum StoreMode {
     },
 }
 
-/// A set of task templates, applicable in the current project.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct RawTaskTemplates<'a> {
-    pub global: &'a [serde_json::Value],
-    pub worktree: Vec<(&'a Arc<Path>, &'a serde_json::Value)>,
-}
+impl EventEmitter<crate::Event> for TaskStore {}
 
 impl TaskStore {
     pub fn init(client: Option<&AnyProtoClient>) {
@@ -162,6 +153,7 @@ impl TaskStore {
     }
 
     pub fn local(
+        fs: Arc<dyn Fs>,
         buffer_store: WeakModel<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         environment: Model<ProjectEnvironment>,
@@ -175,10 +167,12 @@ impl TaskStore {
             task_inventory: Inventory::new(cx),
             buffer_store,
             worktree_store,
+            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, cx),
         })
     }
 
     pub fn remote(
+        fs: Arc<dyn Fs>,
         buffer_store: WeakModel<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         upstream_client: AnyProtoClient,
@@ -193,6 +187,7 @@ impl TaskStore {
             task_inventory: Inventory::new(cx),
             buffer_store,
             worktree_store,
+            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, cx),
         })
     }
 
@@ -212,8 +207,10 @@ impl TaskStore {
                     cx,
                 ),
                 StoreMode::Remote {
-                    upstream_client, ..
+                    upstream_client,
+                    project_id,
                 } => remote_task_context_for_location(
+                    *project_id,
                     upstream_client,
                     state.worktree_store.clone(),
                     captured_variables,
@@ -261,135 +258,59 @@ impl TaskStore {
         }
     }
 
-    pub(super) fn update_task_templates<'a>(
-        &'a self,
-        worktree: Option<WorktreeId>,
-        templates: RawTaskTemplates<'a>,
-        cx: &mut AppContext,
-    ) {
+    /// TODO kb docs
+    pub(super) fn update_user_tasks<'a>(
+        &self,
+        location: Option<SettingsLocation<'a>>,
+        raw_tasks_json: Option<&str>,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> anyhow::Result<()> {
         let task_inventory = match self {
             TaskStore::Functional(state) => &state.task_inventory,
-            TaskStore::Noop => return,
+            TaskStore::Noop => return Ok(()),
         };
+        let raw_tasks_json = raw_tasks_json
+            .map(|json| json.trim())
+            .filter(|json| !json.is_empty());
 
-        // task_inventory.update(cx, |inventory, cx| {
-        //     let mut bad_templates = 0;
-        //     match worktree {
-        //         Some(worktree) => {
-        //             if templates.worktree.is_empty() {
-        //                 self.worktree_tasks.remove(&worktree);
-        //             } else {
-        //                 *self.worktree_tasks.entry(worktree).or_default() = templates
-        //                     .worktree
-        //                     .into_iter()
-        //                     .filter_map(|(directory_path, raw_template)| {
-        //                         match serde_json::from_value::<TaskTemplate>(raw_template.clone())
-        //                             .log_err()
-        //                         {
-        //                             Some(template) => Some((Arc::clone(directory_path), template)),
-        //                             None => {
-        //                                 bad_templates += 1;
-        //                                 None
-        //                             }
-        //                         }
-        //                     })
-        //                     .collect();
-        //             }
-        //         }
-        //         None => {
-        //             self.global_tasks = templates
-        //                 .global
-        //                 .into_iter()
-        //                 .filter_map(|raw_template| {
-        //                     match serde_json::from_value::<TaskTemplate>(raw_template.clone())
-        //                         .log_err()
-        //                     {
-        //                         Some(template) => Some(template),
-        //                         None => {
-        //                             bad_templates += 1;
-        //                             None
-        //                         }
-        //                     }
-        //                 })
-        //                 .collect();
-        //         }
-        //     }
-        // });
+        task_inventory.update(cx, |inventory, _| {
+            inventory.update_file_based_tasks(location, raw_tasks_json)
+        })
     }
 
-    pub(super) fn update_user_tasks(
-        &self,
-        content: &str,
-        cx: &mut ModelContext<'_, TaskStore>,
-    ) -> anyhow::Result<()> {
-        todo!("TODO kb")
+    fn subscribe_to_global_task_file_changes(
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Task<()> {
+        let mut user_tasks_file_rx =
+            watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
+        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        cx.spawn(move |task_store, mut cx| async move {
+            if let Some(user_tasks_content) = user_tasks_content {
+                let Ok(_) = task_store.update(&mut cx, |task_store, cx| {
+                    task_store
+                        .update_user_tasks(None, Some(&user_tasks_content), cx)
+                        .log_err();
+                }) else {
+                    return;
+                };
+            }
+            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
+                let Ok(()) = task_store.update(&mut cx, |task_store, cx| {
+                    let result = task_store.update_user_tasks(None, Some(&user_tasks_content), cx);
+                    if let Err(err) = &result {
+                        log::error!("Failed to load user tasks: {err}");
+                        cx.emit(crate::Event::Notification(format!(
+                            "Invalid global tasks file\n{err}"
+                        )));
+                    }
+                    cx.refresh();
+                }) else {
+                    break; // App dropped
+                };
+            }
+        })
     }
-}
-
-fn subscribe_to_global_task_file_changes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
-    let user_tasks_file_rx =
-        watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
-
-    handle_tasks_file_changes(user_tasks_file_rx, cx, handle_tasks_file_changed);
-    todo!("TODO kb")
-}
-
-pub fn handle_tasks_file_changes(
-    mut user_tasks_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
-    tasks_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
-) -> Task<()> {
-    let user_tasks_content = cx
-        .background_executor()
-        .block(user_tasks_file_rx.next())
-        .unwrap();
-    // SettingsStore::update_global(cx, |store, cx| {
-    //     store.set_user_tasks(&user_tasks_content, cx).log_err();
-    // });
-    // cx.spawn(move |cx| async move {
-    //     while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-    //         let result = cx.update_global(|store: &mut SettingsStore, cx| {
-    //             let result = store.set_user_tasks(&user_tasks_content, cx);
-    //             if let Err(err) = &result {
-    //                 log::error!("Failed to load user tasks: {err}");
-    //             }
-    //             tasks_changed(result.err(), cx);
-    //             cx.refresh();
-    //         });
-    //         if result.is_err() {
-    //             break; // App dropped
-    //         }
-    //     }
-    // })
-    todo!("TODO kb")
-}
-
-fn handle_tasks_file_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
-    struct TasksParseErrorNotification;
-    // let id = NotificationId::unique::<TasksParseErrorNotification>();
-
-    // TODO kb show proper error pop-ups here and for local worktree files
-    // for workspace in workspace::local_workspace_windows(cx) {
-    //     workspace
-    //         .update(cx, |workspace, cx| match error.as_ref() {
-    //             Some(error) => {
-    //                 workspace.show_notification(id.clone(), cx, |cx| {
-    //                     cx.new_view(|_| {
-    //                         simple_message_notification::MessageNotification::new(format!(
-    //                             "Invalid user tasks file\n{error}"
-    //                         ))
-    //                         .with_click_message("Open tasks file")
-    //                         .on_click(|cx| {
-    //                             cx.dispatch_action(zed::OpenTasks.boxed_clone());
-    //                             cx.emit(DismissEvent);
-    //                         })
-    //                     })
-    //                 });
-    //             }
-    //             None => workspace.dismiss_notification(&id, cx),
-    //         })
-    //         .log_err();
-    // }
 }
 
 fn local_task_context_for_location(
@@ -438,6 +359,7 @@ fn local_task_context_for_location(
 }
 
 fn remote_task_context_for_location(
+    project_id: u64,
     upstream_client: &AnyProtoClient,
     worktree_store: Model<WorktreeStore>,
     captured_variables: TaskVariables,
@@ -452,7 +374,7 @@ fn remote_task_context_for_location(
     remote_context.extend(captured_variables);
 
     let context_task = upstream_client.request(proto::TaskContextForLocation {
-        project_id: SSH_PROJECT_ID,
+        project_id,
         location: Some(proto::Location {
             buffer_id: location.buffer.read(cx).remote_id().into(),
             start: Some(serialize_anchor(&location.range.start)),

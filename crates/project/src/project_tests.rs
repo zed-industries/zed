@@ -94,7 +94,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
-    cx.update(|cx| TaskStore::init(None));
+    TaskStore::init(None);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(

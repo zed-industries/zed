@@ -604,6 +604,7 @@ impl Project {
 
             let task_store = cx.new_model(|cx| {
                 TaskStore::local(
+                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     environment.clone(),
@@ -709,6 +710,7 @@ impl Project {
 
             let task_store = cx.new_model(|cx| {
                 TaskStore::remote(
+                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     ssh.read(cx).to_proto_client(),
@@ -719,7 +721,6 @@ impl Project {
 
             let settings_observer = cx.new_model(|cx| {
                 SettingsObserver::new_ssh(
-                    fs.clone(),
                     ssh_proto.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
@@ -910,6 +911,7 @@ impl Project {
         let task_store = cx.new_model(|cx| {
             if run_tasks {
                 TaskStore::remote(
+                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     client.clone().into(),
@@ -922,7 +924,7 @@ impl Project {
         })?;
 
         let settings_observer = cx.new_model(|cx| {
-            SettingsObserver::new_remote(fs.clone(), worktree_store.clone(), task_store.clone(), cx)
+            SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
         let this = cx.new_model(|cx| {

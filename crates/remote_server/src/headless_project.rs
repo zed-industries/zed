@@ -73,6 +73,7 @@ impl HeadlessProject {
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let task_store = cx.new_model(|cx| {
             let mut task_store = TaskStore::local(
+                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 environment.clone(),

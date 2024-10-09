@@ -531,6 +531,10 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &mut AppContext,
     ) -> Result<()> {
+        if kind == LocalSettingsKind::Tasks {
+            anyhow::bail!("Attempted to submit tasks into the settings store")
+        }
+
         let raw_local_settings = self
             .raw_local_settings
             .entry((root_id, directory_path.clone()))
@@ -547,12 +551,7 @@ impl SettingsStore {
             raw_local_settings.remove(&kind).is_some()
         };
         if changed {
-            match kind {
-                LocalSettingsKind::Settings | LocalSettingsKind::Editorconfig => {
-                    self.recompute_values(Some((root_id, &directory_path)), cx)?;
-                }
-                LocalSettingsKind::Tasks => {}
-            }
+            self.recompute_values(Some((root_id, &directory_path)), cx)?;
         }
         Ok(())
     }

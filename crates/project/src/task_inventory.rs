@@ -8,16 +8,17 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use gpui::{AppContext, Context, Model};
+use gpui::{AppContext, Context as _, Model};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
+use settings::{parse_json_with_comments, SettingsLocation};
 use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix};
+use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
@@ -280,6 +281,37 @@ impl Inventory {
                             })
                     })
             }))
+    }
+
+    pub(crate) fn update_file_based_tasks<'a>(
+        &mut self,
+        location: Option<SettingsLocation<'a>>,
+        raw_tasks_json: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let raw_tasks =
+            parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json.unwrap_or("[]"))
+                .with_context(|| format!("Unable to parse tasks file content as a JSON array"))?;
+        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
+            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
+        });
+
+        let parsed_templates = &mut self.templates_from_settings;
+        match location {
+            Some(location) => {
+                let new_templates = new_templates
+                    .map(|template| (Arc::<Path>::from(location.path), template))
+                    .collect::<Vec<_>>();
+                if new_templates.is_empty() {
+                    parsed_templates.worktree.remove(&location.worktree_id);
+                } else {
+                    parsed_templates
+                        .worktree
+                        .insert(location.worktree_id, new_templates);
+                }
+            }
+            None => parsed_templates.global = new_templates.collect(),
+        }
+        Ok(())
     }
 }
 
@@ -790,13 +822,11 @@ mod tests {
         );
     }
 
-    fn init_test(cx: &mut TestAppContext) {
+    fn init_test(_cx: &mut TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {
             env_logger::try_init().ok();
         }
-        cx.update(|cx| {
-            TaskStore::init(None);
-        });
+        TaskStore::init(None);
     }
 
     pub(super) async fn resolved_task_names(
