@@ -563,6 +563,7 @@ impl SshRemoteClient {
             return Ok(());
         }
         drop(lock);
+
         self.set_state(State::Reconnecting, cx);
 
         log::info!("Trying to reconnect to ssh server... Attempt {}", attempts);
@@ -734,6 +735,7 @@ impl SshRemoteClient {
         } else {
             state.heartbeat_recovered()
         };
+
         self.set_state(next_state, cx);
 
         if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
@@ -877,8 +879,12 @@ impl SshRemoteClient {
         cx: &mut ModelContext<Self>,
         map: impl FnOnce(&State) -> Option<State>,
     ) {
-        if let Some(new_state) = self.state.lock().as_ref().and_then(map) {
-            self.set_state(new_state, cx);
+        let mut lock = self.state.lock();
+        let new_state = lock.as_ref().and_then(map);
+
+        if let Some(new_state) = new_state {
+            lock.replace(new_state);
+            cx.notify();
         }
     }
 
