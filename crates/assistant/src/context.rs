@@ -26,10 +26,11 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    provider::cloud::PaymentRequiredError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUse, MessageContent, Role, StopReason,
+    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
+    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
+    StopReason,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -295,6 +296,7 @@ impl ContextOperation {
 pub enum ContextEvent {
     ShowAssistError(SharedString),
     ShowPaymentRequiredError,
+    ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
@@ -2116,6 +2118,12 @@ impl Context {
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ContextEvent::ShowPaymentRequiredError);
+                            this.update_metadata(assistant_message_id, cx, |metadata| {
+                                metadata.status = MessageStatus::Canceled;
+                            });
+                            Some(error.to_string())
+                        } else if error.is::<MaxMonthlySpendReachedError>() {
+                            cx.emit(ContextEvent::ShowMaxMonthlySpendReachedError);
                             this.update_metadata(assistant_message_id, cx, |metadata| {
                                 metadata.status = MessageStatus::Canceled;
                             });

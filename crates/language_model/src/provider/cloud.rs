@@ -7,7 +7,10 @@ use crate::{
 };
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
-use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use client::{
+    Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+};
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
@@ -391,6 +394,18 @@ impl fmt::Display for PaymentRequiredError {
     }
 }
 
+#[derive(Error, Debug)]
+pub struct MaxMonthlySpendReachedError;
+
+impl fmt::Display for MaxMonthlySpendReachedError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Maximum spending limit reached for this month. For more usage, increase your spending limit."
+        )
+    }
+}
+
 impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
@@ -425,6 +440,13 @@ impl CloudLanguageModel {
             {
                 did_retry = true;
                 token = llm_api_token.refresh(&client).await?;
+            } else if response.status() == StatusCode::FORBIDDEN
+                && response
+                    .headers()
+                    .get(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME)
+                    .is_some()
+            {
+                break Err(anyhow!(MaxMonthlySpendReachedError))?;
             } else if response.status() == StatusCode::PAYMENT_REQUIRED {
                 break Err(anyhow!(PaymentRequiredError))?;
             } else {
