@@ -117,10 +117,10 @@ async fn create_billing_subscription(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
-    let Some((stripe_client, stripe_price_id)) = app
+    let Some((stripe_client, stripe_access_price_id)) = app
         .stripe_client
         .clone()
-        .zip(app.config.stripe_llm_usage_price_id.clone())
+        .zip(app.config.stripe_llm_access_price_id.clone())
     else {
         log::error!("failed to retrieve Stripe client or price ID");
         Err(Error::http(
@@ -152,8 +152,8 @@ async fn create_billing_subscription(
         params.customer = Some(customer_id);
         params.client_reference_id = Some(user.github_login.as_str());
         params.line_items = Some(vec![CreateCheckoutSessionLineItems {
-            price: Some(stripe_price_id.to_string()),
-            quantity: Some(0),
+            price: Some(stripe_access_price_id.to_string()),
+            quantity: Some(1),
             ..Default::default()
         }]);
         let success_url = format!("{}/account", app.config.zed_dot_dev_url());
@@ -707,22 +707,33 @@ async fn update_stripe_subscription(
         monthly_spending.saturating_sub(MONTHLY_SPENDING_LIMIT_IN_CENTS);
 
     let new_quantity = (monthly_spending_over_free_tier as f32 / 100.).ceil();
-    Subscription::update(
-        stripe_client,
-        &subscription_id,
-        stripe::UpdateSubscription {
-            items: Some(vec![stripe::UpdateSubscriptionItems {
-                // TODO: Do we need to send up the `id` if a subscription item
-                // with this price already exists, or will Stripe take care of
-                // it?
-                id: None,
-                price: Some(stripe_llm_usage_price_id.to_string()),
-                quantity: Some(new_quantity as u64),
-                ..Default::default()
-            }]),
+    let current_subscription = Subscription::retrieve(stripe_client, &subscription_id, &[]).await?;
+
+    let mut update_params = stripe::UpdateSubscription {
+        proration_behavior: Some(
+            stripe::generated::billing::subscription::SubscriptionProrationBehavior::None,
+        ),
+        ..Default::default()
+    };
+
+    if let Some(existing_item) = current_subscription.items.data.iter().find(|item| {
+        item.price.as_ref().map_or(false, |price| {
+            price.id == stripe_llm_usage_price_id.as_ref()
+        })
+    }) {
+        update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
+            id: Some(existing_item.id.to_string()),
+            quantity: Some(new_quantity as u64),
             ..Default::default()
-        },
-    )
-    .await?;
+        }]);
+    } else {
+        update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
+            price: Some(stripe_llm_usage_price_id.to_string()),
+            quantity: Some(new_quantity as u64),
+            ..Default::default()
+        }]);
+    }
+
+    Subscription::update(stripe_client, &subscription_id, update_params).await?;
     Ok(())
 }
