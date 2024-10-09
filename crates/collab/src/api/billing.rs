@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context};
-use axum::routing::put;
 use axum::{
     extract::{self, Query},
     routing::{get, post},
@@ -30,7 +29,7 @@ use crate::db::{
     UpdateBillingSubscriptionParams,
 };
 use crate::llm::db::LlmDatabase;
-use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
+use crate::llm::FREE_TIER_MONTHLY_SPENDING_LIMIT;
 use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
@@ -39,10 +38,6 @@ pub fn router() -> Router {
         .route(
             "/billing/subscriptions",
             get(list_billing_subscriptions).post(create_billing_subscription),
-        )
-        .route(
-            "/billing/subscriptions/:id",
-            put(update_billing_subscription),
         )
         .route(
             "/billing/subscriptions/manage",
@@ -63,7 +58,6 @@ struct BillingSubscriptionJson {
     cancel_at: Option<String>,
     /// Whether this subscription can be canceled.
     is_cancelable: bool,
-    max_monthly_spend_in_cents: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,9 +91,6 @@ async fn list_billing_subscriptions(
                 }),
                 is_cancelable: subscription.stripe_subscription_status.is_cancelable()
                     && subscription.stripe_cancel_at.is_none(),
-                max_monthly_spend_in_cents: subscription
-                    .max_monthly_spend_in_cents
-                    .unwrap_or(DEFAULT_MAX_MONTHLY_SPEND.0),
             })
             .collect(),
     }))
@@ -176,32 +167,6 @@ async fn create_billing_subscription(
             .url
             .ok_or_else(|| anyhow!("no checkout session URL"))?,
     }))
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateBillingSubscriptionBody {
-    max_monthly_spend_in_cents: u32,
-}
-
-#[derive(Debug, Serialize)]
-struct UpdateBillingSubscriptionResponse {}
-
-async fn update_billing_subscription(
-    Extension(app): Extension<Arc<AppState>>,
-    extract::Path(subscription_id): extract::Path<BillingSubscriptionId>,
-    extract::Json(body): extract::Json<UpdateBillingSubscriptionBody>,
-) -> Result<Json<UpdateBillingSubscriptionResponse>> {
-    app.db
-        .update_billing_subscription(
-            subscription_id,
-            &UpdateBillingSubscriptionParams {
-                max_monthly_spend_in_cents: ActiveValue::set(body.max_monthly_spend_in_cents),
-                ..Default::default()
-            },
-        )
-        .await?;
-
-    Ok(Json(UpdateBillingSubscriptionResponse {}))
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -592,7 +557,6 @@ async fn handle_customer_subscription_event(
                             .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
                             .map(|time| time.naive_utc()),
                     ),
-                    max_monthly_spend_in_cents: ActiveValue::NotSet,
                 },
             )
             .await?;
@@ -602,7 +566,6 @@ async fn handle_customer_subscription_event(
                 billing_customer_id: billing_customer.id,
                 stripe_subscription_id: subscription.id.to_string(),
                 stripe_subscription_status: subscription.status.into(),
-                max_monthly_spend_in_cents: DEFAULT_MAX_MONTHLY_SPEND.0,
             })
             .await?;
     }
