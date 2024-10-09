@@ -1156,7 +1156,6 @@ impl Buffer {
                 this.non_text_state_update_count += 1;
                 if let Some(BufferDiffBase::PastBufferVersion { rope, .. }) = &mut this.diff_base {
                     *rope = diff_base_rope;
-                    cx.emit(BufferEvent::DiffBaseChanged);
                 }
                 cx.emit(BufferEvent::DiffUpdated);
             })

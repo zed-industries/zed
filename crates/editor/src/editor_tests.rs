@@ -11716,6 +11716,60 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let base = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\n";
+    let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\n";
+
+    let buffer = cx.new_model(|cx| {
+        let mut buffer = Buffer::local(text.to_string(), cx);
+        buffer.set_diff_base(Some(base.into()), cx);
+        buffer
+    });
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.push_excerpts(
+            buffer.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(2, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer
+    });
+
+    let editor = cx.add_window(|cx| Editor::new(EditorMode::Full, multi_buffer, None, true, cx));
+    let mut cx = EditorTestContext::for_editor(editor, cx).await;
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, cx| editor.expand_all_hunk_diffs(&Default::default(), cx));
+    cx.executor().run_until_parked();
+
+    cx.assert_diff_hunks(
+        "
+            aaa
+          - bbb
+          + BBB
+
+          - ddd
+          - eee
+          + EEE
+            fff
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_edits_around_expanded_insertion_hunks(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
