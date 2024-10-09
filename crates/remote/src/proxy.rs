@@ -2,13 +2,16 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ProxyLaunchError {
-    #[error("Attempted reconnect. Server is already running.")]
+    #[error("Attempted reconnect, but server not running.")]
     ServerNotRunning,
 }
 
 impl ProxyLaunchError {
     pub fn to_exit_code(&self) -> i32 {
         match self {
+            // We're using 90 as the exit code, because 0-78 are often taken
+            // by shells and other conventions and >128 also has certain meanings
+            // in certain contexts.
             Self::ServerNotRunning => 90,
         }
     }
