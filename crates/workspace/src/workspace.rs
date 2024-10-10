@@ -1468,6 +1468,10 @@ impl Workspace {
         self.on_prompt_for_open_path = Some(prompt)
     }
 
+    pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
+        self.serialized_ssh_project.clone()
+    }
+
     pub fn set_serialized_ssh_project(&mut self, serialized_ssh_project: SerializedSshProject) {
         self.serialized_ssh_project = Some(serialized_ssh_project);
     }

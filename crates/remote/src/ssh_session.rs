@@ -982,6 +982,10 @@ impl SshRemoteClient {
         self.connection_options.connection_string()
     }
 
+    pub fn connection_options(&self) -> SshConnectionOptions {
+        self.connection_options.clone()
+    }
+
     pub fn connection_state(&self) -> ConnectionState {
         self.state
             .lock()

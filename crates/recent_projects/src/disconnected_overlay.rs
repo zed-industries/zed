@@ -1,20 +1,24 @@
+use std::path::PathBuf;
+
 use dev_server_projects::DevServer;
 use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakView};
+use remote::SshConnectionOptions;
 use ui::{
     div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder,
     Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
-    ModalFooter, ModalHeader, ParentElement, Section, SharedString, Styled, StyledExt, ViewContext,
+    ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, ViewContext,
 };
-use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
+use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, OpenOptions, Workspace};
 
 use crate::{
-    dev_servers::reconnect_to_dev_server_project, open_dev_server_project, DevServerProjects,
+    dev_servers::reconnect_to_dev_server_project, open_dev_server_project, open_ssh_project,
+    DevServerProjects,
 };
 
 enum Host {
     RemoteProject,
     DevServerProject(DevServer),
-    SshRemoteProject(SharedString),
+    SshRemoteProject(SshConnectionOptions),
 }
 
 pub struct DisconnectedOverlay {
@@ -55,12 +59,11 @@ impl DisconnectedOverlay {
                 })
                 .cloned();
 
-            let ssh_connection_string = project.read(cx).ssh_connection_string(cx);
-
+            let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
             let host = if let Some(dev_server) = dev_server {
                 Host::DevServerProject(dev_server)
-            } else if let Some(ssh_connection_string) = ssh_connection_string {
-                Host::SshRemoteProject(ssh_connection_string)
+            } else if let Some(ssh_connection_options) = ssh_connection_options {
+                Host::SshRemoteProject(ssh_connection_options)
             } else {
                 Host::RemoteProject
             };
@@ -76,16 +79,22 @@ impl DisconnectedOverlay {
 
     fn handle_reconnect(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
+
+        match &self.host {
+            Host::DevServerProject(dev_server) => {
+                self.reconnect_to_dev_server(dev_server.clone(), cx);
+            }
+            Host::SshRemoteProject(ssh_connection_options) => {
+                self.reconnect_to_ssh_remote(ssh_connection_options.clone(), cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn reconnect_to_dev_server(&self, dev_server: DevServer, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let dev_server = match &self.host {
-            Host::DevServerProject(dev_server) => dev_server.clone(),
-            _ => {
-                return;
-            }
-        };
-
         let Some(dev_server_project_id) = workspace
             .read(cx)
             .project()
@@ -126,6 +135,44 @@ impl DisconnectedOverlay {
         }
     }
 
+    fn reconnect_to_ssh_remote(
+        &self,
+        connection_options: SshConnectionOptions,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let Some(ssh_project) = workspace.read(cx).serialized_ssh_project() else {
+            return;
+        };
+
+        let Some(window) = cx.window_handle().downcast::<Workspace>() else {
+            return;
+        };
+
+        let app_state = workspace.read(cx).app_state().clone();
+
+        let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
+
+        cx.spawn(move |_, mut cx| async move {
+            open_ssh_project(
+                connection_options,
+                paths,
+                app_state,
+                OpenOptions {
+                    replace_window: Some(window),
+                    ..Default::default()
+                },
+                &mut cx,
+            )
+            .await?;
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to reconnect", cx, |_, _| None);
+    }
+
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent)
     }
@@ -142,8 +189,11 @@ impl Render for DisconnectedOverlay {
             Host::RemoteProject | Host::DevServerProject(_) => {
                 "Your connection to the remote project has been lost.".to_string()
             }
-            Host::SshRemoteProject(ssh_connection_string) => {
-                format!("Your connection to {ssh_connection_string} has been lost")
+            Host::SshRemoteProject(options) => {
+                format!(
+                    "Your connection to {} has been lost",
+                    options.connection_string()
+                )
             }
         };
 

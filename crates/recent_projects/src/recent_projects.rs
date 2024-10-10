@@ -342,7 +342,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     .dev_server_project(dev_server_project.id)
                                     .and_then(|p| p.project_id)
                                 else {
-                                    let server = store.read(cx).dev_server_for_project(dev_server_project.id).clone();
+                                    let server = store.read(cx).dev_server_for_project(dev_server_project.id);
                                     if server.is_some_and(|server| server.ssh_connection_string.is_some()) {
                                         return reconnect_to_dev_server_project(cx.view().clone(), server.unwrap().clone(), dev_server_project.id, replace_current_window, cx);
                                     } else {
