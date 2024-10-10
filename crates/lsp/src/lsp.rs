@@ -627,14 +627,6 @@ impl LanguageServer {
                                     "additionalTextEdits".to_string(),
                                     "command".to_string(),
                                     "documentation".to_string(),
-                                    "filterText".to_string(),
-                                    "labelDetails".to_string(),
-                                    "tags".to_string(),
-                                    // Details are rendered as rich text (markdown) inside the completion menu,
-                                    // and if not taken from there, regular text labels are used.
-                                    // If we start to resolve those, Zed's menu will flicker, as first it will show unresolved completions,
-                                    // and then the resolved ones will bring the colored labels, causing a flicker.
-                                    // "detail".to_string(),
                                     // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
                                     // "textEdit".to_string(),
                                 ],
