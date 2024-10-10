@@ -36,11 +36,17 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 
     fn description(&self) -> String {
-        format!("Run context server command: {}", self.prompt.name)
+        match &self.prompt.description {
+            Some(desc) => desc.clone(),
+            None => format!("Run '{}' from {}", self.prompt.name, self.server_id),
+        }
     }
 
     fn menu_text(&self) -> String {
-        format!("Run '{}' from {}", self.prompt.name, self.server_id)
+        match &self.prompt.description {
+            Some(desc) => desc.clone(),
+            None => format!("Run '{}' from {}", self.prompt.name, self.server_id),
+        }
     }
 
     fn requires_argument(&self) -> bool {
