@@ -61,7 +61,10 @@ use std::{
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
-use util::{paths::home_dir, ResultExt};
+use util::{
+    paths::{home_dir, PathMatcher},
+    ResultExt,
+};
 pub use worktree_settings::WorktreeSettings;
 
 #[cfg(feature = "test-support")]
@@ -125,7 +128,7 @@ pub struct RemoteWorktree {
     background_snapshot: Arc<Mutex<(Snapshot, Vec<proto::UpdateWorktree>)>>,
     project_id: u64,
     client: AnyProtoClient,
-    settings: WorktreeSettings,
+    file_scan_inclusions: PathMatcher,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     update_observer: Option<mpsc::UnboundedSender<proto::UpdateWorktree>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
@@ -142,6 +145,7 @@ pub struct Snapshot {
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
+    always_included_entries: Vec<Arc<Path>>,
     repository_entries: TreeMap<RepositoryWorkDirectory, RepositoryEntry>,
 
     /// A number that increases every time the worktree begins scanning
@@ -413,11 +417,9 @@ impl Worktree {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 if let Self::Local(this) = this {
                     let settings = WorktreeSettings::get(settings_location, cx).clone();
-                    if settings != this.settings {
-                        let force_reindex =
-                            this.settings.file_scan_inclusions != settings.file_scan_inclusions;
+                    if this.settings != settings {
                         this.settings = settings;
-                        this.restart_background_scanners(cx, force_reindex);
+                        this.restart_background_scanners(cx);
                     }
                 }
             })
@@ -474,7 +476,7 @@ impl Worktree {
                 project_id,
                 replica_id,
                 snapshot,
-                settings: settings.clone(),
+                file_scan_inclusions: settings.file_scan_inclusions.clone(),
                 background_snapshot: background_snapshot.clone(),
                 updates_tx: Some(background_updates_tx),
                 update_observer: None,
@@ -490,8 +492,9 @@ impl Worktree {
                     while let Some(update) = background_updates_rx.next().await {
                         {
                             let mut lock = background_snapshot.lock();
-                            if let Err(error) =
-                                lock.0.apply_remote_update(update.clone(), &settings)
+                            if let Err(error) = lock
+                                .0
+                                .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                             {
                                 log::error!("error applying worktree update: {}", error);
                             }
@@ -996,36 +999,22 @@ impl LocalWorktree {
         !self.share_private_files && self.settings.is_path_private(path)
     }
 
-    fn restart_background_scanners(
-        &mut self,
-        cx: &mut ModelContext<Worktree>,
-        force_reindex: bool,
-    ) {
+    fn restart_background_scanners(&mut self, cx: &ModelContext<Worktree>) {
         let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
         let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
         self.scan_requests_tx = scan_requests_tx;
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
-        if force_reindex {
-            log::debug!("forcing reindex of worktree {}", self.id);
-            let mut snapshot = LocalSnapshot {
-                ignores_by_parent_abs_path: self.snapshot.ignores_by_parent_abs_path.clone(),
-                git_repositories: self.snapshot.git_repositories.clone(),
-                snapshot: Snapshot::new(
-                    cx.entity_id().as_u64(),
-                    self.abs_path
-                        .file_name()
-                        .map_or(String::new(), |f| f.to_string_lossy().to_string()),
-                    self.abs_path.clone(),
-                ),
-            };
-            snapshot.insert_entry(
-                self.snapshot().root_entry().unwrap().clone(),
-                self.fs.as_ref(),
-            );
 
-            self.snapshot = snapshot;
-        }
         self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
+        let always_included_entries = mem::take(&mut self.snapshot.always_included_entries);
+        log::debug!(
+            "refreshing entries for the following always included paths: {:?}",
+            always_included_entries
+        );
+
+        // Cleans up old always included entries to ensure they get updated properly. Otherwise,
+        // nested always included entries may not get updated and will result in out-of-date info.
+        self.refresh_entries_for_paths(always_included_entries);
     }
 
     fn start_background_scanner(
@@ -1815,7 +1804,7 @@ impl LocalWorktree {
 
     pub fn share_private_files(&mut self, cx: &ModelContext<Worktree>) {
         self.share_private_files = true;
-        self.restart_background_scanners(cx, false);
+        self.restart_background_scanners(cx);
     }
 }
 
@@ -1826,10 +1815,6 @@ impl RemoteWorktree {
 
     pub fn client(&self) -> AnyProtoClient {
         self.client.clone()
-    }
-
-    pub fn settings(&self) -> WorktreeSettings {
-        self.settings.clone()
     }
 
     pub fn disconnected_from_host(&mut self) {
@@ -1916,7 +1901,7 @@ impl RemoteWorktree {
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 let snapshot = &mut worktree.background_snapshot.lock().0;
-                let entry = snapshot.insert_entry(entry, &worktree.settings);
+                let entry = snapshot.insert_entry(entry, &worktree.file_scan_inclusions);
                 worktree.snapshot = snapshot.clone();
                 entry
             })?
@@ -1997,6 +1982,7 @@ impl Snapshot {
             abs_path,
             root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
             root_name,
+            always_included_entries: Default::default(),
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
             repository_entries: Default::default(),
@@ -2063,9 +2049,9 @@ impl Snapshot {
     fn insert_entry(
         &mut self,
         entry: proto::Entry,
-        local_settings: &WorktreeSettings,
+        always_included_paths: &PathMatcher,
     ) -> Result<Entry> {
-        let entry = Entry::try_from((&self.root_char_bag, local_settings, entry))?;
+        let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
         let old_entry = self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
@@ -2114,7 +2100,7 @@ impl Snapshot {
     pub(crate) fn apply_remote_update(
         &mut self,
         mut update: proto::UpdateWorktree,
-        local_settings: &WorktreeSettings,
+        always_included_paths: &PathMatcher,
     ) -> Result<()> {
         log::trace!(
             "applying remote worktree update. {} entries updated, {} removed",
@@ -2134,7 +2120,7 @@ impl Snapshot {
         }
 
         for entry in update.updated_entries {
-            let entry = Entry::try_from((&self.root_char_bag, local_settings, entry))?;
+            let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
             if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
                 entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
@@ -3384,7 +3370,8 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self, _cx: &()) -> Self::Summary {
-        let non_ignored_count = if (self.is_ignored || self.is_external) && !self.is_always_included {
+        let non_ignored_count = if (self.is_ignored || self.is_external) && !self.is_always_included
+        {
             0
         } else {
             1
@@ -4189,6 +4176,12 @@ impl BackgroundScanner {
                     entry.kind = EntryKind::UnloadedDir;
                     new_jobs.remove(job_ix);
                 }
+            }
+            if entry.is_always_included {
+                state
+                    .snapshot
+                    .always_included_entries
+                    .push(entry.path.clone());
             }
         }
 
@@ -5318,11 +5311,11 @@ impl<'a> From<&'a Entry> for proto::Entry {
     }
 }
 
-impl<'a> TryFrom<(&'a CharBag, &WorktreeSettings, proto::Entry)> for Entry {
+impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
     type Error = anyhow::Error;
 
     fn try_from(
-        (root_char_bag, settings, entry): (&'a CharBag, &WorktreeSettings, proto::Entry),
+        (root_char_bag, always_included, entry): (&'a CharBag, &PathMatcher, proto::Entry),
     ) -> Result<Self> {
         let kind = if entry.is_dir {
             EntryKind::Dir
@@ -5340,7 +5333,7 @@ impl<'a> TryFrom<(&'a CharBag, &WorktreeSettings, proto::Entry)> for Entry {
             size: entry.size.unwrap_or(0),
             canonical_path: None,
             is_ignored: entry.is_ignored,
-            is_always_included: settings.is_path_always_included(path.as_ref()),
+            is_always_included: always_included.is_match(path.as_ref()),
             is_external: entry.is_external,
             git_status: git_status_from_proto(entry.git_status),
             is_private: false,

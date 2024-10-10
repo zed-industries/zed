@@ -1011,7 +1011,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     init_test(cx);
     cx.executor().allow_parking();
     let dir = temp_tree(json!({
-        ".gitignore": "**/target\n/node_modules\n",
+        ".gitignore": "**/target\n/node_modules/\n",
         "target": {
             "index": "blah2"
         },
@@ -1079,7 +1079,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
             .is_some_and(|f| !f.is_always_included));
         assert!(tree
             .entry_for_path("node_modules/prettier/package.json")
-            .is_none());
+            .is_some_and(|f| !f.is_always_included));
     });
 }
 
@@ -1393,7 +1393,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
             move |update| {
                 snapshot
                     .lock()
-                    .apply_remote_update(update, &settings)
+                    .apply_remote_update(update, &settings.file_scan_inclusions)
                     .unwrap();
                 async { true }
             }
@@ -1694,7 +1694,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot
-                    .apply_remote_update(update.clone(), &settings)
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                     .unwrap();
             }
         }
@@ -1831,7 +1831,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         for update in updates.lock().iter() {
             if update.scan_id >= prev_snapshot.scan_id() as u64 {
                 prev_snapshot
-                    .apply_remote_update(update.clone(), &settings)
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                     .unwrap();
             }
         }
