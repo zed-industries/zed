@@ -1,8 +1,8 @@
 name: Close Unlabeled Issues
 
 on:
-  issues:
-    types: [opened]
+  schedule:
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 jobs:
