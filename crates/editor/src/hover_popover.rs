@@ -20,10 +20,9 @@ use settings::Settings;
 use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
-use text::Bias;
 use theme::ThemeSettings;
 use ui::{prelude::*, window_is_transparent};
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
@@ -200,7 +199,6 @@ fn show_hover(
     if editor.pending_rename.is_some() {
         return;
     }
-
     let snapshot = editor.snapshot(cx);
 
     let (buffer, buffer_position) =
@@ -216,47 +214,6 @@ fn show_hover(
         } else {
             return;
         };
-
-    let is_invalid_char = {
-        let offset = anchor.text_anchor.offset;
-        let buffer = buffer.read(cx);
-        let byte_offset = (offset + 3).min(buffer.len());
-        let char_bytes_vec = buffer
-            .bytes_in_range(offset..byte_offset)
-            .collect::<Vec<_>>();
-        if !char_bytes_vec.is_empty() && offset <= byte_offset {
-            let char_bytes = char_bytes_vec[0];
-            if char_bytes.len() == 3 {
-                let special_chars = ['\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}'];
-                let special_char_bytes = special_chars
-                    .iter()
-                    .map(|x| {
-                        let mut bytes = [0; 3];
-                        x.encode_utf8(&mut bytes);
-                        bytes
-                    })
-                    .collect::<Vec<[u8; 3]>>();
-                if let Ok(char_byte_array) =
-                    <&[u8] as std::convert::TryInto<&[u8; 3]>>::try_into(&char_bytes)
-                {
-                    if let Some(index) = special_char_bytes
-                        .iter()
-                        .position(|&b| &b == char_byte_array)
-                    {
-                        Some(special_chars[index])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
 
     let project = if let Some(project) = editor.project.clone() {
         project
@@ -338,6 +295,38 @@ fn show_hover(
                     })
             });
 
+            let buffer_snapshot = buffer
+                .update(&mut cx, |buffer, _| buffer.snapshot())
+                .log_err();
+            let (result, invisible_anchor) = if let Some((result, invisible_anchor)) =
+                buffer_snapshot.map(|snapshot| {
+                    let position = anchor.text_anchor;
+                    let offset = text::ToOffset::to_offset(&position, &snapshot);
+                    for ch in snapshot.chars_at(offset).take(1) {
+                        if ('\u{200B}'..='\u{200F}').contains(&ch)
+                            || ('\u{0001}'..='\u{0008}').contains(&ch)
+                            || ('\u{000B}'..='\u{000C}').contains(&ch)
+                            || ('\u{000E}'..='\u{001F}').contains(&ch)
+                            || ('\u{007F}'..='\u{009F}').contains(&ch)
+                        {
+                            let anchor_end = Anchor {
+                                text_anchor: snapshot.anchor_before(offset),
+                                ..anchor
+                            };
+                            let anchor_start = Anchor {
+                                text_anchor: snapshot.anchor_after(offset),
+                                ..anchor
+                            };
+                            return (Some(ch), Some(anchor_start..anchor_end));
+                        }
+                    }
+                    (None, None)
+                }) {
+                (result, invisible_anchor)
+            } else {
+                (None, None)
+            };
+
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
                     Some(ref source) => {
@@ -345,7 +334,6 @@ fn show_hover(
                     }
                     None => local_diagnostic.diagnostic.message.clone(),
                 };
-
                 let mut border_color: Option<Hsla> = None;
                 let mut background_color: Option<Hsla> = None;
 
@@ -410,22 +398,13 @@ fn show_hover(
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
                 })
-            } else if is_invalid_char.is_some() {
-                let anchor_start = anchor;
-                let anchor_end = Anchor {
-                    text_anchor: text::Anchor {
-                        offset: anchor_start.text_anchor.offset + 3,
-                        bias: Bias::Right,
-                        ..anchor_start.text_anchor
-                    },
-                    ..anchor_start
-                };
-                let new_x = is_invalid_char.unwrap();
+            } else if result.is_some() {
+                let char = result.unwrap();
                 let new_diagnostic = Diagnostic {
                     source: None,
                     code: None,
                     severity: DiagnosticSeverity::WARNING,
-                    message: format!("The Character `{:?}` is invisible", new_x),
+                    message: format!("The Character `{:?}` is invisible", char),
                     group_id: 0,
                     is_primary: false,
                     is_disk_based: false,
@@ -436,7 +415,7 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
                 let parsed_content = cx
                     .new_view(|cx| {
-                        let text = format!("The Character `{:?}` is invisible", new_x);
+                        let text = format!("The Character `{:?}` is invisible", char);
                         let status_colors = cx.theme().status();
                         background_color = Some(status_colors.warning_background);
                         border_color = Some(status_colors.warning_border);
@@ -465,13 +444,13 @@ fn show_hover(
                         Markdown::new_text(text, markdown_style.clone(), None, cx, None)
                     })
                     .ok();
-                let d = DiagnosticEntry {
-                    range: anchor_start..anchor_end,
+                let diagnostic_entry = DiagnosticEntry {
+                    range: invisible_anchor.unwrap(),
                     diagnostic: new_diagnostic,
                 };
                 Some(DiagnosticPopover {
-                    local_diagnostic: d.clone(),
-                    primary_diagnostic: Some(d),
+                    local_diagnostic: diagnostic_entry.clone(),
+                    primary_diagnostic: Some(diagnostic_entry),
                     parsed_content,
                     border_color,
                     background_color,
@@ -553,7 +532,6 @@ fn show_hover(
                 cx.notify();
                 cx.refresh();
             })?;
-
             anyhow::Ok(())
         }
         .log_err()
