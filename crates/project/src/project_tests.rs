@@ -3892,7 +3892,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     assert_eq!(range, 6..9);
 
     let response = project.update(cx, |project, cx| {
-        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), true, cx)
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
     });
     fake_server
         .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {

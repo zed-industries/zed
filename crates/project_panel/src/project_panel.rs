@@ -344,16 +344,17 @@ impl ProjectPanel {
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
 
-                                project_panel.update(cx, |this, _| {
-                                    if !mark_selected {
-                                        this.marked_entries.clear();
-                                    }
-                                    this.marked_entries.insert(SelectedEntry {
-                                        worktree_id,
-                                        entry_id
-                                    });
-                                }).ok();
+                            project_panel.update(cx, |this, _| {
+                                if !mark_selected {
+                                    this.marked_entries.clear();
+                                }
+                                this.marked_entries.insert(SelectedEntry {
+                                    worktree_id,
+                                    entry_id
+                                });
+                            }).ok();
 
+                            let is_via_ssh = project.read(cx).is_via_ssh();
 
                             workspace
                                 .open_path_preview(
@@ -368,7 +369,11 @@ impl ProjectPanel {
                                 )
                                 .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
                                     match e.error_code() {
-                                        ErrorCode::Disconnected => Some("Disconnected from remote project".to_string()),
+                                        ErrorCode::Disconnected => if is_via_ssh {
+                                            Some("Disconnected from SSH host".to_string())
+                                        } else {
+                                            Some("Disconnected from remote project".to_string())
+                                        },
                                         ErrorCode::UnsharedItem => Some(format!(
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display()
@@ -493,7 +498,7 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let worktree_id = worktree.id();
-            let is_read_only = project.is_read_only();
+            let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
             let is_local = project.is_local();
 
@@ -2434,71 +2439,62 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            h_flex().h_6().map(|this| {
+                            h_flex().h_6().map(|mut this| {
                                 if let Some(folded_ancestors) =
                                     is_active.then(|| self.ancestors.get(&entry_id)).flatten()
                                 {
-                                    let Some(part_to_highlight) = Path::new(&file_name)
-                                        .ancestors()
-                                        .nth(folded_ancestors.current_ancestor_depth)
-                                    else {
-                                        return this;
-                                    };
+                                    let components = Path::new(&file_name)
+                                        .components()
+                                        .map(|comp| {
+                                            let comp_str =
+                                                comp.as_os_str().to_string_lossy().into_owned();
+                                            comp_str
+                                        })
+                                        .collect::<Vec<_>>();
+                                    let components_len = components.len();
+                                    let active_index = components_len
+                                        - 1
+                                        - folded_ancestors.current_ancestor_depth;
+                                    const DELIMITER: SharedString =
+                                        SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
+                                    for (index, component) in components.into_iter().enumerate() {
+                                        if index != 0 {
+                                            this = this.child(
+                                                Label::new(DELIMITER.clone())
+                                                    .single_line()
+                                                    .color(filename_text_color),
+                                            );
+                                        }
+                                        let id = SharedString::from(format!(
+                                            "project_panel_path_component_{}_{index}",
+                                            entry_id.to_usize()
+                                        ));
+                                        let label = div()
+                                            .id(id)
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                if index != active_index {
+                                                    if let Some(folds) =
+                                                        this.ancestors.get_mut(&entry_id)
+                                                    {
+                                                        folds.current_ancestor_depth =
+                                                            components_len - 1 - index;
+                                                        cx.notify();
+                                                    }
+                                                }
+                                            }))
+                                            .child(
+                                                Label::new(component)
+                                                    .single_line()
+                                                    .color(filename_text_color)
+                                                    .when(index == active_index, |this| {
+                                                        this.underline(true)
+                                                    }),
+                                            );
 
-                                    let suffix = Path::new(&file_name)
-                                        .strip_prefix(part_to_highlight)
-                                        .ok()
-                                        .filter(|suffix| !suffix.as_os_str().is_empty());
-                                    let prefix = part_to_highlight
-                                        .parent()
-                                        .filter(|prefix| !prefix.as_os_str().is_empty());
-                                    let Some(part_to_highlight) = part_to_highlight
-                                        .file_name()
-                                        .and_then(|name| name.to_str().map(String::from))
-                                    else {
-                                        return this;
-                                    };
+                                        this = this.child(label);
+                                    }
 
-                                    this.children(prefix.and_then(|prefix| {
-                                        Some(
-                                            h_flex()
-                                                .child(
-                                                    Label::new(prefix.to_str().map(String::from)?)
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                )
-                                                .child(
-                                                    Label::new(std::path::MAIN_SEPARATOR_STR)
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                ),
-                                        )
-                                    }))
-                                    .child(
-                                        Label::new(part_to_highlight)
-                                            .single_line()
-                                            .color(filename_text_color)
-                                            .underline(true),
-                                    )
-                                    .children(
-                                        suffix.and_then(|suffix| {
-                                            Some(
-                                                h_flex()
-                                                    .child(
-                                                        Label::new(std::path::MAIN_SEPARATOR_STR)
-                                                            .single_line()
-                                                            .color(filename_text_color),
-                                                    )
-                                                    .child(
-                                                        Label::new(
-                                                            suffix.to_str().map(String::from)?,
-                                                        )
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                    ),
-                                            )
-                                        }),
-                                    )
+                                    this
                                 } else {
                                     this.child(
                                         Label::new(file_name)
@@ -2910,7 +2906,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
-                .when(!project.is_read_only(), |el| {
+                .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
