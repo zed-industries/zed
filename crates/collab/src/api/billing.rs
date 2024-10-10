@@ -26,15 +26,19 @@ use crate::db::billing_subscription::{self, StripeSubscriptionStatus};
 use crate::db::{
     billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
     CreateBillingSubscriptionParams, CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
-    UpdateBillingSubscriptionParams,
+    UpdateBillingPreferencesParams, UpdateBillingSubscriptionParams,
 };
 use crate::llm::db::LlmDatabase;
-use crate::llm::MONTHLY_SPENDING_LIMIT_IN_CENTS;
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::ResultExt as _;
 use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
     Router::new()
+        .route(
+            "/billing/preferences",
+            get(get_billing_preferences).put(update_billing_preferences),
+        )
         .route(
             "/billing/subscriptions",
             get(list_billing_subscriptions).post(create_billing_subscription),
@@ -43,6 +47,82 @@ pub fn router() -> Router {
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
         )
+}
+
+#[derive(Debug, Deserialize)]
+struct GetBillingPreferencesParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct BillingPreferencesResponse {
+    max_monthly_llm_usage_spending_in_cents: i32,
+}
+
+async fn get_billing_preferences(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<GetBillingPreferencesParams>,
+) -> Result<Json<BillingPreferencesResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(params.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let preferences = app.db.get_billing_preferences(user.id).await?;
+
+    Ok(Json(BillingPreferencesResponse {
+        max_monthly_llm_usage_spending_in_cents: preferences
+            .map_or(DEFAULT_MAX_MONTHLY_SPEND.0 as i32, |preferences| {
+                preferences.max_monthly_llm_usage_spending_in_cents
+            }),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateBillingPreferencesBody {
+    github_user_id: i32,
+    max_monthly_llm_usage_spending_in_cents: i32,
+}
+
+async fn update_billing_preferences(
+    Extension(app): Extension<Arc<AppState>>,
+    extract::Json(body): extract::Json<UpdateBillingPreferencesBody>,
+) -> Result<Json<BillingPreferencesResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(body.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let billing_preferences =
+        if let Some(_billing_preferences) = app.db.get_billing_preferences(user.id).await? {
+            app.db
+                .update_billing_preferences(
+                    user.id,
+                    &UpdateBillingPreferencesParams {
+                        max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
+                            body.max_monthly_llm_usage_spending_in_cents,
+                        ),
+                    },
+                )
+                .await?
+        } else {
+            app.db
+                .create_billing_preferences(
+                    user.id,
+                    &crate::db::CreateBillingPreferencesParams {
+                        max_monthly_llm_usage_spending_in_cents: body
+                            .max_monthly_llm_usage_spending_in_cents,
+                    },
+                )
+                .await?
+        };
+
+    Ok(Json(BillingPreferencesResponse {
+        max_monthly_llm_usage_spending_in_cents: billing_preferences
+            .max_monthly_llm_usage_spending_in_cents,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,10 +197,10 @@ async fn create_billing_subscription(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
-    let Some((stripe_client, stripe_price_id)) = app
+    let Some((stripe_client, stripe_access_price_id)) = app
         .stripe_client
         .clone()
-        .zip(app.config.stripe_llm_usage_price_id.clone())
+        .zip(app.config.stripe_llm_access_price_id.clone())
     else {
         log::error!("failed to retrieve Stripe client or price ID");
         Err(Error::http(
@@ -152,8 +232,8 @@ async fn create_billing_subscription(
         params.customer = Some(customer_id);
         params.client_reference_id = Some(user.github_login.as_str());
         params.line_items = Some(vec![CreateCheckoutSessionLineItems {
-            price: Some(stripe_price_id.to_string()),
-            quantity: Some(0),
+            price: Some(stripe_access_price_id.to_string()),
+            quantity: Some(1),
             ..Default::default()
         }]);
         let success_url = format!("{}/account", app.config.zed_dot_dev_url());
@@ -704,25 +784,36 @@ async fn update_stripe_subscription(
         .context("failed to parse subscription ID")?;
 
     let monthly_spending_over_free_tier =
-        monthly_spending.saturating_sub(MONTHLY_SPENDING_LIMIT_IN_CENTS);
+        monthly_spending.saturating_sub(FREE_TIER_MONTHLY_SPENDING_LIMIT);
 
-    let new_quantity = (monthly_spending_over_free_tier as f32 / 100.).ceil();
-    Subscription::update(
-        stripe_client,
-        &subscription_id,
-        stripe::UpdateSubscription {
-            items: Some(vec![stripe::UpdateSubscriptionItems {
-                // TODO: Do we need to send up the `id` if a subscription item
-                // with this price already exists, or will Stripe take care of
-                // it?
-                id: None,
-                price: Some(stripe_llm_usage_price_id.to_string()),
-                quantity: Some(new_quantity as u64),
-                ..Default::default()
-            }]),
+    let new_quantity = (monthly_spending_over_free_tier.0 as f32 / 100.).ceil();
+    let current_subscription = Subscription::retrieve(stripe_client, &subscription_id, &[]).await?;
+
+    let mut update_params = stripe::UpdateSubscription {
+        proration_behavior: Some(
+            stripe::generated::billing::subscription::SubscriptionProrationBehavior::None,
+        ),
+        ..Default::default()
+    };
+
+    if let Some(existing_item) = current_subscription.items.data.iter().find(|item| {
+        item.price.as_ref().map_or(false, |price| {
+            price.id == stripe_llm_usage_price_id.as_ref()
+        })
+    }) {
+        update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
+            id: Some(existing_item.id.to_string()),
+            quantity: Some(new_quantity as u64),
             ..Default::default()
-        },
-    )
-    .await?;
+        }]);
+    } else {
+        update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
+            price: Some(stripe_llm_usage_price_id.to_string()),
+            quantity: Some(new_quantity as u64),
+            ..Default::default()
+        }]);
+    }
+
+    Subscription::update(stripe_client, &subscription_id, update_params).await?;
     Ok(())
 }

@@ -1,4 +1,5 @@
 use crate::db::UserId;
+use crate::llm::Cents;
 use chrono::{Datelike, Duration};
 use futures::StreamExt as _;
 use rpc::LanguageModelProvider;
@@ -17,8 +18,8 @@ pub struct Usage {
     pub cache_creation_input_tokens_this_month: usize,
     pub cache_read_input_tokens_this_month: usize,
     pub output_tokens_this_month: usize,
-    pub spending_this_month: usize,
-    pub lifetime_spending: usize,
+    pub spending_this_month: Cents,
+    pub lifetime_spending: Cents,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -144,7 +145,7 @@ impl LlmDatabase {
         &self,
         user_id: UserId,
         now: DateTimeUtc,
-    ) -> Result<usize> {
+    ) -> Result<Cents> {
         self.transaction(|tx| async move {
             let month = now.date_naive().month() as i32;
             let year = now.date_naive().year();
@@ -158,7 +159,7 @@ impl LlmDatabase {
                 )
                 .stream(&*tx)
                 .await?;
-            let mut monthly_spending_in_cents = 0;
+            let mut monthly_spending = Cents::ZERO;
 
             while let Some(usage) = monthly_usages.next().await {
                 let usage = usage?;
@@ -166,7 +167,7 @@ impl LlmDatabase {
                     continue;
                 };
 
-                monthly_spending_in_cents += calculate_spending(
+                monthly_spending += calculate_spending(
                     model,
                     usage.input_tokens as usize,
                     usage.cache_creation_input_tokens as usize,
@@ -175,7 +176,7 @@ impl LlmDatabase {
                 );
             }
 
-            Ok(monthly_spending_in_cents)
+            Ok(monthly_spending)
         })
         .await
     }
@@ -238,7 +239,7 @@ impl LlmDatabase {
                     monthly_usage.output_tokens as usize,
                 )
             } else {
-                0
+                Cents::ZERO
             };
             let lifetime_spending = if let Some(lifetime_usage) = &lifetime_usage {
                 calculate_spending(
@@ -249,7 +250,7 @@ impl LlmDatabase {
                     lifetime_usage.output_tokens as usize,
                 )
             } else {
-                0
+                Cents::ZERO
             };
 
             Ok(Usage {
@@ -637,7 +638,7 @@ fn calculate_spending(
     cache_creation_input_tokens_this_month: usize,
     cache_read_input_tokens_this_month: usize,
     output_tokens_this_month: usize,
-) -> usize {
+) -> Cents {
     let input_token_cost =
         input_tokens_this_month * model.price_per_million_input_tokens as usize / 1_000_000;
     let cache_creation_input_token_cost = cache_creation_input_tokens_this_month
@@ -648,10 +649,11 @@ fn calculate_spending(
         / 1_000_000;
     let output_token_cost =
         output_tokens_this_month * model.price_per_million_output_tokens as usize / 1_000_000;
-    input_token_cost
+    let spending = input_token_cost
         + cache_creation_input_token_cost
         + cache_read_input_token_cost
-        + output_token_cost
+        + output_token_cost;
+    Cents::new(spending as u32)
 }
 
 const MINUTE_BUCKET_COUNT: usize = 12;

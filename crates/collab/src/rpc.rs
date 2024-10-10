@@ -36,8 +36,8 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
+use isahc_http_client::IsahcHttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
-use reqwest_client::ReqwestClient;
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -468,9 +468,6 @@ impl Server {
             .add_message_handler(update_worktree_settings)
             .add_request_handler(user_handler(
                 forward_project_request_for_owner::<proto::TaskContextForLocation>,
-            ))
-            .add_request_handler(user_handler(
-                forward_project_request_for_owner::<proto::TaskTemplates>,
             ))
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
@@ -964,8 +961,8 @@ impl Server {
             tracing::info!("connection opened");
 
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-            let http_client = match ReqwestClient::user_agent(&user_agent) {
-                Ok(http_client) => Arc::new(http_client),
+            let http_client = match IsahcHttpClient::builder().default_header("User-Agent", user_agent).build() {
+                Ok(http_client) => Arc::new(IsahcHttpClient::from(http_client)),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;
@@ -4920,10 +4917,14 @@ async fn get_llm_api_token(
     if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
         Err(anyhow!("account too young"))?
     }
+
+    let billing_preferences = db.get_billing_preferences(user.id).await?;
+
     let token = LlmTokenClaims::create(
         user.id,
         user.github_login.clone(),
         session.is_staff(),
+        billing_preferences,
         has_llm_closed_beta_feature_flag,
         session.has_llm_subscription(&db).await?,
         session.current_plan(&db).await?,
