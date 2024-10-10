@@ -797,6 +797,19 @@ impl Terminal {
                             term.vi_mode_cursor = ViModeCursor::new(point);
                         }
                     }
+                    if let Some(mut selection) = term.selection.take() {
+                        let point = term.vi_mode_cursor.point;
+                        selection.update(point, AlacDirection::Right);
+                        term.selection = Some(selection);
+
+                        #[cfg(target_os = "linux")]
+                        if let Some(selection_text) = term.selection_to_string() {
+                            cx.write_to_primary(ClipboardItem::new_string(selection_text));
+                        }
+
+                        self.selection_head = Some(point);
+                        cx.emit(Event::SelectionsChanged)
+                    }
                 }
             }
             InternalEvent::SetSelection(selection) => {
@@ -1150,7 +1163,7 @@ impl Terminal {
             "k" => Some(ViMotion::Up),
             "l" => Some(ViMotion::Right),
             "w" => Some(ViMotion::WordRight),
-            "b" => Some(ViMotion::WordLeft),
+            "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             "e" => Some(ViMotion::WordRightEnd),
             "%" => Some(ViMotion::Bracket),
             "$" => Some(ViMotion::Last),
