@@ -105,6 +105,18 @@ impl InitializedContextServerProtocol {
         Ok(response.prompts)
     }
 
+    /// List the MCP resources.
+    pub async fn list_resources(&self) -> Result<types::ResourcesListResponse> {
+        self.check_capability(ServerCapability::Resources)?;
+
+        let response: types::ResourcesListResponse = self
+            .inner
+            .request(types::RequestType::ResourcesList.as_str(), ())
+            .await?;
+
+        Ok(response)
+    }
+
     /// Executes a prompt with the given arguments and returns the result.
     pub async fn run_prompt<P: AsRef<str>>(
         &self,
