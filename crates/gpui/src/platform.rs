@@ -178,8 +178,8 @@ pub(crate) trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
-    fn compositor_name(&self) -> &'static str {
-        ""
+    fn compositor_name(&self) -> String {
+        String::new()
     }
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;

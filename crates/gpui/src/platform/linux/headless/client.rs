@@ -7,7 +7,7 @@ use util::ResultExt;
 
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
-use crate::{AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, WindowParams};
+use crate::{AnyWindowHandle, Compositor, CursorStyle, DisplayId, PlatformDisplay, WindowParams};
 
 pub struct HeadlessClientState {
     pub(crate) _loop_handle: LoopHandle<'static, HeadlessClient>,
@@ -77,8 +77,8 @@ impl LinuxClient for HeadlessClient {
         ))
     }
 
-    fn compositor_name(&self) -> &'static str {
-        "headless"
+    fn compositor_name(&self) -> String {
+        format!("{:#?}", Compositor::Headless)
     }
 
     fn set_cursor_style(&self, _style: CursorStyle) {}

@@ -36,10 +36,10 @@ use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
-    Platform, PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta, Size, TouchPhase,
-    WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, Compositor,
+    CursorStyle, DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, Pixels, Platform, PlatformDisplay, PlatformInput, Point, ScaledPixels,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -1236,8 +1236,8 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
-    fn compositor_name(&self) -> &'static str {
-        "X11"
+    fn compositor_name(&self) -> String {
+        format!("{:#?}", Compositor::X11)
     }
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
