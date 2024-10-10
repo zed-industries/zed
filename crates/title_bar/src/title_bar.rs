@@ -280,6 +280,16 @@ impl TitleBar {
                 (Color::Error, format!("Disconnected from {host}"))
             }
         };
+
+
+        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => Color::Info,
+            remote::ConnectionState::Connected => Color::Default,
+            remote::ConnectionState::HeartbeatMissed => Color::Warning,
+            remote::ConnectionState::Reconnecting => Color::Warning,
+            remote::ConnectionState::Disconnected => Color::Error,
+        };
+
         let meta = SharedString::from(meta);
 
         let indicator = div()
@@ -297,6 +307,7 @@ impl TitleBar {
                     IconButton::new("ssh-server-icon", IconName::Server)
                         .icon_size(IconSize::Small)
                         .shape(IconButtonShape::Square)
+                        .icon_color(icon_color)
                         .tooltip(move |cx| {
                             Tooltip::with_meta(
                                 "Remote Project",
