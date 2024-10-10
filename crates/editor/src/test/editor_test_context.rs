@@ -13,7 +13,6 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
 use multi_buffer::{ExcerptRange, ToPoint};
 use parking_lot::RwLock;
-use pretty_assertions::assert_eq;
 use project::{FakeFs, Project};
 use std::{
     any::TypeId,
