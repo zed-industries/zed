@@ -167,8 +167,8 @@ pub struct SettingsStore {
     raw_user_settings: serde_json::Value,
     raw_server_settings: Option<serde_json::Value>,
     raw_extension_settings: serde_json::Value,
-    raw_local_settings:
-        BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
+    raw_local_settings: BTreeMap<(WorktreeId, Arc<Path>), serde_json::Value>,
+    raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<Path>), String>,
     tab_size_callback: Option<(
         TypeId,
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
@@ -226,6 +226,7 @@ impl SettingsStore {
             raw_server_settings: None,
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
+            raw_editorconfig_settings: Default::default(),
             tab_size_callback: Default::default(),
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(|cx| async move {
@@ -567,35 +568,79 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &mut AppContext,
     ) -> std::result::Result<(), InvalidSettingsError> {
-        debug_assert!(
-            kind != LocalSettingsKind::Tasks,
-            "Attempted to submit tasks into the settings store"
-        );
-
-        let raw_local_settings = self
-            .raw_local_settings
-            .entry((root_id, directory_path.clone()))
-            .or_default();
-        let changed = if settings_content.is_some_and(|content| !content.is_empty()) {
-            let new_contents =
-                parse_json_with_comments(settings_content.unwrap()).map_err(|e| {
-                    InvalidSettingsError::LocalSettings {
-                        path: directory_path.join(local_settings_file_relative_path()),
-                        message: e.to_string(),
-                    }
-                })?;
-            if Some(&new_contents) == raw_local_settings.get(&kind) {
-                false
-            } else {
-                raw_local_settings.insert(kind, new_contents);
-                true
+        let mut zed_settings_changed = false;
+        let mut editorconfig_settings_changed = false;
+        match (
+            kind,
+            settings_content
+                .map(|content| content.trim())
+                .filter(|content| !content.is_empty()),
+        ) {
+            (LocalSettingsKind::Tasks, _) => {
+                anyhow::bail!("Attempted to submit tasks into the settings store");
             }
-        } else {
-            raw_local_settings.remove(&kind).is_some()
+            (LocalSettingsKind::Settings, None) => {
+                zed_settings_changed = self
+                    .raw_local_settings
+                    .remove(&(root_id, directory_path.clone()))
+                    .is_some()
+            }
+            (LocalSettingsKind::Editorconfig, None) => {
+                editorconfig_settings_changed = self
+                    .raw_editorconfig_settings
+                    .remove(&(root_id, directory_path.clone()))
+                    .is_some()
+            }
+            (LocalSettingsKind::Settings, Some(settings_contents)) => {
+                let new_settings = parse_json_with_comments::<serde_json::Value>(settings_contents)
+                    .map_err(|e| {
+                        InvalidSettingsError::LocalSettings {
+                            path: directory_path.join(local_settings_file_relative_path()),
+                            message: e.to_string(),
+                        }
+                    })?;
+                match self
+                    .raw_local_settings
+                    .entry((root_id, directory_path.clone()))
+                {
+                    btree_map::Entry::Vacant(v) => {
+                        v.insert(new_settings);
+                        zed_settings_changed = true;
+                    }
+                    btree_map::Entry::Occupied(mut o) => {
+                        if o.get() != &new_settings {
+                            o.insert(new_settings);
+                            zed_settings_changed = true;
+                        }
+                    }
+                }
+            }
+            (LocalSettingsKind::Editorconfig, Some(editorconfig_contents)) => {
+                match self
+                    .raw_editorconfig_settings
+                    .entry((root_id, directory_path.clone()))
+                {
+                    btree_map::Entry::Vacant(v) => {
+                        v.insert(editorconfig_contents.to_owned());
+                        editorconfig_settings_changed = true;
+                    }
+                    btree_map::Entry::Occupied(mut o) => {
+                        if o.get() != editorconfig_contents {
+                            o.insert(editorconfig_contents.to_owned());
+                            editorconfig_settings_changed = true;
+                        }
+                    }
+                }
+            }
         };
-        if changed {
+
+        if zed_settings_changed {
             self.recompute_values(Some((root_id, &directory_path)), cx)?;
         }
+        if editorconfig_settings_changed {
+            self.recompute_editorconfig_values((root_id, &directory_path), cx)?;
+        }
+
         Ok(())
     }
 
@@ -605,13 +650,10 @@ impl SettingsStore {
         cx: &mut AppContext,
     ) -> Result<()> {
         let settings: serde_json::Value = serde_json::to_value(content)?;
-        if settings.is_object() {
-            self.raw_extension_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
-        } else {
-            Err(anyhow!("settings must be an object"))
-        }
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_extension_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Add or remove a set of local settings via a JSON string.
@@ -625,7 +667,7 @@ impl SettingsStore {
     pub fn local_settings(
         &self,
         root_id: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (Arc<Path>, LocalSettingsKind, String)> {
+    ) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
         self.raw_local_settings
             .range(
                 (root_id, Path::new("").into())
@@ -634,12 +676,22 @@ impl SettingsStore {
                         Path::new("").into(),
                     ),
             )
-            .flat_map(|((_, path), content)| {
-                content.iter().filter_map(|(&kind, raw_content)| {
-                    let parsed_content = serde_json::to_string(raw_content).log_err()?;
-                    Some((path.clone(), kind, parsed_content))
-                })
-            })
+            .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
+    }
+
+    pub fn local_editorconfig_settings(
+        &self,
+        root_id: WorktreeId,
+    ) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
+        self.raw_editorconfig_settings
+            .range(
+                (root_id, Path::new("").into())
+                    ..(
+                        WorktreeId::from_usize(root_id.to_usize() + 1),
+                        Path::new("").into(),
+                    ),
+            )
+            .map(|((_, path), content)| (path.clone(), content.clone()))
     }
 
     pub fn json_schema(
@@ -819,68 +871,69 @@ impl SettingsStore {
             paths_stack.clear();
             project_settings_stack.clear();
             for ((root_id, directory_path), local_settings) in &self.raw_local_settings {
-                if let Some(local_settings) = local_settings.get(&LocalSettingsKind::Settings) {
-                    // Build a stack of all of the local values for that setting.
-                    while let Some(prev_entry) = paths_stack.last() {
-                        if let Some((prev_root_id, prev_path)) = prev_entry {
-                            if root_id != prev_root_id || !directory_path.starts_with(prev_path) {
-                                paths_stack.pop();
-                                project_settings_stack.pop();
-                                continue;
-                            }
+                // Build a stack of all of the local values for that setting.
+                while let Some(prev_entry) = paths_stack.last() {
+                    if let Some((prev_root_id, prev_path)) = prev_entry {
+                        if root_id != prev_root_id || !directory_path.starts_with(prev_path) {
+                            paths_stack.pop();
+                            project_settings_stack.pop();
+                            continue;
                         }
-                        break;
                     }
+                    break;
+                }
 
-                    match setting_value.deserialize_setting(local_settings) {
-                        Ok(local_settings) => {
-                            paths_stack.push(Some((*root_id, directory_path.as_ref())));
-                            project_settings_stack.push(local_settings);
+                match setting_value.deserialize_setting(local_settings) {
+                    Ok(local_settings) => {
+                        paths_stack.push(Some((*root_id, directory_path.as_ref())));
+                        project_settings_stack.push(local_settings);
 
-                            // If a local settings file changed, then avoid recomputing local
-                            // settings for any path outside of that directory.
-                            if changed_local_path.map_or(
-                                false,
-                                |(changed_root_id, changed_local_path)| {
-                                    *root_id != changed_root_id
-                                        || !directory_path.starts_with(changed_local_path)
+                        // If a local settings file changed, then avoid recomputing local
+                        // settings for any path outside of that directory.
+                        if changed_local_path.map_or(
+                            false,
+                            |(changed_root_id, changed_local_path)| {
+                                *root_id != changed_root_id
+                                    || !directory_path.starts_with(changed_local_path)
+                            },
+                        ) {
+                            continue;
+                        }
+
+                        if let Some(value) = setting_value
+                            .load_setting(
+                                SettingsSources {
+                                    default: &default_settings,
+                                    extensions: extension_settings.as_ref(),
+                                    user: user_settings.as_ref(),
+                                    release_channel: release_channel_settings.as_ref(),
+                                    server: server_settings.as_ref(),project: &project_settings_stack.iter().collect::<Vec<_>>(),
                                 },
-                            ) {
-                                continue;
-                            }
-
-                            if let Some(value) = setting_value
-                                .load_setting(
-                                    SettingsSources {
-                                        default: &default_settings,
-                                        extensions: extension_settings.as_ref(),
-                                        user: user_settings.as_ref(),
-                                        release_channel: release_channel_settings.as_ref(),
-                                        server: server_settings.as_ref(),
-                                        project: &project_settings_stack.iter().collect::<Vec<_>>(),
-                                    },
-                                    cx,
-                                )
-                                .log_err()
-                            {
-                                setting_value.set_local_value(
-                                    *root_id,
-                                    directory_path.clone(),
-                                    value,
-                                );
-                            }
+                                cx,
+                            )
+                            .log_err()
+                        {
+                            setting_value.set_local_value(*root_id, directory_path.clone(), value);
                         }
-                        Err(error) => {
-                            return Err(InvalidSettingsError::LocalSettings {
-                                path: directory_path.join(local_settings_file_relative_path()),
-                                message: error.to_string(),
-                            });
-                        }
+                    }
+                    Err(error) => {
+                        return Err(InvalidSettingsError::LocalSettings {
+                            path: directory_path.join(local_settings_file_relative_path()),
+                            message: error.to_string(),
+                        });
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn recompute_editorconfig_values(
+        &self,
+        directory_of_item_changed: (WorktreeId, &Path),
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        todo!("TODO kb sync editorconfig settings")
     }
 }
 
