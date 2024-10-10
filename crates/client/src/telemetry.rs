@@ -104,7 +104,7 @@ pub fn os_name() -> String {
     }
     #[cfg(target_os = "linux")]
     {
-        format!("Linux {}", gpui::guess_compositor())
+        format!("Linux {:#?}", gpui::guess_compositor())
     }
 
     #[cfg(target_os = "windows")]
