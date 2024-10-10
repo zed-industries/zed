@@ -18,7 +18,7 @@ doctest = true
 [dependencies]
 http = "0.2"
 anyhow.workspace = true
-derive_more.workspace = true
+# derive_more.workspace = true
 futures.workspace = true
 log.workspace = true
 serde.workspace = true

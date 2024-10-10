@@ -5561,7 +5561,6 @@ name = "http_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "derive_more",
  "futures 0.3.30",
  "http 0.2.12",
  "log",
