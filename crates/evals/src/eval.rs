@@ -26,7 +26,7 @@ use std::time::Duration;
 use std::{
     fs,
     path::Path,
-    process::{exit, Command, Stdio},
+    process::{exit, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
