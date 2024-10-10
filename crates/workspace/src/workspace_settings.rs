@@ -5,6 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
+use crate::dock::DockPosition;
+
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_magnification: f32,
@@ -19,6 +21,7 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
+    pub sync_dock_size: Vec<DockPosition>,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -108,6 +111,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub command_aliases: Option<HashMap<String, String>>,
+    /// Whether to sync the sizes of panels in a dock.
+    /// When a dock position is on the list, resizing one panel will resize all panels in that dock.
+    ///
+    /// Default: none
+    pub sync_dock_size: Option<Vec<DockPosition>>,
 }
 
 #[derive(Deserialize)]
