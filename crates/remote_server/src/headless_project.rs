@@ -135,6 +135,8 @@ impl HeadlessProject {
         client.add_request_handler(cx.weak_model(), Self::handle_ping);
 
         client.add_model_request_handler(Self::handle_add_worktree);
+        client.add_request_handler(cx.weak_model(), Self::handle_remove_worktree);
+
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_find_search_candidates);
 
@@ -238,7 +240,7 @@ impl HeadlessProject {
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
                     Arc::from(canonicalized),
-                    true,
+                    message.payload.visible,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
                     &mut cx,
@@ -254,6 +256,20 @@ impl HeadlessProject {
                 worktree_id: worktree.id().to_proto(),
             })
         })
+    }
+
+    pub async fn handle_remove_worktree(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::RemoveWorktree>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        this.update(&mut cx, |this, cx| {
+            this.worktree_store.update(cx, |worktree_store, cx| {
+                worktree_store.remove_worktree(worktree_id, cx);
+            });
+        })?;
+        Ok(proto::Ack {})
     }
 
     pub async fn handle_open_buffer_by_path(

@@ -282,7 +282,9 @@ message Envelope {
         CheckFileExists check_file_exists = 255;
         CheckFileExistsResponse check_file_exists_response = 256;
 
-        ShutdownRemoteServer shutdown_remote_server = 257; // current max
+        ShutdownRemoteServer shutdown_remote_server = 257;
+
+        RemoveWorktree remove_worktree = 258; // current max
     }
 
     reserved 87 to 88;
@@ -2432,6 +2434,7 @@ message GetLlmTokenResponse {
 message AddWorktree {
     uint64 project_id = 2;
     string path = 1;
+    bool visible = 3;
 }
 
 message AddWorktreeResponse {
@@ -2460,3 +2463,7 @@ message CheckFileExistsResponse {
 }
 
 message ShutdownRemoteServer {}
+
+message RemoveWorktree {
+    uint64 worktree_id = 1;
+}

@@ -2242,6 +2242,15 @@ impl Project {
             return;
         }
 
+        if let Some(ssh) = &self.ssh_client {
+            ssh.read(cx)
+                .to_proto_client()
+                .send(proto::RemoveWorktree {
+                    worktree_id: id_to_remove.to_proto(),
+                })
+                .log_err();
+        }
+
         cx.notify();
     }
 

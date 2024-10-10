@@ -237,12 +237,19 @@ impl WorktreeStore {
             .to_string_lossy()
             .to_string();
         cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |this, _| {
+                this.retain_worktrees = true;
+            })?;
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
                     path: abs_path.clone(),
+                    visible,
                 })
                 .await?;
+            this.update(&mut cx, |this, _| {
+                this.retain_worktrees = false;
+            })?;
 
             if let Some(existing_worktree) = this.read_with(&cx, |this, cx| {
                 this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
@@ -252,7 +259,7 @@ impl WorktreeStore {
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
-                    0,
+                    SSH_PROJECT_ID,
                     0,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,
@@ -509,11 +516,6 @@ impl WorktreeStore {
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade() {
                 worktree.update(cx, |worktree, _| {
-                    println!(
-                        "worktree. is_local: {:?}, is_remote: {:?}",
-                        worktree.is_local(),
-                        worktree.is_remote()
-                    );
                     if let Some(worktree) = worktree.as_remote_mut() {
                         worktree.disconnected_from_host();
                     }
