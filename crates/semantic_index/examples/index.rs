@@ -31,7 +31,6 @@ fn main() {
         let http = Arc::new(HttpClientWithUrl::new(
             IsahcHttpClient::new(None, None),
             "http://localhost:11434",
-            None,
         ));
         let client = client::Client::new(clock, http.clone(), cx);
         Client::set_global(client.clone(), cx);

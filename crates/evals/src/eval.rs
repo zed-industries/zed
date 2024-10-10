@@ -283,7 +283,6 @@ async fn run_evaluation(
                 Arc::new(http_client::HttpClientWithUrl::new(
                     http_client.clone(),
                     "https://zed.dev",
-                    None,
                 )),
                 cx,
             )
