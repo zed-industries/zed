@@ -22,6 +22,7 @@ use gpui::{
     Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
+use proto::TypedEnvelope;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -97,20 +98,53 @@ pub struct AvailableModel {
 
 pub struct CloudLanguageModelProvider {
     client: Arc<Client>,
-    llm_api_token: LlmApiToken,
     state: gpui::Model<State>,
     _maintain_client_status: Task<()>,
 }
 
 pub struct State {
     client: Arc<Client>,
+    llm_api_token: LlmApiToken,
     user_store: Model<UserStore>,
     status: client::Status,
     accept_terms: Option<Task<Result<()>>>,
-    _subscription: Subscription,
+    _settings_subscription: Subscription,
+    _llm_token_subscription: client::Subscription,
 }
 
 impl State {
+    fn new(
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        status: client::Status,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self {
+            client: client.clone(),
+            llm_api_token: LlmApiToken::default(),
+            user_store,
+            status,
+            accept_terms: None,
+            _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+                cx.notify();
+            }),
+            _llm_token_subscription: client
+                .add_message_handler(cx.weak_model(), Self::handle_refresh_llm_token),
+        }
+    }
+
+    async fn handle_refresh_llm_token(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::RefreshLlmToken>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let (llm_api_token, client) = this.update(&mut cx, |this, _cx| {
+            (this.llm_api_token.clone(), this.client.clone())
+        })?;
+        llm_api_token.refresh(&client).await?;
+        Ok(())
+    }
+
     fn is_signed_out(&self) -> bool {
         self.status.is_signed_out()
     }
@@ -149,15 +183,7 @@ impl CloudLanguageModelProvider {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
 
-        let state = cx.new_model(|cx| State {
-            client: client.clone(),
-            user_store,
-            status,
-            accept_terms: None,
-            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                cx.notify();
-            }),
-        });
+        let state = cx.new_model(|cx| State::new(client.clone(), user_store.clone(), status, cx));
 
         let state_ref = state.downgrade();
         let maintain_client_status = cx.spawn(|mut cx| async move {
@@ -177,8 +203,7 @@ impl CloudLanguageModelProvider {
 
         Self {
             client,
-            state,
-            llm_api_token: LlmApiToken::default(),
+            state: state.clone(),
             _maintain_client_status: maintain_client_status,
         }
     }
@@ -277,13 +302,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             models.insert(model.id().to_string(), model.clone());
         }
 
+        let llm_api_token = self.state.read(cx).llm_api_token.clone();
         models
             .into_values()
             .map(|model| {
                 Arc::new(CloudLanguageModel {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
-                    llm_api_token: self.llm_api_token.clone(),
+                    llm_api_token: llm_api_token.clone(),
                     client: self.client.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>

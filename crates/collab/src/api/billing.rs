@@ -87,6 +87,7 @@ struct UpdateBillingPreferencesBody {
 
 async fn update_billing_preferences(
     Extension(app): Extension<Arc<AppState>>,
+    Extension(rpc_server): Extension<Arc<crate::rpc::Server>>,
     extract::Json(body): extract::Json<UpdateBillingPreferencesBody>,
 ) -> Result<Json<BillingPreferencesResponse>> {
     let user = app
@@ -118,6 +119,8 @@ async fn update_billing_preferences(
                 )
                 .await?
         };
+
+    rpc_server.refresh_llm_tokens_for_user(user.id).await;
 
     Ok(Json(BillingPreferencesResponse {
         max_monthly_llm_usage_spending_in_cents: billing_preferences
