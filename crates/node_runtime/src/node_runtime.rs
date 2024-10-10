@@ -110,6 +110,7 @@ impl NodeRuntime {
         args: &[&str],
     ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
+        println!("==> {:#?}", http.proxy());
         self.instance()
             .await?
             .run_npm_subcommand(Some(directory), http.proxy(), subcommand, args)

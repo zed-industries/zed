@@ -531,7 +531,6 @@ impl Client {
         let http = Arc::new(HttpClientWithUrl::new_uri(
             cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
-            cx.http_client().proxy().cloned(),
         ));
         Self::new(clock, http, cx)
     }

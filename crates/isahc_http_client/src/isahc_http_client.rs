@@ -4,7 +4,10 @@ use futures::future::BoxFuture;
 use util::maybe;
 
 pub use isahc::config::Configurable;
-pub struct IsahcHttpClient(isahc::HttpClient);
+pub struct IsahcHttpClient {
+    client: isahc::HttpClient,
+    proxy: Option<Uri>,
+}
 
 pub use http_client::*;
 
@@ -17,7 +20,10 @@ impl IsahcHttpClient {
         if let Some(agent) = user_agent {
             builder = builder.default_header("User-Agent", agent);
         }
-        Arc::new(IsahcHttpClient(builder.build().unwrap()))
+        Arc::new(IsahcHttpClient {
+            client: builder.build().unwrap(),
+            proxy,
+        })
     }
     pub fn builder() -> isahc::HttpClientBuilder {
         isahc::HttpClientBuilder::new()
@@ -26,13 +32,16 @@ impl IsahcHttpClient {
 
 impl From<isahc::HttpClient> for IsahcHttpClient {
     fn from(client: isahc::HttpClient) -> Self {
-        Self(client)
+        Self {
+            client,
+            proxy: None,
+        }
     }
 }
 
 impl HttpClient for IsahcHttpClient {
     fn proxy(&self) -> Option<&Uri> {
-        None
+        self.proxy.as_ref()
     }
 
     fn send(
@@ -54,6 +63,7 @@ impl HttpClient for IsahcHttpClient {
             let mut builder = isahc::Request::builder()
                 .method(parts.method)
                 .uri(parts.uri)
+                .proxy(self.proxy.clone())
                 .version(parts.version);
             if let Some(read_timeout) = read_timeout {
                 builder = builder.low_speed_timeout(100, read_timeout);
@@ -85,7 +95,7 @@ impl HttpClient for IsahcHttpClient {
                 .ok()
         });
 
-        let client = self.0.clone();
+        let client = self.client.clone();
 
         Box::pin(async move {
             match req {
