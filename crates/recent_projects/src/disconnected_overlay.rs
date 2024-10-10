@@ -8,7 +8,7 @@ use ui::{
     Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
     ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, ViewContext,
 };
-use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, OpenOptions, Workspace};
+use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
 use crate::{
     dev_servers::reconnect_to_dev_server_project, open_dev_server_project, open_ssh_project,
