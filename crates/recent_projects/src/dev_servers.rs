@@ -14,7 +14,6 @@ use futures::FutureExt;
 use gpui::pulsating_between;
 use gpui::AsyncWindowContext;
 use gpui::ClipboardItem;
-use gpui::PathPromptOptions;
 use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
@@ -76,7 +75,6 @@ struct CreateDevServerProject {
 }
 
 struct ProjectPicker {
-    project: Model<Project>,
     connection_string: SharedString,
     picker: View<Picker<OpenPathDelegate>>,
     main_modal: WeakView<DevServerProjects>,
@@ -107,7 +105,6 @@ impl ProjectPicker {
         cx.new_view(|cx| {
             let _path_task = cx
                 .spawn({
-                    let project = project.clone();
                     let workspace = workspace.clone();
                     move |_, mut cx| async move {
                         let Ok(Some(paths)) = rx.await else {
@@ -188,7 +185,6 @@ impl ProjectPicker {
 
             Self {
                 _path_task,
-                project,
                 picker,
                 main_modal,
                 connection_string,
