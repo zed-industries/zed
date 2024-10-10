@@ -87,7 +87,10 @@ pub struct SshConnectionModal {
 }
 
 impl SshPrompt {
-    pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
+    pub(crate) fn new(
+        connection_options: &SshConnectionOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let connection_string = connection_options.connection_string().into();
         Self {
             connection_string,
@@ -231,12 +234,52 @@ impl SshConnectionModal {
     }
 }
 
+pub(crate) struct SshConnectionHeader {
+    pub(crate) connection_string: SharedString,
+    pub(crate) on_back_click_handler: Box<dyn Fn(&gpui::ClickEvent, &mut WindowContext) + 'static>,
+}
+
+impl RenderOnce for SshConnectionHeader {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let theme = cx.theme();
+        let mut header_color = theme.colors().text;
+        header_color.fade_out(0.96);
+        h_flex()
+            .relative()
+            .p_1()
+            .rounded_t_md()
+            .border_b_1()
+            .border_color(theme.colors().border)
+            .bg(header_color)
+            .justify_between()
+            .child(
+                div().absolute().left_0p5().top_0p5().child(
+                    IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(self.on_back_click_handler)
+                        .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
+                ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .justify_center()
+                    .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+                    .child(
+                        Label::new(self.connection_string)
+                            .size(ui::LabelSize::Small)
+                            .single_line(),
+                    ),
+            )
+    }
+}
+
 impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
         let connection_string = self.prompt.read(cx).connection_string.clone();
         let theme = cx.theme();
-        let mut header_color = cx.theme().colors().text;
-        header_color.fade_out(0.96);
+
         let body_color = theme.colors().editor_background;
 
         v_flex()
@@ -248,36 +291,13 @@ impl Render for SshConnectionModal {
             .border_1()
             .border_color(theme.colors().border)
             .child(
-                h_flex()
-                    .relative()
-                    .p_1()
-                    .rounded_t_md()
-                    .border_b_1()
-                    .border_color(theme.colors().border)
-                    .bg(header_color)
-                    .justify_between()
-                    .child(
-                        div().absolute().left_0p5().top_0p5().child(
-                            IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
-                                .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |this, _, cx| {
-                                    this.dismiss(&Default::default(), cx);
-                                }))
-                                .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
-                        ),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .justify_center()
-                            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
-                            .child(
-                                Label::new(connection_string)
-                                    .size(ui::LabelSize::Small)
-                                    .single_line(),
-                            ),
-                    ),
+                SshConnectionHeader {
+                    connection_string,
+                    on_back_click_handler: Box::new(cx.listener(move |this, _, cx| {
+                        this.dismiss(&Default::default(), cx);
+                    })),
+                }
+                .render(cx),
             )
             .child(
                 h_flex()
