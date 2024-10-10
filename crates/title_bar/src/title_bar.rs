@@ -281,6 +281,7 @@ impl TitleBar {
             }
         };
 
+        let indicator_border_color = cx.theme().colors().title_bar_background;
 
         let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
@@ -294,10 +295,12 @@ impl TitleBar {
 
         let indicator = div()
             .absolute()
-            .size_1p5()
-            .right_0p5()
-            .bottom_0p5()
+            .size_2p5()
+            .right_0()
+            .bottom_0()
             .rounded_full()
+            .border_2()
+            .border_color(indicator_border_color)
             .bg(indicator_color.color(cx));
 
         Some(
