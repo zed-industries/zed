@@ -307,6 +307,11 @@ impl Display for TerminalError {
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
+// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
+// https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
+const WORD_REGEX: &str =
+    r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -425,12 +430,6 @@ impl TerminalBuilder {
         let pty_tx = event_loop.channel();
         let _io_thread = event_loop.spawn(); // DANGER
 
-        let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
-        // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-        let word_regex =
-            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
-
         let terminal = Terminal {
             task,
             pty_tx: Notifier(pty_tx),
@@ -450,8 +449,8 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             secondary_pressed: false,
             hovered_word: false,
-            url_regex,
-            word_regex,
+            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
+            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
         };
 
@@ -2065,5 +2064,59 @@ mod tests {
             size,
             ..Default::default()
         }
+    }
+
+    fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
+        let results: Vec<_> = regex::Regex::new(re)
+            .unwrap()
+            .find_iter(hay)
+            .map(|m| m.as_str())
+            .collect();
+        assert_eq!(results, expected);
+    }
+    #[test]
+    fn test_url_regex() {
+        re_test(
+            crate::URL_REGEX,
+            "test http://example.com test mailto:bob@example.com train",
+            vec!["http://example.com", "mailto:bob@example.com"],
+        );
+    }
+    #[test]
+    fn test_word_regex() {
+        re_test(
+            crate::WORD_REGEX,
+            "hello, world! \"What\" is this?",
+            vec!["hello", "world", "What", "is", "this"],
+        );
+    }
+    #[test]
+    fn test_word_regex_with_linenum() {
+        // filename(line) and filename(line,col) as used in MSBuild output
+        // should be considered a single "word", even though comma is
+        // usually a word separator
+        re_test(
+            crate::WORD_REGEX,
+            "a Main.cs(20) b",
+            vec!["a", "Main.cs(20)", "b"],
+        );
+        re_test(
+            crate::WORD_REGEX,
+            "Main.cs(20,5) Error desc",
+            vec!["Main.cs(20,5)", "Error", "desc"],
+        );
+        // filename:line:col is a popular format for unix tools
+        re_test(
+            crate::WORD_REGEX,
+            "a Main.cs:20:5 b",
+            vec!["a", "Main.cs:20:5", "b"],
+        );
+        // Some tools output "filename:line:col:message", which currently isn't
+        // handled correctly, but might be in the future
+        re_test(
+            crate::WORD_REGEX,
+            "Main.cs:20:5:Error desc",
+            vec!["Main.cs:20:5:Error", "desc"],
+        );
     }
 }
