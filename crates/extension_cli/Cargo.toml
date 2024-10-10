@@ -18,9 +18,9 @@ clap = { workspace = true, features = ["derive"] }
 env_logger.workspace = true
 extension = { workspace = true, features = ["no-webrtc"] }
 fs.workspace = true
-isahc_http_client.workspace = true
 language.workspace = true
 log.workspace = true
+reqwest_client.workspace = true
 rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

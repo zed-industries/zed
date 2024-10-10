@@ -32,6 +32,7 @@ use std::{
         Arc,
     },
 };
+use ureq_client::UreqClient;
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
@@ -100,7 +101,11 @@ fn main() -> Result<()> {
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
-        let client = isahc_http_client::IsahcHttpClient::new(None, None);
+        let client = Arc::new(UreqClient::new(
+            None,
+            "Zed LLM evals".to_string(),
+            executor.clone(),
+        ));
         cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {
