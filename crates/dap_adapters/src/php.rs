@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use crate::*;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -37,40 +35,25 @@ impl DebugAdapter for PhpDebugAdapter {
     async fn fetch_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary> {
         let node_runtime = delegate
             .node_runtime()
             .ok_or(anyhow!("Couldn't get npm runtime"))?;
 
-        if let Some(adapter_path) = config.adapter_path.as_ref() {
-            return Ok(DebugAdapterBinary {
-                start_command: Some(
-                    node_runtime
-                        .binary_path()
-                        .await?
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-                path: std::path::PathBuf::from_str(adapter_path)?,
-                arguments: vec!["--server=8132".into()],
-                env: None,
-            });
-        }
-
         let adapter_path = paths::debug_adapters_dir().join(self.name());
 
         Ok(DebugAdapterBinary {
-            start_command: Some(
-                node_runtime
-                    .binary_path()
-                    .await?
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-            path: adapter_path.join(Self::ADAPTER_PATH),
-            arguments: vec!["--server=8132".into()],
-            env: None,
+            command: node_runtime
+                .binary_path()
+                .await?
+                .to_string_lossy()
+                .into_owned(),
+            arguments: Some(vec![
+                adapter_path.join(Self::ADAPTER_PATH).into(),
+                "--server=8132".into(),
+            ]),
+            envs: None,
         })
     }
 

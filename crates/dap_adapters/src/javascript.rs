@@ -1,5 +1,4 @@
 use crate::*;
-use std::str::FromStr;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) struct JsDebugAdapter {}
@@ -36,40 +35,25 @@ impl DebugAdapter for JsDebugAdapter {
     async fn fetch_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary> {
         let node_runtime = delegate
             .node_runtime()
             .ok_or(anyhow!("Couldn't get npm runtime"))?;
 
-        if let Some(adapter_path) = config.adapter_path.as_ref() {
-            return Ok(DebugAdapterBinary {
-                start_command: Some(
-                    node_runtime
-                        .binary_path()
-                        .await?
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-                path: std::path::PathBuf::from_str(adapter_path)?,
-                arguments: vec!["8133".into()],
-                env: None,
-            });
-        }
-
         let adapter_path = paths::debug_adapters_dir().join(self.name());
 
         Ok(DebugAdapterBinary {
-            start_command: Some(
-                node_runtime
-                    .binary_path()
-                    .await?
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-            path: adapter_path.join(Self::ADAPTER_PATH),
-            arguments: vec!["8133".into()],
-            env: None,
+            command: node_runtime
+                .binary_path()
+                .await?
+                .to_string_lossy()
+                .into_owned(),
+            arguments: Some(vec![
+                adapter_path.join(Self::ADAPTER_PATH).into(),
+                "8133".into(),
+            ]),
+            envs: None,
         })
     }
 
@@ -176,6 +160,10 @@ impl DebugAdapter for JsDebugAdapter {
         json!({
             "program": config.program,
             "type": "pwa-node",
+            "skipFiles": [
+                "<node_internals>/**",
+                "**/node_modules/**"
+            ]
         })
     }
 }

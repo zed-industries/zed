@@ -1,5 +1,6 @@
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use util::ResultExt;
 
@@ -35,7 +36,7 @@ pub enum DebugRequestType {
 
 /// The Debug adapter to use
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", tag = "kind")]
 pub enum DebugAdapterKind {
     /// Manually setup starting a debug adapter
     /// The argument within is used to start the DAP
@@ -55,36 +56,28 @@ pub enum DebugAdapterKind {
 pub struct CustomArgs {
     /// The connection that a custom debugger should use
     pub connection: DebugConnectionType,
-    /// The cli command used to start the debug adapter
-    pub start_command: String,
-}
-
-impl Default for DebugAdapterKind {
-    fn default() -> Self {
-        DebugAdapterKind::Custom(CustomArgs {
-            connection: DebugConnectionType::STDIO,
-            start_command: "".into(),
-        })
-    }
+    /// The cli command used to start the debug adapter e.g. `python3`, `node` or the adapter binary
+    pub command: String,
+    /// The cli arguments used to start the debug adapter
+    pub args: Option<Vec<String>>,
+    /// The cli envs used to start the debug adapter
+    pub envs: Option<HashMap<String, String>>,
 }
 
 /// Represents the configuration for the debug adapter
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugAdapterConfig {
     /// Unique id of for the debug adapter,
     /// that will be send with the `initialize` request
+    #[serde(flatten)]
     pub kind: DebugAdapterKind,
     /// The type of connection the adapter should use
     /// The type of request that should be called on the debug adapter
     #[serde(default)]
     pub request: DebugRequestType,
-    /// The configuration options that are send with the `launch` or `attach` request
-    /// to the debug adapter
-    // pub request_args: Option<DebugRequestArgs>,
+    /// The program that you trying to debug
     pub program: String,
-    /// The path to the adapter
-    pub adapter_path: Option<String>,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
 }
@@ -99,7 +92,7 @@ pub enum DebugConnectionType {
     STDIO,
 }
 
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugTaskDefinition {
     /// Name of the debug tasks
@@ -113,8 +106,6 @@ pub struct DebugTaskDefinition {
     adapter: DebugAdapterKind,
     /// Additional initialization arguments to be sent on DAP initialization
     initialize_args: Option<serde_json::Value>,
-    /// The path of the debug adapter to use
-    adapter_path: Option<String>,
 }
 
 impl DebugTaskDefinition {
@@ -124,7 +115,6 @@ impl DebugTaskDefinition {
             kind: self.adapter,
             request: self.session_type,
             program: self.program,
-            adapter_path: self.adapter_path,
             initialize_args: self.initialize_args,
         });
 

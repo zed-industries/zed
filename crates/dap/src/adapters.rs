@@ -18,7 +18,7 @@ use std::{
     ffi::OsString,
     fmt::Debug,
     net::{Ipv4Addr, SocketAddrV4},
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
     sync::Arc,
     time::Duration,
@@ -60,17 +60,18 @@ pub async fn create_tcp_client(
     if port.is_none() {
         port = get_open_port(host_address).await;
     }
-    let mut command = if let Some(start_command) = &adapter_binary.start_command {
-        let mut command = process::Command::new(start_command);
-        command.arg(adapter_binary.path.clone());
-        command
-    } else {
-        process::Command::new(adapter_binary.path.clone())
-    };
+
+    let mut command = process::Command::new(&adapter_binary.command);
+
+    if let Some(args) = &adapter_binary.arguments {
+        command.args(args);
+    }
+
+    if let Some(envs) = &adapter_binary.envs {
+        command.envs(envs);
+    }
 
     command
-        .args(adapter_binary.arguments.clone())
-        .envs(adapter_binary.env.clone().unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -109,18 +110,17 @@ pub async fn create_tcp_client(
 /// # Parameters
 /// - `adapter_binary`: The debug adapter binary to start
 pub fn create_stdio_client(adapter_binary: &DebugAdapterBinary) -> Result<TransportParams> {
-    let mut command = if let Some(start_command) = &adapter_binary.start_command {
-        let mut command = process::Command::new(start_command);
-        command.arg(adapter_binary.path.clone());
-        command
-    } else {
-        let command = process::Command::new(adapter_binary.path.clone());
-        command
-    };
+    let mut command = process::Command::new(&adapter_binary.command);
+
+    if let Some(args) = &adapter_binary.arguments {
+        command.args(args);
+    }
+
+    if let Some(envs) = &adapter_binary.envs {
+        command.envs(envs);
+    }
 
     command
-        .args(adapter_binary.arguments.clone())
-        .envs(adapter_binary.env.clone().unwrap_or_default())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -169,10 +169,9 @@ impl std::fmt::Display for DebugAdapterName {
 
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
-    pub start_command: Option<String>,
-    pub path: PathBuf,
-    pub arguments: Vec<OsString>,
-    pub env: Option<HashMap<String, String>>,
+    pub command: String,
+    pub arguments: Option<Vec<OsString>>,
+    pub envs: Option<HashMap<String, String>>,
 }
 
 #[async_trait(?Send)]

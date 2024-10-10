@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use serde_json::Value;
 use task::DebugAdapterConfig;
 
@@ -9,7 +11,7 @@ pub(crate) struct CustomDebugAdapter {
 }
 
 impl CustomDebugAdapter {
-    const _ADAPTER_NAME: &'static str = "custom_dap";
+    const ADAPTER_NAME: &'static str = "custom_dap";
 
     pub(crate) fn new(custom_args: CustomArgs) -> Self {
         CustomDebugAdapter { custom_args }
@@ -19,7 +21,7 @@ impl CustomDebugAdapter {
 #[async_trait(?Send)]
 impl DebugAdapter for CustomDebugAdapter {
     fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::_ADAPTER_NAME.into())
+        DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
     async fn connect(
@@ -35,12 +37,8 @@ impl DebugAdapter for CustomDebugAdapter {
         }
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({"program": config.program})
-    }
-
     async fn install_binary(&self, _: &dyn DapDelegate) -> Result<()> {
-        bail!("Install or fetch not implemented for custom debug adapter (yet)")
+        Ok(())
     }
 
     async fn fetch_binary(
@@ -48,6 +46,18 @@ impl DebugAdapter for CustomDebugAdapter {
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary> {
-        bail!("Install or fetch not implemented for custom debug adapter (yet)")
+        Ok(DebugAdapterBinary {
+            command: self.custom_args.command.clone(),
+            arguments: self
+                .custom_args
+                .args
+                .clone()
+                .map(|args| args.iter().map(OsString::from).collect()),
+            envs: self.custom_args.envs.clone(),
+        })
+    }
+
+    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+        json!({"program": config.program})
     }
 }

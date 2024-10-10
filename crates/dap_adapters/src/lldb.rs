@@ -8,7 +8,7 @@ use crate::*;
 pub(crate) struct LldbDebugAdapter {}
 
 impl LldbDebugAdapter {
-    const _ADAPTER_NAME: &'static str = "lldb";
+    const ADAPTER_NAME: &'static str = "lldb";
 
     pub(crate) fn new() -> Self {
         LldbDebugAdapter {}
@@ -18,7 +18,7 @@ impl LldbDebugAdapter {
 #[async_trait(?Send)]
 impl DebugAdapter for LldbDebugAdapter {
     fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::_ADAPTER_NAME.into())
+        DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
     async fn connect(

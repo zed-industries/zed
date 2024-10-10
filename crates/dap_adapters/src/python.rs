@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use crate::*;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -31,24 +29,14 @@ impl DebugAdapter for PythonDebugAdapter {
     async fn fetch_binary(
         &self,
         _: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary> {
-        if let Some(adapter_path) = config.adapter_path.as_ref() {
-            return Ok(DebugAdapterBinary {
-                start_command: Some("python3".to_string()),
-                path: std::path::PathBuf::from_str(&adapter_path)?,
-                arguments: vec![],
-                env: None,
-            });
-        }
-
         let adapter_path = paths::debug_adapters_dir().join(self.name());
 
         Ok(DebugAdapterBinary {
-            start_command: Some("python3".to_string()),
-            path: adapter_path.join(Self::ADAPTER_PATH),
-            arguments: vec![],
-            env: None,
+            command: "python3".to_string(),
+            arguments: Some(vec![adapter_path.join(Self::ADAPTER_PATH).into()]),
+            envs: None,
         })
     }
 
@@ -135,6 +123,6 @@ impl DebugAdapter for PythonDebugAdapter {
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({"program": config.program})
+        json!({"program": config.program, "subProcess": true})
     }
 }
