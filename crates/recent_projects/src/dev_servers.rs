@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -61,6 +62,7 @@ pub struct DevServerProjects {
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
     _dev_server_subscription: Subscription,
+    focusable_items: SelectableItemList,
 }
 
 #[derive(Default)]
@@ -79,6 +81,60 @@ struct ProjectPicker {
     picker: View<Picker<OpenPathDelegate>>,
     main_modal: WeakView<DevServerProjects>,
     _path_task: Shared<Task<Option<()>>>,
+}
+
+type SelectedItemCallback =
+    Box<dyn Fn(&mut DevServerProjects, &mut ViewContext<DevServerProjects>) + 'static>;
+
+#[derive(Default)]
+struct SelectableItemList {
+    items: Vec<SelectedItemCallback>,
+    active_item: Option<usize>,
+}
+
+impl SelectableItemList {
+    fn reset(&mut self) {
+        self.items.clear();
+    }
+    fn reset_selection(&mut self) {
+        self.active_item.take();
+    }
+    fn prev(&mut self, _: &mut WindowContext<'_>) {
+        match self.active_item.as_mut() {
+            Some(active_index) => {
+                *active_index = active_index.checked_sub(1).unwrap_or(self.items.len() - 1)
+            }
+            None => {
+                self.active_item = Some(self.items.len() - 1);
+            }
+        }
+    }
+    fn next(&mut self, _: &mut WindowContext<'_>) {
+        match self.active_item.as_mut() {
+            Some(active_index) => {
+                if *active_index + 1 < self.items.len() {
+                    *active_index += 1;
+                } else {
+                    *active_index = 0;
+                }
+            }
+            None => {
+                self.active_item = Some(0);
+            }
+        }
+    }
+
+    fn add_item(&mut self, callback: SelectedItemCallback) {
+        self.items.push(callback)
+    }
+    fn is_selected(&self) -> bool {
+        self.active_item == self.items.len().checked_sub(1)
+    }
+    fn confirm(&self, dev_modal: &mut DevServerProjects, cx: &mut ViewContext<DevServerProjects>) {
+        if let Some(active_item) = self.active_item.and_then(|ix| self.items.get(ix)) {
+            active_item(dev_modal, cx);
+        }
+    }
 }
 
 impl ProjectPicker {
@@ -203,6 +259,7 @@ impl gpui::Render for ProjectPicker {
                         this.main_modal
                             .update(cx, |this, cx| {
                                 this.mode = Mode::Default(None);
+                                this.focusable_items.reset_selection();
                                 cx.notify();
                             })
                             .log_err();
@@ -266,9 +323,22 @@ impl DevServerProjects {
             dev_server_name_input,
             workspace,
             _dev_server_subscription: subscription,
+            focusable_items: Default::default(),
         }
     }
 
+    fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        if !matches!(self.mode, Mode::Default(_)) {
+            return;
+        }
+        self.focusable_items.next(cx);
+    }
+    fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        if !matches!(self.mode, Mode::Default(_)) {
+            return;
+        }
+        self.focusable_items.prev(cx);
+    }
     pub fn project_picker(
         ix: usize,
         connection_options: remote::SshConnectionOptions,
@@ -348,6 +418,7 @@ impl DevServerProjects {
                                         editor.set_text("", cx);
                                     });
                                     this.mode = Mode::Default(None);
+                                    this.focusable_items.reset_selection();
                                     if let Some(app_state) = AppState::global(cx).upgrade() {
                                         workspace::join_dev_server_project(
                                             DevServerProjectId(dev_server_project_id),
@@ -453,6 +524,7 @@ impl DevServerProjects {
 
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::Default(None);
+                        this.focusable_items.reset_selection();
                         cx.notify()
                     })
                     .log_err(),
@@ -544,7 +616,11 @@ impl DevServerProjects {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default(None) => {}
+            Mode::Default(None) => {
+                let items = std::mem::take(&mut self.focusable_items);
+                items.confirm(self, cx);
+                self.focusable_items = items;
+            }
             Mode::Default(Some(create_project)) => {
                 self.create_dev_server_project(create_project.dev_server_id, cx);
             }
@@ -569,10 +645,12 @@ impl DevServerProjects {
                 self.mode = Mode::CreateDevServer(CreateDevServer {
                     ..Default::default()
                 });
+                self.focusable_items.reset_selection();
                 cx.notify();
             }
             _ => {
                 self.mode = Mode::Default(None);
+                self.focusable_items.reset_selection();
                 self.focus_handle(cx).focus(cx);
                 cx.notify();
             }
@@ -667,45 +745,45 @@ impl DevServerProjects {
                                     cx,
                                 ))
                             }))
-                            .child(
-                                h_flex().mt_1().pl_1().child(
+                            .child(h_flex().mt_1().pl_1().map(|this| {
+                                self.focusable_items.add_item(Box::new({
+                                    let ssh_connection = ssh_connection.clone();
+                                    move |this, cx| {
+                                        this.create_ssh_project(ix, ssh_connection.clone(), cx);
+                                    }
+                                }));
+                                let is_selected = self.focusable_items.is_selected();
+                                this.child(
                                     Button::new(("new-remote_project", ix), "Open Folder…")
                                         .size(ButtonSize::Default)
                                         .layer(ElevationIndex::ModalSurface)
                                         .icon(IconName::Plus)
                                         .icon_color(Color::Muted)
+                                        .selected(is_selected)
                                         .icon_position(IconPosition::Start)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.create_ssh_project(ix, ssh_connection.clone(), cx);
                                         })),
-                                ),
-                            ),
+                                )
+                            })),
                     ),
             )
     }
 
     fn render_ssh_project(
-        &self,
+        &mut self,
         server_ix: usize,
         server: &SshConnection,
         ix: usize,
         project: &SshProject,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let project = project.clone();
         let server = server.clone();
 
         let element_id_base = SharedString::from(format!("remote-project-{server_ix}"));
-        ListItem::new((element_id_base, ix))
-            .inset(true)
-            .spacing(ui::ListItemSpacing::Sparse)
-            .start_slot(
-                Icon::new(IconName::Folder)
-                    .color(Color::Muted)
-                    .size(IconSize::Small),
-            )
-            .child(Label::new(project.paths.join(", ")))
-            .on_click(cx.listener(move |this, _, cx| {
+        let callback = Arc::new({
+            let project = project.clone();
+            move |this: &mut Self, cx: &mut ViewContext<Self>| {
                 let Some(app_state) = this
                     .workspace
                     .update(cx, |workspace, _| workspace.app_state().clone())
@@ -737,7 +815,25 @@ impl DevServerProjects {
                     }
                 })
                 .detach();
-            }))
+            }
+        });
+        self.focusable_items.add_item(Box::new({
+            let callback = callback.clone();
+            move |this, cx| callback(this, cx)
+        }));
+        let is_selected = self.focusable_items.is_selected();
+
+        ListItem::new((element_id_base, ix))
+            .inset(true)
+            .selected(is_selected)
+            .spacing(ui::ListItemSpacing::Sparse)
+            .start_slot(
+                Icon::new(IconName::Folder)
+                    .color(Color::Muted)
+                    .size(IconSize::Small),
+            )
+            .child(Label::new(project.paths.join(", ")))
+            .on_click(cx.listener(move |this, _, cx| callback(this, cx)))
             .end_hover_slot::<AnyElement>(Some(
                 IconButton::new("remove-remote-project", IconName::TrashAlt)
                     .on_click(
@@ -917,25 +1013,40 @@ impl DevServerProjects {
                     h_flex()
                         .justify_between()
                         .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall))
-                        .child(
-                            Button::new("register-dev-server-button", "Connect New Server")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .icon(IconName::Plus)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted)
-                                .on_click(cx.listener(|this, _, cx| {
-                                    this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        ..Default::default()
+                        .map(|this| {
+                            self.focusable_items.add_item(Box::new(|this, cx| {
+                                this.mode = Mode::CreateDevServer(CreateDevServer {
+                                    ..Default::default()
+                                });
+                                this.dev_server_name_input.update(cx, |text_field, cx| {
+                                    text_field.editor().update(cx, |editor, cx| {
+                                        editor.set_text("", cx);
                                     });
-                                    this.dev_server_name_input.update(cx, |text_field, cx| {
-                                        text_field.editor().update(cx, |editor, cx| {
-                                            editor.set_text("", cx);
+                                });
+                                cx.notify();
+                            }));
+                            let is_selected = self.focusable_items.is_selected();
+                            this.child(
+                                Button::new("register-dev-server-button", "Connect New Server")
+                                    .style(ButtonStyle::Filled)
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .icon(IconName::Plus)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_color(Color::Muted)
+                                    .selected(is_selected)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.mode = Mode::CreateDevServer(CreateDevServer {
+                                            ..Default::default()
                                         });
-                                    });
-                                    cx.notify();
-                                })),
-                        ),
+                                        this.dev_server_name_input.update(cx, |text_field, cx| {
+                                            text_field.editor().update(cx, |editor, cx| {
+                                                editor.set_text("", cx);
+                                            });
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
                 ),
             )
             .section(
@@ -987,12 +1098,15 @@ impl EventEmitter<DismissEvent> for DevServerProjects {}
 
 impl Render for DevServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        self.focusable_items.reset();
         div()
             .track_focus(&self.focus_handle)
             .elevation_3(cx)
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::prev_item))
+            .on_action(cx.listener(Self::next_item))
             .capture_any_mouse_down(cx.listener(|this, _, cx| {
                 this.focus_handle(cx).focus(cx);
             }))
