@@ -30,14 +30,14 @@ impl IsahcHttpClient {
     }
 }
 
-impl From<isahc::HttpClient> for IsahcHttpClient {
-    fn from(client: isahc::HttpClient) -> Self {
-        Self {
-            client,
-            proxy: None,
-        }
-    }
-}
+// impl From<isahc::HttpClient> for IsahcHttpClient {
+//     fn from(client: isahc::HttpClient) -> Self {
+//         Self {
+//             client,
+//             proxy: None,
+//         }
+//     }
+// }
 
 impl HttpClient for IsahcHttpClient {
     fn proxy(&self) -> Option<&Uri> {
