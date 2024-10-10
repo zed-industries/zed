@@ -3471,7 +3471,7 @@ impl ContextEditor {
                         .border_b_1()
                         .border_color(theme.info_border)
                         .gap_1()
-                        .child(Icon::new(IconName::Pencil))
+                        .child(Icon::new(IconName::Diff))
                         .child(Label::new(patch.title.clone()).size(LabelSize::Small)),
                 )
                 .children(paths.into_iter().map(|path| {

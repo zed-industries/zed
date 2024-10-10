@@ -174,7 +174,7 @@ impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
-        Some(Icon::new(IconName::Pencil))
+        Some(Icon::new(IconName::Diff))
     }
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
