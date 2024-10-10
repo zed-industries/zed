@@ -270,7 +270,7 @@ impl TitleBar {
             remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
             remote::ConnectionState::HeartbeatMissed => (
                 Color::Warning,
-                format!("Heartbeat missed to {host}. Retrying..."),
+                format!("Connection attempt to {host} missed. Retrying..."),
             ),
             remote::ConnectionState::Reconnecting => (
                 Color::Warning,
