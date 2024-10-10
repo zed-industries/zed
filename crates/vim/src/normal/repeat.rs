@@ -387,7 +387,7 @@ mod test {
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                    resolve_provider: Some(false),
+                    resolve_provider: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -432,9 +432,7 @@ mod test {
         request.next().await;
         cx.condition(|editor, _| editor.context_menu_visible())
             .await;
-        cx.simulate_keystrokes("down enter");
-        cx.run_until_parked();
-        cx.simulate_keystrokes("! escape");
+        cx.simulate_keystrokes("down enter ! escape");
 
         cx.assert_state(
             indoc! {"
