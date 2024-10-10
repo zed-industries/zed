@@ -986,12 +986,18 @@ impl SshRemoteClient {
         self.connection_options.clone()
     }
 
+    #[cfg(not(any(test, feature = "test-support")))]
     pub fn connection_state(&self) -> ConnectionState {
         self.state
             .lock()
             .as_ref()
             .map(ConnectionState::from)
             .unwrap_or(ConnectionState::Disconnected)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn connection_state(&self) -> ConnectionState {
+        ConnectionState::Connected
     }
 
     pub fn is_disconnected(&self) -> bool {
