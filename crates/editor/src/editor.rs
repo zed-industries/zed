@@ -4459,48 +4459,15 @@ impl Editor {
         &mut self,
         item_ix: Option<usize>,
         intent: CompletionIntent,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Task<anyhow::Result<()>>> {
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
+        use language::ToOffset as _;
+
         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
             menu
         } else {
             return None;
         };
-
-        let mut resolve_task_store = completions_menu
-            .selected_completion_documentation_resolve_debounce
-            .lock();
-        let selected_completion_resolve = resolve_task_store.start_now();
-        let menu_pre_resolve = self
-            .completion_documentation_pre_resolve_debounce
-            .start_now();
-        drop(resolve_task_store);
-
-        Some(cx.spawn(|editor, mut cx| async move {
-            match (selected_completion_resolve, menu_pre_resolve) {
-                (None, None) => {}
-                (Some(resolve), None) | (None, Some(resolve)) => resolve.await,
-                (Some(resolve_1), Some(resolve_2)) => {
-                    futures::join!(resolve_1, resolve_2);
-                }
-            }
-            if let Some(apply_edits_task) = editor.update(&mut cx, |editor, cx| {
-                editor.apply_resolved_completion(completions_menu, item_ix, intent, cx)
-            })? {
-                apply_edits_task.await?;
-            }
-            Ok(())
-        }))
-    }
-
-    fn apply_resolved_completion(
-        &mut self,
-        completions_menu: CompletionsMenu,
-        item_ix: Option<usize>,
-        intent: CompletionIntent,
-        cx: &mut ViewContext<'_, Editor>,
-    ) -> Option<Task<anyhow::Result<Option<language::Transaction>>>> {
-        use language::ToOffset as _;
 
         let mat = completions_menu
             .matches
@@ -4660,7 +4627,11 @@ impl Editor {
             // so we should automatically call signature_help
             self.show_signature_help(&ShowSignatureHelp, cx);
         }
-        Some(apply_edits)
+
+        Some(cx.foreground_executor().spawn(async move {
+            apply_edits.await?;
+            Ok(())
+        }))
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
