@@ -4,7 +4,7 @@ mod telemetry;
 mod token;
 
 use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor,
+    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor, Cents,
     Config, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
@@ -438,13 +438,18 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
-/// The maximum monthly spending an individual user can reach before they have to pay.
-pub const MONTHLY_SPENDING_LIMIT_IN_CENTS: usize = 5 * 100;
+/// The maximum monthly spending an individual user can reach on the free tier
+/// before they have to pay.
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+
+/// The default value to use for maximum spend per month if the user did not
+/// explicitly set a maximum spend.
+///
+/// Used to prevent surprise bills.
+pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
 
 /// The maximum lifetime spending an individual user can reach before being cut off.
-///
-/// Represented in cents.
-const LIFETIME_SPENDING_LIMIT_IN_CENTS: usize = 1_000 * 100;
+const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
 
 async fn check_usage_limit(
     state: &Arc<LlmState>,
@@ -464,8 +469,8 @@ async fn check_usage_limit(
         .await?;
 
     if state.config.is_llm_billing_enabled() {
-        if usage.spending_this_month >= MONTHLY_SPENDING_LIMIT_IN_CENTS {
-            if !claims.has_llm_subscription.unwrap_or(false) {
+        if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
+            if !claims.has_llm_subscription {
                 return Err(Error::http(
                     StatusCode::PAYMENT_REQUIRED,
                     "Maximum spending limit reached for this month.".to_string(),
@@ -475,7 +480,7 @@ async fn check_usage_limit(
     }
 
     // TODO: Remove this once we've rolled out monthly spending limits.
-    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
+    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT {
         return Err(Error::http(
             StatusCode::FORBIDDEN,
             "Maximum spending limit reached.".to_string(),
@@ -690,8 +695,8 @@ impl<S> Drop for TokenCountingStream<S> {
                                 .cache_read_input_tokens_this_month
                                 as u64,
                             output_tokens_this_month: usage.output_tokens_this_month as u64,
-                            spending_this_month: usage.spending_this_month as u64,
-                            lifetime_spending: usage.lifetime_spending as u64,
+                            spending_this_month: usage.spending_this_month.0 as u64,
+                            lifetime_spending: usage.lifetime_spending.0 as u64,
                         },
                     )
                     .await

@@ -470,9 +470,6 @@ impl Server {
                 forward_project_request_for_owner::<proto::TaskContextForLocation>,
             ))
             .add_request_handler(user_handler(
-                forward_project_request_for_owner::<proto::TaskTemplates>,
-            ))
-            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
             ))
             .add_request_handler(user_handler(
@@ -4920,10 +4917,14 @@ async fn get_llm_api_token(
     if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
         Err(anyhow!("account too young"))?
     }
+
+    let billing_preferences = db.get_billing_preferences(user.id).await?;
+
     let token = LlmTokenClaims::create(
         user.id,
         user.github_login.clone(),
         session.is_staff(),
+        billing_preferences,
         has_llm_closed_beta_feature_flag,
         session.has_llm_subscription(&db).await?,
         session.current_plan(&db).await?,

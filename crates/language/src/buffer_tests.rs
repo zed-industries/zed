@@ -2381,20 +2381,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
 fn test_branch_and_merge(cx: &mut TestAppContext) {
     cx.update(|cx| init_settings(cx, |_| {}));
 
-    let base_buffer = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+    let base = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
 
     // Create a remote replica of the base buffer.
-    let base_buffer_replica = cx.new_model(|cx| {
-        Buffer::from_proto(
-            1,
-            Capability::ReadWrite,
-            base_buffer.read(cx).to_proto(cx),
-            None,
-        )
-        .unwrap()
+    let base_replica = cx.new_model(|cx| {
+        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
     });
-    base_buffer.update(cx, |_buffer, cx| {
-        cx.subscribe(&base_buffer_replica, |this, _, event, cx| {
+    base.update(cx, |_buffer, cx| {
+        cx.subscribe(&base_replica, |this, _, event, cx| {
             if let BufferEvent::Operation {
                 operation,
                 is_local: true,
@@ -2407,14 +2401,14 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Create a branch, which initially has the same state as the base buffer.
-    let branch_buffer = base_buffer.update(cx, |buffer, cx| buffer.branch(cx));
-    branch_buffer.read_with(cx, |buffer, _| {
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+    branch.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "one\ntwo\nthree\n");
     });
 
     // Edits to the branch are not applied to the base.
-    branch_buffer.update(cx, |branch_buffer, cx| {
-        branch_buffer.edit(
+    branch.update(cx, |buffer, cx| {
+        buffer.edit(
             [
                 (Point::new(1, 0)..Point::new(1, 0), "1.5\n"),
                 (Point::new(2, 0)..Point::new(2, 5), "THREE"),
@@ -2423,64 +2417,74 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
             cx,
         )
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "one\ntwo\nthree\n");
-        assert_eq!(branch_buffer.text(), "one\n1.5\ntwo\nTHREE\n");
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "one\ntwo\nthree\n");
+        assert_eq!(buffer.text(), "one\n1.5\ntwo\nTHREE\n");
+    });
+
+    // Convert from branch buffer ranges to the corresoponing ranges in the
+    // base buffer.
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(
+            buffer.range_to_version(4..7, &base.read(cx).version()),
+            4..4
+        );
+        assert_eq!(
+            buffer.range_to_version(2..9, &base.read(cx).version()),
+            2..5
+        );
     });
 
     // The branch buffer maintains a diff with respect to its base buffer.
-    start_recalculating_diff(&branch_buffer, cx);
+    start_recalculating_diff(&branch, cx);
     cx.run_until_parked();
     assert_diff_hunks(
-        &branch_buffer,
+        &branch,
         cx,
         &[(1..2, "", "1.5\n"), (3..4, "three\n", "THREE\n")],
     );
 
     // Edits to the base are applied to the branch.
-    base_buffer.update(cx, |buffer, cx| {
+    base.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\nthree\n");
-        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\nTHREE\n");
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\nthree\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\nTHREE\n");
     });
 
     // Until the git diff recalculation is complete, the git diff references
     // the previous content of the base buffer, so that it stays in sync.
-    start_recalculating_diff(&branch_buffer, cx);
+    start_recalculating_diff(&branch, cx);
     assert_diff_hunks(
-        &branch_buffer,
+        &branch,
         cx,
         &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
     );
     cx.run_until_parked();
     assert_diff_hunks(
-        &branch_buffer,
+        &branch,
         cx,
         &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
     );
 
     // Edits to any replica of the base are applied to the branch.
-    base_buffer_replica.update(cx, |buffer, cx| {
+    base_replica.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "2.5\n")], None, cx)
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\n2.5\nthree\n");
-        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\n2.5\nthree\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 
     // Merging the branch applies all of its changes to the base.
-    branch_buffer.update(cx, |branch_buffer, cx| {
-        branch_buffer.merge_into_base(Vec::new(), cx);
+    branch.update(cx, |buffer, cx| {
+        buffer.merge_into_base(Vec::new(), cx);
     });
 
-    branch_buffer.update(cx, |branch_buffer, cx| {
-        assert_eq!(
-            base_buffer.read(cx).text(),
-            "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n"
-        );
-        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+    branch.update(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 }
 

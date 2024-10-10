@@ -262,7 +262,7 @@ async fn test_dev_server_leave_room(
     cx1.executor().run_until_parked();
 
     let (workspace, cx2) = client2.active_workspace(cx2);
-    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected()));
+    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected(cx)));
 }
 
 #[gpui::test]
@@ -308,7 +308,7 @@ async fn test_dev_server_delete(
     cx1.executor().run_until_parked();
 
     let (workspace, cx2) = client2.active_workspace(cx2);
-    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected()));
+    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected(cx)));
 
     cx1.update(|cx| {
         dev_server_projects::Store::global(cx).update(cx, |store, _| {
@@ -418,12 +418,12 @@ async fn test_dev_server_refresh_access_token(
 
     // Assert that the other client was disconnected
     let (workspace, cx2) = client2.active_workspace(cx2);
-    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected()));
+    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected(cx)));
 
     // Assert that the owner of the dev server does not see the dev server as online anymore
     let (workspace, cx1) = client1.active_workspace(cx1);
     cx1.update(|cx| {
-        assert!(workspace.read(cx).project().read(cx).is_disconnected());
+        assert!(workspace.read(cx).project().read(cx).is_disconnected(cx));
         dev_server_projects::Store::global(cx).update(cx, |store, _| {
             assert_eq!(
                 store.dev_servers().first().unwrap().status,
