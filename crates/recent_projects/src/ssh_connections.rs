@@ -4,21 +4,21 @@ use anyhow::Result;
 use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::AppContext;
 use gpui::{
     percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
     EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
     Transformation, View,
 };
+use gpui::{AppContext, Model};
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    h_flex, v_flex, Color, FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, Styled, StyledExt as _, ViewContext, VisualContext,
-    WindowContext,
+    div, h_flex, prelude::*, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, Icon, IconButton,
+    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, Styled, Tooltip,
+    ViewContext, VisualContext, WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -28,10 +28,6 @@ pub struct SshSettings {
 }
 
 impl SshSettings {
-    pub fn use_direct_ssh(&self) -> bool {
-        self.ssh_connections.is_some()
-    }
-
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> {
         self.ssh_connections.clone().into_iter().flatten()
     }
@@ -87,7 +83,9 @@ pub struct SshPrompt {
 
 pub struct SshConnectionModal {
     pub(crate) prompt: View<SshPrompt>,
+    is_separate_window: bool,
 }
+
 impl SshPrompt {
     pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
         let connection_string = connection_options.connection_string().into();
@@ -140,14 +138,18 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let cx = cx.window_context();
+        let theme = cx.theme();
         v_flex()
             .key_context("PasswordPrompt")
-            .p_4()
             .size_full()
+            .justify_center()
             .child(
                 h_flex()
-                    .gap_2()
+                    .p_2()
+                    .justify_center()
+                    .flex_wrap()
                     .child(if self.error_message.is_some() {
                         Icon::new(IconName::XCircle)
                             .size(IconSize::Medium)
@@ -166,28 +168,54 @@ impl Render for SshPrompt {
                             .into_any_element()
                     })
                     .child(
-                        Label::new(format!("ssh {}…", self.connection_string))
-                            .size(ui::LabelSize::Large),
+                        div()
+                            .ml_1()
+                            .child(Label::new("SSH Connection").size(LabelSize::Small)),
+                    )
+                    .child(
+                        div()
+                            .text_ellipsis()
+                            .overflow_x_hidden()
+                            .when_some(self.error_message.as_ref(), |el, error| {
+                                el.child(Label::new(format!("－{}", error)).size(LabelSize::Small))
+                            })
+                            .when(
+                                self.error_message.is_none() && self.status_message.is_some(),
+                                |el| {
+                                    el.child(
+                                        Label::new(format!(
+                                            "－{}",
+                                            self.status_message.clone().unwrap()
+                                        ))
+                                        .size(LabelSize::Small),
+                                    )
+                                },
+                            ),
                     ),
             )
-            .when_some(self.error_message.as_ref(), |el, error| {
-                el.child(Label::new(error.clone()))
-            })
-            .when(
-                self.error_message.is_none() && self.status_message.is_some(),
-                |el| el.child(Label::new(self.status_message.clone().unwrap())),
-            )
-            .when_some(self.prompt.as_ref(), |el, prompt| {
-                el.child(Label::new(prompt.0.clone()))
-                    .child(self.editor.clone())
-            })
+            .child(div().when_some(self.prompt.as_ref(), |el, prompt| {
+                el.child(
+                    h_flex()
+                        .p_4()
+                        .border_t_1()
+                        .border_color(theme.colors().border_variant)
+                        .font_buffer(cx)
+                        .child(Label::new(prompt.0.clone()))
+                        .child(self.editor.clone()),
+                )
+            }))
     }
 }
 
 impl SshConnectionModal {
-    pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        connection_options: &SshConnectionOptions,
+        is_separate_window: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
             prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
+            is_separate_window,
         }
     }
 
@@ -196,20 +224,68 @@ impl SshConnectionModal {
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.remove_window();
+        cx.emit(DismissEvent);
+        if self.is_separate_window {
+            cx.remove_window();
+        }
     }
 }
 
 impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+        let connection_string = self.prompt.read(cx).connection_string.clone();
+        let theme = cx.theme();
+        let mut header_color = cx.theme().colors().text;
+        header_color.fade_out(0.96);
+        let body_color = theme.colors().editor_background;
+
         v_flex()
             .elevation_3(cx)
-            .p_4()
-            .gap_2()
+            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
-            .w(px(400.))
-            .child(self.prompt.clone())
+            .w(px(500.))
+            .border_1()
+            .border_color(theme.colors().border)
+            .child(
+                h_flex()
+                    .relative()
+                    .p_1()
+                    .rounded_t_md()
+                    .border_b_1()
+                    .border_color(theme.colors().border)
+                    .bg(header_color)
+                    .justify_between()
+                    .child(
+                        div().absolute().left_0p5().top_0p5().child(
+                            IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.dismiss(&Default::default(), cx);
+                                }))
+                                .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
+                        ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .justify_center()
+                            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+                            .child(
+                                Label::new(connection_string)
+                                    .size(ui::LabelSize::Small)
+                                    .single_line(),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .rounded_b_md()
+                    .bg(body_color)
+                    .w_full()
+                    .child(self.prompt.clone()),
+            )
     }
 }
 
@@ -373,25 +449,24 @@ impl SshClientDelegate {
 }
 
 pub fn connect_over_ssh(
+    unique_identifier: String,
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
     cx: &mut WindowContext,
-) -> Task<Result<Arc<SshRemoteClient>>> {
+) -> Task<Result<Model<SshRemoteClient>>> {
     let window = cx.window_handle();
     let known_password = connection_options.password.clone();
 
-    cx.spawn(|mut cx| async move {
-        remote::SshRemoteClient::new(
-            connection_options,
-            Arc::new(SshClientDelegate {
-                window,
-                ui,
-                known_password,
-            }),
-            &mut cx,
-        )
-        .await
-    })
+    remote::SshRemoteClient::new(
+        unique_identifier,
+        connection_options,
+        Arc::new(SshClientDelegate {
+            window,
+            ui,
+            known_password,
+        }),
+        cx,
+    )
 }
 
 pub async fn open_ssh_project(
@@ -401,11 +476,10 @@ pub async fn open_ssh_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
-
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
+        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
         cx.open_window(options, |cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
@@ -420,22 +494,30 @@ pub async fn open_ssh_project(
         })?
     };
 
-    let session = window
-        .update(cx, |workspace, cx| {
-            cx.activate_window();
-            workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
-            let ui = workspace
-                .active_modal::<SshConnectionModal>(cx)
-                .unwrap()
-                .read(cx)
-                .prompt
-                .clone();
-            connect_over_ssh(connection_options.clone(), ui, cx)
-        })?
-        .await?;
+    let delegate = window.update(cx, |workspace, cx| {
+        cx.activate_window();
+        workspace.toggle_modal(cx, |cx| {
+            SshConnectionModal::new(&connection_options, true, cx)
+        });
+        let ui = workspace
+            .active_modal::<SshConnectionModal>(cx)
+            .unwrap()
+            .read(cx)
+            .prompt
+            .clone();
 
-    cx.update(|cx| {
-        workspace::open_ssh_project(window, connection_options, session, app_state, paths, cx)
-    })?
-    .await
+        Arc::new(SshClientDelegate {
+            window: cx.window_handle(),
+            ui,
+            known_password: connection_options.password.clone(),
+        })
+    })?;
+
+    let did_open_ssh_project = cx
+        .update(|cx| {
+            workspace::open_ssh_project(window, connection_options, delegate, app_state, paths, cx)
+        })?
+        .await;
+
+    did_open_ssh_project
 }

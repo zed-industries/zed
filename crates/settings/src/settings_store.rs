@@ -515,13 +515,11 @@ impl SettingsStore {
         } else {
             parse_json_with_comments(user_settings_content)?
         };
-        if settings.is_object() {
-            self.raw_user_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
-        } else {
-            Err(anyhow!("settings must be an object"))
-        }
+
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_user_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Add or remove a set of local settings via a JSON string.
@@ -533,16 +531,29 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &mut AppContext,
     ) -> Result<()> {
+        anyhow::ensure!(
+            kind != LocalSettingsKind::Tasks,
+            "Attempted to submit tasks into the settings store"
+        );
+
         let raw_local_settings = self
             .raw_local_settings
             .entry((root_id, directory_path.clone()))
             .or_default();
-        if settings_content.is_some_and(|content| !content.is_empty()) {
-            raw_local_settings.insert(kind, parse_json_with_comments(settings_content.unwrap())?);
+        let changed = if settings_content.is_some_and(|content| !content.is_empty()) {
+            let new_contents = parse_json_with_comments(settings_content.unwrap())?;
+            if Some(&new_contents) == raw_local_settings.get(&kind) {
+                false
+            } else {
+                raw_local_settings.insert(kind, new_contents);
+                true
+            }
         } else {
-            raw_local_settings.remove(&kind);
+            raw_local_settings.remove(&kind).is_some()
+        };
+        if changed {
+            self.recompute_values(Some((root_id, &directory_path)), cx)?;
         }
-        self.recompute_values(Some((root_id, &directory_path)), cx)?;
         Ok(())
     }
 

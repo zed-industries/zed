@@ -4,9 +4,9 @@ use crate::{
         queries::{providers::ModelParams, usages::Usage},
         LlmDatabase,
     },
-    test_llm_db,
+    test_llm_db, Cents,
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use pretty_assertions::assert_eq;
 use rpc::LanguageModelProvider;
 
@@ -29,16 +29,19 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     .await
     .unwrap();
 
-    let t0 = Utc::now();
+    // We're using a fixed datetime to prevent flakiness based on the clock.
+    let t0 = DateTime::parse_from_rfc3339("2024-08-08T22:46:33Z")
+        .unwrap()
+        .with_timezone(&Utc);
     let user_id = UserId::from_proto(123);
 
     let now = t0;
-    db.record_usage(user_id, false, provider, model, 1000, 0, now)
+    db.record_usage(user_id, false, provider, model, 1000, 0, 0, 0, now)
         .await
         .unwrap();
 
     let now = t0 + Duration::seconds(10);
-    db.record_usage(user_id, false, provider, model, 2000, 0, now)
+    db.record_usage(user_id, false, provider, model, 2000, 0, 0, 0, now)
         .await
         .unwrap();
 
@@ -50,9 +53,11 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             tokens_this_minute: 3000,
             tokens_this_day: 3000,
             input_tokens_this_month: 3000,
+            cache_creation_input_tokens_this_month: 0,
+            cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -65,14 +70,16 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             tokens_this_minute: 2000,
             tokens_this_day: 3000,
             input_tokens_this_month: 3000,
+            cache_creation_input_tokens_this_month: 0,
+            cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
     let now = t0 + Duration::seconds(60);
-    db.record_usage(user_id, false, provider, model, 3000, 0, now)
+    db.record_usage(user_id, false, provider, model, 3000, 0, 0, 0, now)
         .await
         .unwrap();
 
@@ -84,9 +91,11 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             tokens_this_minute: 5000,
             tokens_this_day: 6000,
             input_tokens_this_month: 6000,
+            cache_creation_input_tokens_this_month: 0,
+            cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
@@ -100,13 +109,15 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             tokens_this_minute: 0,
             tokens_this_day: 5000,
             input_tokens_this_month: 6000,
+            cache_creation_input_tokens_this_month: 0,
+            cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
-    db.record_usage(user_id, false, provider, model, 4000, 0, now)
+    db.record_usage(user_id, false, provider, model, 4000, 0, 0, 0, now)
         .await
         .unwrap();
 
@@ -118,25 +129,58 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             tokens_this_minute: 4000,
             tokens_this_day: 9000,
             input_tokens_this_month: 10000,
+            cache_creation_input_tokens_this_month: 0,
+            cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 
-    let t2 = t0 + Duration::days(30);
-    let now = t2;
+    // We're using a fixed datetime to prevent flakiness based on the clock.
+    let now = DateTime::parse_from_rfc3339("2024-10-08T22:15:58Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+    // Test cache creation input tokens
+    db.record_usage(user_id, false, provider, model, 1000, 500, 0, 0, now)
+        .await
+        .unwrap();
+
     let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
     assert_eq!(
         usage,
         Usage {
-            requests_this_minute: 0,
-            tokens_this_minute: 0,
-            tokens_this_day: 0,
-            input_tokens_this_month: 9000,
+            requests_this_minute: 1,
+            tokens_this_minute: 1500,
+            tokens_this_day: 1500,
+            input_tokens_this_month: 1000,
+            cache_creation_input_tokens_this_month: 500,
+            cache_read_input_tokens_this_month: 0,
             output_tokens_this_month: 0,
-            spending_this_month: 0,
-            lifetime_spending: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
+        }
+    );
+
+    // Test cache read input tokens
+    db.record_usage(user_id, false, provider, model, 1000, 0, 300, 0, now)
+        .await
+        .unwrap();
+
+    let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(
+        usage,
+        Usage {
+            requests_this_minute: 2,
+            tokens_this_minute: 2800,
+            tokens_this_day: 2800,
+            input_tokens_this_month: 2000,
+            cache_creation_input_tokens_this_month: 500,
+            cache_read_input_tokens_this_month: 300,
+            output_tokens_this_month: 0,
+            spending_this_month: Cents::ZERO,
+            lifetime_spending: Cents::ZERO,
         }
     );
 }

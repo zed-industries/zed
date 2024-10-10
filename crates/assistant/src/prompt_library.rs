@@ -521,9 +521,9 @@ impl PromptLibrary {
                             editor.set_show_indent_guides(false, cx);
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                            editor.set_completion_provider(Box::new(
+                            editor.set_completion_provider(Some(Box::new(
                                 SlashCommandCompletionProvider::new(None, None),
-                            ));
+                            )));
                             if focus {
                                 editor.focus(cx);
                             }

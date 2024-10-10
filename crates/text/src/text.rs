@@ -1430,16 +1430,22 @@ impl Buffer {
             counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
         }
 
+        let operation = self.undo_operations(counts);
+        self.history.push(operation.clone());
+        operation
+    }
+
+    pub fn undo_operations(&mut self, counts: HashMap<clock::Lamport, u32>) -> Operation {
+        let timestamp = self.lamport_clock.tick();
+        let version = self.version();
+        self.snapshot.version.observe(timestamp);
         let undo = UndoOperation {
-            timestamp: self.lamport_clock.tick(),
-            version: self.version(),
+            timestamp,
+            version,
             counts,
         };
         self.apply_undo(&undo);
-        self.snapshot.version.observe(undo.timestamp);
-        let operation = Operation::Undo(undo);
-        self.history.push(operation.clone());
-        operation
+        Operation::Undo(undo)
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
@@ -2432,6 +2438,42 @@ impl BufferSnapshot {
             }
         }
         false
+    }
+
+    pub fn range_to_version(&self, range: Range<usize>, version: &clock::Global) -> Range<usize> {
+        let mut offsets = self.offsets_to_version([range.start, range.end], version);
+        offsets.next().unwrap()..offsets.next().unwrap()
+    }
+
+    /// Converts the given sequence of offsets into their corresponding offsets
+    /// at a prior version of this buffer.
+    pub fn offsets_to_version<'a>(
+        &'a self,
+        offsets: impl 'a + IntoIterator<Item = usize>,
+        version: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = usize> {
+        let mut edits = self.edits_since(version).peekable();
+        let mut last_old_end = 0;
+        let mut last_new_end = 0;
+        offsets.into_iter().map(move |new_offset| {
+            while let Some(edit) = edits.peek() {
+                if edit.new.start > new_offset {
+                    break;
+                }
+
+                if edit.new.end <= new_offset {
+                    last_new_end = edit.new.end;
+                    last_old_end = edit.old.end;
+                    edits.next();
+                    continue;
+                }
+
+                let overshoot = new_offset - edit.new.start;
+                return (edit.old.start + overshoot).min(edit.old.end);
+            }
+
+            last_old_end + new_offset.saturating_sub(last_new_end)
+        })
     }
 }
 

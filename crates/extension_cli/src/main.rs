@@ -13,8 +13,8 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
+use isahc_http_client::IsahcHttpClient;
 use language::LanguageConfig;
-use reqwest_client::ReqwestClient;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -66,7 +66,12 @@ async fn main() -> Result<()> {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let http_client = Arc::new(ReqwestClient::user_agent(&user_agent)?);
+    let http_client = Arc::new(
+        IsahcHttpClient::builder()
+            .default_header("User-Agent", user_agent)
+            .build()
+            .map(IsahcHttpClient::from)?,
+    );
 
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder

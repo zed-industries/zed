@@ -114,7 +114,7 @@ async fn test_host_disconnect(
 
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 
-    project_b.read_with(cx_b, |project, _| project.is_read_only());
+    project_b.read_with(cx_b, |project, cx| project.is_read_only(cx));
 
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 

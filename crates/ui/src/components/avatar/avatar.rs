@@ -10,6 +10,7 @@ use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 /// use ui::{Avatar, AvatarShape};
 ///
 /// Avatar::new("path/to/image.png")
+///     .shape(AvatarShape::Circle)
 ///     .grayscale(true)
 ///     .border_color(gpui::red());
 /// ```
@@ -70,7 +71,7 @@ impl Avatar {
 }
 
 impl RenderOnce for Avatar {
-    fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let border_width = if self.border_color.is_some() {
             px(2.)
         } else {
@@ -82,16 +83,14 @@ impl RenderOnce for Avatar {
 
         div()
             .size(container_size)
-            .map(|mut div| {
-                div.style().corner_radii = self.image.style().corner_radii.clone();
-                div
-            })
+            .rounded_full()
             .when_some(self.border_color, |this, color| {
                 this.border(border_width).border_color(color)
             })
             .child(
                 self.image
                     .size(image_size)
+                    .rounded_full()
                     .bg(cx.theme().colors().ghost_element_background),
             )
             .children(self.indicator.map(|indicator| div().child(indicator)))

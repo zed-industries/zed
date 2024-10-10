@@ -1,8 +1,8 @@
 use crate::{
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
-    Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
-    Navigated, PointForPosition, SelectPhase,
+    Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition,
+    GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
 use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -14,12 +14,12 @@ use project::{
 };
 use std::ops::Range;
 use theme::ActiveTheme as _;
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt as _};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
     pub last_trigger_point: TriggerPoint,
-    pub preferred_kind: LinkDefinitionKind,
+    pub preferred_kind: GotoDefinitionKind,
     pub symbol_range: Option<RangeInEditor>,
     pub links: Vec<HoverLink>,
     pub task: Option<Task<Option<()>>>,
@@ -428,12 +428,6 @@ pub fn update_inlay_link_and_hover_points(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LinkDefinitionKind {
-    Symbol,
-    Type,
-}
-
 pub fn show_link_definition(
     shift_held: bool,
     editor: &mut Editor,
@@ -442,8 +436,8 @@ pub fn show_link_definition(
     cx: &mut ViewContext<Editor>,
 ) {
     let preferred_kind = match trigger_point {
-        TriggerPoint::Text(_) if !shift_held => LinkDefinitionKind::Symbol,
-        _ => LinkDefinitionKind::Type,
+        TriggerPoint::Text(_) if !shift_held => GotoDefinitionKind::Symbol,
+        _ => GotoDefinitionKind::Type,
     };
 
     let (mut hovered_link_state, is_cached) =
@@ -505,6 +499,7 @@ pub fn show_link_definition(
         editor.hide_hovered_link(cx)
     }
     let project = editor.project.clone();
+    let provider = editor.semantics_provider.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
     hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
@@ -522,54 +517,40 @@ pub fn show_link_definition(
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
-                    } else if let Some(project) = project {
-                        if let Some((filename_range, filename)) =
-                            find_file(&buffer, project.clone(), buffer_position, &mut cx).await
-                        {
-                            let range = maybe!({
-                                let start =
-                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
-                                let end =
-                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
-                                Some(RangeInEditor::Text(start..end))
-                            });
+                    } else if let Some((filename_range, filename)) =
+                        find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                    {
+                        let range = maybe!({
+                            let start =
+                                snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
+                            let end = snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
+                            Some(RangeInEditor::Text(start..end))
+                        });
 
-                            Some((range, vec![HoverLink::File(filename)]))
+                        Some((range, vec![HoverLink::File(filename)]))
+                    } else if let Some(provider) = provider {
+                        let task = cx.update(|cx| {
+                            provider.definitions(&buffer, buffer_position, preferred_kind, cx)
+                        })?;
+                        if let Some(task) = task {
+                            task.await.ok().map(|definition_result| {
+                                (
+                                    definition_result.iter().find_map(|link| {
+                                        link.origin.as_ref().and_then(|origin| {
+                                            let start = snapshot.anchor_in_excerpt(
+                                                excerpt_id,
+                                                origin.range.start,
+                                            )?;
+                                            let end = snapshot
+                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
+                                            Some(RangeInEditor::Text(start..end))
+                                        })
+                                    }),
+                                    definition_result.into_iter().map(HoverLink::Text).collect(),
+                                )
+                            })
                         } else {
-                            // query the LSP for definition info
-                            project
-                                .update(&mut cx, |project, cx| match preferred_kind {
-                                    LinkDefinitionKind::Symbol => {
-                                        project.definition(&buffer, buffer_position, cx)
-                                    }
-
-                                    LinkDefinitionKind::Type => {
-                                        project.type_definition(&buffer, buffer_position, cx)
-                                    }
-                                })?
-                                .await
-                                .ok()
-                                .map(|definition_result| {
-                                    (
-                                        definition_result.iter().find_map(|link| {
-                                            link.origin.as_ref().and_then(|origin| {
-                                                let start = snapshot.anchor_in_excerpt(
-                                                    excerpt_id,
-                                                    origin.range.start,
-                                                )?;
-                                                let end = snapshot.anchor_in_excerpt(
-                                                    excerpt_id,
-                                                    origin.range.end,
-                                                )?;
-                                                Some(RangeInEditor::Text(start..end))
-                                            })
-                                        }),
-                                        definition_result
-                                            .into_iter()
-                                            .map(HoverLink::Text)
-                                            .collect(),
-                                    )
-                                })
+                            None
                         }
                     } else {
                         None
@@ -708,10 +689,11 @@ pub(crate) fn find_url(
 
 pub(crate) async fn find_file(
     buffer: &Model<language::Buffer>,
-    project: Model<Project>,
+    project: Option<Model<Project>>,
     position: text::Anchor,
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
+    let project = project?;
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
     let scope = snapshot.language_scope_at(position);
     let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
