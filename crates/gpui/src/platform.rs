@@ -80,39 +80,41 @@ pub enum Compositor {
     Headless,
 }
 
+impl Compositor {
+    /// Return which compositor we're guessing we'll use.
+    /// Does not attempt to connect to the given compositor
+    #[cfg(target_os = "linux")]
+    #[inline]
+    pub fn guess() -> Self {
+        if std::env::var_os("ZED_HEADLESS").is_some() {
+            return Self::Headless;
+        }
+        let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+        let x11_display = std::env::var_os("DISPLAY");
+
+        let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
+        let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
+
+        if use_wayland {
+            Self::Wayland
+        } else if use_x11 {
+            Self::X11
+        } else {
+            Self::Headless
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     if headless {
         return Rc::new(HeadlessClient::new());
     }
 
-    match guess_compositor() {
+    match Compositor::guess() {
         Compositor::Wayland => Rc::new(WaylandClient::new()),
         Compositor::X11 => Rc::new(X11Client::new()),
         Compositor::Headless => Rc::new(HeadlessClient::new()),
-    }
-}
-
-/// Return which compositor we're guessing we'll use.
-/// Does not attempt to connect to the given compositor
-#[cfg(target_os = "linux")]
-#[inline]
-pub fn guess_compositor() -> Compositor {
-    if std::env::var_os("ZED_HEADLESS").is_some() {
-        return Compositor::Headless;
-    }
-    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
-    let x11_display = std::env::var_os("DISPLAY");
-
-    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
-    let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
-
-    if use_wayland {
-        Compositor::Wayland
-    } else if use_x11 {
-        Compositor::X11
-    } else {
-        Compositor::Headless
     }
 }
 
