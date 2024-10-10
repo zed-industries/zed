@@ -553,7 +553,7 @@
     }
   },
   {
-    "context": "ProjectPanel",
+    "context": "ProjectPanel && not_editing",
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
       "right": "project_panel::ExpandSelectedEntry",
@@ -578,7 +578,7 @@
   },
   {
     // Separate block with same context so these display in context menus
-    "context": "ProjectPanel",
+    "context": "ProjectPanel && not_editing",
     "bindings": {
       "f2": "project_panel::Rename",
       "ctrl-c": "project_panel::Copy",
