@@ -67,7 +67,7 @@ telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }

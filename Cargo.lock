@@ -250,7 +250,6 @@ dependencies = [
  "serde_json",
  "strum 0.25.0",
  "thiserror",
- "tokio",
  "util",
 ]
 
@@ -4146,7 +4145,6 @@ dependencies = [
  "snippet_provider",
  "task",
  "theme",
- "tokio",
  "toml 0.8.19",
  "ui",
  "url",

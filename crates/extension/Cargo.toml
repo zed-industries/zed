@@ -64,5 +64,4 @@ gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
-tokio.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
