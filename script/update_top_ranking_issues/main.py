@@ -1,38 +1,33 @@
+import json
 import os
+import pathlib
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 
+import typer
 from github import Github
 from github.Issue import Issue
 from github.Repository import Repository
 from pytz import timezone
-
-import typer
 from typer import Typer
 
 app: Typer = typer.Typer()
 
 DATETIME_FORMAT: str = "%m/%d/%Y %I:%M %p"
-CORE_LABELS: set[str] = {
-    "defect",
-    "design",
-    "documentation",
-    "duplicate",
-    "enhancement",
-    "panic / crash",
-    "support",
-}
-# A set of labels for adding in labels that we want present in the final
-# report, but that we don't want being defined as a core label, since issues
-# with without core labels are flagged as errors.
-ADDITIONAL_LABELS: set[str] = {
-    "ai",
-    "linux",
-    "vim",
-    "windows",
-}
-IGNORED_LABEL_TEXT: str = "ignore top-ranking issues"
+
+label_data_file_path = pathlib.Path(__file__).parent.parent / "label_data.json"
+
+with open(label_data_file_path, "r") as label_data_file:
+    label_data = json.load(label_data_file)
+    CORE_LABELS: set[str] = set(label_data["core_labels"])
+    # A set of labels for adding in labels that we want present in the final
+    # report, but that we don't want being defined as a core label, since issues
+    # with without core labels are flagged as errors.
+    ADDITIONAL_LABELS: set[str] = set(label_data["additional_labels"])
+    IGNORED_LABEL: str = label_data["ignored_label"]
+
+
 ISSUES_PER_LABEL: int = 20
 
 
@@ -153,7 +148,7 @@ def get_label_to_issues(
     )
 
     for label in labels:
-        query: str = f'repo:{repository.full_name} is:open is:issue {date_query} label:"{label}" -label:"{IGNORED_LABEL_TEXT}" sort:reactions-+1-desc'
+        query: str = f'repo:{repository.full_name} is:open is:issue {date_query} label:"{label}" -label:"{IGNORED_LABEL}" sort:reactions-+1-desc'
 
         issues = github.search_issues(query)
 
@@ -191,7 +186,7 @@ def get_error_message_to_erroneous_issues(
     error_message_to_erroneous_issues: defaultdict[str, list[Issue]] = defaultdict(list)
 
     # Query for all open issues that don't have either a core or the ignored label and mark those as erroneous
-    filter_labels: set[str] = CORE_LABELS | {IGNORED_LABEL_TEXT}
+    filter_labels: set[str] = CORE_LABELS | {IGNORED_LABEL}
     filter_labels_text: str = " ".join([f'-label:"{label}"' for label in filter_labels])
     query: str = f"repo:{repository.full_name} is:open is:issue {filter_labels_text}"
 
@@ -245,7 +240,7 @@ def get_issue_text(
             [
                 "## errors with issues (this section only shows when there are errors with issues)\n",
                 f"This script expects every issue to have at least one of the following core labels: {core_labels_text}",
-                f"This script currently ignores issues that have the following label: {IGNORED_LABEL_TEXT}\n",
+                f"This script currently ignores issues that have the following label: {IGNORED_LABEL}\n",
                 "### what to do?\n",
                 "- Adjust the core labels on an issue to put it into a correct state or add a currently-ignored label to the issue",
                 "- Adjust the core and ignored labels registered in this script",
