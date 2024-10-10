@@ -631,7 +631,8 @@ impl LanguageServer {
                                     "filterText".to_string(),
                                     "labelDetails".to_string(),
                                     "tags".to_string(),
-                                    "textEdit".to_string(),
+                                    // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
+                                    // "textEdit".to_string(),
                                 ],
                             }),
                             insert_replace_support: Some(true),
