@@ -4743,10 +4743,20 @@ impl Render for Workspace {
                                                     workspace.left_dock.update(
                                                         cx,
                                                         |left_dock, cx| {
-                                                            left_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
+                                                            if WorkspaceSettings::get_global(cx)
+                                                                .sync_dock_size
+                                                                .contains(&DockPosition::Left)
+                                                            {
+                                                                left_dock.resize_all_panels(
+                                                                    Some(size),
+                                                                    cx,
+                                                                );
+                                                            } else {
+                                                                left_dock.resize_active_panel(
+                                                                    Some(size),
+                                                                    cx,
+                                                                );
+                                                            }
                                                         },
                                                     );
                                                 }
@@ -4756,10 +4766,20 @@ impl Render for Workspace {
                                                     workspace.right_dock.update(
                                                         cx,
                                                         |right_dock, cx| {
-                                                            right_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
+                                                            if WorkspaceSettings::get_global(cx)
+                                                                .sync_dock_size
+                                                                .contains(&DockPosition::Right)
+                                                            {
+                                                                right_dock.resize_all_panels(
+                                                                    Some(size),
+                                                                    cx,
+                                                                );
+                                                            } else {
+                                                                right_dock.resize_active_panel(
+                                                                    Some(size),
+                                                                    cx,
+                                                                );
+                                                            }
                                                         },
                                                     );
                                                 }
@@ -4769,10 +4789,20 @@ impl Render for Workspace {
                                                     workspace.bottom_dock.update(
                                                         cx,
                                                         |bottom_dock, cx| {
-                                                            bottom_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
+                                                            if WorkspaceSettings::get_global(cx)
+                                                                .sync_dock_size
+                                                                .contains(&DockPosition::Bottom)
+                                                            {
+                                                                bottom_dock.resize_all_panels(
+                                                                    Some(size),
+                                                                    cx,
+                                                                );
+                                                            } else {
+                                                                bottom_dock.resize_active_panel(
+                                                                    Some(size),
+                                                                    cx,
+                                                                );
+                                                            }
                                                         },
                                                     );
                                                 }
