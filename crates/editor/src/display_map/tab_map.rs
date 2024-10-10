@@ -411,13 +411,6 @@ impl TabSnapshot {
                 expanded_chars += 1;
                 expanded_bytes += 3;
 
-                if expanded_bytes > column {
-                    expanded_chars -= expanded_bytes - column;
-                    return match bias {
-                        Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
-                        Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
-                    };
-                }
             } else {
                 expanded_chars += 1;
                 expanded_bytes += c.len_utf8() as u32;
@@ -625,12 +618,13 @@ impl<'a> Iterator for TabChunks<'a> {
                             ..self.chunk.clone()
                         });
                     } else {
-                        if self.chunk.text.len() >= 1 {
-                            self.chunk.text = &self.chunk.text[1..];
+                        let c_len =  c.len_utf8();
+                        if self.chunk.text.len() >= c_len {
+                            self.chunk.text = &self.chunk.text[c_len..];
                         } else {
                             self.chunk.text = "";
                         }
-                        let len = 1;
+                        let len = c_len as u32;
                         let next_output_position = cmp::min(
                             self.output_position + Point::new(0, len),
                             self.max_output_position,
