@@ -366,7 +366,7 @@ impl TitleBar {
             return self.render_ssh_project_host(cx);
         }
 
-        if self.project.read(cx).is_disconnected() {
+        if self.project.read(cx).is_disconnected(cx) {
             return Some(
                 Button::new("disconnected", "Disconnected")
                     .disabled(true)

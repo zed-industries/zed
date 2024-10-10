@@ -509,6 +509,11 @@ impl WorktreeStore {
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade() {
                 worktree.update(cx, |worktree, _| {
+                    println!(
+                        "worktree. is_local: {:?}, is_remote: {:?}",
+                        worktree.is_local(),
+                        worktree.is_remote()
+                    );
                     if let Some(worktree) = worktree.as_remote_mut() {
                         worktree.disconnected_from_host();
                     }
