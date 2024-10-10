@@ -15,6 +15,7 @@ pub enum RequestType {
     PromptsGet,
     PromptsList,
     CompletionComplete,
+    Ping,
 }
 
 impl RequestType {
@@ -30,6 +31,7 @@ impl RequestType {
             RequestType::PromptsGet => "prompts/get",
             RequestType::PromptsList => "prompts/list",
             RequestType::CompletionComplete => "completion/complete",
+            RequestType::Ping => "ping",
         }
     }
 }
@@ -39,14 +41,15 @@ impl RequestType {
 pub struct InitializeParams {
     pub protocol_version: u32,
     pub capabilities: ClientCapabilities,
-    pub client_info: EntityInfo,
+    pub client_info: Implementation,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallToolParams {
     pub name: String,
-    pub arguments: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,6 +80,7 @@ pub struct LoggingSetLevelParams {
 #[serde(rename_all = "camelCase")]
 pub struct PromptsGetParams {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, String>>,
 }
 
@@ -102,19 +106,19 @@ pub struct PromptReference {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceReference {
+    pub r#type: PromptReferenceType,
+    pub uri: Url,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptReferenceType {
     #[serde(rename = "ref/prompt")]
     Prompt,
     #[serde(rename = "ref/resource")]
     Resource,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceReference {
-    pub r#type: String,
-    pub uri: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,7 +133,7 @@ pub struct CompletionArgument {
 pub struct InitializeResponse {
     pub protocol_version: u32,
     pub capabilities: ServerCapabilities,
-    pub server_info: EntityInfo,
+    pub server_info: Implementation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,13 +145,39 @@ pub struct ResourcesReadResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesListResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_templates: Option<Vec<ResourceTemplate>>,
-    pub resources: Vec<Resource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<Vec<Resource>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SamplingMessage {
+    pub role: SamplingRole,
+    pub content: SamplingContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SamplingRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SamplingContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { data: String, mime_type: String },
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsGetResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub prompt: String,
 }
@@ -155,7 +185,7 @@ pub struct PromptsGetResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
-    pub prompts: Vec<PromptInfo>,
+    pub prompts: Vec<Prompt>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,61 +198,91 @@ pub struct CompletionCompleteResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CompletionResult {
     pub values: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub has_more: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PromptInfo {
+pub struct Prompt {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptArgument {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
 }
-
-// Shared Types
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, serde_json::Value>>,
-    pub sampling: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, serde_json::Value>>,
-    pub logging: Option<HashMap<String, serde_json::Value>>,
-    pub prompts: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logging: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptsCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourcesCapabilities>,
-    pub tools: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ToolsCapabilities>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptsCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_changed: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subscribe: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_changed: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_changed: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntityInfo {
+pub struct Implementation {
     pub name: String,
     pub version: String,
 }
@@ -231,6 +291,10 @@ pub struct EntityInfo {
 #[serde(rename_all = "camelCase")]
 pub struct Resource {
     pub uri: Url,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
 }
 
@@ -238,17 +302,23 @@ pub struct Resource {
 #[serde(rename_all = "camelCase")]
 pub struct ResourceContent {
     pub uri: Url,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceTemplate {
     pub uri_template: String,
-    pub name: Option<String>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -260,13 +330,16 @@ pub enum LoggingLevel {
     Error,
 }
 
-// Client Notifications
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NotificationType {
     Initialized,
     Progress,
+    Message,
+    ResourcesUpdated,
+    ResourcesListChanged,
+    ToolsListChanged,
+    PromptsListChanged,
 }
 
 impl NotificationType {
@@ -274,6 +347,11 @@ impl NotificationType {
         match self {
             NotificationType::Initialized => "notifications/initialized",
             NotificationType::Progress => "notifications/progress",
+            NotificationType::Message => "notifications/message",
+            NotificationType::ResourcesUpdated => "notifications/resources/updated",
+            NotificationType::ResourcesListChanged => "notifications/resources/list_changed",
+            NotificationType::ToolsListChanged => "notifications/tools/list_changed",
+            NotificationType::PromptsListChanged => "notifications/prompts/list_changed",
         }
     }
 }
@@ -288,12 +366,13 @@ pub enum ClientNotification {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressParams {
-    pub progress_token: String,
+    pub progress_token: ProgressToken,
     pub progress: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<f64>,
 }
 
-// Helper Types that don't map directly to the protocol
+pub type ProgressToken = String;
 
 pub enum CompletionTotal {
     Exact(u32),

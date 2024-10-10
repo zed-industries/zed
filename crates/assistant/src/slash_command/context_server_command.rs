@@ -6,7 +6,7 @@ use assistant_slash_command::{
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
-    protocol::PromptInfo,
+    types::Prompt,
 };
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
@@ -18,11 +18,11 @@ use workspace::Workspace;
 
 pub struct ContextServerSlashCommand {
     server_id: String,
-    prompt: PromptInfo,
+    prompt: Prompt,
 }
 
 impl ContextServerSlashCommand {
-    pub fn new(server: &Arc<ContextServer>, prompt: PromptInfo) -> Self {
+    pub fn new(server: &Arc<ContextServer>, prompt: Prompt) -> Self {
         Self {
             server_id: server.id.clone(),
             prompt,
@@ -154,7 +154,7 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 }
 
-fn completion_argument(prompt: &PromptInfo, arguments: &[String]) -> Result<(String, String)> {
+fn completion_argument(prompt: &Prompt, arguments: &[String]) -> Result<(String, String)> {
     if arguments.is_empty() {
         return Err(anyhow!("No arguments given"));
     }
@@ -170,7 +170,7 @@ fn completion_argument(prompt: &PromptInfo, arguments: &[String]) -> Result<(Str
     }
 }
 
-fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap<String, String>> {
+fn prompt_arguments(prompt: &Prompt, arguments: &[String]) -> Result<HashMap<String, String>> {
     match &prompt.arguments {
         Some(args) if args.len() > 1 => Err(anyhow!(
             "Prompt has more than one argument, which is not supported"
@@ -199,7 +199,7 @@ fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap
 /// MCP servers can return prompts with multiple arguments. Since we only
 /// support one argument, we ignore all others. This is the necessary predicate
 /// for this.
-pub fn acceptable_prompt(prompt: &PromptInfo) -> bool {
+pub fn acceptable_prompt(prompt: &Prompt) -> bool {
     match &prompt.arguments {
         None => true,
         Some(args) if args.len() <= 1 => true,
