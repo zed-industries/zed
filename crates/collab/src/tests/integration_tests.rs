@@ -34,7 +34,7 @@ use project::{
 };
 use rand::prelude::*;
 use serde_json::json;
-use settings::{LocalSettingsKind, SettingsStore};
+use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -3328,16 +3328,8 @@ async fn test_local_settings(
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Path::new("").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":2}"#.to_string()
-                ),
-                (
-                    Path::new("a").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":8}"#.to_string()
-                ),
+                (Path::new("").into(), r#"{"tab_size":2}"#.to_string()),
+                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
             ]
         )
     });
@@ -3355,16 +3347,8 @@ async fn test_local_settings(
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Path::new("").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{}"#.to_string()
-                ),
-                (
-                    Path::new("a").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":8}"#.to_string()
-                ),
+                (Path::new("").into(), r#"{}"#.to_string()),
+                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
             ]
         )
     });
@@ -3392,16 +3376,8 @@ async fn test_local_settings(
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Path::new("a").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":8}"#.to_string()
-                ),
-                (
-                    Path::new("b").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":4}"#.to_string()
-                ),
+                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
+                (Path::new("b").into(), r#"{"tab_size":4}"#.to_string()),
             ]
         )
     });
@@ -3431,11 +3407,7 @@ async fn test_local_settings(
             store
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
-            &[(
-                Path::new("a").into(),
-                LocalSettingsKind::Settings,
-                r#"{"hard_tabs":true}"#.to_string()
-            ),]
+            &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
         )
     });
 }
