@@ -5,6 +5,7 @@ use axum::{
     Extension, Json, Router,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
+use collections::HashSet;
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ use stripe::{
 };
 use util::ResultExt;
 
+use crate::db::{billing_subscription::StripeSubscriptionStatus, UserId};
 use crate::llm::db::LlmDatabase;
 use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
 use crate::rpc::ResultExt as _;
@@ -30,10 +32,6 @@ use crate::{
         UpdateBillingSubscriptionParams,
     },
     stripe_billing::StripeBilling,
-};
-use crate::{
-    db::{billing_subscription::StripeSubscriptionStatus, UserId},
-    Cents,
 };
 use crate::{AppState, Error, Result};
 
@@ -752,19 +750,19 @@ async fn sync_with_stripe(
 ) -> anyhow::Result<()> {
     let mut stripe_billing = StripeBilling::new(stripe_client).await?;
 
-    let rollups = llm_db.get_billing_event_rollups().await?;
-    let user_ids = rollups
+    let events = llm_db.get_billing_events().await?;
+    let user_ids = events
         .iter()
-        .map(|rollup| rollup.user_id)
-        .collect::<Vec<UserId>>();
+        .map(|(event, _)| event.user_id)
+        .collect::<HashSet<UserId>>();
     let stripe_subscriptions = app.db.get_active_billing_subscriptions(user_ids).await?;
 
-    for rollup in llm_db.get_billing_event_rollups().await? {
+    for (event, model) in events {
         let Some((stripe_db_customer, stripe_db_subscription)) =
-            stripe_subscriptions.get(&rollup.user_id)
+            stripe_subscriptions.get(&event.user_id)
         else {
             tracing::warn!(
-                user_id = rollup.user_id.0,
+                user_id = event.user_id.0,
                 "Registered billing event for user who is not a Stripe customer. Billing events should only be created for users who are Stripe customers, so this is a mistake on our side."
             );
             continue;
@@ -778,32 +776,14 @@ async fn sync_with_stripe(
             .parse()
             .context("failed to parse stripe customer id from db")?;
 
-        let stripe_model = stripe_billing
-            .register_model(
-                rollup.model_id,
-                &rollup.model_name,
-                Cents::new(rollup.price_per_million_input_tokens as u32),
-                Cents::new(rollup.price_per_million_cache_creation_input_tokens as u32),
-                Cents::new(rollup.price_per_million_cache_read_input_tokens as u32),
-                Cents::new(rollup.price_per_million_output_tokens as u32),
-                stripe_client,
-            )
-            .await?;
+        let stripe_model = stripe_billing.register_model(&model, stripe_client).await?;
         stripe_billing
             .subscribe_to_model(&stripe_subscription_id, &stripe_model, stripe_client)
             .await?;
         stripe_billing
-            .bill_model_usage(
-                &stripe_model,
-                &stripe_customer_id,
-                rollup.input_tokens as u64,
-                rollup.cache_creation_input_tokens as u64,
-                rollup.cache_read_input_tokens as u64,
-                rollup.output_tokens as u64,
-                stripe_client,
-            )
+            .bill_model_usage(&stripe_customer_id, &stripe_model, &event, stripe_client)
             .await?;
-        llm_db.consume_billing_event_rollup(rollup).await?;
+        llm_db.consume_billing_event(event.id).await?;
     }
 
     Ok(())

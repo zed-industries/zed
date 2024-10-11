@@ -47,43 +47,38 @@ impl StripeBilling {
 
     pub async fn register_model(
         &mut self,
-        model_id: llm::db::ModelId,
-        model_name: &str,
-        price_per_million_input_tokens: Cents,
-        price_per_million_cache_creation_input_tokens: Cents,
-        price_per_million_cache_read_input_tokens: Cents,
-        price_per_million_output_tokens: Cents,
+        model: &llm::db::model::Model,
         client: &stripe::Client,
     ) -> Result<StripeModel> {
         let input_tokens_price = self
             .get_or_insert_price(
-                &format!("model_{model_id}/input_tokens"),
-                &format!("{model_name} (Input Tokens)"),
-                price_per_million_input_tokens,
+                &format!("model_{}/input_tokens", model.id),
+                &format!("{} (Input Tokens)", model.name),
+                Cents::new(model.price_per_million_input_tokens as u32),
                 client,
             )
             .await?;
         let input_cache_creation_tokens_price = self
             .get_or_insert_price(
-                &format!("model_{model_id}/input_cache_creation_tokens"),
-                &format!("{model_name} (Input Cache Creation Tokens)"),
-                price_per_million_cache_creation_input_tokens,
+                &format!("model_{}/input_cache_creation_tokens", model.id),
+                &format!("{} (Input Cache Creation Tokens)", model.name),
+                Cents::new(model.price_per_million_cache_creation_input_tokens as u32),
                 client,
             )
             .await?;
         let input_cache_read_tokens_price = self
             .get_or_insert_price(
-                &format!("model_{model_id}/input_cache_read_tokens"),
-                &format!("{model_name} (Input Cache Read Tokens)"),
-                price_per_million_cache_read_input_tokens,
+                &format!("model_{}/input_cache_read_tokens", model.id),
+                &format!("{} (Input Cache Read Tokens)", model.name),
+                Cents::new(model.price_per_million_cache_read_input_tokens as u32),
                 client,
             )
             .await?;
         let output_tokens_price = self
             .get_or_insert_price(
-                &format!("model_{model_id}/output_tokens"),
-                &format!("{model_name} (Output Tokens)"),
-                price_per_million_output_tokens,
+                &format!("model_{}/output_tokens", model.id),
+                &format!("{} (Output Tokens)", model.name),
+                Cents::new(model.price_per_million_output_tokens as u32),
                 client,
             )
             .await?;
@@ -145,7 +140,7 @@ impl StripeBilling {
                         unit_label: None,
                     }),
                     recurring: Some(stripe::CreatePriceRecurring {
-                        aggregate_usage: Some(stripe::CreatePriceRecurringAggregateUsage::Sum),
+                        aggregate_usage: None,
                         interval: stripe::CreatePriceRecurringInterval::Month,
                         interval_count: None,
                         trial_period_days: None,
@@ -156,12 +151,12 @@ impl StripeBilling {
                     tiers: None,
                     tiers_mode: None,
                     transfer_lookup_key: None,
-                    transform_quantity: Some(stripe::CreatePriceTransformQuantity {
-                        divide_by: 1000000,
-                        round: stripe::CreatePriceTransformQuantityRound::Up,
-                    }),
-                    unit_amount: Some(price_per_million_tokens.0 as i64),
-                    unit_amount_decimal: None,
+                    transform_quantity: None,
+                    unit_amount: None,
+                    unit_amount_decimal: Some(&format!(
+                        "{:.12}",
+                        price_per_million_tokens.0 as f64 / 1_000_000f64
+                    )),
                 },
             )
             .await?;
@@ -239,23 +234,21 @@ impl StripeBilling {
 
     pub async fn bill_model_usage(
         &self,
-        model: &StripeModel,
         customer_id: &stripe::CustomerId,
-        input_tokens: u64,
-        cache_creation_input_tokens: u64,
-        cache_read_input_tokens: u64,
-        output_tokens: u64,
+        model: &StripeModel,
+        event: &llm::db::billing_event::Model,
         client: &stripe::Client,
     ) -> Result<()> {
         let timestamp = Utc::now().timestamp();
 
-        if input_tokens > 0 {
+        if event.input_tokens > 0 {
             StripeMeterEvent::create(
                 client,
                 StripeCreateMeterEventParams {
+                    identifier: &format!("input_tokens/{}", event.idempotency_key),
                     event_name: &model.input_tokens_price.meter_event_name,
                     payload: StripeCreateMeterEventPayload {
-                        value: input_tokens,
+                        value: event.input_tokens as u64,
                         stripe_customer_id: customer_id,
                     },
                     timestamp: Some(timestamp),
@@ -264,13 +257,14 @@ impl StripeBilling {
             .await?;
         }
 
-        if cache_creation_input_tokens > 0 {
+        if event.input_cache_creation_tokens > 0 {
             StripeMeterEvent::create(
                 client,
                 StripeCreateMeterEventParams {
+                    identifier: &format!("input_cache_creation_tokens/{}", event.idempotency_key),
                     event_name: &model.input_cache_creation_tokens_price.meter_event_name,
                     payload: StripeCreateMeterEventPayload {
-                        value: cache_creation_input_tokens,
+                        value: event.input_cache_creation_tokens as u64,
                         stripe_customer_id: customer_id,
                     },
                     timestamp: Some(timestamp),
@@ -279,13 +273,14 @@ impl StripeBilling {
             .await?;
         }
 
-        if cache_read_input_tokens > 0 {
+        if event.input_cache_read_tokens > 0 {
             StripeMeterEvent::create(
                 client,
                 StripeCreateMeterEventParams {
+                    identifier: &format!("input_cache_read_tokens/{}", event.idempotency_key),
                     event_name: &model.input_cache_read_tokens_price.meter_event_name,
                     payload: StripeCreateMeterEventPayload {
-                        value: cache_read_input_tokens,
+                        value: event.input_cache_read_tokens as u64,
                         stripe_customer_id: customer_id,
                     },
                     timestamp: Some(timestamp),
@@ -294,13 +289,14 @@ impl StripeBilling {
             .await?;
         }
 
-        if output_tokens > 0 {
+        if event.output_tokens > 0 {
             StripeMeterEvent::create(
                 client,
                 StripeCreateMeterEventParams {
+                    identifier: &format!("output_tokens/{}", event.idempotency_key),
                     event_name: &model.output_tokens_price.meter_event_name,
                     payload: StripeCreateMeterEventPayload {
-                        value: output_tokens,
+                        value: event.output_tokens as u64,
                         stripe_customer_id: customer_id,
                     },
                     timestamp: Some(timestamp),
@@ -336,11 +332,14 @@ impl StripeMeter {
         client: &stripe::Client,
         params: StripeCreateMeterParams,
     ) -> stripe::Response<Self> {
-        client.post_form("/v1/billing/meters", params)
+        client.post_form("/billing/meters", params)
     }
 
     pub fn list(client: &stripe::Client) -> stripe::Response<stripe::List<Self>> {
-        client.get_query("/billing/meters", ())
+        #[derive(Serialize)]
+        struct Params {}
+
+        client.get_query("/billing/meters", Params {})
     }
 }
 
@@ -350,16 +349,35 @@ struct StripeMeterEvent {
 }
 
 impl StripeMeterEvent {
-    pub fn create(
+    pub async fn create(
         client: &stripe::Client,
-        params: StripeCreateMeterEventParams,
-    ) -> stripe::Response<Self> {
-        client.post_form("/v1/billing/meter_events", params)
+        params: StripeCreateMeterEventParams<'_>,
+    ) -> Result<Self, stripe::StripeError> {
+        let identifier = params.identifier;
+        match client.post_form("/billing/meter_events", params).await {
+            Ok(event) => Ok(event),
+            Err(stripe::StripeError::Stripe(error)) => {
+                if error.http_status == 400
+                    && error
+                        .message
+                        .as_ref()
+                        .map_or(false, |message| message.contains(identifier))
+                {
+                    Ok(Self {
+                        identifier: identifier.to_string(),
+                    })
+                } else {
+                    Err(stripe::StripeError::Stripe(error))
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
 #[derive(Serialize)]
 struct StripeCreateMeterEventParams<'a> {
+    identifier: &'a str,
     event_name: &'a str,
     payload: StripeCreateMeterEventPayload<'a>,
     timestamp: Option<i64>,

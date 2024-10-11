@@ -1,10 +1,11 @@
 create table billing_events (
     id serial primary key,
+    idempotency_key uuid not null default gen_random_uuid(),
     user_id integer not null,
     model_id integer not null references models (id) on delete cascade,
     input_tokens bigint not null default 0,
-    cache_creation_input_tokens bigint not null default 0,
-    cache_read_input_tokens bigint not null default 0,
+    input_cache_creation_input_tokens bigint not null default 0,
+    input_cache_read_input_tokens bigint not null default 0,
     output_tokens bigint not null default 0
 );
 

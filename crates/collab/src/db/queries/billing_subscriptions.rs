@@ -114,7 +114,7 @@ impl Database {
 
     pub async fn get_active_billing_subscriptions(
         &self,
-        user_ids: Vec<UserId>,
+        user_ids: HashSet<UserId>,
     ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
         self.transaction(|tx| {
             let user_ids = user_ids.clone();
