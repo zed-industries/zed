@@ -2242,6 +2242,15 @@ impl Project {
             return;
         }
 
+        if let Some(ssh) = &self.ssh_client {
+            ssh.read(cx)
+                .to_proto_client()
+                .send(proto::RemoveWorktree {
+                    worktree_id: id_to_remove.to_proto(),
+                })
+                .log_err();
+        }
+
         cx.notify();
     }
 
@@ -3070,7 +3079,7 @@ impl Project {
         }
     }
 
-    // Returns the resolved version of `path`, that was found in `buffer`, if it exists.
+    /// Returns the resolved version of `path`, that was found in `buffer`, if it exists.
     pub fn resolve_existing_file_path(
         &self,
         path: &str,
@@ -3079,38 +3088,53 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let path_buf = PathBuf::from(path);
         if path_buf.is_absolute() || path.starts_with("~") {
-            if self.is_local() {
-                let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
-
-                let fs = self.fs.clone();
-                cx.background_executor().spawn(async move {
-                    let path = expanded.as_path();
-                    let exists = fs.is_file(path).await;
-
-                    exists.then(|| ResolvedPath::AbsPath(expanded))
-                })
-            } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-                let request =
-                    ssh_client
-                        .read(cx)
-                        .to_proto_client()
-                        .request(proto::CheckFileExists {
-                            project_id: SSH_PROJECT_ID,
-                            path: path.to_string(),
-                        });
-                cx.background_executor().spawn(async move {
-                    let response = request.await.log_err()?;
-                    if response.exists {
-                        Some(ResolvedPath::AbsPath(PathBuf::from(response.path)))
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                return Task::ready(None);
-            }
+            self.resolve_abs_file_path(path, cx)
         } else {
             self.resolve_path_in_worktrees(path_buf, buffer, cx)
+        }
+    }
+
+    pub fn abs_file_path_exists(&self, path: &str, cx: &mut ModelContext<Self>) -> Task<bool> {
+        let resolve_task = self.resolve_abs_file_path(path, cx);
+        cx.background_executor().spawn(async move {
+            let resolved_path = resolve_task.await;
+            resolved_path.is_some()
+        })
+    }
+
+    fn resolve_abs_file_path(
+        &self,
+        path: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        if self.is_local() {
+            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
+
+            let fs = self.fs.clone();
+            cx.background_executor().spawn(async move {
+                let path = expanded.as_path();
+                let exists = fs.is_file(path).await;
+
+                exists.then(|| ResolvedPath::AbsPath(expanded))
+            })
+        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request = ssh_client
+                .read(cx)
+                .to_proto_client()
+                .request(proto::CheckFileExists {
+                    project_id: SSH_PROJECT_ID,
+                    path: path.to_string(),
+                });
+            cx.background_executor().spawn(async move {
+                let response = request.await.log_err()?;
+                if response.exists {
+                    Some(ResolvedPath::AbsPath(PathBuf::from(response.path)))
+                } else {
+                    None
+                }
+            })
+        } else {
+            return Task::ready(None);
         }
     }
 
