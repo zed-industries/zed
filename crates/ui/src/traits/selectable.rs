@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 /// A trait for elements that can be selected.
 ///
 /// Generally used to enable "toggle" or "active" behavior and styles on an element through the [`Selection`] status.
@@ -26,6 +28,16 @@ impl Selection {
         match self {
             Self::Unselected | Self::Indeterminate => Self::Selected,
             Self::Selected => Self::Unselected,
+        }
+    }
+}
+
+impl Display for Selection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unselected => write!(f, "Unselected"),
+            Self::Indeterminate => write!(f, "Indeterminate"),
+            Self::Selected => write!(f, "Selected"),
         }
     }
 }
