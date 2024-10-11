@@ -288,6 +288,7 @@ impl LlmDatabase {
         input_cache_read_tokens: usize,
         output_tokens: usize,
         has_llm_subscription: bool,
+        max_monthly_spend: Cents,
         now: DateTimeUtc,
     ) -> Result<Usage> {
         self.transaction(|tx| async move {
@@ -402,7 +403,10 @@ impl LlmDatabase {
                 monthly_usage.output_tokens as usize,
             );
 
-            if spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT && has_llm_subscription {
+            if spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT
+                && has_llm_subscription
+                && spending_this_month <= max_monthly_spend
+            {
                 billing_event::ActiveModel {
                     id: ActiveValue::not_set(),
                     idempotency_key: ActiveValue::not_set(),

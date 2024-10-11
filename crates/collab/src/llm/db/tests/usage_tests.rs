@@ -36,14 +36,38 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     let user_id = UserId::from_proto(123);
 
     let now = t0;
-    db.record_usage(user_id, false, provider, model, 1000, 0, 0, 0, false, now)
-        .await
-        .unwrap();
+    db.record_usage(
+        user_id,
+        false,
+        provider,
+        model,
+        1000,
+        0,
+        0,
+        0,
+        false,
+        Cents::ZERO,
+        now,
+    )
+    .await
+    .unwrap();
 
     let now = t0 + Duration::seconds(10);
-    db.record_usage(user_id, false, provider, model, 2000, 0, 0, 0, false, now)
-        .await
-        .unwrap();
+    db.record_usage(
+        user_id,
+        false,
+        provider,
+        model,
+        2000,
+        0,
+        0,
+        0,
+        false,
+        Cents::ZERO,
+        now,
+    )
+    .await
+    .unwrap();
 
     let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
     assert_eq!(
@@ -79,9 +103,21 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     );
 
     let now = t0 + Duration::seconds(60);
-    db.record_usage(user_id, false, provider, model, 3000, 0, 0, 0, false, now)
-        .await
-        .unwrap();
+    db.record_usage(
+        user_id,
+        false,
+        provider,
+        model,
+        3000,
+        0,
+        0,
+        0,
+        false,
+        Cents::ZERO,
+        now,
+    )
+    .await
+    .unwrap();
 
     let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
     assert_eq!(
@@ -117,9 +153,21 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         }
     );
 
-    db.record_usage(user_id, false, provider, model, 4000, 0, 0, 0, false, now)
-        .await
-        .unwrap();
+    db.record_usage(
+        user_id,
+        false,
+        provider,
+        model,
+        4000,
+        0,
+        0,
+        0,
+        false,
+        Cents::ZERO,
+        now,
+    )
+    .await
+    .unwrap();
 
     let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
     assert_eq!(
@@ -143,9 +191,21 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         .with_timezone(&Utc);
 
     // Test cache creation input tokens
-    db.record_usage(user_id, false, provider, model, 1000, 500, 0, 0, false, now)
-        .await
-        .unwrap();
+    db.record_usage(
+        user_id,
+        false,
+        provider,
+        model,
+        1000,
+        500,
+        0,
+        0,
+        false,
+        Cents::ZERO,
+        now,
+    )
+    .await
+    .unwrap();
 
     let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
     assert_eq!(
@@ -164,9 +224,21 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     );
 
     // Test cache read input tokens
-    db.record_usage(user_id, false, provider, model, 1000, 0, 300, 0, false, now)
-        .await
-        .unwrap();
+    db.record_usage(
+        user_id,
+        false,
+        provider,
+        model,
+        1000,
+        0,
+        300,
+        0,
+        false,
+        Cents::ZERO,
+        now,
+    )
+    .await
+    .unwrap();
 
     let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
     assert_eq!(

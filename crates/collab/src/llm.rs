@@ -664,6 +664,7 @@ impl<S> Drop for TokenCountingStream<S> {
                     cache_read_input_token_count,
                     output_token_count,
                     claims.has_llm_subscription,
+                    Cents(claims.max_monthly_spend_in_cents),
                     Utc::now(),
                 )
                 .await
