@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use gpui::{AppContext, ClickEvent, FocusHandle, FocusableView, View};
+use gpui::{
+    AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakView,
+};
 use ui::{
     div, px, relative, v_flex, vh, ActiveTheme, Button, ButtonCommon, ButtonSize,
     CheckboxWithLabel, Clickable, Color, ElementId, ElevationIndex, FixedWidth, FluentBuilder,
@@ -10,6 +12,7 @@ use ui::{
     Render, Selection, SharedString, Spacing, StatefulInteractiveElement, Styled, StyledExt,
     StyledTypography, ViewContext, VisualContext, WindowContext,
 };
+use workspace::{ModalView, Workspace};
 
 const MAX_DIALOG_WIDTH: f32 = 440.0;
 const MIN_DIALOG_WIDTH: f32 = 260.0;
@@ -59,6 +62,7 @@ enum AlertDialogLayout {
 ///
 /// It blocks all other interactions until the user responds, making it suitable
 /// for important confirmations or critical error messages.
+#[derive(Clone)]
 pub struct AlertDialog {
     /// The title of the alert dialog
     pub title: SharedString,
@@ -78,6 +82,17 @@ pub struct AlertDialog {
 struct AlertDialogView {
     dialog: AlertDialog,
     focus_handle: FocusHandle,
+}
+
+impl AlertDialogView {}
+
+impl ModalView for AlertDialog {}
+
+impl EventEmitter<DismissEvent> for AlertDialog {}
+impl FocusableView for AlertDialog {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl AlertDialog {
@@ -147,6 +162,24 @@ impl AlertDialog {
         self
     }
 
+    fn render_button(&self, cx: &WindowContext, action: AlertDialogButton) -> impl IntoElement {
+        let id_string: SharedString = format!("action-{}-button", action.label).into();
+        let id: ElementId = ElementId::Name(id_string);
+
+        Button::new(id, action.label)
+            .size(ButtonSize::Large)
+            .layer(ElevationIndex::ModalSurface)
+            .when(
+                self.dialog_layout() == AlertDialogLayout::Vertical,
+                |this| this.full_width(),
+            )
+            .when_some(action.on_click, |this, on_click| {
+                this.on_click(move |event, cx| {
+                    on_click(event, cx);
+                })
+            })
+    }
+
     fn dialog_layout(&self) -> AlertDialogLayout {
         let title_len = self.title.len();
         let primary_action_len = self.primary_action.label.len();
@@ -164,22 +197,15 @@ impl AlertDialog {
         }
     }
 
-    fn render_button(&self, cx: &WindowContext, action: AlertDialogButton) -> impl IntoElement {
-        let id_string: SharedString = format!("action-{}-button", action.label).into();
-        let id: ElementId = ElementId::Name(id_string);
-
-        Button::new(id, action.label)
-            .size(ButtonSize::Large)
-            .layer(ElevationIndex::ModalSurface)
-            .when(
-                self.dialog_layout() == AlertDialogLayout::Vertical,
-                |this| this.full_width(),
-            )
-            .when_some(action.on_click, |this, on_click| {
-                this.on_click(move |event, cx| {
-                    on_click(event, cx);
-                })
+    /// Spawns the alert dialog in a new modal
+    pub fn show(&self, workspace: WeakView<Workspace>, cx: &mut ViewContext<Self>) {
+        let this = self.clone();
+        cx.spawn(|_, mut cx| async move {
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| this);
             })
+        })
+        .detach();
     }
 }
 
@@ -212,20 +238,27 @@ impl Render for AlertDialog {
             .child(
                 v_flex()
                     .w_full()
+                    // This is a flex hack. Layout breaks without it ¯\_(ツ)_/¯
                     .min_h(px(1.))
                     .max_w_full()
                     .flex_grow()
                     .when(layout == AlertDialogLayout::Vertical, |this| {
+                        // If we had `.text_center()` we would use it here instead of centering the content
+                        // since this approach will only work as long as the content is a single line
                         this.justify_center().mx_auto()
                     })
                     .child(
                         div()
+                            // Same as above, if `.text_center()` is supported in the future, use here.
                             .when(layout == AlertDialogLayout::Vertical, |this| this.mx_auto())
                             .child(Headline::new(self.title.clone()).size(HeadlineSize::Small)),
                     )
                     .when_some(self.message.clone(), |this, message| {
+                        // TODO: When content will be long (example: a document, log or stack trace)
+                        // we should render some sort of styled container, as well as allow the content to scroll
                         this.child(
                             div()
+                                // Same as above, if `.text_center()` is supported in the future, use here.
                                 .when(layout == AlertDialogLayout::Vertical, |this| this.mx_auto())
                                 .text_color(cx.theme().colors().text_muted)
                                 .text_ui(cx)
@@ -256,27 +289,15 @@ impl Render for AlertDialog {
                             .flex()
                             .gap(Spacing::Medium.rems(cx))
                             .when(layout == AlertDialogLayout::Vertical, |this| {
-                                this.flex_col().w_full()
+                                this.flex_col_reverse().w_full()
                             })
                             .when(layout == AlertDialogLayout::Horizontal, |this| {
                                 this.items_center()
                             })
-                            .when(layout == AlertDialogLayout::Vertical, |this| {
-                                this.child(self.render_button(cx, self.primary_action.clone()))
-                                    .child(self.render_button(cx, self.secondary_action.clone()))
-                            })
-                            .when(layout == AlertDialogLayout::Horizontal, |this| {
-                                this.child(self.render_button(cx, self.secondary_action.clone()))
-                                    .child(self.render_button(cx, self.primary_action.clone()))
-                            }),
+                            .child(self.render_button(cx, self.secondary_action.clone()))
+                            .child(self.render_button(cx, self.primary_action.clone())),
                     ),
             )
-    }
-}
-
-impl FocusableView for AlertDialog {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
     }
 }
 

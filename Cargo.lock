@@ -11755,6 +11755,7 @@ dependencies = [
  "theme_selector",
  "tree-sitter-md",
  "ui",
+ "ui_feedback",
  "util",
  "vcs_menu",
  "windows 0.58.0",
@@ -12427,6 +12428,7 @@ dependencies = [
  "story",
  "theme",
  "ui",
+ "workspace",
 ]
 
 [[package]]
