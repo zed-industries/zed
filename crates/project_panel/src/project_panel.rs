@@ -2900,42 +2900,31 @@ impl ProjectPanel {
         } else {
             worktree.entry_for_path(&entry.path.parent()?)?
         };
-        println!("--------------------------------------------");
 
         let (active_indent_range, depth) = {
-            // let child_count = snapshot.child_entries(&entry.path).count();
-            println!("Determining indent e indent range for {:?}", &entry.path);
-
             let (worktree_ix, child_offset, ix) = self.index_for_entry(entry.id, worktree.id())?;
             let child_paths = &self.visible_entries[worktree_ix].1;
             let mut child_count = 0;
             let depth = entry.path.ancestors().count();
             while let Some(entry) = child_paths.get(child_offset + child_count + 1) {
-                println!("Looking at: {:?}", &entry.path);
                 if entry.path.ancestors().count() <= depth {
                     break;
                 }
                 child_count += 1;
             }
 
-            println!("Child count: {}", child_count);
-
             let start = ix + 1;
             let end = start + child_count;
 
             (start..end, depth.saturating_sub(1))
         };
-        println!("--------------------------------------------");
 
         let candidates = indent_guides
             .iter()
             .enumerate()
             .filter(|(_, indent_guide)| indent_guide.offset.x == depth);
 
-        // dbg!(&active_indent_range, depth);
-
         for (i, indent) in candidates {
-            // dbg!(indent);
             // Find matches that are either an exact match, partially on screen, or inside the enclosing indent
             if active_indent_range.start <= indent.offset.y + indent.length
                 && indent.offset.y <= active_indent_range.end
@@ -2944,24 +2933,6 @@ impl ProjectPanel {
             }
         }
         None
-        // Use the selection to find the active item range,
-        // This is either:
-        // - The containing range if the selected item is a file or a non-expanded directory
-        // - The children range if the selected item is a directory and expanded
-        //
-        // First find out which case we are dealing with
-        // Then compute the range
-        // Then find the matching indent guide
-
-        // indent_guides
-        //     .iter()
-        //     .enumerate()
-        //     .filter(|(_, layout)| {
-        //         let start = layout.offset.y.saturating_sub(1);
-        //         start <= active_entry_idx && active_entry_idx <= start + layout.length
-        //     })
-        //     .max_by_key(|(_, layout)| layout.offset.x)
-        //     .map(|(idx, _)| idx)
     }
 }
 
