@@ -1,4 +1,3 @@
-use crate::extension_builder::WASI_ADAPTER_URL;
 use crate::extension_manifest::SchemaVersion;
 use crate::extension_settings::ExtensionSettings;
 use crate::{
@@ -12,7 +11,7 @@ use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
-use http_client::{AsyncBody, FakeHttpClient, HttpClient, Response};
+use http_client::{FakeHttpClient, Response};
 use indexed_docs::IndexedDocsRegistry;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::NodeRuntime;

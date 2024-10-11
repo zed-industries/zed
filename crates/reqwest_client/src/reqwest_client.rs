@@ -68,7 +68,7 @@ impl From<reqwest::Client> for ReqwestClient {
                 _thread: None,
             }
         } else {
-            let (sender, mut reciever) = mpsc::unbounded();
+            let (sender, mut receiver) = mpsc::unbounded();
             Self {
                 client,
                 proxy: None,
@@ -79,7 +79,7 @@ impl From<reqwest::Client> for ReqwestClient {
                         .build()?;
 
                     runtime.block_on(async {
-                        while let Some((request, response_channel)) = reciever.next().await {
+                        while let Some((request, response_channel)) = receiver.next().await {
                             tokio::spawn(async {
                                 response_channel.send(request.send().await).ok();
                             });
