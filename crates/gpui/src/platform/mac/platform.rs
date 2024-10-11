@@ -216,7 +216,8 @@ impl MacPlatform {
 
         for menu_config in menus {
             let menu = NSMenu::new(nil).autorelease();
-            menu.setTitle_(ns_string(&menu_config.name));
+            let menu_title = ns_string(&menu_config.name);
+            menu.setTitle_(menu_title);
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
@@ -229,6 +230,7 @@ impl MacPlatform {
             }
 
             let menu_item = NSMenuItem::new(nil).autorelease();
+            menu_item.setTitle_(menu_title);
             menu_item.setSubmenu_(menu);
             application_menu.addItem_(menu_item);
 
@@ -540,8 +542,6 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        // Clippy thinks that this evaluates to `()`, for some reason.
-        #[allow(clippy::unit_arg, clippy::clone_on_copy)]
         let renderer_context = self.0.lock().renderer_context.clone();
         Ok(Box::new(MacWindow::open(
             handle,
@@ -718,6 +718,20 @@ impl Platform for MacPlatform {
                 })
                 .detach();
         }
+    }
+
+    fn open_with_system(&self, path: &Path) {
+        let path = path.to_path_buf();
+        self.0
+            .lock()
+            .background_executor
+            .spawn(async move {
+                std::process::Command::new("open")
+                    .arg(path)
+                    .spawn()
+                    .expect("Failed to open file");
+            })
+            .detach();
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
@@ -1420,7 +1434,7 @@ impl UTType {
         self.0
     }
 
-    fn inner_mut(&mut self) -> *mut Object {
+    fn inner_mut(&self) -> *mut Object {
         self.0 as *mut _
     }
 }

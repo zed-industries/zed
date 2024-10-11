@@ -85,7 +85,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
             impersonator_id: None,
         })
     } else {
-        verify_access_token(&access_token, user_id, &state.db).await
+        verify_access_token(access_token, user_id, &state.db).await
     };
 
     if let Ok(validate_result) = validate_result {
@@ -202,7 +202,7 @@ pub async fn verify_access_token(
         .unwrap()
     });
 
-    let token: AccessTokenJson = serde_json::from_str(&token)?;
+    let token: AccessTokenJson = serde_json::from_str(token)?;
 
     let db_token = db.get_access_token(token.id).await?;
     let token_user_id = db_token.impersonated_user_id.unwrap_or(db_token.user_id);
@@ -249,7 +249,7 @@ pub async fn verify_dev_server_token(
     db: &Arc<Database>,
 ) -> anyhow::Result<dev_server::Model> {
     let (id, token) = split_dev_server_token(dev_server_token)?;
-    let token_hash = hash_access_token(&token);
+    let token_hash = hash_access_token(token);
     let server = db.get_dev_server(id).await?;
 
     if server
@@ -301,18 +301,16 @@ mod test {
             .await
             .unwrap();
 
-        let token = create_access_token(&db, user.user_id, None).await.unwrap();
+        let token = create_access_token(db, user.user_id, None).await.unwrap();
         assert!(matches!(
-            verify_access_token(&token, user.user_id, &db)
-                .await
-                .unwrap(),
+            verify_access_token(&token, user.user_id, db).await.unwrap(),
             VerifyAccessTokenResult {
                 is_valid: true,
                 impersonator_id: None,
             }
         ));
 
-        let old_token = create_previous_access_token(user.user_id, None, &db)
+        let old_token = create_previous_access_token(user.user_id, None, db)
             .await
             .unwrap();
 
@@ -333,7 +331,7 @@ mod test {
         assert!(hash.starts_with("$scrypt$"));
 
         assert!(matches!(
-            verify_access_token(&old_token, user.user_id, &db)
+            verify_access_token(&old_token, user.user_id, db)
                 .await
                 .unwrap(),
             VerifyAccessTokenResult {
@@ -355,7 +353,7 @@ mod test {
         assert!(hash.starts_with("$sha256$"));
 
         assert!(matches!(
-            verify_access_token(&old_token, user.user_id, &db)
+            verify_access_token(&old_token, user.user_id, db)
                 .await
                 .unwrap(),
             VerifyAccessTokenResult {
@@ -365,9 +363,7 @@ mod test {
         ));
 
         assert!(matches!(
-            verify_access_token(&token, user.user_id, &db)
-                .await
-                .unwrap(),
+            verify_access_token(&token, user.user_id, db).await.unwrap(),
             VerifyAccessTokenResult {
                 is_valid: true,
                 impersonator_id: None,

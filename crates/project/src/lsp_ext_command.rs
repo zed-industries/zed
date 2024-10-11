@@ -36,7 +36,7 @@ impl ExpandedMacro {
         self.name.is_empty() && self.expansion.is_empty()
     }
 }
-
+#[derive(Debug)]
 pub struct ExpandMacro {
     pub position: PointUtf16,
 }

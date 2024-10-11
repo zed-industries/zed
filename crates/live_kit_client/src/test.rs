@@ -320,7 +320,7 @@ impl TestServer {
                     .try_broadcast(RoomUpdate::SubscribedToRemoteAudioTrack(
                         Arc::new(RemoteAudioTrack {
                             server_track: track.clone(),
-                            room: Arc::downgrade(&client_room),
+                            room: Arc::downgrade(client_room),
                         }),
                         publication.clone(),
                     ))
@@ -332,7 +332,7 @@ impl TestServer {
     }
 
     fn set_track_muted(&self, token: &str, track_sid: &str, muted: bool) -> Result<()> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = live_kit_server::token::validate(token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = claims.sub.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -363,7 +363,7 @@ impl TestServer {
     }
 
     fn is_track_muted(&self, token: &str, track_sid: &str) -> Option<bool> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key).ok()?;
+        let claims = live_kit_server::token::validate(token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -419,7 +419,7 @@ impl TestServer {
             .map(|track| {
                 Arc::new(RemoteAudioTrack {
                     server_track: track.clone(),
-                    room: Arc::downgrade(&client_room),
+                    room: Arc::downgrade(client_room),
                 })
             })
             .collect())
@@ -840,6 +840,12 @@ pub struct MacOSDisplay {
         async_broadcast::Sender<Frame>,
         async_broadcast::Receiver<Frame>,
     ),
+}
+
+impl Default for MacOSDisplay {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MacOSDisplay {

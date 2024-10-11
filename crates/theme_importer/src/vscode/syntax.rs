@@ -190,7 +190,7 @@ impl ZedSyntaxToken {
         }
     }
 
-    pub fn to_vscode(&self) -> Vec<&'static str> {
+    fn to_vscode(self) -> Vec<&'static str> {
         match self {
             ZedSyntaxToken::Attribute => vec!["entity.other.attribute-name"],
             ZedSyntaxToken::Boolean => vec!["constant.language"],

@@ -12,7 +12,7 @@
 //! - [`WrapMap`] that handles soft wrapping.
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
-//! Each one of those builds on top of preceding map.
+//!   Each one of those builds on top of preceding map.
 //!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
@@ -127,7 +127,9 @@ impl DisplayMap {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
 
         let tab_size = Self::tab_size(&buffer, cx);
-        let (inlay_map, snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let crease_map = CreaseMap::new(&buffer_snapshot);
+        let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
@@ -138,7 +140,6 @@ impl DisplayMap {
             excerpt_header_height,
             excerpt_footer_height,
         );
-        let crease_map = CreaseMap::default();
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 
@@ -588,7 +589,7 @@ impl DisplaySnapshot {
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
         self.buffer_snapshot
-            .anchor_at(point.to_offset(&self, bias), bias)
+            .anchor_at(point.to_offset(self, bias), bias)
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
@@ -735,7 +736,7 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row.next_row();
-        for chunk in self.highlighted_chunks(range, false, &editor_style) {
+        for chunk in self.highlighted_chunks(range, false, editor_style) {
             line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
@@ -1286,7 +1287,7 @@ pub mod tests {
                                         height,
                                         disposition,
                                         render: Box::new(|_| div().into_any()),
-                                        priority: priority,
+                                        priority,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1645,7 +1646,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"
@@ -1750,7 +1751,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"
@@ -1833,7 +1834,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"

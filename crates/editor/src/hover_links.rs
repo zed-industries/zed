@@ -1,8 +1,8 @@
 use crate::{
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
-    Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
-    Navigated, PointForPosition, SelectPhase,
+    Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition,
+    GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
 use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -14,12 +14,12 @@ use project::{
 };
 use std::ops::Range;
 use theme::ActiveTheme as _;
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt as _};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
     pub last_trigger_point: TriggerPoint,
-    pub preferred_kind: LinkDefinitionKind,
+    pub preferred_kind: GotoDefinitionKind,
     pub symbol_range: Option<RangeInEditor>,
     pub links: Vec<HoverLink>,
     pub task: Option<Task<Option<()>>>,
@@ -134,7 +134,7 @@ impl Editor {
             }
             None => {
                 update_inlay_link_and_hover_points(
-                    &snapshot,
+                    snapshot,
                     point_for_position,
                     self,
                     modifiers.secondary(),
@@ -428,12 +428,6 @@ pub fn update_inlay_link_and_hover_points(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LinkDefinitionKind {
-    Symbol,
-    Type,
-}
-
 pub fn show_link_definition(
     shift_held: bool,
     editor: &mut Editor,
@@ -442,8 +436,8 @@ pub fn show_link_definition(
     cx: &mut ViewContext<Editor>,
 ) {
     let preferred_kind = match trigger_point {
-        TriggerPoint::Text(_) if !shift_held => LinkDefinitionKind::Symbol,
-        _ => LinkDefinitionKind::Type,
+        TriggerPoint::Text(_) if !shift_held => GotoDefinitionKind::Symbol,
+        _ => GotoDefinitionKind::Type,
     };
 
     let (mut hovered_link_state, is_cached) =
@@ -490,12 +484,12 @@ pub fn show_link_definition(
             .is_some_and(|d| matches!(d, HoverLink::Url(_)));
 
     if same_kind {
-        if is_cached && (&hovered_link_state.last_trigger_point == &trigger_point)
+        if is_cached && (hovered_link_state.last_trigger_point == trigger_point)
             || hovered_link_state
                 .symbol_range
                 .as_ref()
                 .is_some_and(|symbol_range| {
-                    symbol_range.point_within_range(&trigger_point, &snapshot)
+                    symbol_range.point_within_range(&trigger_point, snapshot)
                 })
         {
             editor.hovered_link_state = Some(hovered_link_state);
@@ -505,6 +499,7 @@ pub fn show_link_definition(
         editor.hide_hovered_link(cx)
     }
     let project = editor.project.clone();
+    let provider = editor.semantics_provider.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
     hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
@@ -522,54 +517,40 @@ pub fn show_link_definition(
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
-                    } else if let Some(project) = project {
-                        if let Some((filename_range, filename)) =
-                            find_file(&buffer, project.clone(), buffer_position, &mut cx).await
-                        {
-                            let range = maybe!({
-                                let start =
-                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
-                                let end =
-                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
-                                Some(RangeInEditor::Text(start..end))
-                            });
+                    } else if let Some((filename_range, filename)) =
+                        find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                    {
+                        let range = maybe!({
+                            let start =
+                                snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
+                            let end = snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
+                            Some(RangeInEditor::Text(start..end))
+                        });
 
-                            Some((range, vec![HoverLink::File(filename)]))
+                        Some((range, vec![HoverLink::File(filename)]))
+                    } else if let Some(provider) = provider {
+                        let task = cx.update(|cx| {
+                            provider.definitions(&buffer, buffer_position, preferred_kind, cx)
+                        })?;
+                        if let Some(task) = task {
+                            task.await.ok().map(|definition_result| {
+                                (
+                                    definition_result.iter().find_map(|link| {
+                                        link.origin.as_ref().and_then(|origin| {
+                                            let start = snapshot.anchor_in_excerpt(
+                                                excerpt_id,
+                                                origin.range.start,
+                                            )?;
+                                            let end = snapshot
+                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
+                                            Some(RangeInEditor::Text(start..end))
+                                        })
+                                    }),
+                                    definition_result.into_iter().map(HoverLink::Text).collect(),
+                                )
+                            })
                         } else {
-                            // query the LSP for definition info
-                            project
-                                .update(&mut cx, |project, cx| match preferred_kind {
-                                    LinkDefinitionKind::Symbol => {
-                                        project.definition(&buffer, buffer_position, cx)
-                                    }
-
-                                    LinkDefinitionKind::Type => {
-                                        project.type_definition(&buffer, buffer_position, cx)
-                                    }
-                                })?
-                                .await
-                                .ok()
-                                .map(|definition_result| {
-                                    (
-                                        definition_result.iter().find_map(|link| {
-                                            link.origin.as_ref().and_then(|origin| {
-                                                let start = snapshot.anchor_in_excerpt(
-                                                    excerpt_id,
-                                                    origin.range.start,
-                                                )?;
-                                                let end = snapshot.anchor_in_excerpt(
-                                                    excerpt_id,
-                                                    origin.range.end,
-                                                )?;
-                                                Some(RangeInEditor::Text(start..end))
-                                            })
-                                        }),
-                                        definition_result
-                                            .into_iter()
-                                            .map(HoverLink::Text)
-                                            .collect(),
-                                    )
-                                })
+                            None
                         }
                     } else {
                         None
@@ -596,7 +577,7 @@ pub fn show_link_definition(
                 if let Some((symbol_range, definitions)) = result {
                     hovered_link_state.links = definitions;
 
-                    let underline_hovered_link = hovered_link_state.links.len() > 0
+                    let underline_hovered_link = !hovered_link_state.links.is_empty()
                         || hovered_link_state.symbol_range.is_some();
 
                     if underline_hovered_link {
@@ -708,22 +689,48 @@ pub(crate) fn find_url(
 
 pub(crate) async fn find_file(
     buffer: &Model<language::Buffer>,
-    project: Model<Project>,
+    project: Option<Model<Project>>,
     position: text::Anchor,
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
+    let project = project?;
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
-
+    let scope = snapshot.language_scope_at(position);
     let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
 
-    let existing_path = project
-        .update(cx, |project, cx| {
-            project.resolve_existing_file_path(&candidate_file_path, &buffer, cx)
-        })
-        .ok()?
-        .await?;
+    async fn check_path(
+        candidate_file_path: &str,
+        project: &Model<Project>,
+        buffer: &Model<language::Buffer>,
+        cx: &mut AsyncWindowContext,
+    ) -> Option<ResolvedPath> {
+        project
+            .update(cx, |project, cx| {
+                project.resolve_existing_file_path(&candidate_file_path, buffer, cx)
+            })
+            .ok()?
+            .await
+    }
 
-    Some((range, existing_path))
+    if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, cx).await {
+        return Some((range, existing_path));
+    }
+
+    if let Some(scope) = scope {
+        for suffix in scope.path_suffixes() {
+            if candidate_file_path.ends_with(format!(".{suffix}").as_str()) {
+                continue;
+            }
+
+            let suffixed_candidate = format!("{candidate_file_path}.{suffix}");
+            if let Some(existing_path) = check_path(&suffixed_candidate, &project, buffer, cx).await
+            {
+                return Some((range, existing_path));
+            }
+        }
+    }
+
+    None
 }
 
 fn surrounding_filename(
@@ -1180,6 +1187,7 @@ mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1258,7 +1266,7 @@ mod tests {
                     let variable« »= TestStruct;
                 }
             "})
-            .get(0)
+            .first()
             .cloned()
             .unwrap();
         let midpoint = cx.update_editor(|editor, cx| {
@@ -1490,7 +1498,8 @@ mod tests {
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.ˇ
+            Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.ˇ
         "});
 
         // File does not exist
@@ -1499,6 +1508,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         // No highlight
@@ -1517,6 +1527,7 @@ mod tests {
             Go to fˇile2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
@@ -1525,6 +1536,7 @@ mod tests {
             Go to «file2.rsˇ» if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         // Moving the mouse over a relative path that does exist should highlight it
@@ -1533,6 +1545,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/fˇile2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
@@ -1541,6 +1554,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to «../dir/file2.rsˇ» if you want.
             Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         // Moving the mouse over an absolute path that does exist should highlight it
@@ -1549,6 +1563,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/diˇr/file2.rs if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
@@ -1557,6 +1572,25 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to «/root/dir/file2.rsˇ» if project is local.
+            Or go to /root/dir/file2 if this is a Rust file.
+        "});
+
+        // Moving the mouse over a path that exists, if we add the language-specific suffix, it should highlight it
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+            Or go to /root/diˇr/file2 if this is a Rust file.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+            Or go to «/root/dir/file2ˇ» if this is a Rust file.
         "});
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());

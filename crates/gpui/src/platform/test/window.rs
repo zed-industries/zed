@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GPUSpecs,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowParams,
+    Point, ScaledPixels, Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -251,12 +251,7 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn draw(
-        &self,
-        _scene: &crate::Scene,
-        _on_complete: Option<futures::channel::oneshot::Sender<()>>,
-    ) {
-    }
+    fn draw(&self, _scene: &crate::Scene) {}
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
@@ -279,13 +274,9 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {}
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
-        None
-    }
-
-    fn fps(&self) -> Option<f32> {
         None
     }
 }

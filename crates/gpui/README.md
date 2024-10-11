@@ -5,7 +5,7 @@ for Rust, designed to support a wide variety of applications.
 
 ## Getting Started
 
-GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io. You'll also need to use the latest version of stable rust and be on macOS. Add the following to your Cargo.toml:
+GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io. You'll also need to use the latest version of stable Rust and be on macOS or Linux. Add the following to your `Cargo.toml`:
 
 ```toml
 gpui = { git = "https://github.com/zed-industries/zed" }
@@ -13,9 +13,33 @@ gpui = { git = "https://github.com/zed-industries/zed" }
 
 Everything in GPUI starts with an `App`. You can create one with `App::new()`, and kick off your application by passing a callback to `App::run()`. Inside this callback, you can create a new window with `AppContext::open_window()`, and register your first root view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
 
+### Dependencies
+
+GPUI has various system dependencies that it needs in order to work.
+
+#### macOS
+
+On macOS, GPUI uses Metal for rendering. In order to use Metal, you need to do the following:
+
+- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
+
+> Ensure you launch XCode after installing, and install the macOS components, which is the default option.
+
+- Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
+
+  ```sh
+  xcode-select --install
+  ```
+
+- Ensure that the Xcode command line tools are using your newly installed copy of Xcode:
+
+  ```sh
+  sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+  ```
+
 ## The Big Picture
 
-GPUI offers three different [registers](https://en.wikipedia.org/wiki/Register_(sociolinguistics)) depending on your needs:
+GPUI offers three different [registers](<https://en.wikipedia.org/wiki/Register_(sociolinguistics)>) depending on your needs:
 
 - State management and communication with Models. Whenever you need to store application state that communicates between different parts of your application, you'll want to use GPUI's models. Models are owned by GPUI and are only accessible through an owned smart pointer similar to an `Rc`. See the `app::model_context` module for more information.
 

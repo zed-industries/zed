@@ -14,6 +14,7 @@ use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
+use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
@@ -26,19 +27,17 @@ use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
-use project::TaskSourceKind;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
-    SettingsStore, DEFAULT_KEYMAP_PATH,
+    initial_local_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 use workspace::CloseIntent;
@@ -203,7 +202,7 @@ pub fn initialize_workspace(
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
             cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
-        let vim_mode_indicator = cx.new_view(|cx| vim::ModeIndicator::new(cx));
+        let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -227,27 +226,6 @@ pub fn initialize_workspace(
                 })
                 .unwrap_or(true)
         });
-
-        let project = workspace.project().clone();
-        if project.update(cx, |project, cx| {
-            project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
-        }) {
-            project.update(cx, |project, cx| {
-                let fs = app_state.fs.clone();
-                project.task_inventory().update(cx, |inventory, cx| {
-                    let tasks_file_rx =
-                        watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
-                    inventory.add_source(
-                        TaskSourceKind::AbsPath {
-                            id_base: "global_tasks".into(),
-                            abs_path: paths::tasks_file().clone(),
-                        },
-                        |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
-                        cx,
-                    );
-                })
-            });
-        }
 
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
@@ -423,7 +401,7 @@ pub fn initialize_workspace(
                 move |_: &mut Workspace,
                       _: &zed_actions::OpenKeymap,
                       cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(&paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
+                    open_settings_file(paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
                 },
             )
             .register_action(
@@ -572,7 +550,7 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
     .detach();
 }
 
-fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
+fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
             let multibuffer_hint = cx.new_view(|_| MultibufferHint::new());
@@ -582,6 +560,8 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
+            let proposed_change_bar = cx.new_view(|_| ProposedChangesEditorToolbar::new());
+            toolbar.add_item(proposed_change_bar, cx);
             let quick_action_bar =
                 cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);
@@ -628,8 +608,8 @@ fn quit(_: &Quit, cx: &mut AppContext) {
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        cx.update(|mut cx| {
-            workspace_windows.sort_by_key(|window| window.is_active(&mut cx) == Some(false));
+        cx.update(|cx| {
+            workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
         })
         .log_err();
 
@@ -978,7 +958,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
 }
 
 fn open_bundled_file(
-    workspace: &mut Workspace,
+    workspace: &Workspace,
     text: Cow<'static, str>,
     title: &'static str,
     language: &'static str,
@@ -1029,7 +1009,7 @@ fn open_settings_file(
                     // TODO: Do note that all other external files (e.g. drag and drop from OS) still have their worktrees released on file close, causing LSP servers' restarts.
                     project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
                 });
-                let settings_open_task = create_and_open_local_file(&abs_path, cx, default_content);
+                let settings_open_task = create_and_open_local_file(abs_path, cx, default_content);
                 (worktree_creation_task, settings_open_task)
             })?;
 
@@ -1038,6 +1018,11 @@ fn open_settings_file(
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
+    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
+        .await
 }
 
 #[cfg(test)]
@@ -2246,14 +2231,8 @@ mod tests {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     );
                 });
             })
@@ -2369,14 +2348,8 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .language_at(0, cx)
-                            .unwrap()
-                            .name()
-                            .as_ref(),
-                        "Rust"
+                        editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
+                        "Rust".into()
                     )
                 });
             })
@@ -3368,11 +3341,11 @@ mod tests {
     #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
         env_logger::builder().is_test(true).try_init().ok();
-        let settings = cx.update(|cx| SettingsStore::test(cx));
+        let settings = cx.update(SettingsStore::test);
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
-        let node_runtime = node_runtime::FakeNodeRuntime::new();
+        let node_runtime = node_runtime::NodeRuntime::unavailable();
         cx.update(|cx| {
             languages::init(languages.clone(), node_runtime, cx);
         });
@@ -3387,7 +3360,7 @@ mod tests {
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        init_test_with_state(cx, cx.update(|cx| AppState::test(cx)))
+        init_test_with_state(cx, cx.update(AppState::test))
     }
 
     fn init_test_with_state(
@@ -3437,6 +3410,7 @@ mod tests {
             );
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
+            search::init(cx);
             app_state
         })
     }
@@ -3451,7 +3425,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -3465,7 +3439,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_md::language()),
+            Some(tree_sitter_md::LANGUAGE.into()),
         ))
     }
 
@@ -3505,9 +3479,4 @@ mod tests {
             );
         }
     }
-}
-
-async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
-    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
-        .await
 }

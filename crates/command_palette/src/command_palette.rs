@@ -273,7 +273,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = trim_consecutive_whitespaces(&query.as_str());
+            let query = trim_consecutive_whitespaces(query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -303,7 +303,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         })
                         .collect()
                 } else {
-                    let ret = fuzzy::match_strings(
+                    fuzzy::match_strings(
                         &candidates,
                         &query,
                         true,
@@ -311,8 +311,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         &Default::default(),
                         executor,
                     )
-                    .await;
-                    ret
+                    .await
                 };
 
                 tx.send((commands, matches)).await.log_err();

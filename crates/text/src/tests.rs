@@ -515,25 +515,25 @@ fn test_undo_redo() {
     let entries = buffer.history.undo_stack.clone();
     assert_eq!(entries.len(), 3);
 
-    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone());
     assert_eq!(buffer.text(), "1cdef234");
-    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone());
     assert_eq!(buffer.text(), "1abcdef234");
 
-    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone());
     assert_eq!(buffer.text(), "1abcdx234");
-    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone());
     assert_eq!(buffer.text(), "1abx234");
-    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone());
     assert_eq!(buffer.text(), "1abyzef234");
-    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone());
     assert_eq!(buffer.text(), "1abcdef234");
 
-    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone());
     assert_eq!(buffer.text(), "1abyzef234");
-    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone());
     assert_eq!(buffer.text(), "1yzef234");
-    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone());
     assert_eq!(buffer.text(), "1234");
 }
 
@@ -692,12 +692,12 @@ fn test_concurrent_edits() {
     let buf3_op = buffer3.edit([(5..6, "56")]);
     assert_eq!(buffer3.text(), "abcde56");
 
-    buffer1.apply_op(buf2_op.clone()).unwrap();
-    buffer1.apply_op(buf3_op.clone()).unwrap();
-    buffer2.apply_op(buf1_op.clone()).unwrap();
-    buffer2.apply_op(buf3_op).unwrap();
-    buffer3.apply_op(buf1_op).unwrap();
-    buffer3.apply_op(buf2_op).unwrap();
+    buffer1.apply_op(buf2_op.clone());
+    buffer1.apply_op(buf3_op.clone());
+    buffer2.apply_op(buf1_op.clone());
+    buffer2.apply_op(buf3_op);
+    buffer3.apply_op(buf1_op);
+    buffer3.apply_op(buf2_op);
 
     assert_eq!(buffer1.text(), "a12c34e56");
     assert_eq!(buffer2.text(), "a12c34e56");
@@ -756,7 +756,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
                         replica_id,
                         ops.len()
                     );
-                    buffer.apply_ops(ops).unwrap();
+                    buffer.apply_ops(ops);
                 }
             }
             _ => {}

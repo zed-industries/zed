@@ -1,24 +1,28 @@
 pub mod buffer_store;
+mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
 pub mod lsp_ext_command;
 pub mod lsp_store;
-mod prettier_support;
+pub mod prettier_store;
 pub mod project_settings;
 pub mod search;
 mod task_inventory;
+pub mod task_store;
 pub mod terminals;
 pub mod worktree_store;
 
 #[cfg(test)]
 mod project_tests;
 
+mod direnv;
 mod environment;
+pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
@@ -27,48 +31,38 @@ use client::{
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
-use environment::ProjectEnvironment;
+pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
-    stream::FuturesUnordered,
-    AsyncWriteExt, FutureExt, StreamExt,
+    StreamExt,
 };
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, Entity, EventEmitter, Model,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Hsla, Model,
     ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
 use language::{
-    language_settings::{
-        language_settings, FormatOnSave, Formatter, InlayHintKind, LanguageSettings,
-        SelectedFormatter,
-    },
-    proto::{
-        deserialize_anchor, serialize_anchor, serialize_line_ending, serialize_version,
-        split_operations,
-    },
-    Buffer, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry, Diff,
-    Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
-    LocalFile, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
+    CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation, File as _, Language,
+    LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
-use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
+use lsp::{
+    CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
+};
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
-use paths::{
-    local_settings_file_relative_path, local_tasks_file_relative_path,
-    local_vscode_tasks_file_relative_path,
-};
-use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{LspSettings, ProjectSettings};
-use remote::SshSession;
-use rpc::{proto::AnyProtoClient, ErrorCode};
-use search::{SearchQuery, SearchResult};
+pub use prettier_store::PrettierStore;
+use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
+use remote::{SshConnectionOptions, SshRemoteClient};
+use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
+use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
+use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -80,13 +74,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::{
-    static_source::{StaticSource, TrackedFile},
-    HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
-};
+use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
-use util::{defer, paths::compare_paths, ResultExt as _};
+use util::{paths::compare_paths, ResultExt as _};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -107,7 +98,7 @@ pub use buffer_store::ProjectTransaction;
 pub use lsp_store::{
     DiagnosticSummary, LanguageServerLogType, LanguageServerProgress, LanguageServerPromptRequest,
     LanguageServerStatus, LanguageServerToQuery, LspStore, LspStoreEvent,
-    ProjectLspAdapterDelegate, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -143,11 +134,11 @@ pub struct Project {
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
     client: Arc<client::Client>,
-    current_lsp_settings: HashMap<Arc<str>, LspSettings>,
     join_project_response_message_id: u32,
+    task_store: Model<TaskStore>,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
-    ssh_session: Option<Arc<SshSession>>,
+    ssh_client: Option<Model<SshRemoteClient>>,
     client_state: ProjectClientState,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
@@ -157,44 +148,42 @@ pub struct Project {
     _subscriptions: Vec<gpui::Subscription>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
     git_diff_debouncer: DebouncedDelay<Self>,
-    remotely_created_buffers: Arc<Mutex<RemotelyCreatedBuffers>>,
-    _maintain_buffer_languages: Task<()>,
+    remotely_created_models: Arc<Mutex<RemotelyCreatedModels>>,
     terminals: Terminals,
-    node: Option<Arc<dyn NodeRuntime>>,
-    default_prettier: DefaultPrettier,
-    prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
-    prettier_instances: HashMap<PathBuf, PrettierInstance>,
-    tasks: Model<Inventory>,
+    node: Option<NodeRuntime>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    search_included_history: SearchHistory,
+    search_excluded_history: SearchHistory,
     snippets: Model<SnippetProvider>,
-    last_formatting_failure: Option<String>,
-    buffers_being_formatted: HashSet<BufferId>,
     environment: Model<ProjectEnvironment>,
+    settings_observer: Model<SettingsObserver>,
 }
 
 #[derive(Default)]
-struct RemotelyCreatedBuffers {
+struct RemotelyCreatedModels {
+    worktrees: Vec<Model<Worktree>>,
     buffers: Vec<Model<Buffer>>,
     retain_count: usize,
 }
 
-struct RemotelyCreatedBufferGuard {
-    remote_buffers: std::sync::Weak<Mutex<RemotelyCreatedBuffers>>,
+struct RemotelyCreatedModelGuard {
+    remote_models: std::sync::Weak<Mutex<RemotelyCreatedModels>>,
 }
 
-impl Drop for RemotelyCreatedBufferGuard {
+impl Drop for RemotelyCreatedModelGuard {
     fn drop(&mut self) {
-        if let Some(remote_buffers) = self.remote_buffers.upgrade() {
-            let mut remote_buffers = remote_buffers.lock();
+        if let Some(remote_models) = self.remote_models.upgrade() {
+            let mut remote_models = remote_models.lock();
             assert!(
-                remote_buffers.retain_count > 0,
-                "RemotelyCreatedBufferGuard dropped too many times"
+                remote_models.retain_count > 0,
+                "RemotelyCreatedModelGuard dropped too many times"
             );
-            remote_buffers.retain_count -= 1;
-            if remote_buffers.retain_count == 0 {
-                remote_buffers.buffers.clear();
+            remote_models.retain_count -= 1;
+            if remote_models.retain_count == 0 {
+                remote_models.buffers.clear();
+                remote_models.worktrees.clear();
             }
         }
     }
@@ -234,6 +223,7 @@ pub enum Event {
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     Notification(String),
+    LocalSettingsUpdated(Result<(), InvalidSettingsError>),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
@@ -255,6 +245,7 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
+    DisconnectedFromSshRemote,
     Closed,
     DeletedEntry(ProjectEntryId),
     CollaboratorUpdated {
@@ -478,29 +469,12 @@ impl Hover {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FormatTrigger {
-    Save,
-    Manual,
-}
-
-// Currently, formatting operations are represented differently depending on
-// whether they come from a language server or an external command.
-#[derive(Debug)]
-enum FormatOperation {
-    Lsp(Vec<(Range<Anchor>, String)>),
-    External(Diff),
-    Prettier(Diff),
-}
-
-impl FormatTrigger {
-    fn from_proto(value: i32) -> FormatTrigger {
-        match value {
-            0 => FormatTrigger::Save,
-            1 => FormatTrigger::Manual,
-            _ => FormatTrigger::Save,
-        }
-    }
+enum EntitySubscription {
+    Project(PendingEntitySubscription<Project>),
+    BufferStore(PendingEntitySubscription<BufferStore>),
+    WorktreeStore(PendingEntitySubscription<WorktreeStore>),
+    LspStore(PendingEntitySubscription<LspStore>),
+    SettingsObserver(PendingEntitySubscription<SettingsObserver>),
 }
 
 #[derive(Clone)]
@@ -513,7 +487,7 @@ impl DirectoryLister {
     pub fn is_local(&self, cx: &AppContext) -> bool {
         match self {
             DirectoryLister::Local(_) => true,
-            DirectoryLister::Project(project) => project.read(cx).is_local_or_ssh(),
+            DirectoryLister::Project(project) => project.read(cx).is_local(),
         }
     }
 
@@ -574,6 +548,7 @@ impl Project {
         connection_manager::init(client.clone(), cx);
         Self::init_settings(cx);
 
+        let client: AnyProtoClient = client.clone().into();
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_update_project_collaborator);
         client.add_model_message_handler(Self::handle_remove_collaborator);
@@ -581,27 +556,24 @@ impl Project {
         client.add_model_message_handler(Self::handle_unshare_project);
         client.add_model_request_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_worktree);
-        client.add_model_message_handler(Self::handle_update_worktree_settings);
-        client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
-        client.add_model_request_handler(Self::handle_format_buffers);
-        client.add_model_request_handler(Self::handle_search_project);
+
         client.add_model_request_handler(Self::handle_search_candidate_buffers);
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);
-        client.add_model_request_handler(Self::handle_task_context_for_location);
-        client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
-        WorktreeStore::init(client);
-        BufferStore::init(client);
-        LspStore::init(client);
+        WorktreeStore::init(&client);
+        BufferStore::init(&client);
+        LspStore::init(&client);
+        SettingsObserver::init(&client);
+        TaskStore::init(Some(&client));
     }
 
     pub fn local(
         client: Arc<Client>,
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -612,32 +584,57 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
-            let tasks = Inventory::new(cx);
-            let global_snippets_dir = paths::config_dir().join("snippets");
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
-
-            let worktree_store = cx.new_model(|_| WorktreeStore::new(false, fs.clone()));
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
+            let worktree_store = cx.new_model(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
-            let buffer_store =
-                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), None, cx));
+            let buffer_store = cx.new_model(|cx| BufferStore::local(worktree_store.clone(), cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
-            let environment = ProjectEnvironment::new(env, cx);
+            let prettier_store = cx.new_model(|cx| {
+                PrettierStore::new(
+                    node.clone(),
+                    fs.clone(),
+                    languages.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+            });
+
+            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+
+            let task_store = cx.new_model(|cx| {
+                TaskStore::local(
+                    fs.clone(),
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+
+            let settings_observer = cx.new_model(|cx| {
+                SettingsObserver::new_local(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    cx,
+                )
+            });
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
+
             let lsp_store = cx.new_model(|cx| {
-                LspStore::new(
+                LspStore::new_local(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(environment.clone()),
+                    prettier_store.clone(),
+                    environment.clone(),
                     languages.clone(),
-                    client.http_client(),
+                    Some(client.http_client()),
                     fs.clone(),
-                    None,
-                    None,
-                    None,
                     cx,
                 )
             });
@@ -649,67 +646,173 @@ impl Project {
                 worktree_store,
                 buffer_store,
                 lsp_store,
-                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![
-                    cx.observe_global::<SettingsStore>(Self::on_settings_changed),
-                    cx.on_release(Self::release),
-                ],
-                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
+                _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
                 snippets,
                 languages,
                 client,
+                task_store,
                 user_store,
+                settings_observer,
                 fs,
-                ssh_session: None,
+                ssh_client: None,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
-                default_prettier: DefaultPrettier::default(),
-                prettiers_per_worktree: HashMap::default(),
-                prettier_instances: HashMap::default(),
-                tasks,
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
                 environment,
-                remotely_created_buffers: Default::default(),
-                last_formatting_failure: None,
-                buffers_being_formatted: Default::default(),
+                remotely_created_models: Default::default(),
+
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
             }
         })
     }
 
     pub fn ssh(
-        ssh: Arc<SshSession>,
+        ssh: Model<SshRemoteClient>,
         client: Arc<Client>,
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let this = Self::local(client, node, user_store, languages, fs, None, cx);
-        this.update(cx, |this, cx| {
-            let buffer_store = this.buffer_store.downgrade();
-            this.worktree_store.update(cx, |store, _cx| {
-                store.set_upstream_client(ssh.clone().into());
+        cx.new_model(|cx: &mut ModelContext<Self>| {
+            let (tx, rx) = mpsc::unbounded();
+            cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+                .detach();
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+
+            let ssh_proto = ssh.read(cx).to_proto_client();
+            let worktree_store =
+                cx.new_model(|_| WorktreeStore::remote(false, ssh_proto.clone(), 0, None));
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                .detach();
+
+            let buffer_store = cx.new_model(|cx| {
+                BufferStore::remote(
+                    worktree_store.clone(),
+                    ssh.read(cx).to_proto_client(),
+                    SSH_PROJECT_ID,
+                    cx,
+                )
+            });
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
+            let task_store = cx.new_model(|cx| {
+                TaskStore::remote(
+                    fs.clone(),
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    ssh.read(cx).to_proto_client(),
+                    SSH_PROJECT_ID,
+                    cx,
+                )
             });
 
-            ssh.add_message_handler(cx.weak_model(), Self::handle_update_worktree);
-            ssh.add_message_handler(cx.weak_model(), Self::handle_create_buffer_for_peer);
-            ssh.add_message_handler(buffer_store.clone(), BufferStore::handle_update_buffer_file);
-            ssh.add_message_handler(buffer_store.clone(), BufferStore::handle_update_diff_base);
+            let settings_observer = cx.new_model(|cx| {
+                SettingsObserver::new_ssh(
+                    ssh_proto.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    cx,
+                )
+            });
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
 
-            this.ssh_session = Some(ssh);
-        });
-        this
+            let environment = ProjectEnvironment::new(&worktree_store, None, cx);
+            let lsp_store = cx.new_model(|cx| {
+                LspStore::new_remote(
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    languages.clone(),
+                    ssh_proto.clone(),
+                    SSH_PROJECT_ID,
+                    cx,
+                )
+            });
+            cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+            cx.on_release(|this, cx| {
+                if let Some(ssh_client) = this.ssh_client.as_ref() {
+                    ssh_client
+                        .read(cx)
+                        .to_proto_client()
+                        .send(proto::ShutdownRemoteServer {})
+                        .log_err();
+                }
+            })
+            .detach();
+
+            cx.subscribe(&ssh, Self::on_ssh_event).detach();
+            cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
+
+            let this = Self {
+                buffer_ordered_messages_tx: tx,
+                collaborators: Default::default(),
+                worktree_store,
+                buffer_store,
+                lsp_store,
+                join_project_response_message_id: 0,
+                client_state: ProjectClientState::Local,
+                client_subscriptions: Vec::new(),
+                _subscriptions: vec![cx.on_release(Self::release)],
+                active_entry: None,
+                snippets,
+                languages,
+                client,
+                task_store,
+                user_store,
+                settings_observer,
+                fs,
+                ssh_client: Some(ssh.clone()),
+                buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DebouncedDelay::new(),
+                terminals: Terminals {
+                    local_handles: Vec::new(),
+                },
+                node: Some(node),
+                hosted_project_id: None,
+                dev_server_project_id: None,
+                search_history: Self::new_search_history(),
+                environment,
+                remotely_created_models: Default::default(),
+
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
+            };
+
+            let ssh = ssh.read(cx);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
+
+            ssh_proto.add_model_message_handler(Self::handle_create_buffer_for_peer);
+            ssh_proto.add_model_message_handler(Self::handle_update_worktree);
+            ssh_proto.add_model_message_handler(Self::handle_update_project);
+            ssh_proto.add_model_request_handler(BufferStore::handle_update_buffer);
+            BufferStore::init(&ssh_proto);
+            LspStore::init(&ssh_proto);
+            SettingsObserver::init(&ssh_proto);
+            TaskStore::init(Some(&ssh_proto));
+
+            this
+        })
     }
 
     pub async fn remote(
@@ -740,12 +843,17 @@ impl Project {
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscriptions = (
-            client.subscribe_to_entity::<Self>(remote_id)?,
-            client.subscribe_to_entity::<BufferStore>(remote_id)?,
-            client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
-            client.subscribe_to_entity::<LspStore>(remote_id)?,
-        );
+        let subscriptions = [
+            EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
+            EntitySubscription::BufferStore(client.subscribe_to_entity::<BufferStore>(remote_id)?),
+            EntitySubscription::WorktreeStore(
+                client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
+            ),
+            EntitySubscription::LspStore(client.subscribe_to_entity::<LspStore>(remote_id)?),
+            EntitySubscription::SettingsObserver(
+                client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
+            ),
+        ];
         let response = client
             .request_envelope(proto::JoinProject {
                 project_id: remote_id,
@@ -755,6 +863,7 @@ impl Project {
             response,
             subscriptions,
             client,
+            false,
             user_store,
             languages,
             fs,
@@ -763,15 +872,12 @@ impl Project {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscription: (
-            PendingEntitySubscription<Project>,
-            PendingEntitySubscription<BufferStore>,
-            PendingEntitySubscription<WorktreeStore>,
-            PendingEntitySubscription<LspStore>,
-        ),
+        subscriptions: [EntitySubscription; 5],
         client: Arc<Client>,
+        run_tasks: bool,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -781,39 +887,56 @@ impl Project {
         let role = response.payload.role();
 
         let worktree_store = cx.new_model(|_| {
-            let mut store = WorktreeStore::new(true, fs.clone());
-            store.set_upstream_client(client.clone().into());
-            if let Some(dev_server_project_id) = response.payload.dev_server_project_id {
-                store.set_dev_server_project_id(DevServerProjectId(dev_server_project_id));
-            }
-            store
+            WorktreeStore::remote(
+                true,
+                client.clone().into(),
+                response.payload.project_id,
+                response
+                    .payload
+                    .dev_server_project_id
+                    .map(DevServerProjectId),
+            )
         })?;
-        let buffer_store =
-            cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx))?;
+        let buffer_store = cx.new_model(|cx| {
+            BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
+        })?;
 
         let lsp_store = cx.new_model(|cx| {
-            let mut lsp_store = LspStore::new(
+            let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                None,
                 languages.clone(),
-                client.http_client(),
-                fs.clone(),
-                None,
-                Some(client.clone().into()),
-                Some(remote_id),
+                client.clone().into(),
+                remote_id,
                 cx,
             );
             lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
             lsp_store
         })?;
 
+        let task_store = cx.new_model(|cx| {
+            if run_tasks {
+                TaskStore::remote(
+                    fs.clone(),
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    client.clone().into(),
+                    remote_id,
+                    cx,
+                )
+            } else {
+                TaskStore::Noop
+            }
+        })?;
+
+        let settings_observer = cx.new_model(|cx| {
+            SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
+        })?;
+
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
-            let tasks = Inventory::new(cx);
-            let global_snippets_dir = paths::config_dir().join("snippets");
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
@@ -826,25 +949,30 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
 
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                .detach();
+
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
 
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
-                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
-                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 languages,
                 user_store: user_store.clone(),
+                task_store,
                 snippets,
                 fs,
-                ssh_session: None,
+                ssh_client: None,
+                settings_observer: settings_observer.clone(),
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 client: client.clone(),
@@ -861,34 +989,42 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: None,
-                default_prettier: DefaultPrettier::default(),
-                prettiers_per_worktree: HashMap::default(),
-                prettier_instances: HashMap::default(),
-                tasks,
                 hosted_project_id: None,
                 dev_server_project_id: response
                     .payload
                     .dev_server_project_id
-                    .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
+                    .map(DevServerProjectId),
                 search_history: Self::new_search_history(),
-                environment: ProjectEnvironment::new(None, cx),
-                remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
-                last_formatting_failure: None,
-                buffers_being_formatted: Default::default(),
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
+                environment: ProjectEnvironment::new(&worktree_store, None, cx),
+                remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
-                let _ = this.add_worktree(&worktree, cx);
+                this.add_worktree(&worktree, cx);
             }
             this
         })?;
 
-        let subscriptions = [
-            subscription.0.set_model(&this, &mut cx),
-            subscription.1.set_model(&buffer_store, &mut cx),
-            subscription.2.set_model(&worktree_store, &mut cx),
-            subscription.3.set_model(&lsp_store, &mut cx),
-        ];
+        let subscriptions = subscriptions
+            .into_iter()
+            .map(|s| match s {
+                EntitySubscription::BufferStore(subscription) => {
+                    subscription.set_model(&buffer_store, &mut cx)
+                }
+                EntitySubscription::WorktreeStore(subscription) => {
+                    subscription.set_model(&worktree_store, &mut cx)
+                }
+                EntitySubscription::SettingsObserver(subscription) => {
+                    subscription.set_model(&settings_observer, &mut cx)
+                }
+                EntitySubscription::Project(subscription) => subscription.set_model(&this, &mut cx),
+                EntitySubscription::LspStore(subscription) => {
+                    subscription.set_model(&lsp_store, &mut cx)
+                }
+            })
+            .collect::<Vec<_>>();
 
         let user_ids = response
             .payload
@@ -919,12 +1055,19 @@ impl Project {
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscriptions = (
-            client.subscribe_to_entity::<Self>(remote_id.0)?,
-            client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
-            client.subscribe_to_entity::<WorktreeStore>(remote_id.0)?,
-            client.subscribe_to_entity::<LspStore>(remote_id.0)?,
-        );
+        let subscriptions = [
+            EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id.0)?),
+            EntitySubscription::BufferStore(
+                client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
+            ),
+            EntitySubscription::WorktreeStore(
+                client.subscribe_to_entity::<WorktreeStore>(remote_id.0)?,
+            ),
+            EntitySubscription::LspStore(client.subscribe_to_entity::<LspStore>(remote_id.0)?),
+            EntitySubscription::SettingsObserver(
+                client.subscribe_to_entity::<SettingsObserver>(remote_id.0)?,
+            ),
+        ];
         let response = client
             .request_envelope(proto::JoinHostedProject {
                 project_id: remote_id.0,
@@ -934,6 +1077,7 @@ impl Project {
             response,
             subscriptions,
             client,
+            true,
             user_store,
             languages,
             fs,
@@ -985,7 +1129,7 @@ impl Project {
             .update(|cx| {
                 Project::local(
                     client,
-                    node_runtime::FakeNodeRuntime::new(),
+                    node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
                     fs,
@@ -1025,7 +1169,7 @@ impl Project {
         let project = cx.update(|cx| {
             Project::local(
                 client,
-                node_runtime::FakeNodeRuntime::new(),
+                node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
                 fs,
@@ -1042,13 +1186,10 @@ impl Project {
                 .unwrap();
 
             project.update(cx, |project, cx| {
-                // In tests we always populate the environment to be empty so we don't run the shell
                 let tree_id = tree.read(cx).id();
-                let environment = ProjectEnvironment::test(&[(tree_id, HashMap::default())], cx);
-                project.environment = environment.clone();
-                project
-                    .lsp_store
-                    .update(cx, |lsp_store, _| lsp_store.set_environment(environment));
+                project.environment.update(cx, |environment, _| {
+                    environment.set_cached(&[(tree_id, HashMap::default())])
+                });
             });
 
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
@@ -1061,111 +1202,8 @@ impl Project {
         self.lsp_store.clone()
     }
 
-    fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let mut language_servers_to_start = Vec::new();
-        let mut language_formatters_to_check = Vec::new();
-        for buffer in self.buffer_store.read(cx).buffers() {
-            let buffer = buffer.read(cx);
-            let buffer_file = File::from_dyn(buffer.file());
-            let buffer_language = buffer.language();
-            let settings = language_settings(buffer_language, buffer.file(), cx);
-            if let Some(language) = buffer_language {
-                if settings.enable_language_server {
-                    if let Some(file) = buffer_file {
-                        language_servers_to_start
-                            .push((file.worktree.clone(), Arc::clone(language)));
-                    }
-                }
-                language_formatters_to_check
-                    .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
-            }
-        }
-
-        let mut language_servers_to_stop = Vec::new();
-        let mut language_servers_to_restart = Vec::new();
-        let languages = self.languages.to_vec();
-
-        let new_lsp_settings = ProjectSettings::get_global(cx).lsp.clone();
-        let current_lsp_settings = &self.current_lsp_settings;
-        for (worktree_id, started_lsp_name) in self.lsp_store.read(cx).started_language_servers() {
-            let language = languages.iter().find_map(|l| {
-                let adapter = self
-                    .languages
-                    .lsp_adapters(l)
-                    .iter()
-                    .find(|adapter| adapter.name == started_lsp_name)?
-                    .clone();
-                Some((l, adapter))
-            });
-            if let Some((language, adapter)) = language {
-                let worktree = self.worktree_for_id(worktree_id, cx);
-                let file = worktree.as_ref().and_then(|tree| {
-                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
-                });
-                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
-                    language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
-                } else if let Some(worktree) = worktree {
-                    let server_name = &adapter.name.0;
-                    match (
-                        current_lsp_settings.get(server_name),
-                        new_lsp_settings.get(server_name),
-                    ) {
-                        (None, None) => {}
-                        (Some(_), None) | (None, Some(_)) => {
-                            language_servers_to_restart.push((worktree, Arc::clone(language)));
-                        }
-                        (Some(current_lsp_settings), Some(new_lsp_settings)) => {
-                            if current_lsp_settings != new_lsp_settings {
-                                language_servers_to_restart.push((worktree, Arc::clone(language)));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        self.current_lsp_settings = new_lsp_settings;
-
-        // Stop all newly-disabled language servers.
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            for (worktree_id, adapter_name) in language_servers_to_stop {
-                lsp_store
-                    .stop_language_server(worktree_id, adapter_name, cx)
-                    .detach();
-            }
-        });
-
-        let mut prettier_plugins_by_worktree = HashMap::default();
-        for (worktree, language_settings) in language_formatters_to_check {
-            if let Some(plugins) =
-                prettier_support::prettier_plugins_for_language(&language_settings)
-            {
-                prettier_plugins_by_worktree
-                    .entry(worktree)
-                    .or_insert_with(|| HashSet::default())
-                    .extend(plugins.iter().cloned());
-            }
-        }
-        for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(
-                worktree,
-                prettier_plugins.into_iter().map(Arc::from),
-                cx,
-            );
-        }
-
-        // Start all the newly-enabled language servers.
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            for (worktree, language) in language_servers_to_start {
-                lsp_store.start_language_servers(&worktree, language, cx);
-            }
-
-            // Restart all language servers with changed initialization options.
-            for (worktree, language) in language_servers_to_restart {
-                lsp_store.restart_language_servers(worktree, language, cx);
-            }
-        });
-
-        cx.notify();
+    pub fn worktree_store(&self) -> Model<WorktreeStore> {
+        self.worktree_store.clone()
     }
 
     pub fn buffer_for_id(&self, remote_id: BufferId, cx: &AppContext) -> Option<Model<Buffer>> {
@@ -1184,7 +1222,7 @@ impl Project {
         self.user_store.clone()
     }
 
-    pub fn node_runtime(&self) -> Option<&Arc<dyn NodeRuntime>> {
+    pub fn node_runtime(&self) -> Option<&NodeRuntime> {
         self.node.as_ref()
     }
 
@@ -1194,6 +1232,23 @@ impl Project {
 
     pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
         self.environment.read(cx).get_cli_environment()
+    }
+
+    pub fn shell_environment_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+        self.environment.read(cx).environment_errors()
+    }
+
+    pub fn remove_environment_error(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+        worktree_id: WorktreeId,
+    ) {
+        self.environment.update(cx, |environment, _| {
+            environment.remove_environment_error(worktree_id);
+        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1224,7 +1279,13 @@ impl Project {
         self.dev_server_project_id
     }
 
-    pub fn supports_remote_terminal(&self, cx: &AppContext) -> bool {
+    pub fn supports_terminal(&self, cx: &AppContext) -> bool {
+        if self.is_local() {
+            return true;
+        }
+        if self.is_via_ssh() {
+            return true;
+        }
         let Some(id) = self.dev_server_project_id else {
             return false;
         };
@@ -1237,11 +1298,10 @@ impl Project {
         server.ssh_connection_string.is_some()
     }
 
-    pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
-        if self.is_local_or_ssh() {
-            return None;
+    pub fn ssh_connection_string(&self, cx: &AppContext) -> Option<SharedString> {
+        if let Some(ssh_state) = &self.ssh_client {
+            return Some(ssh_state.read(cx).connection_string().into());
         }
-
         let dev_server_id = self.dev_server_project_id()?;
         dev_server_projects::Store::global(cx)
             .read(cx)
@@ -1250,64 +1310,53 @@ impl Project {
             .clone()
     }
 
+    pub fn ssh_connection_state(&self, cx: &AppContext) -> Option<remote::ConnectionState> {
+        self.ssh_client
+            .as_ref()
+            .map(|ssh| ssh.read(cx).connection_state())
+    }
+
+    pub fn ssh_connection_options(&self, cx: &AppContext) -> Option<SshConnectionOptions> {
+        self.ssh_client
+            .as_ref()
+            .map(|ssh| ssh.read(cx).connection_options())
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
-            _ => 0,
+            _ => {
+                if self.ssh_client.is_some() {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
-    fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
-        cx.notify();
-
-        let ProjectClientState::Shared { remote_id } = self.client_state else {
-            return;
-        };
-        let project_id = remote_id;
-
-        let update_project = self.client.request(proto::UpdateProject {
-            project_id,
-            worktrees: self.worktree_metadata_protos(cx),
-        });
-        cx.spawn(|this, mut cx| async move {
-            update_project.await?;
-            this.update(&mut cx, |this, cx| {
-                let client = this.client.clone();
-                let worktrees = this.worktree_store.read(cx).worktrees().collect::<Vec<_>>();
-
-                for worktree in worktrees {
-                    worktree.update(cx, |worktree, cx| {
-                        let client = client.clone();
-                        worktree.observe_updates(project_id, cx, {
-                            move |update| client.request(update).map(|result| result.is_ok())
-                        });
-
-                        this.lsp_store.update(cx, |lsp_store, _| {
-                            lsp_store.send_diagnostic_summaries(worktree)
-                        })
-                    })?;
-                }
-
-                anyhow::Ok(())
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
-    pub fn task_inventory(&self) -> &Model<Inventory> {
-        &self.tasks
+    pub fn task_store(&self) -> &Model<TaskStore> {
+        &self.task_store
     }
 
     pub fn snippets(&self) -> &Model<SnippetProvider> {
         &self.snippets
     }
 
-    pub fn search_history(&self) -> &SearchHistory {
-        &self.search_history
+    pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {
+        match kind {
+            SearchInputKind::Query => &self.search_history,
+            SearchInputKind::Include => &self.search_included_history,
+            SearchInputKind::Exclude => &self.search_excluded_history,
+        }
     }
 
-    pub fn search_history_mut(&mut self) -> &mut SearchHistory {
-        &mut self.search_history
+    pub fn search_history_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistory {
+        match kind {
+            SearchInputKind::Query => &mut self.search_history,
+            SearchInputKind::Include => &mut self.search_included_history,
+            SearchInputKind::Exclude => &mut self.search_excluded_history,
+        }
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
@@ -1494,38 +1543,31 @@ impl Project {
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&self.lsp_store, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_model(&self.settings_observer, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.shared(project_id, self.client.clone().into(), cx)
         });
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.set_shared(true, cx);
+            worktree_store.shared(project_id, self.client.clone().into(), cx);
         });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.client.clone().into(), cx)
         });
-
-        let store = cx.global::<SettingsStore>();
-        for worktree in self.worktrees(cx) {
-            let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
-                self.client
-                    .send(proto::UpdateWorktreeSettings {
-                        project_id,
-                        worktree_id,
-                        path: path.to_string_lossy().into(),
-                        content: Some(content),
-                    })
-                    .log_err();
-            }
-        }
+        self.task_store.update(cx, |task_store, cx| {
+            task_store.shared(project_id, self.client.clone().into(), cx);
+        });
+        self.settings_observer.update(cx, |settings_observer, cx| {
+            settings_observer.shared(project_id, self.client.clone().into(), cx)
+        });
 
         self.client_state = ProjectClientState::Shared {
             remote_id: project_id,
         };
 
-        self.metadata_changed(cx);
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
         cx.notify();
         Ok(())
@@ -1539,7 +1581,11 @@ impl Project {
         self.buffer_store
             .update(cx, |buffer_store, _| buffer_store.forget_shared_buffers());
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-        self.metadata_changed(cx);
+
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.send_project_updates(cx);
+        });
+        cx.notify();
         cx.emit(Event::Reshared);
         Ok(())
     }
@@ -1554,7 +1600,7 @@ impl Project {
             self.worktree_store.update(cx, |worktree_store, cx| {
                 for worktree in worktree_store.worktrees() {
                     store
-                        .clear_local_settings(worktree.entity_id().as_u64() as usize, cx)
+                        .clear_local_settings(worktree.read(cx).id(), cx)
                         .log_err();
                 }
             });
@@ -1575,7 +1621,6 @@ impl Project {
 
     pub fn unshare(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         self.unshare_internal(cx)?;
-        self.metadata_changed(cx);
         cx.notify();
         Ok(())
     }
@@ -1597,12 +1642,19 @@ impl Project {
             self.collaborators.clear();
             self.client_subscriptions.clear();
             self.worktree_store.update(cx, |store, cx| {
-                store.set_shared(false, cx);
+                store.unshared(cx);
             });
             self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers();
                 buffer_store.unshared(cx)
             });
+            self.task_store.update(cx, |task_store, cx| {
+                task_store.unshared(cx);
+            });
+            self.settings_observer.update(cx, |settings_observer, cx| {
+                settings_observer.unshared(cx);
+            });
+
             self.client
                 .send(proto::UnshareProject {
                     project_id: remote_id,
@@ -1615,7 +1667,7 @@ impl Project {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
-        if self.is_disconnected() {
+        if self.is_disconnected(cx) {
             return;
         }
         self.disconnected_from_host_internal(cx);
@@ -1665,14 +1717,22 @@ impl Project {
         cx.emit(Event::Closed);
     }
 
-    pub fn is_disconnected(&self) -> bool {
+    pub fn is_disconnected(&self, cx: &AppContext) -> bool {
         match &self.client_state {
             ProjectClientState::Remote {
                 sharing_has_stopped,
                 ..
             } => *sharing_has_stopped,
+            ProjectClientState::Local if self.is_via_ssh() => self.ssh_is_disconnected(cx),
             _ => false,
         }
+    }
+
+    fn ssh_is_disconnected(&self, cx: &AppContext) -> bool {
+        self.ssh_client
+            .as_ref()
+            .map(|ssh| ssh.read(cx).is_disconnected())
+            .unwrap_or(false)
     }
 
     pub fn capability(&self) -> Capability {
@@ -1682,22 +1742,24 @@ impl Project {
         }
     }
 
-    pub fn is_read_only(&self) -> bool {
-        self.is_disconnected() || self.capability() == Capability::ReadOnly
+    pub fn is_read_only(&self, cx: &AppContext) -> bool {
+        self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
     }
 
     pub fn is_local(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
-                self.ssh_session.is_none()
+                self.ssh_client.is_none()
             }
             ProjectClientState::Remote { .. } => false,
         }
     }
 
-    pub fn is_local_or_ssh(&self) -> bool {
+    pub fn is_via_ssh(&self) -> bool {
         match &self.client_state {
-            ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => {
+                self.ssh_client.is_some()
+            }
             ProjectClientState::Remote { .. } => false,
         }
     }
@@ -1710,16 +1772,8 @@ impl Project {
     }
 
     pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.create_buffer(
-                if self.is_via_collab() {
-                    Some((self.client.clone().into(), self.remote_id().unwrap()))
-                } else {
-                    None
-                },
-                cx,
-            )
-        })
+        self.buffer_store
+            .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))
     }
 
     pub fn create_local_buffer(
@@ -1728,7 +1782,7 @@ impl Project {
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Model<Buffer> {
-        if self.is_via_collab() {
+        if self.is_via_collab() || self.is_via_ssh() {
             panic!("called create_local_buffer on a remote project")
         }
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -1770,7 +1824,7 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if self.is_via_collab() && self.is_disconnected() {
+        if (self.is_via_collab() || self.is_via_ssh()) && self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
@@ -1786,7 +1840,7 @@ impl Project {
     ) -> Task<Result<Model<Buffer>>> {
         if let Some(buffer) = self.buffer_for_id(id, cx) {
             Task::ready(Ok(buffer))
-        } else if self.is_local_or_ssh() {
+        } else if self.is_local() || self.is_via_ssh() {
             Task::ready(Err(anyhow!("buffer {} does not exist", id)))
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferById {
@@ -1854,65 +1908,20 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         {
-            let mut remotely_created_buffers = self.remotely_created_buffers.lock();
-            if remotely_created_buffers.retain_count > 0 {
-                remotely_created_buffers.buffers.push(buffer.clone())
+            let mut remotely_created_models = self.remotely_created_models.lock();
+            if remotely_created_models.retain_count > 0 {
+                remotely_created_models.buffers.push(buffer.clone())
             }
         }
 
         self.request_buffer_diff_recalculation(buffer, cx);
-        buffer.update(cx, |buffer, _| {
-            buffer.set_language_registry(self.languages.clone())
-        });
 
         cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
         })
         .detach();
 
-        self.detect_language_for_buffer(buffer, cx);
-        self.register_buffer_with_language_servers(buffer, cx);
-        cx.observe_release(buffer, |this, buffer, cx| {
-            if let Some(file) = File::from_dyn(buffer.file()) {
-                if file.is_local() {
-                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                    for server in this.language_servers_for_buffer(buffer, cx) {
-                        server
-                            .1
-                            .notify::<lsp::notification::DidCloseTextDocument>(
-                                lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
-                                },
-                            )
-                            .log_err();
-                    }
-                }
-            }
-        })
-        .detach();
-
         Ok(())
-    }
-
-    fn register_buffer_with_language_servers(
-        &mut self,
-        buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(buffer_handle, cx)
-        })
-    }
-
-    fn unregister_buffer_from_language_servers(
-        &mut self,
-        buffer: &Model<Buffer>,
-        old_file: &File,
-        cx: &mut AppContext,
-    ) {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.unregister_buffer_from_language_servers(buffer, old_file, cx)
-        })
     }
 
     async fn send_buffer_ordered_messages(
@@ -1953,7 +1962,7 @@ impl Project {
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let is_local = this.update(&mut cx, |this, _| this.is_local_or_ssh())?;
+            let is_local = this.update(&mut cx, |this, _| this.is_local())?;
 
             for change in changes {
                 match change {
@@ -2033,17 +2042,12 @@ impl Project {
             BufferStoreEvent::BufferAdded(buffer) => {
                 self.register_buffer(buffer, cx).log_err();
             }
-            BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
-                if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
-                    self.unregister_buffer_from_language_servers(&buffer, old_file, cx);
-                }
-
-                self.detect_language_for_buffer(&buffer, cx);
-                self.register_buffer_with_language_servers(&buffer, cx);
-            }
+            BufferStoreEvent::BufferChangedFilePath { .. } => {}
             BufferStoreEvent::BufferDropped(buffer_id) => {
-                if let Some(ref ssh_session) = self.ssh_session {
-                    ssh_session
+                if let Some(ref ssh_client) = self.ssh_client {
+                    ssh_client
+                        .read(cx)
+                        .to_proto_client()
                         .send(proto::CloseBuffer {
                             project_id: 0,
                             buffer_id: buffer_id.to_proto(),
@@ -2072,11 +2076,20 @@ impl Project {
                 cx.emit(Event::LanguageServerAdded(*language_server_id))
             }
             LspStoreEvent::LanguageServerRemoved(language_server_id) => {
-                cx.emit(Event::LanguageServerAdded(*language_server_id))
+                cx.emit(Event::LanguageServerRemoved(*language_server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
             ),
+            LspStoreEvent::LanguageDetected {
+                buffer,
+                new_language,
+            } => {
+                let Some(_) = new_language else {
+                    cx.emit(Event::LanguageNotFound(buffer.clone()));
+                    return;
+                };
+            }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
@@ -2085,38 +2098,17 @@ impl Project {
                 cx.emit(Event::DiskBasedDiagnosticsStarted {
                     language_server_id: *language_server_id,
                 });
-                if self.is_local_or_ssh() {
-                    self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
-                        language_server_id: *language_server_id,
-                        message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                            Default::default(),
-                        ),
-                    })
-                    .ok();
-                }
             }
             LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
                 cx.emit(Event::DiskBasedDiagnosticsFinished {
                     language_server_id: *language_server_id,
                 });
-                if self.is_local_or_ssh() {
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id: *language_server_id,
-                            message:
-                                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                                    Default::default(),
-                                ),
-                        },
-                    )
-                    .ok();
-                }
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 message,
             } => {
-                if self.is_local_or_ssh() {
+                if self.is_local() {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,
@@ -2136,11 +2128,42 @@ impl Project {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
             }
-            LspStoreEvent::StartFormattingLocalBuffer(buffer_id) => {
-                self.buffers_being_formatted.insert(*buffer_id);
+        }
+    }
+
+    fn on_ssh_event(
+        &mut self,
+        _: Model<SshRemoteClient>,
+        event: &remote::SshRemoteEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            remote::SshRemoteEvent::Disconnected => {
+                // if self.is_via_ssh() {
+                // self.collaborators.clear();
+                self.worktree_store.update(cx, |store, cx| {
+                    store.disconnected_from_host(cx);
+                });
+                self.buffer_store.update(cx, |buffer_store, cx| {
+                    buffer_store.disconnected_from_host(cx)
+                });
+                self.lsp_store.update(cx, |lsp_store, _cx| {
+                    lsp_store.disconnected_from_ssh_remote()
+                });
+                cx.emit(Event::DisconnectedFromSshRemote);
             }
-            LspStoreEvent::FinishFormattingLocalBuffer(buffer_id) => {
-                self.buffers_being_formatted.remove(buffer_id);
+        }
+    }
+
+    fn on_settings_observer_event(
+        &mut self,
+        _: Model<SettingsObserver>,
+        event: &SettingsObserverEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            SettingsObserverEvent::LocalSettingsUpdated(error) => {
+                cx.emit(Event::LocalSettingsUpdated(error.clone()))
             }
         }
     }
@@ -2161,42 +2184,38 @@ impl Project {
                 cx.emit(Event::WorktreeRemoved(*id));
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
+            WorktreeStoreEvent::WorktreeUpdateSent(_) => {}
         }
     }
 
     fn on_worktree_added(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
-        cx.observe(worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(worktree, |this, worktree, event, cx| {
-            let is_local = worktree.read(cx).is_local();
-            match event {
-                worktree::Event::UpdatedEntries(changes) => {
-                    if is_local {
-                        this.lsp_store.update(cx, |lsp_store, cx| {
-                            lsp_store
-                                .update_local_worktree_language_servers(&worktree, changes, cx);
-                        });
-                        this.update_local_worktree_settings(&worktree, changes, cx);
-                        this.update_prettier_settings(&worktree, changes, cx);
-                    }
-
-                    cx.emit(Event::WorktreeUpdatedEntries(
-                        worktree.read(cx).id(),
-                        changes.clone(),
-                    ));
-
-                    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
-                    this.client()
-                        .telemetry()
-                        .report_discovered_project_events(worktree_id, changes);
-                }
-                worktree::Event::UpdatedGitRepositories(_) => {
-                    cx.emit(Event::WorktreeUpdatedGitRepositories);
-                }
-                worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(*id)),
+        {
+            let mut remotely_created_models = self.remotely_created_models.lock();
+            if remotely_created_models.retain_count > 0 {
+                remotely_created_models.worktrees.push(worktree.clone())
             }
+        }
+        cx.observe(worktree, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(worktree, |project, worktree, event, cx| match event {
+            worktree::Event::UpdatedEntries(changes) => {
+                cx.emit(Event::WorktreeUpdatedEntries(
+                    worktree.read(cx).id(),
+                    changes.clone(),
+                ));
+
+                let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+                project
+                    .client()
+                    .telemetry()
+                    .report_discovered_project_events(worktree_id, changes);
+            }
+            worktree::Event::UpdatedGitRepositories(_) => {
+                cx.emit(Event::WorktreeUpdatedGitRepositories);
+            }
+            worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(*id)),
         })
         .detach();
-        self.metadata_changed(cx);
+        cx.notify();
     }
 
     fn on_worktree_removed(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
@@ -2211,7 +2230,7 @@ impl Project {
                     }
                 })
                 .collect();
-            if paths.len() > 0 {
+            if !paths.is_empty() {
                 let request = self.client.request(proto::UpdateDevServerProject {
                     dev_server_project_id: dev_server_project_id.0,
                     paths,
@@ -2222,49 +2241,17 @@ impl Project {
             }
             return;
         }
-        self.environment.update(cx, |environment, _| {
-            environment.remove_worktree_environment(id_to_remove);
-        });
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.remove_worktree(id_to_remove, cx);
-        });
 
-        let mut prettier_instances_to_clean = FuturesUnordered::new();
-        if let Some(prettier_paths) = self.prettiers_per_worktree.remove(&id_to_remove) {
-            for path in prettier_paths.iter().flatten() {
-                if let Some(prettier_instance) = self.prettier_instances.remove(path) {
-                    prettier_instances_to_clean.push(async move {
-                        prettier_instance
-                            .server()
-                            .await
-                            .map(|server| server.server_id())
-                    });
-                }
-            }
+        if let Some(ssh) = &self.ssh_client {
+            ssh.read(cx)
+                .to_proto_client()
+                .send(proto::RemoveWorktree {
+                    worktree_id: id_to_remove.to_proto(),
+                })
+                .log_err();
         }
-        cx.spawn(|project, mut cx| async move {
-            while let Some(prettier_server_id) = prettier_instances_to_clean.next().await {
-                if let Some(prettier_server_id) = prettier_server_id {
-                    project
-                        .update(&mut cx, |project, cx| {
-                            project.lsp_store.update(cx, |lsp_store, cx| {
-                                lsp_store.unregister_supplementary_language_server(
-                                    prettier_server_id,
-                                    cx,
-                                );
-                            });
-                        })
-                        .ok();
-                }
-            }
-        })
-        .detach();
 
-        self.task_inventory().update(cx, |inventory, _| {
-            inventory.remove_worktree_sources(id_to_remove);
-        });
-
-        self.metadata_changed(cx);
+        cx.notify();
     }
 
     fn on_buffer_event(
@@ -2282,16 +2269,21 @@ impl Project {
 
         let buffer_id = buffer.read(cx).remote_id();
         match event {
-            BufferEvent::Operation(operation) => {
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => {
                 let operation = language::proto::serialize_operation(operation);
 
-                if let Some(ssh) = &self.ssh_session {
-                    ssh.send(proto::UpdateBuffer {
-                        project_id: 0,
-                        buffer_id: buffer_id.to_proto(),
-                        operations: vec![operation.clone()],
-                    })
-                    .ok();
+                if let Some(ssh) = &self.ssh_client {
+                    ssh.read(cx)
+                        .to_proto_client()
+                        .send(proto::UpdateBuffer {
+                            project_id: 0,
+                            buffer_id: buffer_id.to_proto(),
+                            operations: vec![operation.clone()],
+                        })
+                        .ok();
                 }
 
                 self.enqueue_buffer_ordered_message(BufferOrderedMessage::Operation {
@@ -2299,36 +2291,6 @@ impl Project {
                     operation,
                 })
                 .ok();
-            }
-
-            BufferEvent::Reloaded => {
-                if self.is_local_or_ssh() {
-                    if let Some(project_id) = self.remote_id() {
-                        let buffer = buffer.read(cx);
-                        self.client
-                            .send(proto::BufferReloaded {
-                                project_id,
-                                buffer_id: buffer.remote_id().to_proto(),
-                                version: serialize_version(&buffer.version()),
-                                mtime: buffer.saved_mtime().map(|t| t.into()),
-                                line_ending: serialize_line_ending(buffer.line_ending()) as i32,
-                            })
-                            .log_err();
-                    }
-                }
-            }
-
-            BufferEvent::Edited { .. } => {
-                self.lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.on_buffer_edited(buffer, cx);
-                });
-            }
-
-            // NEXT STEP have the lsp_store register for these things!
-            BufferEvent::Saved => {
-                self.lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.on_buffer_saved(buffer, cx);
-                });
             }
 
             _ => {}
@@ -2380,7 +2342,7 @@ impl Project {
                 .filter_map(|buffer| {
                     let buffer = buffer.upgrade()?;
                     buffer
-                        .update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx))
+                        .update(&mut cx, |buffer, cx| buffer.recalculate_diff(cx))
                         .ok()
                         .flatten()
                 })
@@ -2404,134 +2366,15 @@ impl Project {
         })
     }
 
-    fn maintain_buffer_languages(
-        languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Project>,
-    ) -> Task<()> {
-        let mut subscription = languages.subscribe();
-        let mut prev_reload_count = languages.reload_count();
-        cx.spawn(move |project, mut cx| async move {
-            while let Some(()) = subscription.next().await {
-                if let Some(project) = project.upgrade() {
-                    // If the language registry has been reloaded, then remove and
-                    // re-assign the languages on all open buffers.
-                    let reload_count = languages.reload_count();
-                    if reload_count > prev_reload_count {
-                        prev_reload_count = reload_count;
-                        project
-                            .update(&mut cx, |this, cx| {
-                                this.buffer_store.clone().update(cx, |buffer_store, cx| {
-                                    for buffer in buffer_store.buffers() {
-                                        if let Some(f) =
-                                            File::from_dyn(buffer.read(cx).file()).cloned()
-                                        {
-                                            this.unregister_buffer_from_language_servers(
-                                                &buffer, &f, cx,
-                                            );
-                                            buffer.update(cx, |buffer, cx| {
-                                                buffer.set_language(None, cx)
-                                            });
-                                        }
-                                    }
-                                });
-                            })
-                            .ok();
-                    }
-
-                    project
-                        .update(&mut cx, |project, cx| {
-                            let mut plain_text_buffers = Vec::new();
-                            let mut buffers_with_unknown_injections = Vec::new();
-                            for handle in project.buffer_store.read(cx).buffers() {
-                                let buffer = handle.read(cx);
-                                if buffer.language().is_none()
-                                    || buffer.language() == Some(&*language::PLAIN_TEXT)
-                                {
-                                    plain_text_buffers.push(handle);
-                                } else if buffer.contains_unknown_injections() {
-                                    buffers_with_unknown_injections.push(handle);
-                                }
-                            }
-
-                            for buffer in plain_text_buffers {
-                                project.detect_language_for_buffer(&buffer, cx);
-                                project.register_buffer_with_language_servers(&buffer, cx);
-                            }
-
-                            for buffer in buffers_with_unknown_injections {
-                                buffer.update(cx, |buffer, cx| buffer.reparse(cx));
-                            }
-                        })
-                        .ok();
-                }
-            }
-        })
-    }
-
-    fn detect_language_for_buffer(
-        &mut self,
-        buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        // If the buffer has a language, set it and start the language server if we haven't already.
-        let buffer = buffer_handle.read(cx);
-        let Some(file) = buffer.file() else {
-            return;
-        };
-        let content = buffer.as_rope();
-        let Some(new_language_result) = self
-            .languages
-            .language_for_file(file, Some(content), cx)
-            .now_or_never()
-        else {
-            return;
-        };
-
-        match new_language_result {
-            Err(e) => {
-                if e.is::<language::LanguageNotFound>() {
-                    cx.emit(Event::LanguageNotFound(buffer_handle.clone()))
-                }
-            }
-            Ok(new_language) => {
-                self.set_language_for_buffer(buffer_handle, new_language, cx);
-            }
-        };
-    }
-
     pub fn set_language_for_buffer(
         &mut self,
         buffer: &Model<Buffer>,
         new_language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        buffer.update(cx, |buffer, cx| {
-            if buffer.language().map_or(true, |old_language| {
-                !Arc::ptr_eq(old_language, &new_language)
-            }) {
-                buffer.set_language(Some(new_language.clone()), cx);
-            }
-        });
-
-        let buffer_file = buffer.read(cx).file().cloned();
-        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
-        let buffer_file = File::from_dyn(buffer_file.as_ref());
-        let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(&settings) {
-            self.install_default_prettier(
-                worktree,
-                prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
-                cx,
-            );
-        };
-        if let Some(file) = buffer_file {
-            let worktree = file.worktree.clone();
-            if worktree.read(cx).is_local() {
-                self.lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.start_language_servers(&worktree, new_language, cx);
-                });
-            }
-        }
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.set_language_for_buffer(buffer, new_language, cx)
+        })
     }
 
     pub fn restart_language_servers_for_buffers(
@@ -2578,8 +2421,8 @@ impl Project {
         self.lsp_store.read(cx).language_server_statuses()
     }
 
-    pub fn last_formatting_failure(&self) -> Option<&str> {
-        self.last_formatting_failure.as_deref()
+    pub fn last_formatting_failure<'a>(&self, cx: &'a AppContext) -> Option<&'a str> {
+        self.lsp_store.read(cx).last_formatting_failure()
     }
 
     pub fn update_diagnostics(
@@ -2613,67 +2456,8 @@ impl Project {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        let mut local_buffers = Vec::new();
-        let mut remote_buffers = None;
-        for buffer_handle in buffers {
-            let buffer = buffer_handle.read(cx);
-            if buffer.is_dirty() {
-                if let Some(file) = File::from_dyn(buffer.file()) {
-                    if file.is_local() {
-                        local_buffers.push(buffer_handle);
-                    } else {
-                        remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
-                    }
-                }
-            }
-        }
-
-        let remote_buffers = self.remote_id().zip(remote_buffers);
-        let client = self.client.clone();
-
-        cx.spawn(move |this, mut cx| async move {
-            let mut project_transaction = ProjectTransaction::default();
-
-            if let Some((project_id, remote_buffers)) = remote_buffers {
-                let response = client
-                    .request(proto::ReloadBuffers {
-                        project_id,
-                        buffer_ids: remote_buffers
-                            .iter()
-                            .filter_map(|buffer| {
-                                buffer
-                                    .update(&mut cx, |buffer, _| buffer.remote_id().into())
-                                    .ok()
-                            })
-                            .collect(),
-                    })
-                    .await?
-                    .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
-                BufferStore::deserialize_project_transaction(
-                    this.read_with(&cx, |this, _| this.buffer_store.downgrade())?,
-                    response,
-                    push_to_history,
-                    cx.clone(),
-                )
-                .await?;
-            }
-
-            for buffer in local_buffers {
-                let transaction = buffer
-                    .update(&mut cx, |buffer, cx| buffer.reload(cx))?
-                    .await?;
-                buffer.update(&mut cx, |buffer, cx| {
-                    if let Some(transaction) = transaction {
-                        if !push_to_history {
-                            buffer.forget_transaction(transaction.id);
-                        }
-                        project_transaction.0.insert(cx.handle(), transaction);
-                    }
-                })?;
-            }
-
-            Ok(project_transaction)
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.reload_buffers(buffers, push_to_history, cx)
         })
     }
 
@@ -2681,561 +2465,17 @@ impl Project {
         &mut self,
         buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
-        trigger: FormatTrigger,
+        trigger: lsp_store::FormatTrigger,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
-        if self.is_local_or_ssh() {
-            let buffers_with_paths = buffers
-                .into_iter()
-                .map(|buffer_handle| {
-                    let buffer = buffer_handle.read(cx);
-                    let buffer_abs_path = File::from_dyn(buffer.file())
-                        .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
-                    (buffer_handle, buffer_abs_path)
-                })
-                .collect::<Vec<_>>();
-
-            cx.spawn(move |project, mut cx| async move {
-                let result = Self::format_locally(
-                    project.clone(),
-                    buffers_with_paths,
-                    push_to_history,
-                    trigger,
-                    cx.clone(),
-                )
-                .await;
-
-                project.update(&mut cx, |project, _| match &result {
-                    Ok(_) => project.last_formatting_failure = None,
-                    Err(error) => {
-                        project.last_formatting_failure.replace(error.to_string());
-                    }
-                })?;
-
-                result
-            })
-        } else {
-            let remote_id = self.remote_id();
-            let client = self.client.clone();
-            cx.spawn(move |this, mut cx| async move {
-                if let Some(project_id) = remote_id {
-                    let response = client
-                        .request(proto::FormatBuffers {
-                            project_id,
-                            trigger: trigger as i32,
-                            buffer_ids: buffers
-                                .iter()
-                                .map(|buffer| {
-                                    buffer.update(&mut cx, |buffer, _| buffer.remote_id().into())
-                                })
-                                .collect::<Result<_>>()?,
-                        })
-                        .await?
-                        .transaction
-                        .ok_or_else(|| anyhow!("missing transaction"))?;
-                    BufferStore::deserialize_project_transaction(
-                        this.read_with(&cx, |this, _| this.buffer_store.downgrade())?,
-                        response,
-                        push_to_history,
-                        cx,
-                    )
-                    .await
-                } else {
-                    Ok(ProjectTransaction::default())
-                }
-            })
-        }
-    }
-
-    async fn format_locally(
-        project: WeakModel<Project>,
-        mut buffers_with_paths: Vec<(Model<Buffer>, Option<PathBuf>)>,
-        push_to_history: bool,
-        trigger: FormatTrigger,
-        mut cx: AsyncAppContext,
-    ) -> anyhow::Result<ProjectTransaction> {
-        // Do not allow multiple concurrent formatting requests for the
-        // same buffer.
-        let lsp_store = project.update(&mut cx, |this, cx| {
-            buffers_with_paths.retain(|(buffer, _)| {
-                this.buffers_being_formatted
-                    .insert(buffer.read(cx).remote_id())
-            });
-            this.lsp_store.downgrade()
-        })?;
-
-        let _cleanup = defer({
-            let this = project.clone();
-            let mut cx = cx.clone();
-            let buffers = &buffers_with_paths;
-            move || {
-                this.update(&mut cx, |this, cx| {
-                    for (buffer, _) in buffers {
-                        this.buffers_being_formatted
-                            .remove(&buffer.read(cx).remote_id());
-                    }
-                })
-                .ok();
-            }
-        });
-
-        let mut project_transaction = ProjectTransaction::default();
-        for (buffer, buffer_abs_path) in &buffers_with_paths {
-            let (primary_adapter_and_server, adapters_and_servers) =
-                project.update(&mut cx, |project, cx| {
-                    let buffer = buffer.read(cx);
-
-                    let adapters_and_servers = project
-                        .language_servers_for_buffer(buffer, cx)
-                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
-                        .collect::<Vec<_>>();
-
-                    let primary_adapter = project
-                        .lsp_store
-                        .read(cx)
-                        .primary_language_server_for_buffer(buffer, cx)
-                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()));
-
-                    (primary_adapter, adapters_and_servers)
-                })?;
-
-            let settings = buffer.update(&mut cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx).clone()
-            })?;
-
-            let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
-            let ensure_final_newline = settings.ensure_final_newline_on_save;
-
-            // First, format buffer's whitespace according to the settings.
-            let trailing_whitespace_diff = if remove_trailing_whitespace {
-                Some(
-                    buffer
-                        .update(&mut cx, |b, cx| b.remove_trailing_whitespace(cx))?
-                        .await,
-                )
-            } else {
-                None
-            };
-            let whitespace_transaction_id = buffer.update(&mut cx, |buffer, cx| {
-                buffer.finalize_last_transaction();
-                buffer.start_transaction();
-                if let Some(diff) = trailing_whitespace_diff {
-                    buffer.apply_diff(diff, cx);
-                }
-                if ensure_final_newline {
-                    buffer.ensure_final_newline(cx);
-                }
-                buffer.end_transaction(cx)
-            })?;
-
-            // Apply the `code_actions_on_format` before we run the formatter.
-            let code_actions = deserialize_code_actions(&settings.code_actions_on_format);
-            #[allow(clippy::nonminimal_bool)]
-            if !code_actions.is_empty()
-                && !(trigger == FormatTrigger::Save && settings.format_on_save == FormatOnSave::Off)
-            {
-                LspStore::execute_code_actions_on_servers(
-                    &lsp_store,
-                    &adapters_and_servers,
-                    code_actions,
-                    buffer,
-                    push_to_history,
-                    &mut project_transaction,
-                    &mut cx,
-                )
-                .await?;
-            }
-
-            // Apply language-specific formatting using either the primary language server
-            // or external command.
-            // Except for code actions, which are applied with all connected language servers.
-            let primary_language_server =
-                primary_adapter_and_server.map(|(_adapter, server)| server.clone());
-            let server_and_buffer = primary_language_server
-                .as_ref()
-                .zip(buffer_abs_path.as_ref());
-
-            let prettier_settings = buffer.read_with(&mut cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx)
-                    .prettier
-                    .clone()
-            })?;
-
-            let mut format_operations: Vec<FormatOperation> = vec![];
-            {
-                match trigger {
-                    FormatTrigger::Save => {
-                        match &settings.format_on_save {
-                            FormatOnSave::Off => {
-                                // nothing
-                            }
-                            FormatOnSave::On => {
-                                match &settings.formatter {
-                                    SelectedFormatter::Auto => {
-                                        // do the auto-format: prefer prettier, fallback to primary language server
-                                        let diff = {
-                                            if prettier_settings.allowed {
-                                                Self::perform_format(
-                                                    &Formatter::Prettier,
-                                                    server_and_buffer,
-                                                    project.clone(),
-                                                    buffer,
-                                                    buffer_abs_path,
-                                                    &settings,
-                                                    &adapters_and_servers,
-                                                    push_to_history,
-                                                    &mut project_transaction,
-                                                    &mut cx,
-                                                )
-                                                .await
-                                            } else {
-                                                Self::perform_format(
-                                                    &Formatter::LanguageServer { name: None },
-                                                    server_and_buffer,
-                                                    project.clone(),
-                                                    buffer,
-                                                    buffer_abs_path,
-                                                    &settings,
-                                                    &adapters_and_servers,
-                                                    push_to_history,
-                                                    &mut project_transaction,
-                                                    &mut cx,
-                                                )
-                                                .await
-                                            }
-                                        }
-                                        .log_err()
-                                        .flatten();
-                                        if let Some(op) = diff {
-                                            format_operations.push(op);
-                                        }
-                                    }
-                                    SelectedFormatter::List(formatters) => {
-                                        for formatter in formatters.as_ref() {
-                                            let diff = Self::perform_format(
-                                                formatter,
-                                                server_and_buffer,
-                                                project.clone(),
-                                                buffer,
-                                                buffer_abs_path,
-                                                &settings,
-                                                &adapters_and_servers,
-                                                push_to_history,
-                                                &mut project_transaction,
-                                                &mut cx,
-                                            )
-                                            .await
-                                            .log_err()
-                                            .flatten();
-                                            if let Some(op) = diff {
-                                                format_operations.push(op);
-                                            }
-
-                                            // format with formatter
-                                        }
-                                    }
-                                }
-                            }
-                            FormatOnSave::List(formatters) => {
-                                for formatter in formatters.as_ref() {
-                                    let diff = Self::perform_format(
-                                        &formatter,
-                                        server_and_buffer,
-                                        project.clone(),
-                                        buffer,
-                                        buffer_abs_path,
-                                        &settings,
-                                        &adapters_and_servers,
-                                        push_to_history,
-                                        &mut project_transaction,
-                                        &mut cx,
-                                    )
-                                    .await
-                                    .log_err()
-                                    .flatten();
-                                    if let Some(op) = diff {
-                                        format_operations.push(op);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    FormatTrigger::Manual => {
-                        match &settings.formatter {
-                            SelectedFormatter::Auto => {
-                                // do the auto-format: prefer prettier, fallback to primary language server
-                                let diff = {
-                                    if prettier_settings.allowed {
-                                        Self::perform_format(
-                                            &Formatter::Prettier,
-                                            server_and_buffer,
-                                            project.clone(),
-                                            buffer,
-                                            buffer_abs_path,
-                                            &settings,
-                                            &adapters_and_servers,
-                                            push_to_history,
-                                            &mut project_transaction,
-                                            &mut cx,
-                                        )
-                                        .await
-                                    } else {
-                                        Self::perform_format(
-                                            &Formatter::LanguageServer { name: None },
-                                            server_and_buffer,
-                                            project.clone(),
-                                            buffer,
-                                            buffer_abs_path,
-                                            &settings,
-                                            &adapters_and_servers,
-                                            push_to_history,
-                                            &mut project_transaction,
-                                            &mut cx,
-                                        )
-                                        .await
-                                    }
-                                }
-                                .log_err()
-                                .flatten();
-
-                                if let Some(op) = diff {
-                                    format_operations.push(op)
-                                }
-                            }
-                            SelectedFormatter::List(formatters) => {
-                                for formatter in formatters.as_ref() {
-                                    // format with formatter
-                                    let diff = Self::perform_format(
-                                        formatter,
-                                        server_and_buffer,
-                                        project.clone(),
-                                        buffer,
-                                        buffer_abs_path,
-                                        &settings,
-                                        &adapters_and_servers,
-                                        push_to_history,
-                                        &mut project_transaction,
-                                        &mut cx,
-                                    )
-                                    .await
-                                    .log_err()
-                                    .flatten();
-                                    if let Some(op) = diff {
-                                        format_operations.push(op);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            buffer.update(&mut cx, |b, cx| {
-                // If the buffer had its whitespace formatted and was edited while the language-specific
-                // formatting was being computed, avoid applying the language-specific formatting, because
-                // it can't be grouped with the whitespace formatting in the undo history.
-                if let Some(transaction_id) = whitespace_transaction_id {
-                    if b.peek_undo_stack()
-                        .map_or(true, |e| e.transaction_id() != transaction_id)
-                    {
-                        format_operations.clear();
-                    }
-                }
-
-                // Apply any language-specific formatting, and group the two formatting operations
-                // in the buffer's undo history.
-                for operation in format_operations {
-                    match operation {
-                        FormatOperation::Lsp(edits) => {
-                            b.edit(edits, None, cx);
-                        }
-                        FormatOperation::External(diff) => {
-                            b.apply_diff(diff, cx);
-                        }
-                        FormatOperation::Prettier(diff) => {
-                            b.apply_diff(diff, cx);
-                        }
-                    }
-
-                    if let Some(transaction_id) = whitespace_transaction_id {
-                        b.group_until_transaction(transaction_id);
-                    } else if let Some(transaction) = project_transaction.0.get(buffer) {
-                        b.group_until_transaction(transaction.id)
-                    }
-                }
-
-                if let Some(transaction) = b.finalize_last_transaction().cloned() {
-                    if !push_to_history {
-                        b.forget_transaction(transaction.id);
-                    }
-                    project_transaction.0.insert(buffer.clone(), transaction);
-                }
-            })?;
-        }
-
-        Ok(project_transaction)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn perform_format(
-        formatter: &Formatter,
-        primary_server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
-        project: WeakModel<Project>,
-        buffer: &Model<Buffer>,
-        buffer_abs_path: &Option<PathBuf>,
-        settings: &LanguageSettings,
-        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
-        push_to_history: bool,
-        transaction: &mut ProjectTransaction,
-        mut cx: &mut AsyncAppContext,
-    ) -> Result<Option<FormatOperation>, anyhow::Error> {
-        let result = match formatter {
-            Formatter::LanguageServer { name } => {
-                if let Some((language_server, buffer_abs_path)) = primary_server_and_buffer {
-                    let language_server = if let Some(name) = name {
-                        adapters_and_servers
-                            .iter()
-                            .find_map(|(adapter, server)| {
-                                adapter.name.0.as_ref().eq(name.as_str()).then_some(server)
-                            })
-                            .unwrap_or_else(|| language_server)
-                    } else {
-                        language_server
-                    };
-
-                    let lsp_store = project.update(cx, |p, _| p.lsp_store.downgrade())?;
-                    Some(FormatOperation::Lsp(
-                        LspStore::format_via_lsp(
-                            &lsp_store,
-                            buffer,
-                            buffer_abs_path,
-                            language_server,
-                            settings,
-                            cx,
-                        )
-                        .await
-                        .context("failed to format via language server")?,
-                    ))
-                } else {
-                    None
-                }
-            }
-            Formatter::Prettier => {
-                prettier_support::format_with_prettier(&project, buffer, &mut cx)
-                    .await
-                    .transpose()
-                    .ok()
-                    .flatten()
-            }
-            Formatter::External { command, arguments } => {
-                let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
-                Self::format_via_external_command(
-                    buffer,
-                    buffer_abs_path,
-                    &command,
-                    &arguments,
-                    &mut cx,
-                )
-                .await
-                .context(format!(
-                    "failed to format via external command {:?}",
-                    command
-                ))?
-                .map(FormatOperation::External)
-            }
-            Formatter::CodeActions(code_actions) => {
-                let code_actions = deserialize_code_actions(&code_actions);
-                let lsp_store = project.update(cx, |p, _| p.lsp_store.downgrade())?;
-                if !code_actions.is_empty() {
-                    LspStore::execute_code_actions_on_servers(
-                        &lsp_store,
-                        &adapters_and_servers,
-                        code_actions,
-                        buffer,
-                        push_to_history,
-                        transaction,
-                        cx,
-                    )
-                    .await?;
-                }
-                None
-            }
-        };
-        anyhow::Ok(result)
-    }
-
-    async fn format_via_external_command(
-        buffer: &Model<Buffer>,
-        buffer_abs_path: Option<&Path>,
-        command: &str,
-        arguments: &[String],
-        cx: &mut AsyncAppContext,
-    ) -> Result<Option<Diff>> {
-        let working_dir_path = buffer.update(cx, |buffer, cx| {
-            let file = File::from_dyn(buffer.file())?;
-            let worktree = file.worktree.read(cx);
-            let mut worktree_path = worktree.abs_path().to_path_buf();
-            if worktree.root_entry()?.is_file() {
-                worktree_path.pop();
-            }
-            Some(worktree_path)
-        })?;
-
-        let mut child = smol::process::Command::new(command);
-        #[cfg(target_os = "windows")]
-        {
-            use smol::process::windows::CommandExt;
-            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        }
-
-        if let Some(working_dir_path) = working_dir_path {
-            child.current_dir(working_dir_path);
-        }
-
-        let mut child = child
-            .args(arguments.iter().map(|arg| {
-                if let Some(buffer_abs_path) = buffer_abs_path {
-                    arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
-                } else {
-                    arg.replace("{buffer_path}", "Untitled")
-                }
-            }))
-            .stdin(smol::process::Stdio::piped())
-            .stdout(smol::process::Stdio::piped())
-            .stderr(smol::process::Stdio::piped())
-            .spawn()?;
-
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
-        let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
-        for chunk in text.chunks() {
-            stdin.write_all(chunk.as_bytes()).await?;
-        }
-        stdin.flush().await?;
-
-        let output = child.output().await?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            ));
-        }
-
-        let stdout = String::from_utf8(output.stdout)?;
-        Ok(Some(
-            buffer
-                .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
-                .await,
-        ))
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.format(buffers, push_to_history, trigger, cx)
+        })
     }
 
     #[inline(never)]
     fn definition_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -3248,7 +2488,7 @@ impl Project {
         )
     }
     pub fn definition<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3258,7 +2498,7 @@ impl Project {
     }
 
     fn declaration_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -3272,7 +2512,7 @@ impl Project {
     }
 
     pub fn declaration<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3282,7 +2522,7 @@ impl Project {
     }
 
     fn type_definition_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -3296,7 +2536,7 @@ impl Project {
     }
 
     pub fn type_definition<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3306,7 +2546,7 @@ impl Project {
     }
 
     pub fn implementation<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3321,7 +2561,7 @@ impl Project {
     }
 
     pub fn references<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3336,7 +2576,7 @@ impl Project {
     }
 
     fn document_highlights_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -3350,7 +2590,7 @@ impl Project {
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -3471,7 +2711,7 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Vec<CodeAction>> {
+    ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3534,16 +2774,16 @@ impl Project {
             cx,
         )
     }
+
     pub fn perform_rename<T: ToPointUtf16>(
         &mut self,
         buffer: Model<Buffer>,
         position: T,
         new_name: String,
-        push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.perform_rename_impl(buffer, position, new_name, push_to_history, cx)
+        self.perform_rename_impl(buffer, position, new_name, true, cx)
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
@@ -3592,9 +2832,9 @@ impl Project {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
         let matching_buffers_rx = if query.is_opened_only() {
-            self.sort_candidate_buffers(&query, cx)
+            self.sort_search_candidates(&query, cx)
         } else {
-            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
+            self.find_search_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
         };
 
         cx.spawn(|_, cx| async move {
@@ -3657,7 +2897,7 @@ impl Project {
         result_rx
     }
 
-    fn search_for_candidate_buffers(
+    fn find_search_candidate_buffers(
         &mut self,
         query: &SearchQuery,
         limit: usize,
@@ -3665,15 +2905,15 @@ impl Project {
     ) -> Receiver<Model<Buffer>> {
         if self.is_local() {
             let fs = self.fs.clone();
-            return self.buffer_store.update(cx, |buffer_store, cx| {
+            self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(query, limit, fs, cx)
-            });
+            })
         } else {
-            self.search_for_candidate_buffers_remote(query, limit, cx)
+            self.find_search_candidates_remote(query, limit, cx)
         }
     }
 
-    fn sort_candidate_buffers(
+    fn sort_search_candidates(
         &mut self,
         search_query: &SearchQuery,
         cx: &mut ModelContext<Project>,
@@ -3698,7 +2938,7 @@ impl Project {
                         }
                     }
                 }
-                return true;
+                true
             })
             .collect::<Vec<_>>();
         let (tx, rx) = smol::channel::unbounded();
@@ -3715,7 +2955,7 @@ impl Project {
         rx
     }
 
-    fn search_for_candidate_buffers_remote(
+    fn find_search_candidates_remote(
         &mut self,
         query: &SearchQuery,
         limit: usize,
@@ -3723,21 +2963,20 @@ impl Project {
     ) -> Receiver<Model<Buffer>> {
         let (tx, rx) = smol::channel::unbounded();
 
-        let (client, remote_id): (AnyProtoClient, _) =
-            if let Some(ssh_session) = self.ssh_session.clone() {
-                (ssh_session.into(), 0)
-            } else if let Some(remote_id) = self.remote_id() {
-                (self.client.clone().into(), remote_id)
-            } else {
-                return rx;
-            };
+        let (client, remote_id): (AnyProtoClient, _) = if let Some(ssh_client) = &self.ssh_client {
+            (ssh_client.read(cx).to_proto_client(), 0)
+        } else if let Some(remote_id) = self.remote_id() {
+            (self.client.clone().into(), remote_id)
+        } else {
+            return rx;
+        };
 
         let request = client.request(proto::FindSearchCandidates {
             project_id: remote_id,
             query: Some(query.to_proto()),
             limit: limit as _,
         });
-        let guard = self.retain_remotely_created_buffers(cx);
+        let guard = self.retain_remotely_created_models(cx);
 
         cx.spawn(move |this, mut cx| async move {
             let response = request.await?;
@@ -3759,7 +2998,7 @@ impl Project {
     }
 
     pub fn request_lsp<R: LspCommand>(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
@@ -3769,8 +3008,14 @@ impl Project {
         <R::LspRequest as lsp::request::Request>::Result: Send,
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.request_lsp(buffer_handle, server, request, cx)
+        });
+        cx.spawn(|_, _| async move {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3834,39 +3079,62 @@ impl Project {
         }
     }
 
-    // Returns the resolved version of `path`, that was found in `buffer`, if it exists.
+    /// Returns the resolved version of `path`, that was found in `buffer`, if it exists.
     pub fn resolve_existing_file_path(
         &self,
         path: &str,
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<ResolvedPath>> {
-        // TODO: ssh based remoting.
-        if self.ssh_session.is_some() {
-            return Task::ready(None);
+        let path_buf = PathBuf::from(path);
+        if path_buf.is_absolute() || path.starts_with("~") {
+            self.resolve_abs_file_path(path, cx)
+        } else {
+            self.resolve_path_in_worktrees(path_buf, buffer, cx)
         }
+    }
 
-        if self.is_local_or_ssh() {
+    pub fn abs_file_path_exists(&self, path: &str, cx: &mut ModelContext<Self>) -> Task<bool> {
+        let resolve_task = self.resolve_abs_file_path(path, cx);
+        cx.background_executor().spawn(async move {
+            let resolved_path = resolve_task.await;
+            resolved_path.is_some()
+        })
+    }
+
+    fn resolve_abs_file_path(
+        &self,
+        path: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
 
-            if expanded.is_absolute() {
-                let fs = self.fs.clone();
-                cx.background_executor().spawn(async move {
-                    let path = expanded.as_path();
-                    let exists = fs.is_file(path).await;
+            let fs = self.fs.clone();
+            cx.background_executor().spawn(async move {
+                let path = expanded.as_path();
+                let exists = fs.is_file(path).await;
 
-                    exists.then(|| ResolvedPath::AbsPath(expanded))
-                })
-            } else {
-                self.resolve_path_in_worktrees(expanded, buffer, cx)
-            }
+                exists.then(|| ResolvedPath::AbsPath(expanded))
+            })
+        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request = ssh_client
+                .read(cx)
+                .to_proto_client()
+                .request(proto::CheckFileExists {
+                    project_id: SSH_PROJECT_ID,
+                    path: path.to_string(),
+                });
+            cx.background_executor().spawn(async move {
+                let response = request.await.log_err()?;
+                if response.exists {
+                    Some(ResolvedPath::AbsPath(PathBuf::from(response.path)))
+                } else {
+                    None
+                }
+            })
         } else {
-            let path = PathBuf::from(path);
-            if path.is_absolute() || path.starts_with("~") {
-                return Task::ready(None);
-            }
-
-            self.resolve_path_in_worktrees(path, buffer, cx)
+            return Task::ready(None);
         }
     }
 
@@ -3893,10 +3161,10 @@ impl Project {
                         .update(&mut cx, |worktree, _| {
                             let root_entry_path = &worktree.root_entry()?.path;
 
-                            let resolved = resolve_path(&root_entry_path, candidate);
+                            let resolved = resolve_path(root_entry_path, candidate);
 
                             let stripped =
-                                resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
+                                resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
 
                             worktree.entry_for_path(stripped).map(|entry| {
                                 ResolvedPath::ProjectPath(ProjectPath {
@@ -3921,8 +3189,19 @@ impl Project {
         query: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<PathBuf>>> {
-        if self.is_local_or_ssh() {
+        if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
+        } else if let Some(session) = self.ssh_client.as_ref() {
+            let request = proto::ListRemoteDirectory {
+                dev_server_id: SSH_PROJECT_ID,
+                path: query,
+            };
+
+            let response = session.read(cx).to_proto_client().request(request);
+            cx.background_executor().spawn(async move {
+                let response = response.await?;
+                Ok(response.entries.into_iter().map(PathBuf::from).collect())
+            })
         } else if let Some(dev_server) = self.dev_server_project_id().and_then(|id| {
             dev_server_projects::Store::global(cx)
                 .read(cx)
@@ -3963,134 +3242,6 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
         });
-    }
-
-    fn update_local_worktree_settings(
-        &mut self,
-        worktree: &Model<Worktree>,
-        changes: &UpdatedEntriesSet,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if worktree.read(cx).is_remote() {
-            return;
-        }
-        let project_id = self.remote_id();
-        let worktree_id = worktree.entity_id();
-        let remote_worktree_id = worktree.read(cx).id();
-
-        let mut settings_contents = Vec::new();
-        for (path, _, change) in changes.iter() {
-            let removed = change == &PathChange::Removed;
-            let abs_path = match worktree.read(cx).absolutize(path) {
-                Ok(abs_path) => abs_path,
-                Err(e) => {
-                    log::warn!("Cannot absolutize {path:?} received as {change:?} FS change: {e}");
-                    continue;
-                }
-            };
-
-            if path.ends_with(local_settings_file_relative_path()) {
-                let settings_dir = Arc::from(
-                    path.ancestors()
-                        .nth(local_settings_file_relative_path().components().count())
-                        .unwrap(),
-                );
-                let fs = self.fs.clone();
-                settings_contents.push(async move {
-                    (
-                        settings_dir,
-                        if removed {
-                            None
-                        } else {
-                            Some(async move { fs.load(&abs_path).await }.await)
-                        },
-                    )
-                });
-            } else if path.ends_with(local_tasks_file_relative_path()) {
-                self.task_inventory().update(cx, |task_inventory, cx| {
-                    if removed {
-                        task_inventory.remove_local_static_source(&abs_path);
-                    } else {
-                        let fs = self.fs.clone();
-                        let task_abs_path = abs_path.clone();
-                        let tasks_file_rx =
-                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                        task_inventory.add_source(
-                            TaskSourceKind::Worktree {
-                                id: remote_worktree_id,
-                                abs_path,
-                                id_base: "local_tasks_for_worktree".into(),
-                            },
-                            |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
-                            cx,
-                        );
-                    }
-                })
-            } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
-                self.task_inventory().update(cx, |task_inventory, cx| {
-                    if removed {
-                        task_inventory.remove_local_static_source(&abs_path);
-                    } else {
-                        let fs = self.fs.clone();
-                        let task_abs_path = abs_path.clone();
-                        let tasks_file_rx =
-                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                        task_inventory.add_source(
-                            TaskSourceKind::Worktree {
-                                id: remote_worktree_id,
-                                abs_path,
-                                id_base: "local_vscode_tasks_for_worktree".into(),
-                            },
-                            |tx, cx| {
-                                StaticSource::new(TrackedFile::new_convertible::<
-                                    task::VsCodeTaskFile,
-                                >(
-                                    tasks_file_rx, tx, cx
-                                ))
-                            },
-                            cx,
-                        );
-                    }
-                })
-            }
-        }
-
-        if settings_contents.is_empty() {
-            return;
-        }
-
-        let client = self.client.clone();
-        cx.spawn(move |_, cx| async move {
-            let settings_contents: Vec<(Arc<Path>, _)> =
-                futures::future::join_all(settings_contents).await;
-            cx.update(|cx| {
-                cx.update_global::<SettingsStore, _>(|store, cx| {
-                    for (directory, file_content) in settings_contents {
-                        let file_content = file_content.and_then(|content| content.log_err());
-                        store
-                            .set_local_settings(
-                                worktree_id.as_u64() as usize,
-                                directory.clone(),
-                                file_content.as_deref(),
-                                cx,
-                            )
-                            .log_err();
-                        if let Some(remote_id) = project_id {
-                            client
-                                .send(proto::UpdateWorktreeSettings {
-                                    project_id: remote_id,
-                                    worktree_id: remote_worktree_id.to_proto(),
-                                    path: directory.to_string_lossy().into_owned(),
-                                    content: file_content,
-                                })
-                                .log_err();
-                        }
-                    }
-                });
-            })
-            .ok();
-        })
-        .detach();
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
@@ -4256,7 +3407,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            if this.is_local_or_ssh() {
+            if this.is_local() || this.is_via_ssh() {
                 this.unshare(cx)?;
             } else {
                 this.disconnected_from_host(cx);
@@ -4375,6 +3526,7 @@ impl Project {
         })?
     }
 
+    // Collab sends UpdateWorktree protos as messages
     async fn handle_update_worktree(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
@@ -4392,40 +3544,17 @@ impl Project {
         })?
     }
 
-    async fn handle_update_worktree_settings(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
-                cx.update_global::<SettingsStore, _>(|store, cx| {
-                    store
-                        .set_local_settings(
-                            worktree.entity_id().as_u64() as usize,
-                            PathBuf::from(&envelope.payload.path).into(),
-                            envelope.payload.content.as_deref(),
-                            cx,
-                        )
-                        .log_err();
-                });
-            }
-            Ok(())
-        })?
-    }
-
     async fn handle_update_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
         cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         let buffer_store = this.read_with(&cx, |this, cx| {
-            if let Some(ssh) = &this.ssh_session {
+            if let Some(ssh) = &this.ssh_client {
                 let mut payload = envelope.payload.clone();
-                payload.project_id = 0;
+                payload.project_id = SSH_PROJECT_ID;
                 cx.background_executor()
-                    .spawn(ssh.request(payload))
+                    .spawn(ssh.read(cx).to_proto_client().request(payload))
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
@@ -4433,19 +3562,21 @@ impl Project {
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
 
-    fn retain_remotely_created_buffers(
+    fn retain_remotely_created_models(
         &mut self,
         cx: &mut ModelContext<Self>,
-    ) -> RemotelyCreatedBufferGuard {
+    ) -> RemotelyCreatedModelGuard {
         {
-            let mut remotely_created_buffers = self.remotely_created_buffers.lock();
-            if remotely_created_buffers.retain_count == 0 {
-                remotely_created_buffers.buffers = self.buffer_store.read(cx).buffers().collect();
+            let mut remotely_create_models = self.remotely_created_models.lock();
+            if remotely_create_models.retain_count == 0 {
+                remotely_create_models.buffers = self.buffer_store.read(cx).buffers().collect();
+                remotely_create_models.worktrees =
+                    self.worktree_store.read(cx).worktrees().collect();
             }
-            remotely_created_buffers.retain_count += 1;
+            remotely_create_models.retain_count += 1;
         }
-        RemotelyCreatedBufferGuard {
-            remote_buffers: Arc::downgrade(&self.remotely_created_buffers),
+        RemotelyCreatedModelGuard {
+            remote_models: Arc::downgrade(&self.remotely_created_models),
         }
     }
 
@@ -4466,30 +3597,6 @@ impl Project {
         })?
     }
 
-    async fn handle_reload_buffers(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::ReloadBuffers>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ReloadBuffersResponse> {
-        let sender_id = envelope.original_sender_id()?;
-        let reload = this.update(&mut cx, |this, cx| {
-            let mut buffers = HashSet::default();
-            for buffer_id in &envelope.payload.buffer_ids {
-                let buffer_id = BufferId::new(*buffer_id)?;
-                buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
-            }
-            Ok::<_, anyhow::Error>(this.reload_buffers(buffers, false, cx))
-        })??;
-
-        let project_transaction = reload.await?;
-        let project_transaction = this.update(&mut cx, |this, cx| {
-            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
-        })?;
-        Ok(proto::ReloadBuffersResponse {
-            transaction: Some(project_transaction),
-        })
-    }
-
     async fn handle_synchronize_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
@@ -4505,202 +3612,6 @@ impl Project {
         Ok(response)
     }
 
-    async fn handle_format_buffers(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::FormatBuffers>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::FormatBuffersResponse> {
-        let sender_id = envelope.original_sender_id()?;
-        let format = this.update(&mut cx, |this, cx| {
-            let mut buffers = HashSet::default();
-            for buffer_id in &envelope.payload.buffer_ids {
-                let buffer_id = BufferId::new(*buffer_id)?;
-                buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
-            }
-            let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
-            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, cx))
-        })??;
-
-        let project_transaction = format.await?;
-        let project_transaction = this.update(&mut cx, |this, cx| {
-            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
-        })?;
-        Ok(proto::FormatBuffersResponse {
-            transaction: Some(project_transaction),
-        })
-    }
-
-    async fn handle_task_context_for_location(
-        project: Model<Self>,
-        envelope: TypedEnvelope<proto::TaskContextForLocation>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::TaskContext> {
-        let location = envelope
-            .payload
-            .location
-            .context("no location given for task context handling")?;
-        let location = cx
-            .update(|cx| deserialize_location(&project, location, cx))?
-            .await?;
-        let context_task = project.update(&mut cx, |project, cx| {
-            let captured_variables = {
-                let mut variables = TaskVariables::default();
-                for range in location
-                    .buffer
-                    .read(cx)
-                    .snapshot()
-                    .runnable_ranges(location.range.clone())
-                {
-                    for (capture_name, value) in range.extra_captures {
-                        variables.insert(VariableName::Custom(capture_name.into()), value);
-                    }
-                }
-                variables
-            };
-            project.task_context_for_location(captured_variables, location, cx)
-        })?;
-        let task_context = context_task.await.unwrap_or_default();
-        Ok(proto::TaskContext {
-            project_env: task_context.project_env.into_iter().collect(),
-            cwd: task_context
-                .cwd
-                .map(|cwd| cwd.to_string_lossy().to_string()),
-            task_variables: task_context
-                .task_variables
-                .into_iter()
-                .map(|(variable_name, variable_value)| (variable_name.to_string(), variable_value))
-                .collect(),
-        })
-    }
-
-    async fn handle_task_templates(
-        project: Model<Self>,
-        envelope: TypedEnvelope<proto::TaskTemplates>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::TaskTemplatesResponse> {
-        let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
-        let location = match envelope.payload.location {
-            Some(location) => Some(
-                cx.update(|cx| deserialize_location(&project, location, cx))?
-                    .await
-                    .context("task templates request location deserializing")?,
-            ),
-            None => None,
-        };
-
-        let templates = project
-            .update(&mut cx, |project, cx| {
-                project.task_templates(worktree, location, cx)
-            })?
-            .await
-            .context("receiving task templates")?
-            .into_iter()
-            .map(|(kind, template)| {
-                let kind = Some(match kind {
-                    TaskSourceKind::UserInput => proto::task_source_kind::Kind::UserInput(
-                        proto::task_source_kind::UserInput {},
-                    ),
-                    TaskSourceKind::Worktree {
-                        id,
-                        abs_path,
-                        id_base,
-                    } => {
-                        proto::task_source_kind::Kind::Worktree(proto::task_source_kind::Worktree {
-                            id: id.to_proto(),
-                            abs_path: abs_path.to_string_lossy().to_string(),
-                            id_base: id_base.to_string(),
-                        })
-                    }
-                    TaskSourceKind::AbsPath { id_base, abs_path } => {
-                        proto::task_source_kind::Kind::AbsPath(proto::task_source_kind::AbsPath {
-                            abs_path: abs_path.to_string_lossy().to_string(),
-                            id_base: id_base.to_string(),
-                        })
-                    }
-                    TaskSourceKind::Language { name } => {
-                        proto::task_source_kind::Kind::Language(proto::task_source_kind::Language {
-                            name: name.to_string(),
-                        })
-                    }
-                });
-                let kind = Some(proto::TaskSourceKind { kind });
-                let template = Some(proto::TaskTemplate {
-                    label: template.label,
-                    command: template.command,
-                    args: template.args,
-                    env: template.env.into_iter().collect(),
-                    cwd: template.cwd,
-                    use_new_terminal: template.use_new_terminal,
-                    allow_concurrent_runs: template.allow_concurrent_runs,
-                    reveal: match template.reveal {
-                        RevealStrategy::Always => proto::RevealStrategy::RevealAlways as i32,
-                        RevealStrategy::Never => proto::RevealStrategy::RevealNever as i32,
-                    },
-                    hide: match template.hide {
-                        HideStrategy::Always => proto::HideStrategy::HideAlways as i32,
-                        HideStrategy::Never => proto::HideStrategy::HideNever as i32,
-                        HideStrategy::OnSuccess => proto::HideStrategy::HideOnSuccess as i32,
-                    },
-                    shell: Some(proto::Shell {
-                        shell_type: Some(match template.shell {
-                            Shell::System => proto::shell::ShellType::System(proto::System {}),
-                            Shell::Program(program) => proto::shell::ShellType::Program(program),
-                            Shell::WithArguments { program, args } => {
-                                proto::shell::ShellType::WithArguments(
-                                    proto::shell::WithArguments { program, args },
-                                )
-                            }
-                        }),
-                    }),
-                    tags: template.tags,
-                });
-                proto::TemplatePair { kind, template }
-            })
-            .collect();
-
-        Ok(proto::TaskTemplatesResponse { templates })
-    }
-
-    async fn handle_search_project(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::SearchProject>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::SearchProjectResponse> {
-        let peer_id = envelope.original_sender_id()?;
-        let query = SearchQuery::from_proto_v1(envelope.payload)?;
-        let mut result = this.update(&mut cx, |this, cx| this.search(query, cx))?;
-
-        cx.spawn(move |mut cx| async move {
-            let mut locations = Vec::new();
-            let mut limit_reached = false;
-            while let Some(result) = result.next().await {
-                match result {
-                    SearchResult::Buffer { buffer, ranges } => {
-                        for range in ranges {
-                            let start = serialize_anchor(&range.start);
-                            let end = serialize_anchor(&range.end);
-                            let buffer_id = this.update(&mut cx, |this, cx| {
-                                this.create_buffer_for_peer(&buffer, peer_id, cx).into()
-                            })?;
-                            locations.push(proto::Location {
-                                buffer_id,
-                                start: Some(start),
-                                end: Some(end),
-                            });
-                        }
-                    }
-                    SearchResult::LimitReached => limit_reached = true,
-                }
-            }
-            Ok(proto::SearchProjectResponse {
-                locations,
-                limit_reached,
-                // will restart
-            })
-        })
-        .await
-    }
-
     async fn handle_search_candidate_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
@@ -4714,7 +3625,7 @@ impl Project {
                 .ok_or_else(|| anyhow!("missing query field"))?,
         )?;
         let mut results = this.update(&mut cx, |this, cx| {
-            this.search_for_candidate_buffers(&query, message.limit as _, cx)
+            this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {
@@ -4770,7 +3681,9 @@ impl Project {
         envelope: TypedEnvelope<proto::OpenNewBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
-        let buffer = this.update(&mut cx, |this, cx| this.create_local_buffer("", None, cx))?;
+        let buffer = this
+            .update(&mut cx, |this, cx| this.create_buffer(cx))?
+            .await?;
         let peer_id = envelope.original_sender_id()?;
 
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
@@ -4796,17 +3709,6 @@ impl Project {
                 })
             }
         })?
-    }
-
-    fn serialize_project_transaction_for_peer(
-        &mut self,
-        project_transaction: ProjectTransaction,
-        peer_id: proto::PeerId,
-        cx: &mut AppContext,
-    ) -> proto::ProjectTransaction {
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.serialize_project_transaction_for_peer(project_transaction, peer_id, cx)
-        })
     }
 
     fn create_buffer_for_peer(
@@ -4922,17 +3824,7 @@ impl Project {
     }
 
     pub fn worktree_metadata_protos(&self, cx: &AppContext) -> Vec<proto::WorktreeMetadata> {
-        self.worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                proto::WorktreeMetadata {
-                    id: worktree.id().to_proto(),
-                    root_name: worktree.root_name().into(),
-                    visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().into(),
-                }
-            })
-            .collect()
+        self.worktree_store.read(cx).worktree_metadata_protos(cx)
     }
 
     fn set_worktrees_from_proto(
@@ -4940,15 +3832,9 @@ impl Project {
         worktrees: Vec<proto::WorktreeMetadata>,
         cx: &mut ModelContext<Project>,
     ) -> Result<()> {
-        self.metadata_changed(cx);
+        cx.notify();
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.set_worktrees_from_proto(
-                worktrees,
-                self.replica_id(),
-                self.remote_id().ok_or_else(|| anyhow!("invalid project"))?,
-                self.client.clone().into(),
-                cx,
-            )
+            worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
         })
     }
 
@@ -4981,16 +3867,8 @@ impl Project {
     pub fn supplementary_language_servers<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl '_ + Iterator<Item = (&'a LanguageServerId, &'a LanguageServerName)> {
+    ) -> impl 'a + Iterator<Item = (LanguageServerId, LanguageServerName)> {
         self.lsp_store.read(cx).supplementary_language_servers()
-    }
-
-    pub fn language_server_adapter_for_id(
-        &self,
-        id: LanguageServerId,
-        cx: &AppContext,
-    ) -> Option<Arc<CachedLspAdapter>> {
-        self.lsp_store.read(cx).language_server_adapter_for_id(id)
     }
 
     pub fn language_server_for_id(
@@ -5021,265 +3899,6 @@ impl Project {
             .read(cx)
             .language_server_for_buffer(buffer, server_id, cx)
     }
-
-    pub fn task_context_for_location(
-        &self,
-        captured_variables: TaskVariables,
-        location: Location,
-        cx: &mut ModelContext<'_, Project>,
-    ) -> Task<Option<TaskContext>> {
-        if self.is_local_or_ssh() {
-            let (worktree_id, worktree_abs_path) = if let Some(worktree) = self.task_worktree(cx) {
-                (
-                    Some(worktree.read(cx).id()),
-                    Some(worktree.read(cx).abs_path()),
-                )
-            } else {
-                (None, None)
-            };
-
-            cx.spawn(|project, mut cx| async move {
-                let mut task_variables = cx
-                    .update(|cx| {
-                        combine_task_variables(
-                            captured_variables,
-                            location,
-                            BasicContextProvider::new(project.upgrade()?),
-                            cx,
-                        )
-                        .log_err()
-                    })
-                    .ok()
-                    .flatten()?;
-                // Remove all custom entries starting with _, as they're not intended for use by the end user.
-                task_variables.sweep();
-
-                let project_env = project
-                    .update(&mut cx, |project, cx| {
-                        let worktree_abs_path = worktree_abs_path.clone();
-                        project.environment.update(cx, |environment, cx| {
-                            environment.get_environment(worktree_id, worktree_abs_path, cx)
-                        })
-                    })
-                    .ok()?
-                    .await;
-
-                Some(TaskContext {
-                    project_env: project_env.unwrap_or_default(),
-                    cwd: worktree_abs_path.map(|p| p.to_path_buf()),
-                    task_variables,
-                })
-            })
-        } else if let Some(project_id) = self
-            .remote_id()
-            .filter(|_| self.ssh_connection_string(cx).is_some())
-        {
-            let task_context = self.client().request(proto::TaskContextForLocation {
-                project_id,
-                location: Some(proto::Location {
-                    buffer_id: location.buffer.read(cx).remote_id().into(),
-                    start: Some(serialize_anchor(&location.range.start)),
-                    end: Some(serialize_anchor(&location.range.end)),
-                }),
-            });
-            cx.background_executor().spawn(async move {
-                let task_context = task_context.await.log_err()?;
-                Some(TaskContext {
-                    project_env: task_context.project_env.into_iter().collect(),
-                    cwd: task_context.cwd.map(PathBuf::from),
-                    task_variables: task_context
-                        .task_variables
-                        .into_iter()
-                        .filter_map(
-                            |(variable_name, variable_value)| match variable_name.parse() {
-                                Ok(variable_name) => Some((variable_name, variable_value)),
-                                Err(()) => {
-                                    log::error!("Unknown variable name: {variable_name}");
-                                    None
-                                }
-                            },
-                        )
-                        .collect(),
-                })
-            })
-        } else {
-            Task::ready(None)
-        }
-    }
-
-    pub fn task_templates(
-        &self,
-        worktree: Option<WorktreeId>,
-        location: Option<Location>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
-        if self.is_local_or_ssh() {
-            let (file, language) = location
-                .map(|location| {
-                    let buffer = location.buffer.read(cx);
-                    (
-                        buffer.file().cloned(),
-                        buffer.language_at(location.range.start),
-                    )
-                })
-                .unwrap_or_default();
-            Task::ready(Ok(self
-                .task_inventory()
-                .read(cx)
-                .list_tasks(file, language, worktree, cx)))
-        } else if let Some(project_id) = self
-            .remote_id()
-            .filter(|_| self.ssh_connection_string(cx).is_some())
-        {
-            let remote_templates =
-                self.query_remote_task_templates(project_id, worktree, location.as_ref(), cx);
-            cx.background_executor().spawn(remote_templates)
-        } else {
-            Task::ready(Ok(Vec::new()))
-        }
-    }
-
-    pub fn query_remote_task_templates(
-        &self,
-        project_id: u64,
-        worktree: Option<WorktreeId>,
-        location: Option<&Location>,
-        cx: &AppContext,
-    ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
-        let client = self.client();
-        let location = location.map(|location| serialize_location(location, cx));
-        cx.spawn(|_| async move {
-            let response = client
-                .request(proto::TaskTemplates {
-                    project_id,
-                    worktree_id: worktree.map(|id| id.to_proto()),
-                    location,
-                })
-                .await?;
-
-            Ok(response
-                .templates
-                .into_iter()
-                .filter_map(|template_pair| {
-                    let task_source_kind = match template_pair.kind?.kind? {
-                        proto::task_source_kind::Kind::UserInput(_) => TaskSourceKind::UserInput,
-                        proto::task_source_kind::Kind::Worktree(worktree) => {
-                            TaskSourceKind::Worktree {
-                                id: WorktreeId::from_proto(worktree.id),
-                                abs_path: PathBuf::from(worktree.abs_path),
-                                id_base: Cow::Owned(worktree.id_base),
-                            }
-                        }
-                        proto::task_source_kind::Kind::AbsPath(abs_path) => {
-                            TaskSourceKind::AbsPath {
-                                id_base: Cow::Owned(abs_path.id_base),
-                                abs_path: PathBuf::from(abs_path.abs_path),
-                            }
-                        }
-                        proto::task_source_kind::Kind::Language(language) => {
-                            TaskSourceKind::Language {
-                                name: language.name.into(),
-                            }
-                        }
-                    };
-
-                    let proto_template = template_pair.template?;
-                    let reveal = match proto::RevealStrategy::from_i32(proto_template.reveal)
-                        .unwrap_or(proto::RevealStrategy::RevealAlways)
-                    {
-                        proto::RevealStrategy::RevealAlways => RevealStrategy::Always,
-                        proto::RevealStrategy::RevealNever => RevealStrategy::Never,
-                    };
-                    let hide = match proto::HideStrategy::from_i32(proto_template.hide)
-                        .unwrap_or(proto::HideStrategy::HideNever)
-                    {
-                        proto::HideStrategy::HideAlways => HideStrategy::Always,
-                        proto::HideStrategy::HideNever => HideStrategy::Never,
-                        proto::HideStrategy::HideOnSuccess => HideStrategy::OnSuccess,
-                    };
-                    let shell = match proto_template
-                        .shell
-                        .and_then(|shell| shell.shell_type)
-                        .unwrap_or(proto::shell::ShellType::System(proto::System {}))
-                    {
-                        proto::shell::ShellType::System(_) => Shell::System,
-                        proto::shell::ShellType::Program(program) => Shell::Program(program),
-                        proto::shell::ShellType::WithArguments(with_arguments) => {
-                            Shell::WithArguments {
-                                program: with_arguments.program,
-                                args: with_arguments.args,
-                            }
-                        }
-                    };
-                    let task_template = TaskTemplate {
-                        label: proto_template.label,
-                        command: proto_template.command,
-                        args: proto_template.args,
-                        env: proto_template.env.into_iter().collect(),
-                        cwd: proto_template.cwd,
-                        use_new_terminal: proto_template.use_new_terminal,
-                        allow_concurrent_runs: proto_template.allow_concurrent_runs,
-                        reveal,
-                        hide,
-                        shell,
-                        tags: proto_template.tags,
-                    };
-                    Some((task_source_kind, task_template))
-                })
-                .collect())
-        })
-    }
-
-    fn task_worktree(&self, cx: &AppContext) -> Option<Model<Worktree>> {
-        let available_worktrees = self
-            .worktrees(cx)
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                worktree.is_visible()
-                    && worktree.is_local()
-                    && worktree.root_entry().map_or(false, |e| e.is_dir())
-            })
-            .collect::<Vec<_>>();
-
-        match available_worktrees.len() {
-            0 => None,
-            1 => Some(available_worktrees[0].clone()),
-            _ => self.active_entry().and_then(|entry_id| {
-                available_worktrees.into_iter().find_map(|worktree| {
-                    if worktree.read(cx).contains_entry(entry_id) {
-                        Some(worktree)
-                    } else {
-                        None
-                    }
-                })
-            }),
-        }
-    }
-}
-
-fn combine_task_variables(
-    mut captured_variables: TaskVariables,
-    location: Location,
-    baseline: BasicContextProvider,
-    cx: &mut AppContext,
-) -> anyhow::Result<TaskVariables> {
-    let language_context_provider = location
-        .buffer
-        .read(cx)
-        .language()
-        .and_then(|language| language.context_provider());
-    let baseline = baseline
-        .build_context(&captured_variables, &location, cx)
-        .context("building basic default context")?;
-    captured_variables.extend(baseline);
-    if let Some(provider) = language_context_provider {
-        captured_variables.extend(
-            provider
-                .build_context(&captured_variables, &location, cx)
-                .context("building provider context")?,
-        );
-    }
-    Ok(captured_variables)
 }
 
 fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
@@ -5387,11 +4006,11 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 
 impl EventEmitter<Event> for Project {}
 
-impl<'a> Into<SettingsLocation<'a>> for &'a ProjectPath {
-    fn into(self) -> SettingsLocation<'a> {
+impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
+    fn from(val: &'a ProjectPath) -> Self {
         SettingsLocation {
-            worktree_id: self.worktree_id.to_usize(),
-            path: self.path.as_ref(),
+            worktree_id: val.worktree_id,
+            path: val.path.as_ref(),
         }
     }
 }
@@ -5456,6 +4075,22 @@ pub enum ResolvedPath {
     AbsPath(PathBuf),
 }
 
+impl ResolvedPath {
+    pub fn abs_path(&self) -> Option<&Path> {
+        match self {
+            Self::AbsPath(path) => Some(path.as_path()),
+            _ => None,
+        }
+    }
+
+    pub fn project_path(&self) -> Option<&ProjectPath> {
+        match self {
+            Self::ProjectPath(path) => Some(&path),
+            _ => None,
+        }
+    }
+}
+
 impl Item for Buffer {
     fn try_open(
         project: &Model<Project>,
@@ -5493,6 +4128,16 @@ impl Completion {
     pub fn is_snippet(&self) -> bool {
         self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
+
+    /// Returns the corresponding color for this completion.
+    ///
+    /// Will return `None` if this completion's kind is not [`CompletionItemKind::COLOR`].
+    pub fn color(&self) -> Option<Hsla> {
+        match self.lsp_completion.kind {
+            Some(CompletionItemKind::COLOR) => color_extractor::extract_color(&self.lsp_completion),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -5506,44 +4151,7 @@ impl std::fmt::Display for NoRepositoryError {
 
 impl std::error::Error for NoRepositoryError {}
 
-fn serialize_location(location: &Location, cx: &AppContext) -> proto::Location {
-    proto::Location {
-        buffer_id: location.buffer.read(cx).remote_id().into(),
-        start: Some(serialize_anchor(&location.range.start)),
-        end: Some(serialize_anchor(&location.range.end)),
-    }
-}
-
-fn deserialize_location(
-    project: &Model<Project>,
-    location: proto::Location,
-    cx: &mut AppContext,
-) -> Task<Result<Location>> {
-    let buffer_id = match BufferId::new(location.buffer_id) {
-        Ok(id) => id,
-        Err(e) => return Task::ready(Err(e)),
-    };
-    let buffer_task = project.update(cx, |project, cx| {
-        project.wait_for_remote_buffer(buffer_id, cx)
-    });
-    cx.spawn(|_| async move {
-        let buffer = buffer_task.await?;
-        let start = location
-            .start
-            .and_then(deserialize_anchor)
-            .context("missing task context location start")?;
-        let end = location
-            .end
-            .and_then(deserialize_anchor)
-            .context("missing task context location end")?;
-        Ok(Location {
-            buffer,
-            range: start..end,
-        })
-    })
-}
-
-pub fn sort_worktree_entries(entries: &mut Vec<Entry>) {
+pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {
         compare_paths(
             (&entry_a.path, entry_a.is_file()),

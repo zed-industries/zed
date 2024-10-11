@@ -1,21 +1,21 @@
 mod supported_countries;
 
+use std::time::Duration;
+use std::{pin::Pin, str::FromStr};
+
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
-use isahc::http::{HeaderMap, HeaderValue};
+use http_client::http::{HeaderMap, HeaderValue};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use std::{pin::Pin, str::FromStr};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 use util::ResultExt as _;
 
 pub use supported_countries::*;
 
-pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
+pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -48,6 +48,7 @@ pub enum Model {
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
+        default_temperature: Option<f32>,
     },
 }
 
@@ -120,6 +121,19 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
+        }
+    }
+
+    pub fn default_temperature(&self) -> f32 {
+        match self {
+            Self::Claude3_5Sonnet
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => 1.0,
+            Self::Custom {
+                default_temperature,
+                ..
+            } => default_temperature.unwrap_or(1.0),
         }
     }
 
@@ -274,7 +288,7 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
     let serialized_request =
         serde_json::to_string(&request).context("failed to serialize request")?;
@@ -330,96 +344,6 @@ pub async fn stream_completion_with_rate_limit_info(
     }
 }
 
-pub fn extract_content_from_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-) -> impl Stream<Item = Result<String, AnthropicError>> {
-    struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-        current_tool_use_index: Option<usize>,
-    }
-
-    const INDENT: &str = "  ";
-    const NEWLINE: char = '\n';
-
-    futures::stream::unfold(
-        State {
-            events,
-            current_tool_use_index: None,
-        },
-        |mut state| async move {
-            while let Some(event) = state.events.next().await {
-                match event {
-                    Ok(event) => match event {
-                        Event::ContentBlockStart {
-                            index,
-                            content_block,
-                        } => match content_block {
-                            ResponseContent::Text { text } => {
-                                return Some((Ok(text), state));
-                            }
-                            ResponseContent::ToolUse { id, name, .. } => {
-                                state.current_tool_use_index = Some(index);
-
-                                let mut text = String::new();
-                                text.push(NEWLINE);
-
-                                text.push_str("<tool_use>");
-                                text.push(NEWLINE);
-
-                                text.push_str(INDENT);
-                                text.push_str("<id>");
-                                text.push_str(&id);
-                                text.push_str("</id>");
-                                text.push(NEWLINE);
-
-                                text.push_str(INDENT);
-                                text.push_str("<name>");
-                                text.push_str(&name);
-                                text.push_str("</name>");
-                                text.push(NEWLINE);
-
-                                text.push_str(INDENT);
-                                text.push_str("<input>");
-
-                                return Some((Ok(text), state));
-                            }
-                        },
-                        Event::ContentBlockDelta { index, delta } => match delta {
-                            ContentDelta::TextDelta { text } => {
-                                return Some((Ok(text), state));
-                            }
-                            ContentDelta::InputJsonDelta { partial_json } => {
-                                if Some(index) == state.current_tool_use_index {
-                                    return Some((Ok(partial_json), state));
-                                }
-                            }
-                        },
-                        Event::ContentBlockStop { index } => {
-                            if Some(index) == state.current_tool_use_index.take() {
-                                let mut text = String::new();
-                                text.push_str("</input>");
-                                text.push(NEWLINE);
-                                text.push_str("</tool_use>");
-
-                                return Some((Ok(text), state));
-                            }
-                        }
-                        Event::Error { error } => {
-                            return Some((Err(AnthropicError::ApiError(error)), state));
-                        }
-                        _ => {}
-                    },
-                    Err(err) => {
-                        return Some((Err(err), state));
-                    }
-                }
-            }
-
-            None
-        },
-    )
-}
-
 pub async fn extract_tool_args_from_events(
     tool_name: String,
     mut events: Pin<Box<dyn Send + Stream<Item = Result<Event>>>>,
@@ -428,14 +352,12 @@ pub async fn extract_tool_args_from_events(
     while let Some(event) = events.next().await {
         if let Event::ContentBlockStart {
             index,
-            content_block,
+            content_block: ResponseContent::ToolUse { name, .. },
         } = event?
         {
-            if let ResponseContent::ToolUse { name, .. } = content_block {
-                if name == tool_name {
-                    tool_use_index = Some(index);
-                    break;
-                }
+            if name == tool_name {
+                tool_use_index = Some(index);
+                break;
             }
         }
     }
@@ -509,6 +431,14 @@ pub enum RequestContent {
         id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        is_error: bool,
+        content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
@@ -591,6 +521,10 @@ pub struct Usage {
     pub input_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -691,9 +625,6 @@ impl ApiError {
     }
 
     pub fn is_rate_limit_error(&self) -> bool {
-        match self.error_type.as_str() {
-            "rate_limit_error" => true,
-            _ => false,
-        }
+        matches!(self.error_type.as_str(), "rate_limit_error")
     }
 }

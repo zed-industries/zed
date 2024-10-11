@@ -35,12 +35,16 @@ use std::{
 };
 use time::PrimitiveDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use worktree_settings_file::LocalSettingsKind;
 
 #[cfg(test)]
 pub use tests::TestDb;
 
 pub use ids::*;
 pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
+pub use queries::billing_preferences::{
+    CreateBillingPreferencesParams, UpdateBillingPreferencesParams,
+};
 pub use queries::billing_subscriptions::{
     CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
 };
@@ -139,14 +143,12 @@ impl Database {
             let (tx, result) = self.with_weak_transaction(&f).await?;
             match result {
                 Ok(result) => match tx.commit().await.map_err(Into::into) {
-                    Ok(()) => return Ok(result),
-                    Err(error) => {
-                        return Err(error);
-                    }
+                    Ok(()) => Ok(result),
+                    Err(error) => Err(error),
                 },
                 Err(error) => {
                     tx.rollback().await?;
-                    return Err(error);
+                    Err(error)
                 }
             }
         };
@@ -217,7 +219,7 @@ impl Database {
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
     {
-        let room_id = Database::room_id_for_project(&self, project_id).await?;
+        let room_id = Database::room_id_for_project(self, project_id).await?;
         let body = async {
             let mut i = 0;
             loop {
@@ -768,6 +770,7 @@ pub struct Worktree {
 pub struct WorktreeSettingsFile {
     pub path: String,
     pub content: String,
+    pub kind: LocalSettingsKind,
 }
 
 pub struct NewExtensionVersion {
@@ -784,4 +787,22 @@ pub struct NewExtensionVersion {
 pub struct ExtensionVersionConstraints {
     pub schema_versions: RangeInclusive<i32>,
     pub wasm_api_versions: RangeInclusive<SemanticVersion>,
+}
+
+impl LocalSettingsKind {
+    pub fn from_proto(proto_kind: proto::LocalSettingsKind) -> Self {
+        match proto_kind {
+            proto::LocalSettingsKind::Settings => Self::Settings,
+            proto::LocalSettingsKind::Tasks => Self::Tasks,
+            proto::LocalSettingsKind::Editorconfig => Self::Editorconfig,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::LocalSettingsKind {
+        match self {
+            Self::Settings => proto::LocalSettingsKind::Settings,
+            Self::Tasks => proto::LocalSettingsKind::Tasks,
+            Self::Editorconfig => proto::LocalSettingsKind::Editorconfig,
+        }
+    }
 }

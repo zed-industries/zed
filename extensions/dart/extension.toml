@@ -1,9 +1,9 @@
 id = "dart"
 name = "Dart"
 description = "Dart support."
-version = "0.0.3"
+version = "0.1.1"
 schema_version = 1
-authors = ["Abdullah Alsigar <abdullah.alsigar@gmail.com>", "Flo <flo80@users.noreply.github.com>"]
+authors = ["Abdullah Alsigar <abdullah.alsigar@gmail.com>", "Flo <flo80@users.noreply.github.com>", "ybbond <hi@ybbond.id>"]
 repository = "https://github.com/zed-industries/zed"
 
 [language_servers.dart]

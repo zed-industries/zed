@@ -76,10 +76,10 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
 pub(crate) trait OutputContent {
     fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
     fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
-        return false;
+        false
     }
     fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
-        return false;
+        false
     }
     fn buffer_content(&mut self, _cx: &mut WindowContext) -> Option<Model<Buffer>> {
         None
@@ -184,10 +184,7 @@ impl Output {
                                             multi_buffer
                                         });
 
-                                        let editor =
-                                            Editor::for_multibuffer(multibuffer, None, false, cx);
-
-                                        editor
+                                        Editor::for_multibuffer(multibuffer, None, false, cx)
                                     }));
                                     workspace
                                         .update(cx, |workspace, cx| {
@@ -360,30 +357,9 @@ impl ExecutionView {
             }
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
-                    match payload {
-                        // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
-                        // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
-                        runtimelib::Payload::Page { data, .. } => {
-                            let output = Output::new(data, None, cx);
-                            self.outputs.push(output);
-                        }
-
-                        // There are other payloads that could be handled here, such as updating the input.
-                        // Below are the other payloads that _could_ be handled, but are not required for Zed.
-
-                        // Set next input adds text to the next cell. Not required to support.
-                        // However, this could be implemented by adding text to the buffer.
-                        // Trigger in python using `get_ipython().set_next_input("text")`
-                        //
-                        // runtimelib::Payload::SetNextInput { text, replace } => {},
-
-                        // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
-                        // Python users can trigger this with the `%edit` magic command
-                        // runtimelib::Payload::EditMagic { filename, line_number } => {},
-
-                        // Ask the user if they want to exit the kernel. Not required to support.
-                        // runtimelib::Payload::AskExit { keepkernel } => {},
-                        _ => {}
+                    if let runtimelib::Payload::Page { data, .. } = payload {
+                        let output = Output::new(data, None, cx);
+                        self.outputs.push(output);
                     }
                 }
                 cx.notify();
@@ -450,21 +426,17 @@ impl ExecutionView {
 
     fn apply_terminal_text(&mut self, text: &str, cx: &mut ViewContext<Self>) -> Option<Output> {
         if let Some(last_output) = self.outputs.last_mut() {
-            match last_output {
-                Output::Stream {
-                    content: last_stream,
-                } => {
-                    // Don't need to add a new output, we already have a terminal output
-                    // and can just update the most recent terminal output
-                    last_stream.update(cx, |last_stream, cx| {
-                        last_stream.append_text(text, cx);
-                        cx.notify();
-                    });
-                    return None;
-                }
-                // A different output type is "in the way", so we need to create a new output,
-                // which is the same as having no prior stream/terminal text
-                _ => {}
+            if let Output::Stream {
+                content: last_stream,
+            } = last_output
+            {
+                // Don't need to add a new output, we already have a terminal output
+                // and can just update the most recent terminal output
+                last_stream.update(cx, |last_stream, cx| {
+                    last_stream.append_text(text, cx);
+                    cx.notify();
+                });
+                return None;
             }
         }
 
@@ -517,7 +489,7 @@ impl Render for ExecutionView {
                 .into_any_element(),
         };
 
-        if self.outputs.len() == 0 {
+        if self.outputs.is_empty() {
             return v_flex()
                 .min_h(cx.line_height())
                 .justify_center()

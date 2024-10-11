@@ -1,5 +1,5 @@
 use super::*;
-use sea_orm::QueryOrder;
+use sea_orm::{sea_query::OnConflict, QueryOrder};
 use std::str::FromStr;
 use strum::IntoEnumIterator as _;
 
@@ -82,7 +82,7 @@ impl LlmDatabase {
     pub async fn insert_models(&mut self, models: &[ModelParams]) -> Result<()> {
         let all_provider_ids = &self.provider_ids;
         self.transaction(|tx| async move {
-            model::Entity::insert_many(models.into_iter().map(|model_params| {
+            model::Entity::insert_many(models.iter().map(|model_params| {
                 let provider_id = all_provider_ids[&model_params.provider];
                 model::ActiveModel {
                     provider_id: ActiveValue::set(provider_id),
@@ -99,6 +99,17 @@ impl LlmDatabase {
                     ..Default::default()
                 }
             }))
+            .on_conflict(
+                OnConflict::columns([model::Column::ProviderId, model::Column::Name])
+                    .update_columns([
+                        model::Column::MaxRequestsPerMinute,
+                        model::Column::MaxTokensPerMinute,
+                        model::Column::MaxTokensPerDay,
+                        model::Column::PricePerMillionInputTokens,
+                        model::Column::PricePerMillionOutputTokens,
+                    ])
+                    .to_owned(),
+            )
             .exec_without_returning(&*tx)
             .await?;
             Ok(())

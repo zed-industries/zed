@@ -149,16 +149,6 @@ spec:
                 secretKeyRef:
                   name: google-ai
                   key: api_key
-            - name: QWEN2_7B_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: hugging-face
-                  key: api_key
-            - name: QWEN2_7B_API_URL
-              valueFrom:
-                secretKeyRef:
-                  name: hugging-face
-                  key: qwen2_api_url
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

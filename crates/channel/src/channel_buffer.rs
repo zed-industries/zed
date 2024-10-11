@@ -6,7 +6,7 @@ use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelConte
 use language::proto::serialize_version;
 use rpc::{
     proto::{self, PeerId},
-    TypedEnvelope,
+    AnyProtoClient, TypedEnvelope,
 };
 use std::{sync::Arc, time::Duration};
 use text::BufferId;
@@ -14,7 +14,7 @@ use util::ResultExt;
 
 pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 
-pub(crate) fn init(client: &Arc<Client>) {
+pub(crate) fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborators);
 }
@@ -66,7 +66,7 @@ impl ChannelBuffer {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
-        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
+        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -151,7 +151,7 @@ impl ChannelBuffer {
             cx.notify();
             this.buffer
                 .update(cx, |buffer, cx| buffer.apply_ops(ops, cx))
-        })??;
+        })?;
 
         Ok(())
     }
@@ -171,19 +171,19 @@ impl ChannelBuffer {
     fn on_buffer_update(
         &mut self,
         _: Model<language::Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::Event::Operation(operation) => {
+            language::BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => {
                 if *ZED_ALWAYS_ACTIVE {
-                    match operation {
-                        language::Operation::UpdateSelections { selections, .. } => {
-                            if selections.is_empty() {
-                                return;
-                            }
+                    if let language::Operation::UpdateSelections { selections, .. } = operation {
+                        if selections.is_empty() {
+                            return;
                         }
-                        _ => {}
                     }
                 }
                 let operation = language::proto::serialize_operation(operation);
@@ -194,7 +194,7 @@ impl ChannelBuffer {
                     })
                     .log_err();
             }
-            language::Event::Edited => {
+            language::BufferEvent::Edited => {
                 cx.emit(ChannelBufferEvent::BufferEdited);
             }
             _ => {}

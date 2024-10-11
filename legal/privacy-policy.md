@@ -46,7 +46,7 @@ We collect Personal Data about you from the following categories of sources:
   - Usage data, unless you opt out.
   - Crash reports, unless you opt out.
   - When you make requests to language models we host for you.
-    - Zed does store or train on your requests without consent.
+    - Zed does not store or train on your requests without consent.
   - Other relevant data necessary to provide you with our Services.
 
 #### Third Parties
@@ -265,4 +265,4 @@ If you have additional questions about this Privacy Policy, the methods in which
   PO Box 1916
   Denver CO 80205
 
-**DATE: August 19, 2024**
+**DATE: September 1, 2024**

@@ -311,15 +311,11 @@ impl Render for LanguageServerPrompt {
                                                 .mt(px(-2.0))
                                                 .map(|icon| {
                                                     if severity == DiagnosticSeverity::ERROR {
-                                                        icon.path(
-                                                            IconName::ExclamationTriangle.path(),
-                                                        )
-                                                        .text_color(Color::Error.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Error.color(cx))
                                                     } else {
-                                                        icon.path(
-                                                            IconName::ExclamationTriangle.path(),
-                                                        )
-                                                        .text_color(Color::Warning.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Warning.color(cx))
                                                     }
                                                 })
                                         }),
@@ -421,7 +417,7 @@ impl Render for ErrorMessagePrompt {
                                     .mr_2()
                                     .mt(px(-2.0))
                                     .map(|icon| {
-                                        icon.path(IconName::ExclamationTriangle.path())
+                                        icon.path(IconName::Warning.path())
                                             .text_color(Color::Error.color(cx))
                                     }),
                             )
@@ -657,14 +653,14 @@ where
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|cx| {
-                    let detail = f(&err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                    let detail = f(err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
                     cx.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"])
                 }) {
                     prompt.await.ok();
                 }
                 return None;
             }
-            return Some(result.unwrap());
+            Some(result.unwrap())
         })
     }
 

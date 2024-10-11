@@ -17,11 +17,12 @@
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 <!-- - [Fonts](./fonts.md) -->
-- [Vim](./vim.md)
+- [Vim Mode](./vim.md)
 
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
+- [Outline Panel](./outline-panel.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
@@ -93,6 +94,7 @@
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
 - [R](./languages/r.md)
+- [Rego](./languages/rego.md)
 - [ReStructuredText](./languages/rst.md)
 - [Racket](./languages/racket.md)
 - [Roc](./languages/roc.md)
@@ -108,6 +110,7 @@
 - [TypeScript](./languages/typescript.md)
 - [Uiua](./languages/uiua.md)
 - [Vue](./languages/vue.md)
+- [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)

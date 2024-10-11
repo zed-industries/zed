@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use crate::prelude::*;
 use crate::v_flex;
 use gpui::{
@@ -53,6 +55,12 @@ impl RenderOnce for Popover {
                         .child(aside),
                 )
             })
+    }
+}
+
+impl Default for Popover {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

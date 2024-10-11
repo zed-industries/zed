@@ -5,6 +5,7 @@ use gpui::{actions, impl_actions, ViewContext};
 use language::Point;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
+use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
@@ -17,15 +18,23 @@ use crate::{
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToNext {
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
     #[serde(default)]
     partial_word: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToPrev {
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
     #[serde(default)]
     partial_word: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -42,7 +51,7 @@ pub struct FindCommand {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ReplaceCommand {
-    pub(crate) range: Option<CommandRange>,
+    pub(crate) range: CommandRange,
     pub(crate) replacement: Replacement,
 }
 
@@ -73,11 +82,23 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
 impl Vim {
     fn move_to_next(&mut self, action: &MoveToNext, cx: &mut ViewContext<Self>) {
-        self.move_to_internal(Direction::Next, !action.partial_word, cx)
+        self.move_to_internal(
+            Direction::Next,
+            action.case_sensitive,
+            !action.partial_word,
+            action.regex,
+            cx,
+        )
     }
 
     fn move_to_prev(&mut self, action: &MoveToPrev, cx: &mut ViewContext<Self>) {
-        self.move_to_internal(Direction::Prev, !action.partial_word, cx)
+        self.move_to_internal(
+            Direction::Prev,
+            action.case_sensitive,
+            !action.partial_word,
+            action.regex,
+            cx,
+        )
     }
 
     fn move_to_next_match(&mut self, _: &MoveToNextMatch, cx: &mut ViewContext<Self>) {
@@ -108,14 +129,13 @@ impl Vim {
                     search_bar.select_query(cx);
                     cx.focus_self();
 
-                    if query.is_empty() {
-                        search_bar.set_replacement(None, cx);
-                        search_bar.set_search_options(SearchOptions::REGEX, cx);
-                    }
+                    search_bar.set_replacement(None, cx);
+                    search_bar.set_search_options(SearchOptions::NONE | SearchOptions::REGEX, cx);
+
                     self.search = SearchState {
                         direction,
                         count,
-                        initial_query: query.clone(),
+                        initial_query: query,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
@@ -135,9 +155,7 @@ impl Vim {
         self.store_visual_marks(cx);
         let Some(pane) = self.pane(cx) else { return };
         let result = pane.update(cx, |pane, cx| {
-            let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
-                return None;
-            };
+            let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
             search_bar.update(cx, |search_bar, cx| {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
@@ -227,7 +245,9 @@ impl Vim {
     pub fn move_to_internal(
         &mut self,
         direction: Direction,
+        case_sensitive: bool,
         whole_word: bool,
+        regex: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let Some(pane) = self.pane(cx) else { return };
@@ -241,7 +261,16 @@ impl Vim {
                 return false;
             };
             let search = search_bar.update(cx, |search_bar, cx| {
-                let options = SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX;
+                let mut options = SearchOptions::NONE;
+                if case_sensitive {
+                    options |= SearchOptions::CASE_SENSITIVE;
+                }
+                if regex {
+                    options |= SearchOptions::REGEX;
+                }
+                if whole_word {
+                    options |= SearchOptions::WHOLE_WORD;
+                }
                 if !search_bar.show(cx) {
                     return None;
                 }
@@ -249,10 +278,7 @@ impl Vim {
                     drop(search_bar.search("", None, cx));
                     return None;
                 };
-                let mut query = regex::escape(&query);
-                if whole_word {
-                    query = format!(r"\<{}\>", query);
-                }
+                let query = regex::escape(&query);
                 Some(search_bar.search(&query, Some(options), cx))
             });
 
@@ -298,15 +324,19 @@ impl Vim {
                         return None;
                     }
                     let mut query = action.query.clone();
-                    if query == "" {
+                    if query.is_empty() {
                         query = search_bar.query(cx);
                     };
 
-                    Some(search_bar.search(
-                        &query,
-                        Some(SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX),
-                        cx,
-                    ))
+                    let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
+                    if search_bar.should_use_smartcase_search(cx) {
+                        options.set(
+                            SearchOptions::CASE_SENSITIVE,
+                            search_bar.is_contains_uppercase(&query),
+                        );
+                    }
+
+                    Some(search_bar.search(&query, Some(options), cx))
                 });
                 let Some(search) = search else { return };
                 let search_bar = search_bar.downgrade();
@@ -334,20 +364,18 @@ impl Vim {
         else {
             return;
         };
-        if let Some(range) = &action.range {
-            if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
-                let range = range.buffer_range(vim, editor, cx)?;
-                let snapshot = &editor.snapshot(cx).buffer_snapshot;
-                let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
-                let range = snapshot.anchor_before(Point::new(range.start.0, 0))
-                    ..snapshot.anchor_after(end_point);
-                editor.set_search_within_ranges(&[range], cx);
-                anyhow::Ok(())
-            }) {
-                workspace.update(cx, |workspace, cx| {
-                    result.notify_err(workspace, cx);
-                })
-            }
+        if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
+            let range = action.range.buffer_range(vim, editor, cx)?;
+            let snapshot = &editor.snapshot(cx).buffer_snapshot;
+            let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
+            let range = snapshot.anchor_before(Point::new(range.start.0, 0))
+                ..snapshot.anchor_after(end_point);
+            editor.set_search_within_ranges(&[range], cx);
+            anyhow::Ok(())
+        }) {
+            workspace.update(cx, |workspace, cx| {
+                result.notify_err(workspace, cx);
+            })
         }
         let vim = cx.view().clone();
         pane.update(cx, |pane, cx| {
@@ -363,12 +391,17 @@ impl Vim {
                 if replacement.is_case_sensitive {
                     options.set(SearchOptions::CASE_SENSITIVE, true)
                 }
-                let search = if replacement.search == "" {
+                let search = if replacement.search.is_empty() {
                     search_bar.query(cx)
                 } else {
                     replacement.search
                 };
-
+                if search_bar.should_use_smartcase_search(cx) {
+                    options.set(
+                        SearchOptions::CASE_SENSITIVE,
+                        search_bar.is_contains_uppercase(&search),
+                    );
+                }
                 search_bar.set_replacement(Some(&replacement.replacement), cx);
                 Some(search_bar.search(&search, Some(options), cx))
             });
@@ -413,12 +446,9 @@ impl Replacement {
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
     // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
     pub(crate) fn parse(mut chars: Peekable<Chars>) -> Option<Replacement> {
-        let Some(delimiter) = chars
+        let delimiter = chars
             .next()
-            .filter(|c| !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'')
-        else {
-            return None;
-        };
+            .filter(|c| !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'')?;
 
         let mut search = String::new();
         let mut replacement = String::new();
@@ -435,7 +465,7 @@ impl Replacement {
         for c in chars {
             if escaped {
                 escaped = false;
-                if phase == 1 && c.is_digit(10) {
+                if phase == 1 && c.is_ascii_digit() {
                     buffer.push('$')
                 // unescape escaped parens
                 } else if phase == 0 && c == '(' || c == ')' {

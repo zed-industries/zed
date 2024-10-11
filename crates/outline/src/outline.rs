@@ -29,7 +29,7 @@ pub fn toggle(editor: View<Editor>, _: &ToggleOutline, cx: &mut WindowContext) {
         .buffer()
         .read(cx)
         .snapshot(cx)
-        .outline(Some(&cx.theme().syntax()));
+        .outline(Some(cx.theme().syntax()));
 
     if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
         workspace.update(cx, |workspace, cx| {
@@ -143,8 +143,8 @@ impl OutlineViewDelegate {
             self.active_editor.update(cx, |active_editor, cx| {
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.highlight_rows::<OutlineRowHighlights>(
-                    outline_item.range.start..=outline_item.range.end,
-                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    outline_item.range.start..outline_item.range.end,
+                    cx.theme().colors().editor_highlighted_line_background,
                     true,
                     cx,
                 );
@@ -240,12 +240,12 @@ impl PickerDelegate for OutlineViewDelegate {
         self.prev_scroll_position.take();
 
         self.active_editor.update(cx, |active_editor, cx| {
-            if let Some(rows) = active_editor
+            let highlight = active_editor
                 .highlighted_rows::<OutlineRowHighlights>()
-                .and_then(|highlights| highlights.into_iter().next().map(|(rows, _)| rows.clone()))
-            {
+                .next();
+            if let Some((rows, _)) = highlight {
                 active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                    s.select_ranges([*rows.start()..*rows.start()])
+                    s.select_ranges([rows.start..rows.start])
                 });
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.focus(cx);
@@ -338,9 +338,9 @@ mod tests {
             .unwrap();
         let ensure_outline_view_contents =
             |outline_view: &View<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
-                assert_eq!(query(&outline_view, cx), "");
+                assert_eq!(query(outline_view, cx), "");
                 assert_eq!(
-                    outline_names(&outline_view, cx),
+                    outline_names(outline_view, cx),
                     vec![
                         "struct SingleLine",
                         "struct MultiLine",
@@ -484,7 +484,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_outline_query(
                 r#"(struct_item

@@ -40,12 +40,15 @@ pub enum ComponentStory {
     ToolStrip,
     ViewportUnits,
     WithRemSize,
+    Vector,
 }
 
 impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
-            Self::ApplicationMenu => cx.new_view(|_| title_bar::ApplicationMenuStory).into(),
+            Self::ApplicationMenu => cx
+                .new_view(|cx| title_bar::ApplicationMenuStory::new(cx))
+                .into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(cx).into(),
             Self::Avatar => cx.new_view(|_| ui::AvatarStory).into(),
             Self::Button => cx.new_view(|_| ui::ButtonStory).into(),
@@ -75,6 +78,7 @@ impl ComponentStory {
             Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new_view(|_| crate::stories::WithRemSizeStory).into(),
+            Self::Vector => cx.new_view(|_| ui::VectorStory).into(),
         }
     }
 }

@@ -10,7 +10,7 @@
 /crates/collab/seed.json
 /crates/zed/resources/flatpak/flatpak-cargo-sources.json
 /dev.zed.Zed*.json
-/assets/*licenses.md
+/assets/*licenses.*
 **/venv
 .build
 *.wasm

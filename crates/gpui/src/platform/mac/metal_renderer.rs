@@ -1,7 +1,7 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    FpsCounter, Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
+    Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use anyhow::{anyhow, Result};
@@ -14,7 +14,6 @@ use cocoa::{
 use collections::HashMap;
 use core_foundation::base::TCFType;
 use foreign_types::ForeignType;
-use futures::channel::oneshot;
 use media::core_video::CVMetalTextureCache;
 use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
@@ -106,7 +105,6 @@ pub(crate) struct MetalRenderer {
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CVMetalTextureCache,
-    fps_counter: Arc<FpsCounter>,
 }
 
 impl MetalRenderer {
@@ -252,7 +250,6 @@ impl MetalRenderer {
             instance_buffer_pool,
             sprite_atlas,
             core_video_texture_cache,
-            fps_counter: FpsCounter::new(),
         }
     }
 
@@ -287,16 +284,15 @@ impl MetalRenderer {
         }
     }
 
-    pub fn update_transparency(&mut self, _transparent: bool) {
+    pub fn update_transparency(&self, _transparent: bool) {
         // todo(mac)?
     }
 
-    pub fn destroy(&mut self) {
+    pub fn destroy(&self) {
         // nothing to do
     }
 
-    pub fn draw(&mut self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
-        let on_complete = Arc::new(Mutex::new(on_complete));
+    pub fn draw(&mut self, scene: &Scene) {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -323,24 +319,13 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
-                    let device = self.device.clone();
-                    let fps_counter = self.fps_counter.clone();
-                    let completed_handler =
-                        ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
-                            let mut cpu_timestamp = 0;
-                            let mut gpu_timestamp = 0;
-                            device.sample_timestamps(&mut cpu_timestamp, &mut gpu_timestamp);
-
-                            fps_counter.increment(gpu_timestamp);
-                            if let Some(on_complete) = on_complete.lock().take() {
-                                on_complete.send(()).ok();
-                            }
-                            if let Some(instance_buffer) = instance_buffer.take() {
-                                instance_buffer_pool.lock().release(instance_buffer);
-                            }
-                        });
-                    let completed_handler = completed_handler.copy();
-                    command_buffer.add_completed_handler(&completed_handler);
+                    let block = ConcreteBlock::new(move |_| {
+                        if let Some(instance_buffer) = instance_buffer.take() {
+                            instance_buffer_pool.lock().release(instance_buffer);
+                        }
+                    });
+                    let block = block.copy();
+                    command_buffer.add_completed_handler(&block);
 
                     if self.presents_with_transaction {
                         command_buffer.commit();
@@ -501,7 +486,7 @@ impl MetalRenderer {
     }
 
     fn rasterize_paths(
-        &mut self,
+        &self,
         paths: &[Path<ScaledPixels>],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -591,7 +576,7 @@ impl MetalRenderer {
     }
 
     fn draw_shadows(
-        &mut self,
+        &self,
         shadows: &[Shadow],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -654,7 +639,7 @@ impl MetalRenderer {
     }
 
     fn draw_quads(
-        &mut self,
+        &self,
         quads: &[Quad],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -713,7 +698,7 @@ impl MetalRenderer {
     }
 
     fn draw_paths(
-        &mut self,
+        &self,
         paths: &[Path<ScaledPixels>],
         tiles_by_path_id: &HashMap<PathId, AtlasTile>,
         instance_buffer: &mut InstanceBuffer,
@@ -823,7 +808,7 @@ impl MetalRenderer {
     }
 
     fn draw_underlines(
-        &mut self,
+        &self,
         underlines: &[Underline],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -886,7 +871,7 @@ impl MetalRenderer {
     }
 
     fn draw_monochrome_sprites(
-        &mut self,
+        &self,
         texture_id: AtlasTextureId,
         sprites: &[MonochromeSprite],
         instance_buffer: &mut InstanceBuffer,
@@ -960,7 +945,7 @@ impl MetalRenderer {
     }
 
     fn draw_polychrome_sprites(
-        &mut self,
+        &self,
         texture_id: AtlasTextureId,
         sprites: &[PolychromeSprite],
         instance_buffer: &mut InstanceBuffer,
@@ -1131,10 +1116,6 @@ impl MetalRenderer {
             *instance_offset = next_offset;
         }
         true
-    }
-
-    pub fn fps(&self) -> f32 {
-        self.fps_counter.fps()
     }
 }
 

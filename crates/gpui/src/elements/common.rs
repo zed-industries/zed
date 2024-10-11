@@ -1,14 +1,14 @@
 use crate::{rgb, Hsla, Rgba, WindowAppearance};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-/// The appearance of the base gpui colors, used to style gpui elements
+/// The appearance of the base GPUI colors, used to style GPUI elements
 ///
-/// Varies based on the system's current [WindowAppearance].
+/// Varies based on the system's current [`WindowAppearance`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum DefaultThemeAppearance {
+    /// Use the set of colors for light appearances.
     #[default]
-    /// Use the set of colors for light appearances
     Light,
-    /// Use the set of colors for dark appearances
+    /// Use the set of colors for dark appearances.
     Dark,
 }
 
@@ -21,7 +21,7 @@ impl From<WindowAppearance> for DefaultThemeAppearance {
     }
 }
 
-/// Get the default colors for the given appearance
+/// Returns the default colors for the given appearance.
 pub fn colors(appearance: DefaultThemeAppearance) -> DefaultColors {
     match appearance {
         DefaultThemeAppearance::Light => DefaultColors::light(),
@@ -29,7 +29,7 @@ pub fn colors(appearance: DefaultThemeAppearance) -> DefaultColors {
     }
 }
 
-/// A collection of colors
+/// A collection of colors.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DefaultColors {
     text: Rgba,
@@ -43,36 +43,36 @@ pub struct DefaultColors {
 }
 
 impl DefaultColors {
-    /// Get the default light colors
+    /// Returns the default dark colors.
     pub fn dark() -> Self {
         Self {
-            text: rgb(0xFFFFFF),
-            selected_text: rgb(0xFFFFFF),
+            text: rgb(0xffffff),
+            selected_text: rgb(0xffffff),
             disabled: rgb(0x565656),
-            selected: rgb(0x2457CA),
+            selected: rgb(0x2457ca),
             background: rgb(0x222222),
             border: rgb(0x000000),
-            separator: rgb(0xD9D9D9),
+            separator: rgb(0xd9d9d9),
             container: rgb(0x262626),
         }
     }
 
-    /// Get the default dark colors
+    /// Returns the default light colors.
     pub fn light() -> Self {
         Self {
             text: rgb(0x252525),
-            selected_text: rgb(0xFFFFFF),
-            background: rgb(0xFFFFFF),
-            disabled: rgb(0xB0B0B0),
-            selected: rgb(0x2A63D9),
-            border: rgb(0xD9D9D9),
-            separator: rgb(0xE6E6E6),
-            container: rgb(0xF4F5F5),
+            selected_text: rgb(0xffffff),
+            background: rgb(0xffffff),
+            disabled: rgb(0xb0b0b0),
+            selected: rgb(0x2a63d9),
+            border: rgb(0xd9d9d9),
+            separator: rgb(0xe6e6e6),
+            container: rgb(0xf4f5f5),
         }
     }
 }
 
-/// A default gpui color
+/// A default GPUI color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum DefaultColor {
     /// Text color
@@ -92,8 +92,9 @@ pub enum DefaultColor {
     /// Container color
     Container,
 }
+
 impl DefaultColor {
-    /// Get the Rgb color for the given color type
+    /// Returns the RGBA color for the given color type.
     pub fn color(&self, colors: &DefaultColors) -> Rgba {
         match self {
             DefaultColor::Text => colors.text,
@@ -107,8 +108,8 @@ impl DefaultColor {
         }
     }
 
-    /// Get the Hsla color for the given color type
+    /// Returns the HSLA color for the given color type.
     pub fn hsla(&self, colors: &DefaultColors) -> Hsla {
-        self.color(&colors).into()
+        self.color(colors).into()
     }
 }

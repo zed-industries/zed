@@ -74,6 +74,6 @@
     margin-bottom: 12px;
     padding-left: 12px;
     font-size: 1.4rem;
-    color: #000;
+    color: var(--full-contrast);
   }
 }

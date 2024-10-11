@@ -260,7 +260,7 @@ impl Session {
                             let stderr = kernel.process.stderr.take();
 
                             cx.spawn(|_session, mut _cx| async move {
-                                if let None = stderr {
+                                if stderr.is_none() {
                                     return;
                                 }
                                 let reader = BufReader::new(stderr.unwrap());
@@ -275,7 +275,7 @@ impl Session {
                             let stdout = kernel.process.stdout.take();
 
                             cx.spawn(|_session, mut _cx| async move {
-                                if let None = stdout {
+                                if stdout.is_none() {
                                     return;
                                 }
                                 let reader = BufReader::new(stdout.unwrap());
@@ -411,11 +411,8 @@ impl Session {
     }
 
     fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
-        match &mut self.kernel {
-            Kernel::RunningKernel(kernel) => {
-                kernel.request_tx.try_send(message).ok();
-            }
-            _ => {}
+        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
+            kernel.request_tx.try_send(message).ok();
         }
 
         anyhow::Ok(())
@@ -571,7 +568,7 @@ impl Session {
                 cx.notify();
             }
             JupyterMessageContent::KernelInfoReply(reply) => {
-                self.kernel.set_kernel_info(&reply);
+                self.kernel.set_kernel_info(reply);
                 cx.notify();
             }
             JupyterMessageContent::UpdateDisplayData(update) => {
@@ -592,8 +589,7 @@ impl Session {
         }
 
         if let Some(block) = self.blocks.get_mut(parent_message_id) {
-            block.handle_message(&message, cx);
-            return;
+            block.handle_message(message, cx);
         }
     }
 

@@ -12,7 +12,7 @@ use assistant_slash_command::{
 use collections::HashSet;
 use fs::FakeFs;
 use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
-use language::{Buffer, LanguageRegistry, LspAdapterDelegate};
+use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
 use project::Project;
@@ -609,8 +609,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>«
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn one</symbol>
+        <operation>insert_after</operation>
+        <search>fn one</search>
         <description>add a `two` function</description>
         </edit>
         </step>
@@ -634,8 +634,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn one</symbol>
+        <operation>insert_after</operation>
+        <search>fn one</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -643,8 +643,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn one".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn one".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -668,8 +668,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>«fn zero»</symbol>
+        <operation>insert_after</operation>
+        <search>«fn zero»</search>
         <description>add a `two` function</description>
         </edit>
         </step>
@@ -693,8 +693,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -702,8 +702,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn zero".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn zero".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -731,8 +731,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>
@@ -762,8 +762,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -771,8 +771,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn zero".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn zero".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -808,8 +808,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -817,8 +817,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn zero".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn zero".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -1089,6 +1089,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             range: section_start..section_end,
                             icon: ui::IconName::Ai,
                             label: "section".into(),
+                            metadata: None,
                         });
                     }
 
@@ -1165,9 +1166,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     );
 
                     network.lock().broadcast(replica_id, ops_to_send);
-                    context
-                        .update(cx, |context, cx| context.apply_ops(ops_to_receive, cx))
-                        .unwrap();
+                    context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
                 } else if rng.gen_bool(0.1) && replica_id != 0 {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
@@ -1179,9 +1178,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                         .unwrap();
-                    context
-                        .update(cx, |context, cx| context.apply_ops(ops, cx))
-                        .unwrap();
+                    context.update(cx, |context, cx| context.apply_ops(ops, cx));
                 }
             }
         }
@@ -1425,6 +1422,8 @@ impl SlashCommand for FakeSlashCommand {
     fn run(
         self: Arc<Self>,
         _arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,

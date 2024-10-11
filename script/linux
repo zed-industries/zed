@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 
-set -ex
+set -xeuo pipefail
 
-# install the wasm toolchain
-which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+# if root or if sudo/unavailable, define an empty variable
+if [ "$(id -u)" -eq 0 ]
+then maysudo=''
+else maysudo="$(command -v sudo || command -v doas || true)"
+fi
 
-# if sudo is not installed, define an empty alias
-maysudo=$(command -v sudo || command -v doas || true)
+function finalize {
+  # after packages install (curl, etc), get the rust toolchain
+  which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  # verify the mold situation
+  if ! command -v mold >/dev/null 2>&1; then
+    echo "Warning: Mold binaries are unavailable on your system." >&2
+    echo "    Builds will be slower without mold. Try: scripts/install-mold" >&2
+  fi
+  echo "Finished installing Linux dependencies with script/linux"
+}
 
-# Ubuntu, Debian, etc.
-# https://packages.ubuntu.com/
+# Ubuntu, Debian, Mint, Kali, Pop!_OS, Raspbian, etc.
 apt=$(command -v apt-get || true)
 if [[ -n $apt ]]; then
   deps=(
@@ -20,52 +30,95 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libxkbcommon-x11-dev
     libssl-dev
-    libstdc++-12-dev
     libzstd-dev
     libvulkan1
     libgit2-dev
     make
+    cmake
     clang
-    mold
     jq
+    git
+    curl
     gettext-base
     elfutils
     libsqlite3-dev
   )
+  if (grep -qP 'PRETTY_NAME="(.+24\.04)' /etc/os-release); then
+    deps+=( mold libstdc++-14-dev )
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|.+22\.04)' /etc/os-release); then
+    deps+=( mold libstdc++-12-dev )
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|.+20\.04)' /etc/os-release); then
+    deps+=( libstdc++-10-dev )
+  fi
+
+  $maysudo "$apt" update
   $maysudo "$apt" install -y "${deps[@]}"
+  finalize
   exit 0
 fi
 
-# Fedora, CentOS, RHEL, etc.
-# https://packages.fedoraproject.org/
+# Fedora, CentOS, RHEL, Alma, Amazon 2023, Oracle, etc.
 dnf=$(command -v dnf || true)
-if [[ -n $dnf ]]; then
+# Old Redhat (yum only): Amazon Linux 2, Oracle Linux 7, etc.
+yum=$(command -v yum || true)
+
+if [[ -n $dnf ]] || [[ -n $yum ]]; then
+  pkg_cmd="${dnf:-${yum}}"
   deps=(
     gcc
-    g++
     clang
-    mold
+    cmake
     alsa-lib-devel
     fontconfig-devel
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    # Perl dependencies are needed for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
-    perl-FindBin
-    perl-IPC-Cmd
-    perl-File-Compare
-    perl-File-Copy
     vulkan-loader
     sqlite-devel
+    jq
+    git
+    tar
   )
-
-  # libxkbcommon-x11-devel is in the crb repo on RHEL and CentOS, not needed for Fedora
-  if ! grep -q "Fedora" /etc/redhat-release; then
-    $maysudo "$dnf" config-manager --set-enabled crb
+  # perl used for building openssl-sys crate. See: https://docs.rs/openssl/latest/openssl/
+  if grep -qP '^ID="(fedora)' /etc/os-release; then
+    deps+=(
+      perl-FindBin
+      perl-IPC-Cmd
+      perl-File-Compare
+      perl-File-Copy
+      mold
+    )
+  elif grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release; then
+    deps+=( perl-interpreter )
   fi
 
-  $maysudo "$dnf" install -y "${deps[@]}"
+  # gcc-c++ is g++ on RHEL8 and 8.x clones
+  if grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release \
+      && grep -qP '^VERSION_ID="8' /etc/os-release; then
+    deps+=( gcc-c++ )
+  else
+    deps+=( g++ )
+  fi
+
+  # libxkbcommon-x11-devel is in a non-default repo on RHEL 8.x/9.x (except on AmazonLinux)
+  if grep -qP '^VERSION_ID="(8|9)' /etc/os-release && grep -qP '^ID="(rhel|rocky|centos|alma|ol)' /etc/os-release; then
+    $maysudo dnf install -y 'dnf-command(config-manager)'
+    if grep -qP '^PRETTY_NAME="(AlmaLinux 8|Rocky Linux 8)' /etc/os-release; then
+      $maysudo dnf config-manager --set-enabled powertools
+    elif grep -qP '^PRETTY_NAME="((AlmaLinux|Rocky|CentOS Stream) 9|Red Hat.+(8|9))' /etc/os-release; then
+      $maysudo dnf config-manager --set-enabled crb
+    elif grep -qP '^PRETTY_NAME="Oracle Linux Server 8' /etc/os-release; then
+      $maysudo dnf config-manager --set-enabled ol8_codeready_builder
+    elif grep -qP '^PRETTY_NAME="Oracle Linux Server 9' /etc/os-release; then
+      $maysudo dnf config-manager --set-enabled ol9_codeready_builder
+    else
+      echo "Unexpected distro" && grep 'PRETTY_NAME' /etc/os-release && exit 1
+    fi
+  fi
+
+  $maysudo $pkg_cmd install -y "${deps[@]}"
+  finalize
   exit 0
 fi
 
@@ -78,6 +131,7 @@ if [[ -n $zyp ]]; then
     gcc-c++
     clang
     make
+    cmake
     alsa-devel
     fontconfig-devel
     wayland-devel
@@ -85,10 +139,14 @@ if [[ -n $zyp ]]; then
     openssl-devel
     libzstd-devel
     libvulkan1
-    mold
     sqlite3-devel
+    jq
+    git
+    tar
+    gzip
   )
   $maysudo "$zyp" install -y "${deps[@]}"
+  finalize
   exit 0
 fi
 
@@ -99,6 +157,7 @@ if [[ -n $pacman ]]; then
   deps=(
     gcc
     clang
+    cmake
     alsa-lib
     fontconfig
     wayland
@@ -110,8 +169,10 @@ if [[ -n $pacman ]]; then
     mold
     sqlite
     jq
+    git
   )
-  $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
+  $maysudo "$pacman" -Syu --needed --noconfirm "${deps[@]}"
+  finalize
   exit 0
 fi
 
@@ -120,6 +181,12 @@ fi
 xbps=$(command -v xbps-install || true)
 if [[ -n $xbps ]]; then
   deps=(
+    gettext-devel
+    clang
+    cmake
+    jq
+    elfutils-devel
+    gcc
     alsa-lib-devel
     fontconfig-devel
     libxcb-devel
@@ -132,6 +199,7 @@ if [[ -n $xbps ]]; then
     sqlite-devel
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
+  finalize
   exit 0
 fi
 
@@ -141,8 +209,10 @@ emerge=$(command -v emerge || true)
 if [[ -n $emerge ]]; then
   deps=(
     app-arch/zstd
+    app-misc/jq
     dev-libs/openssl
     dev-libs/wayland
+    dev-util/cmake
     media-libs/alsa-lib
     media-libs/fontconfig
     media-libs/vulkan-loader
@@ -152,7 +222,9 @@ if [[ -n $emerge ]]; then
     dev-db/sqlite
   )
   $maysudo "$emerge" -u "${deps[@]}"
+  finalize
   exit 0
 fi
 
 echo "Unsupported Linux distribution in script/linux"
+exit 1

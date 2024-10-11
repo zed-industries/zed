@@ -25,6 +25,13 @@ pub enum SearchResult {
     LimitReached,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum SearchInputKind {
+    Query,
+    Include,
+    Exclude,
+}
+
 #[derive(Clone, Debug)]
 pub struct SearchInputs {
     query: Arc<str>,
@@ -82,7 +89,7 @@ impl SearchQuery {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
-            .build(&[&query])?;
+            .build([&query])?;
         let inner = SearchInputs {
             query: query.into(),
             files_to_exclude,
@@ -140,30 +147,6 @@ impl SearchQuery {
         })
     }
 
-    pub fn from_proto_v1(message: proto::SearchProject) -> Result<Self> {
-        if message.regex {
-            Self::regex(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None,
-            )
-        } else {
-            Self::text(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None,
-            )
-        }
-    }
-
     pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
         if message.regex {
             Self::regex(
@@ -187,6 +170,7 @@ impl SearchQuery {
             )
         }
     }
+
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
@@ -200,18 +184,6 @@ impl SearchQuery {
                 *replacement = Some(new_replacement);
                 self
             }
-        }
-    }
-    pub fn to_protov1(&self, project_id: u64) -> proto::SearchProject {
-        proto::SearchProject {
-            project_id,
-            query: self.as_str().to_string(),
-            regex: self.is_regex(),
-            whole_word: self.whole_word(),
-            case_sensitive: self.case_sensitive(),
-            include_ignored: self.include_ignored(),
-            files_to_include: self.files_to_include().sources().join(","),
-            files_to_exclude: self.files_to_exclude().sources().join(","),
         }
     }
 
@@ -474,7 +446,8 @@ pub fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
     let globs = glob_set
         .split(',')
         .map(str::trim)
-        .filter_map(|glob_str| (!glob_str.is_empty()).then(|| glob_str.to_owned()))
+        .filter(|&glob_str| (!glob_str.is_empty()))
+        .map(|glob_str| glob_str.to_owned())
         .collect::<Vec<_>>();
     Ok(PathMatcher::new(&globs)?)
 }

@@ -65,6 +65,7 @@
   ">" @punctuation.bracket)
 
 [
+  "."
   ";"
   ","
   "::"
@@ -121,6 +122,8 @@
   (char_literal)
 ] @string
 
+(escape_sequence) @string.escape
+
 [
   (integer_literal)
   (float_literal)
@@ -139,7 +142,6 @@
 ] @comment.doc
 
 [
-  "!"
   "!="
   "%"
   "%="
@@ -148,21 +150,16 @@
   "&&"
   "*"
   "*="
-  "*"
   "+"
   "+="
-  ","
   "-"
   "-="
   "->"
-  "."
   ".."
   "..="
   "..."
-  "/"
   "/="
   ":"
-  ";"
   "<<"
   "<<="
   "<"
@@ -182,6 +179,10 @@
   "||"
   "?"
 ] @operator
+
+; Avoid highlighting these as operators when used in doc comments.
+(unary_expression "!" @operator)
+operator: "/" @operator
 
 (lifetime) @lifetime
 

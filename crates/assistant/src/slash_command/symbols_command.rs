@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use editor::Editor;
 use gpui::{Task, WeakView};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
 use ui::{IconName, WindowContext};
@@ -17,11 +17,11 @@ impl SlashCommand for OutlineSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert symbols for active tab".into()
+        "Insert symbols for active tab".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Symbols for Active Tab".into()
+        self.description()
     }
 
     fn complete_argument(
@@ -41,6 +41,8 @@ impl SlashCommand for OutlineSlashCommand {
     fn run(
         self: Arc<Self>,
         _arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -77,6 +79,7 @@ impl SlashCommand for OutlineSlashCommand {
                         range: 0..outline_text.len(),
                         icon: IconName::ListTree,
                         label: path.to_string_lossy().to_string().into(),
+                        metadata: None,
                     }],
                     text: outline_text,
                     run_commands_in_text: false,

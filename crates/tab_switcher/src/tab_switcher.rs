@@ -2,18 +2,21 @@
 mod tab_switcher_tests;
 
 use collections::HashMap;
+use editor::items::entry_git_aware_label_color;
 use gpui::{
     actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Modifiers, ModifiersChangedEvent, MouseButton,
+    EventEmitter, FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseUpEvent, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use project::Project;
 use serde::Deserialize;
+use settings::Settings;
 use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 use workspace::{
-    item::{ItemHandle, TabContentParams},
+    item::{ItemHandle, ItemSettings, TabContentParams},
     pane::{render_item_indicator, tab_details, Event as PaneEvent},
     ModalView, Pane, SaveIntent, Workspace,
 };
@@ -76,8 +79,10 @@ impl TabSwitcher {
             })
         }
 
+        let project = workspace.project().clone();
         workspace.toggle_modal(cx, |cx| {
-            let delegate = TabSwitcherDelegate::new(action, cx.view().downgrade(), weak_pane, cx);
+            let delegate =
+                TabSwitcherDelegate::new(project, action, cx.view().downgrade(), weak_pane, cx);
             TabSwitcher::new(delegate, cx)
         });
     }
@@ -147,11 +152,13 @@ pub struct TabSwitcherDelegate {
     tab_switcher: WeakView<TabSwitcher>,
     selected_index: usize,
     pane: WeakView<Pane>,
+    project: Model<Project>,
     matches: Vec<TabMatch>,
 }
 
 impl TabSwitcherDelegate {
     fn new(
+        project: Model<Project>,
         action: &Toggle,
         tab_switcher: WeakView<TabSwitcher>,
         pane: WeakView<Pane>,
@@ -163,6 +170,7 @@ impl TabSwitcherDelegate {
             tab_switcher,
             selected_index: 0,
             pane,
+            project,
             matches: Vec::new(),
         }
     }
@@ -341,6 +349,29 @@ impl PickerDelegate for TabSwitcherDelegate {
             preview: tab_match.preview,
         };
         let label = tab_match.item.tab_content(params, cx);
+
+        let icon = tab_match.item.tab_icon(cx).map(|icon| {
+            let git_status_color = ItemSettings::get_global(cx)
+                .git_status
+                .then(|| {
+                    tab_match
+                        .item
+                        .project_path(cx)
+                        .as_ref()
+                        .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
+                        .map(|entry| {
+                            entry_git_aware_label_color(
+                                entry.git_status,
+                                entry.is_ignored,
+                                selected,
+                            )
+                        })
+                })
+                .flatten();
+
+            icon.color(git_status_color.unwrap_or_default())
+        });
+
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
         let indicator_color = if let Some(ref indicator) = indicator {
             indicator.color
@@ -378,6 +409,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
+                .start_slot::<Icon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)

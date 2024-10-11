@@ -174,7 +174,7 @@ impl TaskTemplate {
             &mut substituted_variables,
         )?;
 
-        let task_hash = to_hex_hash(&self)
+        let task_hash = to_hex_hash(self)
             .context("hashing task template")
             .log_err()?;
         let variables_hash = to_hex_hash(&task_variables)
@@ -319,13 +319,13 @@ fn substitute_all_template_variables_in_map(
     let mut new_map: HashMap<String, String> = Default::default();
     for (key, value) in keys_and_values {
         let new_value = substitute_all_template_variables_in_str(
-            &value,
+            value,
             task_variables,
             variable_names,
             substituted_variables,
         )?;
         let new_key = substitute_all_template_variables_in_str(
-            &key,
+            key,
             task_variables,
             variable_names,
             substituted_variables,

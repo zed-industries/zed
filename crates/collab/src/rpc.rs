@@ -35,6 +35,8 @@ use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
+use http_client::HttpClient;
+use isahc_http_client::IsahcHttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
@@ -45,7 +47,6 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use http_client::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -115,16 +116,16 @@ impl Principal {
     fn update_span(&self, span: &tracing::Span) {
         match &self {
             Principal::User(user) => {
-                span.record("user_id", &user.id.0);
+                span.record("user_id", user.id.0);
                 span.record("login", &user.github_login);
             }
             Principal::Impersonated { user, admin } => {
-                span.record("user_id", &user.id.0);
+                span.record("user_id", user.id.0);
                 span.record("login", &user.github_login);
                 span.record("impersonator", &admin.github_login);
             }
             Principal::DevServer(dev_server) => {
-                span.record("dev_server_id", &dev_server.id.0);
+                span.record("dev_server_id", dev_server.id.0);
             }
         }
     }
@@ -139,7 +140,7 @@ struct Session {
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
     supermaven_client: Option<Arc<SupermavenAdminApi>>,
-    http_client: Arc<IsahcHttpClient>,
+    http_client: Arc<dyn HttpClient>,
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
@@ -190,16 +191,26 @@ impl Session {
         }
     }
 
-    pub async fn current_plan(&self, db: MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
+    pub async fn has_llm_subscription(
+        &self,
+        db: &MutexGuard<'_, DbHandle>,
+    ) -> anyhow::Result<bool> {
         if self.is_staff() {
-            return Ok(proto::Plan::ZedPro);
+            return Ok(true);
         }
 
         let Some(user_id) = self.user_id() else {
-            return Ok(proto::Plan::Free);
+            return Ok(false);
         };
 
-        if db.has_active_billing_subscription(user_id).await? {
+        Ok(db.has_active_billing_subscription(user_id).await?)
+    }
+
+    pub async fn current_plan(
+        &self,
+        _db: &MutexGuard<'_, DbHandle>,
+    ) -> anyhow::Result<proto::Plan> {
+        if self.is_staff() {
             Ok(proto::Plan::ZedPro)
         } else {
             Ok(proto::Plan::Free)
@@ -459,9 +470,6 @@ impl Server {
                 forward_project_request_for_owner::<proto::TaskContextForLocation>,
             ))
             .add_request_handler(user_handler(
-                forward_project_request_for_owner::<proto::TaskTemplates>,
-            ))
-            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
             ))
             .add_request_handler(user_handler(
@@ -472,9 +480,6 @@ impl Server {
             ))
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetReferences>,
-            ))
-            .add_request_handler(user_handler(
-                forward_read_only_project_request::<proto::SearchProject>,
             ))
             .add_request_handler(user_handler(forward_find_search_candidates_request))
             .add_request_handler(user_handler(
@@ -957,21 +962,17 @@ impl Server {
 
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
             let http_client = match IsahcHttpClient::builder().default_header("User-Agent", user_agent).build() {
-                Ok(http_client) => Arc::new(http_client),
+                Ok(http_client) => Arc::new(IsahcHttpClient::from(http_client)),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;
                 }
             };
 
-            let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_admin_api_key.clone() {
-                Some(Arc::new(SupermavenAdminApi::new(
+            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(|supermaven_admin_api_key| Arc::new(SupermavenAdminApi::new(
                     supermaven_admin_api_key.to_string(),
                     http_client.clone(),
-                )))
-            } else {
-                None
-            };
+                )));
 
             let session = Session {
                 principal: principal.clone(),
@@ -1126,7 +1127,7 @@ impl Server {
                     self.peer.send(connection_id, incoming_call)?;
                 }
 
-                update_user_contacts(user.id, &session).await?;
+                update_user_contacts(user.id, session).await?;
             }
             Principal::DevServer(dev_server) => {
                 {
@@ -1159,7 +1160,7 @@ impl Server {
                     .db
                     .dev_server_projects_update(dev_server.user_id)
                     .await?;
-                send_dev_server_projects_update(dev_server.user_id, status, &session).await;
+                send_dev_server_projects_update(dev_server.user_id, status, session).await;
             }
         }
 
@@ -1564,21 +1565,17 @@ async fn join_room(
 
     let live_kit_connection_info =
         if let Some(live_kit) = session.app_state.live_kit_client.as_ref() {
-            if let Some(token) = live_kit
+            live_kit
                 .room_token(
                     &joined_room.room.live_kit_room,
                     &session.user_id().to_string(),
                 )
                 .trace_err()
-            {
-                Some(proto::LiveKitConnectionInfo {
+                .map(|token| proto::LiveKitConnectionInfo {
                     server_url: live_kit.url().into(),
                     token,
                     can_publish: true,
                 })
-            } else {
-                None
-            }
         } else {
             None
         };
@@ -1749,6 +1746,7 @@ fn notify_rejoined_projects(
                         worktree_id: worktree.id,
                         path: settings_file.path,
                         content: Some(settings_file.content),
+                        kind: Some(settings_file.kind.to_proto().into()),
                     },
                 )?;
             }
@@ -1863,7 +1861,7 @@ async fn call(
                 initial_project_id,
             )
             .await?;
-        room_updated(&room, &session.peer);
+        room_updated(room, &session.peer);
         mem::take(incoming_call)
     };
     update_user_contacts(called_user_id, &session).await?;
@@ -2004,15 +2002,16 @@ async fn share_project(
             RoomId::from_proto(request.room_id),
             session.connection_id,
             &request.worktrees,
+            request.is_ssh_project,
             request
                 .dev_server_project_id
-                .map(|id| DevServerProjectId::from_proto(id)),
+                .map(DevServerProjectId::from_proto),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
         project_id: project_id.to_proto(),
     })?;
-    room_updated(&room, &session.peer);
+    room_updated(room, &session.peer);
 
     Ok(())
 }
@@ -2229,6 +2228,7 @@ fn join_project_internal(
                     worktree_id: worktree.id,
                     path: settings_file.path,
                     content: Some(settings_file.content),
+                    kind: Some(proto::update_user_settings::Kind::Settings.into()),
                 },
             )?;
         }
@@ -2269,9 +2269,9 @@ async fn leave_project(request: proto::LeaveProject, session: UserSession) -> Re
         "leave project"
     );
 
-    project_left(&project, &session);
+    project_left(project, &session);
     if let Some(room) = room {
-        room_updated(&room, &session.peer);
+        room_updated(room, &session.peer);
     }
 
     Ok(())
@@ -2304,7 +2304,7 @@ async fn list_remote_directory(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(dev_server_id, ZedVersion::with_list_directory())?;
+        .online_dev_server_connection_id(dev_server_id)?;
 
     session
         .db()
@@ -2343,10 +2343,7 @@ async fn update_dev_server_project(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(
-            dev_server_project.dev_server_id,
-            ZedVersion::with_list_directory(),
-        )?;
+        .online_dev_server_connection_id(dev_server_project.dev_server_id)?;
 
     session.peer.send(
         dev_server_connection_id,
@@ -2753,7 +2750,7 @@ async fn shutdown_dev_server_internal(
         .await
         .dev_server_projects_update(dev_server.user_id)
         .await?;
-    send_dev_server_projects_update(dev_server.user_id, status, &session).await;
+    send_dev_server_projects_update(dev_server.user_id, status, session).await;
 
     Ok(())
 }
@@ -2795,7 +2792,7 @@ async fn update_project(
         },
     );
     if let Some(room) = room {
-        room_updated(&room, &session.peer);
+        room_updated(room, &session.peer);
     }
     response.send(proto::Ack {})?;
 
@@ -2956,40 +2953,6 @@ async fn forward_find_search_candidates_request(
         .await
         .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
         .await?;
-
-    let host_version = session
-        .connection_pool()
-        .await
-        .connection(host_connection_id)
-        .map(|c| c.zed_version);
-
-    if host_version.is_some_and(|host_version| host_version < ZedVersion::with_search_candidates())
-    {
-        let query = request.query.ok_or_else(|| anyhow!("missing query"))?;
-        let search = proto::SearchProject {
-            project_id: project_id.to_proto(),
-            query: query.query,
-            regex: query.regex,
-            whole_word: query.whole_word,
-            case_sensitive: query.case_sensitive,
-            files_to_include: query.files_to_include,
-            files_to_exclude: query.files_to_exclude,
-            include_ignored: query.include_ignored,
-        };
-
-        let payload = session
-            .peer
-            .forward_request(session.connection_id, host_connection_id, search)
-            .await?;
-        return response.send(proto::FindSearchCandidatesResponse {
-            buffer_ids: payload
-                .locations
-                .into_iter()
-                .map(|loc| loc.buffer_id)
-                .collect(),
-        });
-    }
-
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
@@ -3515,7 +3478,7 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
 }
 
 async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
-    let plan = session.current_plan(session.db().await).await?;
+    let plan = session.current_plan(&session.db().await).await?;
 
     session
         .peer
@@ -3562,7 +3525,7 @@ async fn create_channel(
 ) -> Result<()> {
     let db = session.db().await;
 
-    let parent_id = request.parent_id.map(|id| ChannelId::from_proto(id));
+    let parent_id = request.parent_id.map(ChannelId::from_proto);
     let (channel, membership) = db
         .create_channel(&request.name, parent_id, session.user_id())
         .await?;
@@ -4284,10 +4247,7 @@ async fn send_channel_message(
             &request.mentions,
             timestamp,
             nonce.clone().into(),
-            match request.reply_to_message_id {
-                Some(reply_to_message_id) => Some(MessageId::from_proto(reply_to_message_id)),
-                None => None,
-            },
+            request.reply_to_message_id.map(MessageId::from_proto),
         )
         .await?;
 
@@ -4518,7 +4478,7 @@ async fn count_language_model_tokens(
     };
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
         proto::Plan::Free => Box::new(FreeCountLanguageModelTokensRateLimit),
     };
@@ -4540,6 +4500,7 @@ async fn count_language_model_tokens(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(&request.request)?,
+                None,
             )
             .await?
         }
@@ -4638,7 +4599,7 @@ async fn compute_embeddings(
     let api_key = api_key.context("no OpenAI API key configured on the server")?;
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
         proto::Plan::Free => Box::new(FreeComputeEmbeddingsRateLimit),
     };
@@ -4847,9 +4808,7 @@ async fn get_notifications(
         .get_notifications(
             session.user_id(),
             NOTIFICATION_COUNT_PER_PAGE,
-            request
-                .before_id
-                .map(|id| db::NotificationId::from_proto(id)),
+            request.before_id.map(db::NotificationId::from_proto),
         )
         .await?;
     response.send(proto::GetNotificationsResponse {
@@ -4958,12 +4917,17 @@ async fn get_llm_api_token(
     if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
         Err(anyhow!("account too young"))?
     }
+
+    let billing_preferences = db.get_billing_preferences(user.id).await?;
+
     let token = LlmTokenClaims::create(
         user.id,
         user.github_login.clone(),
         session.is_staff(),
+        billing_preferences,
         has_llm_closed_beta_feature_flag,
-        session.current_plan(db).await?,
+        session.has_llm_subscription(&db).await?,
+        session.current_plan(&db).await?,
         &session.app_state.config,
     )?;
     response.send(proto::GetLlmTokenResponse { token })?;
@@ -5103,7 +5067,7 @@ fn build_initial_contacts_update(
     for contact in contacts {
         match contact {
             db::Contact::Accepted { user_id, busy } => {
-                update.contacts.push(contact_for_user(user_id, busy, &pool));
+                update.contacts.push(contact_for_user(user_id, busy, pool));
             }
             db::Contact::Outgoing { user_id } => update.outgoing_requests.push(user_id.to_proto()),
             db::Contact::Incoming { user_id } => {
@@ -5160,7 +5124,8 @@ fn channel_updated(
         None,
         pool.channel_connection_ids(channel.root_id())
             .filter_map(|(channel_id, role)| {
-                role.can_see_channel(channel.visibility).then(|| channel_id)
+                role.can_see_channel(channel.visibility)
+                    .then_some(channel_id)
             }),
         |peer_id| {
             peer.send(
@@ -5238,7 +5203,7 @@ async fn lost_dev_server_connection(session: &DevServerSession) -> Result<()> {
 
     for project_id in project_ids {
         // not unshare re-checks the connection ids match, so we get away with no transaction
-        unshare_project_internal(project_id, session.connection_id, None, &session).await?;
+        unshare_project_internal(project_id, session.connection_id, None, session).await?;
     }
 
     let user_id = session.dev_server().user_id;
@@ -5310,7 +5275,7 @@ async fn leave_room_for_session(session: &UserSession, connection_id: Connection
     }
 
     for contact_user_id in contacts_to_update {
-        update_user_contacts(contact_user_id, &session).await?;
+        update_user_contacts(contact_user_id, session).await?;
     }
 
     if let Some(live_kit) = session.app_state.live_kit_client.as_ref() {

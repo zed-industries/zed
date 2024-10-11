@@ -9,10 +9,9 @@ use language::{
 };
 use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
 use rope::Point;
-use std::fmt::Write;
-use std::path::{Path, PathBuf};
 use std::{
-    ops::Range,
+    fmt::Write,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::prelude::*;
@@ -96,7 +95,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
     }
 
     fn menu_text(&self) -> String {
-        "Insert Diagnostics".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -163,6 +162,8 @@ impl SlashCommand for DiagnosticsSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -175,68 +176,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
 
-        cx.spawn(move |_| async move {
-            let Some((text, sections)) = task.await? else {
-                return Ok(SlashCommandOutput {
-                    sections: vec![SlashCommandOutputSection {
-                        range: 0..1,
-                        icon: IconName::Library,
-                        label: "No Diagnostics".into(),
-                    }],
-                    text: "\n".to_string(),
-                    run_commands_in_text: true,
-                });
-            };
-
-            let sections = sections
-                .into_iter()
-                .map(|(range, placeholder_type)| SlashCommandOutputSection {
-                    range,
-                    icon: match placeholder_type {
-                        PlaceholderType::Root(_, _) => IconName::ExclamationTriangle,
-                        PlaceholderType::File(_) => IconName::File,
-                        PlaceholderType::Diagnostic(DiagnosticType::Error, _) => IconName::XCircle,
-                        PlaceholderType::Diagnostic(DiagnosticType::Warning, _) => {
-                            IconName::ExclamationTriangle
-                        }
-                    },
-                    label: match placeholder_type {
-                        PlaceholderType::Root(summary, source) => {
-                            let mut label = String::new();
-                            label.push_str("Diagnostics");
-                            if let Some(source) = source {
-                                write!(label, " ({})", source).unwrap();
-                            }
-
-                            if summary.error_count > 0 || summary.warning_count > 0 {
-                                label.push(':');
-
-                                if summary.error_count > 0 {
-                                    write!(label, " {} errors", summary.error_count).unwrap();
-                                    if summary.warning_count > 0 {
-                                        label.push_str(",");
-                                    }
-                                }
-
-                                if summary.warning_count > 0 {
-                                    write!(label, " {} warnings", summary.warning_count).unwrap();
-                                }
-                            }
-
-                            label.into()
-                        }
-                        PlaceholderType::File(file_path) => file_path.into(),
-                        PlaceholderType::Diagnostic(_, message) => message.into(),
-                    },
-                })
-                .collect();
-
-            Ok(SlashCommandOutput {
-                text,
-                sections,
-                run_commands_in_text: false,
-            })
-        })
+        cx.spawn(move |_| async move { task.await?.ok_or_else(|| anyhow!("No diagnostics found")) })
     }
 }
 
@@ -277,7 +217,7 @@ fn collect_diagnostics(
     project: Model<Project>,
     options: Options,
     cx: &mut AppContext,
-) -> Task<Result<Option<(String, Vec<(Range<usize>, PlaceholderType)>)>>> {
+) -> Task<Result<Option<SlashCommandOutput>>> {
     let error_source = if let Some(path_matcher) = &options.path_matcher {
         debug_assert_eq!(path_matcher.sources().len(), 1);
         Some(path_matcher.sources().first().cloned().unwrap_or_default())
@@ -318,13 +258,13 @@ fn collect_diagnostics(
         .collect();
 
     cx.spawn(|mut cx| async move {
-        let mut text = String::new();
+        let mut output = SlashCommandOutput::default();
+
         if let Some(error_source) = error_source.as_ref() {
-            writeln!(text, "diagnostics: {}", error_source).unwrap();
+            writeln!(output.text, "diagnostics: {}", error_source).unwrap();
         } else {
-            writeln!(text, "diagnostics").unwrap();
+            writeln!(output.text, "diagnostics").unwrap();
         }
-        let mut sections: Vec<(Range<usize>, PlaceholderType)> = Vec::new();
 
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, path, summary) in diagnostic_summaries {
@@ -341,10 +281,10 @@ fn collect_diagnostics(
                 continue;
             }
 
-            let last_end = text.len();
+            let last_end = output.text.len();
             let file_path = path.to_string_lossy().to_string();
             if !glob_is_exact_file_match {
-                writeln!(&mut text, "{file_path}").unwrap();
+                writeln!(&mut output.text, "{file_path}").unwrap();
             }
 
             if let Some(buffer) = project_handle
@@ -352,75 +292,73 @@ fn collect_diagnostics(
                 .await
                 .log_err()
             {
-                collect_buffer_diagnostics(
-                    &mut text,
-                    &mut sections,
-                    cx.read_model(&buffer, |buffer, _| buffer.snapshot())?,
-                    options.include_warnings,
-                );
+                let snapshot = cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
+                collect_buffer_diagnostics(&mut output, &snapshot, options.include_warnings);
             }
 
             if !glob_is_exact_file_match {
-                sections.push((
-                    last_end..text.len().saturating_sub(1),
-                    PlaceholderType::File(file_path),
-                ))
+                output.sections.push(SlashCommandOutputSection {
+                    range: last_end..output.text.len().saturating_sub(1),
+                    icon: IconName::File,
+                    label: file_path.into(),
+                    metadata: None,
+                });
             }
         }
 
         // No diagnostics found
-        if sections.is_empty() {
+        if output.sections.is_empty() {
             return Ok(None);
         }
 
-        sections.push((
-            0..text.len(),
-            PlaceholderType::Root(project_summary, error_source),
-        ));
-        Ok(Some((text, sections)))
+        let mut label = String::new();
+        label.push_str("Diagnostics");
+        if let Some(source) = error_source {
+            write!(label, " ({})", source).unwrap();
+        }
+
+        if project_summary.error_count > 0 || project_summary.warning_count > 0 {
+            label.push(':');
+
+            if project_summary.error_count > 0 {
+                write!(label, " {} errors", project_summary.error_count).unwrap();
+                if project_summary.warning_count > 0 {
+                    label.push_str(",");
+                }
+            }
+
+            if project_summary.warning_count > 0 {
+                write!(label, " {} warnings", project_summary.warning_count).unwrap();
+            }
+        }
+
+        output.sections.insert(
+            0,
+            SlashCommandOutputSection {
+                range: 0..output.text.len(),
+                icon: IconName::Warning,
+                label: label.into(),
+                metadata: None,
+            },
+        );
+
+        Ok(Some(output))
     })
 }
 
-pub fn buffer_has_error_diagnostics(snapshot: &BufferSnapshot) -> bool {
-    for (_, group) in snapshot.diagnostic_groups(None) {
-        let entry = &group.entries[group.primary_ix];
-        if entry.diagnostic.severity == DiagnosticSeverity::ERROR {
-            return true;
-        }
-    }
-    false
-}
-
-pub fn write_single_file_diagnostics(
-    output: &mut String,
-    path: Option<&Path>,
+pub fn collect_buffer_diagnostics(
+    output: &mut SlashCommandOutput,
     snapshot: &BufferSnapshot,
-) -> bool {
-    if let Some(path) = path {
-        if buffer_has_error_diagnostics(&snapshot) {
-            output.push_str("/diagnostics ");
-            output.push_str(&path.to_string_lossy());
-            return true;
-        }
-    }
-    false
-}
-
-fn collect_buffer_diagnostics(
-    text: &mut String,
-    sections: &mut Vec<(Range<usize>, PlaceholderType)>,
-    snapshot: BufferSnapshot,
     include_warnings: bool,
 ) {
     for (_, group) in snapshot.diagnostic_groups(None) {
         let entry = &group.entries[group.primary_ix];
-        collect_diagnostic(text, sections, entry, &snapshot, include_warnings)
+        collect_diagnostic(output, entry, &snapshot, include_warnings)
     }
 }
 
 fn collect_diagnostic(
-    text: &mut String,
-    sections: &mut Vec<(Range<usize>, PlaceholderType)>,
+    output: &mut SlashCommandOutput,
     entry: &DiagnosticEntry<Anchor>,
     snapshot: &BufferSnapshot,
     include_warnings: bool,
@@ -428,17 +366,17 @@ fn collect_diagnostic(
     const EXCERPT_EXPANSION_SIZE: u32 = 2;
     const MAX_MESSAGE_LENGTH: usize = 2000;
 
-    let ty = match entry.diagnostic.severity {
+    let (ty, icon) = match entry.diagnostic.severity {
         DiagnosticSeverity::WARNING => {
             if !include_warnings {
                 return;
             }
-            DiagnosticType::Warning
+            ("warning", IconName::Warning)
         }
-        DiagnosticSeverity::ERROR => DiagnosticType::Error,
+        DiagnosticSeverity::ERROR => ("error", IconName::XCircle),
         _ => return,
     };
-    let prev_len = text.len();
+    let prev_len = output.text.len();
 
     let range = entry.range.to_point(snapshot);
     let diagnostic_row_number = range.start.row + 1;
@@ -448,11 +386,11 @@ fn collect_diagnostic(
     let excerpt_range =
         Point::new(start_row, 0).to_offset(&snapshot)..Point::new(end_row, 0).to_offset(&snapshot);
 
-    text.push_str("```");
+    output.text.push_str("```");
     if let Some(language_name) = snapshot.language().map(|l| l.code_fence_block_name()) {
-        text.push_str(&language_name);
+        output.text.push_str(&language_name);
     }
-    text.push('\n');
+    output.text.push('\n');
 
     let mut buffer_text = String::new();
     for chunk in snapshot.text_for_range(excerpt_range) {
@@ -461,46 +399,26 @@ fn collect_diagnostic(
 
     for (i, line) in buffer_text.lines().enumerate() {
         let line_number = start_row + i as u32 + 1;
-        writeln!(text, "{}", line).unwrap();
+        writeln!(output.text, "{}", line).unwrap();
 
         if line_number == diagnostic_row_number {
-            text.push_str("//");
-            let prev_len = text.len();
-            write!(text, " {}: ", ty.as_str()).unwrap();
-            let padding = text.len() - prev_len;
+            output.text.push_str("//");
+            let prev_len = output.text.len();
+            write!(output.text, " {}: ", ty).unwrap();
+            let padding = output.text.len() - prev_len;
 
             let message = util::truncate(&entry.diagnostic.message, MAX_MESSAGE_LENGTH)
                 .replace('\n', format!("\n//{:padding$}", "").as_str());
 
-            writeln!(text, "{message}").unwrap();
+            writeln!(output.text, "{message}").unwrap();
         }
     }
 
-    writeln!(text, "```").unwrap();
-    sections.push((
-        prev_len..text.len().saturating_sub(1),
-        PlaceholderType::Diagnostic(ty, entry.diagnostic.message.clone()),
-    ))
-}
-
-#[derive(Clone)]
-pub enum PlaceholderType {
-    Root(DiagnosticSummary, Option<String>),
-    File(String),
-    Diagnostic(DiagnosticType, String),
-}
-
-#[derive(Copy, Clone)]
-pub enum DiagnosticType {
-    Warning,
-    Error,
-}
-
-impl DiagnosticType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DiagnosticType::Warning => "warning",
-            DiagnosticType::Error => "error",
-        }
-    }
+    writeln!(output.text, "```").unwrap();
+    output.sections.push(SlashCommandOutputSection {
+        range: prev_len..output.text.len().saturating_sub(1),
+        icon,
+        label: entry.diagnostic.message.clone().into(),
+        metadata: None,
+    });
 }

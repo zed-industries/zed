@@ -4,12 +4,19 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::AssetSource;
 use handlebars::{Handlebars, RenderError};
-use language::BufferSnapshot;
+use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::LineEnding;
 use util::ResultExt;
+
+#[derive(Serialize)]
+pub struct ContentPromptDiagnosticContext {
+    pub line_number: usize,
+    pub error_message: String,
+    pub code_content: String,
+}
 
 #[derive(Serialize)]
 pub struct ContentPromptContext {
@@ -20,6 +27,7 @@ pub struct ContentPromptContext {
     pub document_content: String,
     pub user_prompt: String,
     pub rewrite_section: Option<String>,
+    pub diagnostic_errors: Vec<ContentPromptDiagnosticContext>,
 }
 
 #[derive(Serialize)]
@@ -30,6 +38,11 @@ pub struct TerminalAssistantPromptContext {
     pub working_directory: Option<String>,
     pub latest_output: Vec<String>,
     pub user_prompt: String,
+}
+
+#[derive(Serialize)]
+pub struct ProjectSlashCommandPromptContext {
+    pub context_buffer: String,
 }
 
 /// Context required to generate a workflow step resolution prompt.
@@ -82,10 +95,9 @@ impl PromptBuilder {
     ///   and application context.
     /// * `handlebars` - An `Arc<Mutex<Handlebars>>` for registering and updating templates.
     fn watch_fs_for_template_overrides(
-        mut params: PromptLoadingParams,
+        params: PromptLoadingParams,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
-        params.repo_path = None;
         let templates_dir = paths::prompt_overrides_dir(params.repo_path.as_deref());
         params.cx.background_executor()
             .spawn(async move {
@@ -123,7 +135,7 @@ impl PromptBuilder {
                         if params.fs.is_dir(parent_dir).await {
                             let (mut changes, _watcher) = params.fs.watch(parent_dir, Duration::from_secs(1)).await;
                             while let Some(changed_paths) = changes.next().await {
-                                if changed_paths.iter().any(|p| p == &templates_dir) {
+                                if changed_paths.iter().any(|p| &p.path == &templates_dir) {
                                     let mut log_message = format!("Prompt template overrides directory detected at {}", templates_dir.display());
                                     if let Ok(target) = params.fs.read_link(&templates_dir).await {
                                         log_message.push_str(" -> ");
@@ -162,18 +174,18 @@ impl PromptBuilder {
                     let mut combined_changes = futures::stream::select(changes, parent_changes);
 
                     while let Some(changed_paths) = combined_changes.next().await {
-                        if changed_paths.iter().any(|p| p == &templates_dir) {
+                        if changed_paths.iter().any(|p| &p.path == &templates_dir) {
                             if !params.fs.is_dir(&templates_dir).await {
                                 log::info!("Prompt template overrides directory removed. Restoring built-in prompt templates.");
                                 Self::register_built_in_templates(&mut handlebars.lock()).log_err();
                                 break;
                             }
                         }
-                        for changed_path in changed_paths {
-                            if changed_path.starts_with(&templates_dir) && changed_path.extension().map_or(false, |ext| ext == "hbs") {
-                                log::info!("Reloading prompt template override: {}", changed_path.display());
-                                if let Some(content) = params.fs.load(&changed_path).await.log_err() {
-                                    let file_name = changed_path.file_stem().unwrap().to_string_lossy();
+                        for event in changed_paths {
+                            if event.path.starts_with(&templates_dir) && event.path.extension().map_or(false, |ext| ext == "hbs") {
+                                log::info!("Reloading prompt template override: {}", event.path.display());
+                                if let Some(content) = params.fs.load(&event.path).await.log_err() {
+                                    let file_name = event.path.file_stem().unwrap().to_string_lossy();
                                     handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
@@ -204,11 +216,11 @@ impl PromptBuilder {
     pub fn generate_content_prompt(
         &self,
         user_prompt: String,
-        language_name: Option<&str>,
+        language_name: Option<&LanguageName>,
         buffer: BufferSnapshot,
         range: Range<usize>,
     ) -> Result<String, RenderError> {
-        let content_type = match language_name {
+        let content_type = match language_name.as_ref().map(|l| l.0.as_ref()) {
             None | Some("Markdown" | "Plain Text") => "text",
             Some(_) => "code",
         };
@@ -220,7 +232,8 @@ impl PromptBuilder {
         let before_range = 0..range.start;
         let truncated_before = if before_range.len() > MAX_CTX {
             is_truncated = true;
-            range.start - MAX_CTX..range.start
+            let start = buffer.clip_offset(range.start - MAX_CTX, text::Bias::Right);
+            start..range.start
         } else {
             before_range
         };
@@ -228,7 +241,8 @@ impl PromptBuilder {
         let after_range = range.end..buffer.len();
         let truncated_after = if after_range.len() > MAX_CTX {
             is_truncated = true;
-            range.end..range.end + MAX_CTX
+            let end = buffer.clip_offset(range.end + MAX_CTX, text::Bias::Left);
+            range.end..end
         } else {
             after_range
         };
@@ -259,6 +273,17 @@ impl PromptBuilder {
         } else {
             None
         };
+        let diagnostics = buffer.diagnostics_in_range::<_, Point>(range, false);
+        let diagnostic_errors: Vec<ContentPromptDiagnosticContext> = diagnostics
+            .map(|entry| {
+                let start = entry.range.start;
+                ContentPromptDiagnosticContext {
+                    line_number: (start.row + 1) as usize,
+                    error_message: entry.diagnostic.message.clone(),
+                    code_content: buffer.text_for_range(entry.range.clone()).collect(),
+                }
+            })
+            .collect();
 
         let context = ContentPromptContext {
             content_type: content_type.to_string(),
@@ -268,8 +293,8 @@ impl PromptBuilder {
             document_content,
             user_prompt,
             rewrite_section,
+            diagnostic_errors,
         };
-
         self.handlebars.lock().render("content_prompt", &context)
     }
 
@@ -296,5 +321,15 @@ impl PromptBuilder {
 
     pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("edit_workflow", &())
+    }
+
+    pub fn generate_project_slash_command_prompt(
+        &self,
+        context_buffer: String,
+    ) -> Result<String, RenderError> {
+        self.handlebars.lock().render(
+            "project_slash_command",
+            &ProjectSlashCommandPromptContext { context_buffer },
+        )
     }
 }

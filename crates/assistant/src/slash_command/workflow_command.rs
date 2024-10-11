@@ -8,7 +8,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use gpui::{Task, WeakView};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 
 use workspace::Workspace;
@@ -29,11 +29,11 @@ impl SlashCommand for WorkflowSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert a prompt that opts into the edit workflow".into()
+        "Insert prompt to opt into the edit workflow".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Workflow Prompt".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -53,6 +53,8 @@ impl SlashCommand for WorkflowSlashCommand {
     fn run(
         self: Arc<Self>,
         _arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -68,6 +70,7 @@ impl SlashCommand for WorkflowSlashCommand {
                     range,
                     icon: IconName::Route,
                     label: "Workflow".into(),
+                    metadata: None,
                 }],
                 run_commands_in_text: false,
             })

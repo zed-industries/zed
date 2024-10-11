@@ -509,7 +509,7 @@ impl<D: PickerDelegate> Picker<D> {
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, cx| {
-                    // We specficially want to use the platform key here, as
+                    // We specifically want to use the platform key here, as
                     // ctrl will already be held down for the tab switcher.
                     this.handle_click(ix, event.modifiers.platform, cx)
                 }),

@@ -11,12 +11,12 @@ pub struct Session {
     old_window_ids: Option<Vec<WindowId>>,
 }
 
-const SESSION_ID_KEY: &'static str = "session_id";
-const SESSION_WINDOW_STACK_KEY: &'static str = "session_window_stack";
+const SESSION_ID_KEY: &str = "session_id";
+const SESSION_WINDOW_STACK_KEY: &str = "session_window_stack";
 
 impl Session {
     pub async fn new() -> Self {
-        let old_session_id = KEY_VALUE_STORE.read_kvp(&SESSION_ID_KEY).ok().flatten();
+        let old_session_id = KEY_VALUE_STORE.read_kvp(SESSION_ID_KEY).ok().flatten();
 
         let session_id = Uuid::new_v4().to_string();
 
@@ -26,7 +26,7 @@ impl Session {
             .log_err();
 
         let old_window_ids = KEY_VALUE_STORE
-            .read_kvp(&SESSION_WINDOW_STACK_KEY)
+            .read_kvp(SESSION_WINDOW_STACK_KEY)
             .ok()
             .flatten()
             .and_then(|json| serde_json::from_str::<Vec<u64>>(&json).ok())
@@ -64,7 +64,7 @@ pub struct AppSession {
 }
 
 impl AppSession {
-    pub fn new(session: Session, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(session: Session, cx: &ModelContext<Self>) -> Self {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
         let _serialization_task = Some(cx.spawn(|_, cx| async move {

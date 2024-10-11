@@ -21,11 +21,11 @@ use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use remote::SshSession;
+use remote::SshRemoteClient;
 use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
@@ -263,8 +263,7 @@ impl TestServer {
                 })
             });
 
-        let git_hosting_provider_registry =
-            cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
+        let git_hosting_provider_registry = cx.update(GitHostingProviderRegistry::default_global);
         git_hosting_provider_registry
             .register_hosting_provider(Arc::new(git_hosting_providers::Github));
 
@@ -279,7 +278,7 @@ impl TestServer {
             languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: FakeNodeRuntime::new(),
+            node_runtime: NodeRuntime::unavailable(),
             session,
         });
 
@@ -301,7 +300,7 @@ impl TestServer {
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
-            assistant::context_store::init(&client);
+            assistant::context_store::init(&client.clone().into());
         });
 
         client
@@ -409,7 +408,7 @@ impl TestServer {
             languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: FakeNodeRuntime::new(),
+            node_runtime: NodeRuntime::unavailable(),
             session,
         });
 
@@ -678,10 +677,9 @@ impl TestServer {
                 migrations_path: None,
                 seed_path: None,
                 stripe_api_key: None,
-                stripe_price_id: None,
+                stripe_llm_access_price_id: None,
+                stripe_llm_usage_price_id: None,
                 supermaven_admin_api_key: None,
-                qwen2_7b_api_key: None,
-                qwen2_7b_api_url: None,
                 user_backfiller_github_access_token: None,
             },
         })
@@ -838,7 +836,7 @@ impl TestClient {
     pub async fn build_ssh_project(
         &self,
         root_path: impl AsRef<Path>,
-        ssh: Arc<SshSession>,
+        ssh: Model<SshRemoteClient>,
         cx: &mut TestAppContext,
     ) -> (Model<Project>, WorktreeId) {
         let project = cx.update(|cx| {
@@ -922,7 +920,7 @@ impl TestClient {
         })
     }
 
-    pub async fn build_dev_server_project(
+    pub async fn join_remote_project(
         &self,
         host_project_id: u64,
         guest_cx: &mut TestAppContext,

@@ -9,7 +9,7 @@ use crate::workspace::load_workspace;
 pub struct LicensesArgs {}
 
 pub fn run_licenses(_args: LicensesArgs) -> Result<()> {
-    const LICENSE_FILES: &[&'static str] = &["LICENSE-APACHE", "LICENSE-GPL", "LICENSE-AGPL"];
+    const LICENSE_FILES: &[&str] = &["LICENSE-APACHE", "LICENSE-GPL", "LICENSE-AGPL"];
 
     let workspace = load_workspace()?;
 
@@ -19,7 +19,7 @@ pub fn run_licenses(_args: LicensesArgs) -> Result<()> {
             .parent()
             .ok_or_else(|| anyhow!("no crate directory for {}", package.name))?;
 
-        if let Some(license_file) = first_license_file(&crate_dir, &LICENSE_FILES) {
+        if let Some(license_file) = first_license_file(crate_dir, LICENSE_FILES) {
             if !license_file.is_symlink() {
                 println!("{} is not a symlink", license_file.display());
             }

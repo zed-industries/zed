@@ -74,7 +74,7 @@ pub fn show_keyboard_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) ->
         }
     }
 
-    return false;
+    false
 }
 
 pub struct InlayHover {
@@ -195,32 +195,22 @@ fn show_hover(
     anchor: Anchor,
     ignore_timeout: bool,
     cx: &mut ViewContext<Editor>,
-) {
+) -> Option<()> {
     if editor.pending_rename.is_some() {
-        return;
+        return None;
     }
 
     let snapshot = editor.snapshot(cx);
 
-    let (buffer, buffer_position) =
-        if let Some(output) = editor.buffer.read(cx).text_anchor_for_position(anchor, cx) {
-            output
-        } else {
-            return;
-        };
+    let (buffer, buffer_position) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(anchor, cx)?;
 
-    let excerpt_id =
-        if let Some((excerpt_id, _, _)) = editor.buffer().read(cx).excerpt_containing(anchor, cx) {
-            excerpt_id
-        } else {
-            return;
-        };
+    let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
 
-    let project = if let Some(project) = editor.project.clone() {
-        project
-    } else {
-        return;
-    };
+    let language_registry = editor.project.as_ref()?.read(cx).languages().clone();
+    let provider = editor.semantics_provider.clone()?;
 
     if !ignore_timeout {
         if same_info_hover(editor, &snapshot, anchor)
@@ -228,7 +218,7 @@ fn show_hover(
             || editor.hover_state.diagnostic_popover.is_some()
         {
             // Hover triggered from same location as last time. Don't show again.
-            return;
+            return None;
         } else {
             hide_hover(editor, cx);
         }
@@ -240,7 +230,7 @@ fn show_hover(
             .cmp(&anchor, &snapshot.buffer_snapshot)
             .is_eq()
         {
-            return;
+            return None;
         }
     }
 
@@ -262,12 +252,7 @@ fn show_hover(
                 total_delay
             };
 
-            // query the LSP for hover info
-            let hover_request = cx.update(|cx| {
-                project.update(cx, |project, cx| {
-                    project.hover(&buffer, buffer_position, cx)
-                })
-            })?;
+            let hover_request = cx.update(|cx| provider.hover(&buffer, buffer_position, cx))?;
 
             if let Some(delay) = delay {
                 delay.await;
@@ -377,8 +362,11 @@ fn show_hover(
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
-            let hovers_response = hover_request.await;
-            let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+            let hovers_response = if let Some(hover_request) = hover_request {
+                hover_request.await
+            } else {
+                Vec::new()
+            };
             let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(hovers_response.len());
@@ -451,6 +439,7 @@ fn show_hover(
     });
 
     editor.hover_state.info_task = Some(task);
+    None
 }
 
 fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
@@ -518,19 +507,22 @@ async fn parse_blocks(
     let rendered_block = cx
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
+            let ui_font_family = settings.ui_font.family.clone();
             let buffer_font_family = settings.buffer_font.family.clone();
-            let mut base_style = cx.text_style();
-            base_style.refine(&TextStyleRefinement {
-                font_family: Some(buffer_font_family.clone()),
+
+            let mut base_text_style = cx.text_style();
+            base_text_style.refine(&TextStyleRefinement {
+                font_family: Some(ui_font_family.clone()),
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });
 
             let markdown_style = MarkdownStyle {
-                base_text_style: base_style,
-                code_block: StyleRefinement::default().mt(rems(1.)).mb(rems(1.)),
+                base_text_style,
+                code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
                 inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
+                    font_family: Some(buffer_font_family),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
@@ -648,7 +640,7 @@ impl HoverState {
                 }
             }
         }
-        return hover_popover_is_focused;
+        hover_popover_is_focused
     }
 }
 
@@ -1334,6 +1326,7 @@ mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1445,7 +1438,7 @@ mod tests {
                     let variable« »= TestNewType(TestStruct);
                 }
         "})
-            .get(0)
+            .first()
             .cloned()
             .unwrap();
         let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {

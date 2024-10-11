@@ -6,16 +6,17 @@ use crate::markdown_elements::{
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
-    SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
+    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
+use settings::Settings;
 use std::{
     ops::{Mul, Range},
     sync::Arc,
 };
-use theme::{ActiveTheme, SyntaxTheme};
+use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
+    h_flex, relative, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
     StatefulInteractiveElement, Tooltip,
 };
 use workspace::Workspace;
@@ -25,6 +26,8 @@ type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowCon
 pub struct RenderContext {
     workspace: Option<WeakView<Workspace>>,
     next_id: usize,
+    buffer_font_family: SharedString,
+    buffer_text_style: TextStyle,
     text_style: TextStyle,
     border_color: Hsla,
     text_color: Hsla,
@@ -40,10 +43,17 @@ impl RenderContext {
     pub fn new(workspace: Option<WeakView<Workspace>>, cx: &WindowContext) -> RenderContext {
         let theme = cx.theme().clone();
 
+        let settings = ThemeSettings::get_global(cx);
+        let buffer_font_family = settings.buffer_font.family.clone();
+        let mut buffer_text_style = cx.text_style();
+        buffer_text_style.font_family = buffer_font_family.clone();
+
         RenderContext {
             workspace,
             next_id: 0,
             indent: 0,
+            buffer_font_family,
+            buffer_text_style,
             text_style: cx.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
@@ -103,7 +113,7 @@ pub fn render_parsed_markdown(
         elements.push(render_markdown_block(child, &mut cx));
     }
 
-    return elements;
+    elements
 }
 
 pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
@@ -221,12 +231,48 @@ fn render_markdown_list_item(
 }
 
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
-    let header = render_markdown_table_row(&parsed.header, &parsed.column_alignments, true, cx);
+    let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
+
+    for (index, cell) in parsed.header.children.iter().enumerate() {
+        let length = cell.contents.len();
+        max_lengths[index] = length;
+    }
+
+    for row in &parsed.body {
+        for (index, cell) in row.children.iter().enumerate() {
+            let length = cell.contents.len();
+            if length > max_lengths[index] {
+                max_lengths[index] = length;
+            }
+        }
+    }
+
+    let total_max_length: usize = max_lengths.iter().sum();
+    let max_column_widths: Vec<f32> = max_lengths
+        .iter()
+        .map(|&length| length as f32 / total_max_length as f32)
+        .collect();
+
+    let header = render_markdown_table_row(
+        &parsed.header,
+        &parsed.column_alignments,
+        &max_column_widths,
+        true,
+        cx,
+    );
 
     let body: Vec<AnyElement> = parsed
         .body
         .iter()
-        .map(|row| render_markdown_table_row(row, &parsed.column_alignments, false, cx))
+        .map(|row| {
+            render_markdown_table_row(
+                row,
+                &parsed.column_alignments,
+                &max_column_widths,
+                false,
+                cx,
+            )
+        })
         .collect();
 
     cx.with_common_p(v_flex())
@@ -239,14 +285,15 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 fn render_markdown_table_row(
     parsed: &ParsedMarkdownTableRow,
     alignments: &Vec<ParsedMarkdownTableAlignment>,
+    max_column_widths: &Vec<f32>,
     is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = vec![];
 
-    for cell in &parsed.children {
+    for (index, cell) in parsed.children.iter().enumerate() {
         let alignment = alignments
-            .get(items.len())
+            .get(index)
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
@@ -258,8 +305,11 @@ fn render_markdown_table_row(
             ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
         };
 
+        let max_width = max_column_widths.get(index).unwrap_or(&0.0);
+
         let mut cell = container
-            .w_full()
+            .w(Length::Definite(relative(*max_width)))
+            .h_full()
             .child(contents)
             .px_2()
             .py_1()
@@ -308,7 +358,7 @@ fn render_markdown_code_block(
 ) -> AnyElement {
     let body = if let Some(highlights) = parsed.highlights.as_ref() {
         StyledText::new(parsed.contents.clone()).with_highlights(
-            &cx.text_style,
+            &cx.buffer_text_style,
             highlights.iter().filter_map(|(range, highlight_id)| {
                 highlight_id
                     .style(cx.syntax_theme.as_ref())
@@ -320,6 +370,7 @@ fn render_markdown_code_block(
     };
 
     cx.with_common_p(div())
+        .font_family(cx.buffer_font_family.clone())
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)

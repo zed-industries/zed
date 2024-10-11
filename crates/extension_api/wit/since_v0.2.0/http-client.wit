@@ -1,0 +1,67 @@
+interface http-client {
+    /// An HTTP request.
+    record http-request {
+        /// The HTTP method for the request.
+        method: http-method,
+        /// The URL to which the request should be made.
+        url: string,
+        /// The headers for the request.
+        headers: list<tuple<string, string>>,
+        /// The request body.
+        body: option<list<u8>>,
+        /// The policy to use for redirects.
+        redirect-policy: redirect-policy,
+    }
+
+    /// HTTP methods.
+    enum http-method {
+        /// `GET`
+        get,
+        /// `HEAD`
+        head,
+        /// `POST`
+        post,
+        /// `PUT`
+        put,
+        /// `DELETE`
+        delete,
+        /// `OPTIONS`
+        options,
+        /// `PATCH`
+        patch,
+    }
+
+    /// The policy for dealing with redirects received from the server.
+    variant redirect-policy {
+        /// Redirects from the server will not be followed.
+        ///
+        /// This is the default behavior.
+        no-follow,
+        /// Redirects from the server will be followed up to the specified limit.
+        follow-limit(u32),
+        /// All redirects from the server will be followed.
+        follow-all,
+    }
+
+    /// An HTTP response.
+    record http-response {
+        /// The response headers.
+        headers: list<tuple<string, string>>,
+        /// The response body.
+        body: list<u8>,
+    }
+
+    /// Performs an HTTP request and returns the response.
+    fetch: func(req: http-request) -> result<http-response, string>;
+
+    /// An HTTP response stream.
+    resource http-response-stream {
+        /// Retrieves the next chunk of data from the response stream.
+        ///
+        /// Returns `Ok(None)` if the stream has ended.
+        next-chunk: func() -> result<option<list<u8>>, string>;
+    }
+
+    /// Performs an HTTP request and returns a response stream.
+    fetch-stream: func(req: http-request) -> result<http-response-stream, string>;
+}

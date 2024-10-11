@@ -54,6 +54,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("ocaml", &["ml", "mli"]),
     ("php", &["php"]),
     ("prisma", &["prisma"]),
+    ("proto", &["proto"]),
     ("purescript", &["purs"]),
     ("r", &["r", "R"]),
     ("racket", &["rkt"]),
@@ -77,11 +78,11 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
     static SUGGESTIONS_BY_PATH_SUFFIX: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
     SUGGESTIONS_BY_PATH_SUFFIX.get_or_init(|| {
         SUGGESTIONS_BY_EXTENSION_ID
-            .into_iter()
+            .iter()
             .flat_map(|(name, path_suffixes)| {
                 let name = Arc::<str>::from(*name);
                 path_suffixes
-                    .into_iter()
+                    .iter()
                     .map(move |suffix| (*suffix, name.clone()))
             })
             .collect()

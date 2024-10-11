@@ -52,7 +52,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         room::Event::RemoteProjectUnshared { project_id }
         | room::Event::RemoteProjectJoined { project_id }
         | room::Event::RemoteProjectInvitationDiscarded { project_id } => {
-            if let Some(windows) = notification_windows.remove(&project_id) {
+            if let Some(windows) = notification_windows.remove(project_id) {
                 for window in windows {
                     window
                         .update(cx, |_, cx| {

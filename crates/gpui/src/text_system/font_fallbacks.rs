@@ -11,7 +11,7 @@ pub struct FontFallbacks(pub Arc<Vec<String>>);
 impl FontFallbacks {
     /// Get the fallback fonts family names
     pub fn fallback_list(&self) -> &[String] {
-        &self.0.as_slice()
+        self.0.as_slice()
     }
 
     /// Create a font fallback from a list of strings

@@ -187,7 +187,7 @@ pub enum DockPosition {
 }
 
 impl DockPosition {
-    fn to_label(&self) -> &'static str {
+    fn label(&self) -> &'static str {
         match self {
             Self::Left => "left",
             Self::Bottom => "bottom",
@@ -485,7 +485,7 @@ impl Dock {
             self.set_open(serialized.visible, cx);
             return true;
         }
-        return false;
+        false
     }
 
     pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, cx: &mut ViewContext<Self>) {
@@ -494,11 +494,15 @@ impl Dock {
             .iter()
             .position(|entry| entry.panel.panel_id() == Entity::entity_id(panel))
         {
-            if panel_ix == self.active_panel_index {
-                self.active_panel_index = 0;
-                self.set_open(false, cx);
-            } else if panel_ix < self.active_panel_index {
-                self.active_panel_index -= 1;
+            match panel_ix.cmp(&self.active_panel_index) {
+                std::cmp::Ordering::Less => {
+                    self.active_panel_index -= 1;
+                }
+                std::cmp::Ordering::Equal => {
+                    self.active_panel_index = 0;
+                    self.set_open(false, cx);
+                }
+                std::cmp::Ordering::Greater => {}
             }
             self.panel_entries.remove(panel_ix);
             cx.notify();
@@ -726,7 +730,7 @@ impl Render for PanelButtons {
                     let action = dock.toggle_action();
 
                     let tooltip: SharedString =
-                        format!("Close {} dock", dock.position.to_label()).into();
+                        format!("Close {} dock", dock.position.label()).into();
 
                     (action, tooltip)
                 } else {
@@ -751,7 +755,7 @@ impl Render for PanelButtons {
                                     {
                                         let panel = panel.clone();
                                         menu = menu.entry(
-                                            format!("Dock {}", position.to_label()),
+                                            format!("Dock {}", position.label()),
                                             None,
                                             move |cx| {
                                                 panel.set_position(position, cx);

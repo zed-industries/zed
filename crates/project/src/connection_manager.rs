@@ -204,7 +204,7 @@ impl Manager {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, disconnecting projects");
-            let _ = this.update(&mut cx, |this, cx| this.connection_lost(cx))?;
+            this.update(&mut cx, |this, cx| this.connection_lost(cx))?;
         }
 
         Ok(())

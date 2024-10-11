@@ -98,7 +98,7 @@ impl CursorPosition {
             if wrote_once {
                 write!(text, ", ").unwrap();
             }
-            let name = if is_short_format { &name[..1] } else { &name };
+            let name = if is_short_format { &name[..1] } else { name };
             let plural_suffix = if count > 1 && !is_short_format {
                 "s"
             } else {

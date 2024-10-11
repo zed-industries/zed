@@ -108,8 +108,6 @@ message Envelope {
         PrepareRenameResponse prepare_rename_response = 84;
         PerformRename perform_rename = 85;
         PerformRenameResponse perform_rename_response = 86;
-        SearchProject search_project = 87;
-        SearchProjectResponse search_project_response = 88;
 
         UpdateContacts update_contacts = 89;
         UpdateInviteInfo update_invite_info = 90;
@@ -247,8 +245,6 @@ message Envelope {
 
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
-        TaskTemplatesResponse task_templates_response = 205;
-        TaskTemplates task_templates = 206;
 
         LinkedEditingRange linked_editing_range = 209;
         LinkedEditingRangeResponse linked_editing_range_response = 210;
@@ -280,12 +276,23 @@ message Envelope {
         FindSearchCandidates find_search_candidates = 243;
         FindSearchCandidatesResponse find_search_candidates_response = 244;
 
-        CloseBuffer close_buffer = 245; // current max
+        CloseBuffer close_buffer = 245;
+        UpdateUserSettings update_user_settings = 246;
+
+        CheckFileExists check_file_exists = 255;
+        CheckFileExistsResponse check_file_exists_response = 256;
+
+        ShutdownRemoteServer shutdown_remote_server = 257;
+
+        RemoveWorktree remove_worktree = 258; // current max
     }
 
+    reserved 87 to 88;
     reserved 158 to 161;
     reserved 166 to 169;
+    reserved 205 to 206;
     reserved 224 to 229;
+    reserved 247 to 254;
 }
 
 // Messages
@@ -488,6 +495,7 @@ message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     optional uint64 dev_server_project_id = 3;
+    bool is_ssh_project = 4;
 }
 
 message ShareProjectResponse {
@@ -637,6 +645,13 @@ message UpdateWorktreeSettings {
     uint64 worktree_id = 2;
     string path = 3;
     optional string content = 4;
+    optional LocalSettingsKind kind = 5;
+}
+
+enum LocalSettingsKind {
+    Settings = 0;
+    Tasks = 1;
+    Editorconfig = 2;
 }
 
 message CreateProjectEntry {
@@ -1205,6 +1220,7 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    bytes lsp_completion = 6;
 }
 
 message ResolveInlayHint {
@@ -1229,22 +1245,6 @@ message MarkupContent {
 
 message PerformRenameResponse {
     ProjectTransaction transaction = 2;
-}
-
-message SearchProject {
-    uint64 project_id = 1;
-    string query = 2;
-    bool regex = 3;
-    bool whole_word = 4;
-    bool case_sensitive = 5;
-    string files_to_include = 6;
-    string files_to_exclude = 7;
-    bool include_ignored = 8;
-}
-
-message SearchProjectResponse {
-    repeated Location locations = 1;
-    bool limit_reached = 2;
 }
 
 message SearchQuery {
@@ -1846,6 +1846,7 @@ message Entry {
     bool is_external = 8;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
+    optional uint64 size = 11;
 }
 
 message RepositoryEntry {
@@ -2260,41 +2261,13 @@ message GetSupermavenApiKeyResponse {
 message TaskContextForLocation {
     uint64 project_id = 1;
     Location location = 2;
+    map<string, string> task_variables = 3;
 }
 
 message TaskContext {
     optional string cwd = 1;
     map<string, string> task_variables = 2;
     map<string, string> project_env = 3;
-}
-
-message TaskTemplates {
-    uint64 project_id = 1;
-    optional Location location = 2;
-    optional uint64 worktree_id = 3;
-}
-
-message TaskTemplatesResponse {
-    repeated TemplatePair templates = 1;
-}
-
-message TemplatePair {
-    TaskSourceKind kind = 1;
-    TaskTemplate template = 2;
-}
-
-message TaskTemplate {
-    string label = 1;
-    string command = 2;
-    repeated string args = 3;
-    map<string, string> env = 4;
-    optional string cwd = 5;
-    bool use_new_terminal = 6;
-    bool allow_concurrent_runs = 7;
-    RevealStrategy reveal = 8;
-    HideStrategy hide = 10;
-    repeated string tags = 9;
-    Shell shell = 11;
 }
 
 message Shell {
@@ -2321,32 +2294,6 @@ enum HideStrategy {
     HideAlways = 0;
     HideNever = 1;
     HideOnSuccess = 2;
-}
-
-message TaskSourceKind {
-    oneof kind {
-        UserInput user_input = 1;
-        Worktree worktree = 2;
-        AbsPath abs_path = 3;
-        Language language = 4;
-    }
-
-    message UserInput {}
-
-    message Worktree {
-        uint64 id = 1;
-        string abs_path = 2;
-        string id_base = 3;
-    }
-
-    message AbsPath {
-        string id_base = 1;
-        string abs_path = 2;
-    }
-
-    message Language {
-        string name = 1;
-    }
 }
 
 message ContextMessageStatus {
@@ -2379,6 +2326,7 @@ message SlashCommandOutputSection {
     AnchorRange range = 1;
     string icon_name = 2;
     string label = 3;
+    optional string metadata = 4;
 }
 
 message ContextOperation {
@@ -2484,9 +2432,38 @@ message GetLlmTokenResponse {
 // Remote FS
 
 message AddWorktree {
+    uint64 project_id = 2;
     string path = 1;
+    bool visible = 3;
 }
 
 message AddWorktreeResponse {
+    uint64 worktree_id = 1;
+}
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string content = 2;
+    optional Kind kind = 3;
+
+    enum Kind {
+        Settings = 0;
+        Tasks = 1;
+    }
+}
+
+message CheckFileExists {
+    uint64 project_id = 1;
+    string path = 2;
+}
+
+message CheckFileExistsResponse {
+    bool exists = 1;
+    string path = 2;
+}
+
+message ShutdownRemoteServer {}
+
+message RemoveWorktree {
     uint64 worktree_id = 1;
 }

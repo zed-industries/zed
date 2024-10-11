@@ -5,7 +5,7 @@
 //
 // To see all of Zed's default settings without changing your
 // custom settings, run `zed: open default settings` from the
-// command palette
+// command palette (cmd-shift-p / ctrl-shift-p)
 {
   "ui_font_size": 16,
   "buffer_font_size": 16,

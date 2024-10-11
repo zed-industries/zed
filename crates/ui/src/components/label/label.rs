@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{StyleRefinement, WindowContext};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
@@ -168,6 +170,11 @@ impl LabelCommon for Label {
     /// ```
     fn alpha(mut self, alpha: f32) -> Self {
         self.base = self.base.alpha(alpha);
+        self
+    }
+
+    fn underline(mut self, underline: bool) -> Self {
+        self.base = self.base.underline(underline);
         self
     }
 }

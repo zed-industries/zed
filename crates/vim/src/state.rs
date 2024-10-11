@@ -72,6 +72,7 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
+    Rewrap,
     Lowercase,
     Uppercase,
     OppositeCase,
@@ -218,23 +219,25 @@ impl VimGlobals {
                 let yanked = current.clone();
                 self.registers.insert('"', yanked);
             } else {
-                self.registers.insert('"', content.clone());
                 match lower {
                     '_' | ':' | '.' | '%' | '#' | '=' | '/' => {}
                     '+' => {
+                        self.registers.insert('"', content.clone());
                         cx.write_to_clipboard(content.into());
                     }
                     '*' => {
+                        self.registers.insert('"', content.clone());
                         #[cfg(target_os = "linux")]
                         cx.write_to_primary(content.into());
                         #[cfg(not(target_os = "linux"))]
                         cx.write_to_clipboard(content.into());
                     }
                     '"' => {
-                        self.registers.insert('0', content.clone());
-                        self.registers.insert('"', content);
+                        self.registers.insert('"', content.clone());
+                        self.registers.insert('0', content);
                     }
                     _ => {
+                        self.registers.insert('"', content.clone());
                         self.registers.insert(lower, content);
                     }
                 }
@@ -452,6 +455,7 @@ impl Operator {
             Operator::Jump { line: true } => "'",
             Operator::Jump { line: false } => "`",
             Operator::Indent => ">",
+            Operator::Rewrap => "gq",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
@@ -480,6 +484,7 @@ impl Operator {
             Operator::Change
             | Operator::Delete
             | Operator::Yank
+            | Operator::Rewrap
             | Operator::Indent
             | Operator::Outdent
             | Operator::Lowercase

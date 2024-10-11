@@ -1,4 +1,3 @@
-use anyhow;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

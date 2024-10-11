@@ -31,7 +31,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     chat_panel::init(cx);
     collab_panel::init(cx);
     notification_panel::init(cx);
-    notifications::init(&app_state, cx);
+    notifications::init(app_state, cx);
     title_bar::init(cx);
     vcs_menu::init(cx);
 }

@@ -79,7 +79,7 @@ impl BaseKeymap {
         Self::OPTIONS
             .iter()
             .copied()
-            .find_map(|(name, value)| (name == option).then(|| value))
+            .find_map(|(name, value)| (name == option).then_some(value))
             .unwrap_or_default()
     }
 }

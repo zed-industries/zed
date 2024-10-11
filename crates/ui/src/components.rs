@@ -7,6 +7,7 @@ mod divider;
 mod dropdown_menu;
 mod facepile;
 mod icon;
+mod image;
 mod indicator;
 mod keybinding;
 mod label;
@@ -37,6 +38,7 @@ pub use divider::*;
 pub use dropdown_menu::*;
 pub use facepile::*;
 pub use icon::*;
+pub use image::*;
 pub use indicator::*;
 pub use keybinding::*;
 pub use label::*;
@@ -55,5 +57,7 @@ pub use tab_bar::*;
 pub use tool_strip::*;
 pub use tooltip::*;
 
+#[cfg(feature = "stories")]
+pub use image::story::*;
 #[cfg(feature = "stories")]
 pub use stories::*;

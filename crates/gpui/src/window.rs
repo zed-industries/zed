@@ -4,16 +4,17 @@ use crate::{
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
-    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TimeToFirstWindowDraw, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
+    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent,
+    KeystrokeObserver, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -520,6 +521,7 @@ pub struct Window {
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     pub(crate) rendered_frame: Frame,
@@ -544,8 +546,6 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
-    /// We assign this to be notified when the platform graphics backend fires the next completion callback for drawing the window.
-    present_completed: RefCell<Option<oneshot::Sender<()>>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) draw_phase: DrawPhase,
@@ -799,6 +799,7 @@ impl Window {
             text_style_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
+            element_opacity: None,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -822,7 +823,6 @@ impl Window {
             hovered,
             dirty,
             needs_present,
-            present_completed: RefCell::default(),
             last_input_timestamp,
             refreshing: false,
             draw_phase: DrawPhase::None,
@@ -835,10 +835,7 @@ impl Window {
             prompt: None,
         })
     }
-    fn new_focus_listener(
-        &mut self,
-        value: AnyWindowFocusListener,
-    ) -> (Subscription, impl FnOnce()) {
+    fn new_focus_listener(&self, value: AnyWindowFocusListener) -> (Subscription, impl FnOnce()) {
         self.focus_listeners.insert((), value)
     }
 }
@@ -929,7 +926,7 @@ impl<'a> WindowContext<'a> {
 
     /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
     /// for elements rendered within this window.
-    pub fn focus_handle(&mut self) -> FocusHandle {
+    pub fn focus_handle(&self) -> FocusHandle {
         FocusHandle::new(&self.window.focus_handles)
     }
 
@@ -1044,8 +1041,7 @@ impl<'a> WindowContext<'a> {
                         action: action.as_ref().map(|action| action.boxed_clone()),
                     },
                     self,
-                );
-                true
+                )
             });
     }
 
@@ -1128,7 +1124,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register a callback to be invoked when the given Model or View is released.
     pub fn observe_release<E, T>(
-        &mut self,
+        &self,
         entity: &E,
         mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
     ) -> Subscription
@@ -1156,7 +1152,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
-    pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
+    pub fn on_next_frame(&self, callback: impl FnOnce(&mut WindowContext) + 'static) {
         RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
     }
 
@@ -1166,7 +1162,7 @@ impl<'a> WindowContext<'a> {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
-    pub fn request_animation_frame(&mut self) {
+    pub fn request_animation_frame(&self) {
         let parent_id = self.parent_view_id();
         self.on_next_frame(move |cx| {
             if let Some(parent_id) = parent_id {
@@ -1180,7 +1176,7 @@ impl<'a> WindowContext<'a> {
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
-    pub fn spawn<Fut, R>(&mut self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,
@@ -1492,29 +1488,13 @@ impl<'a> WindowContext<'a> {
         self.window.refreshing = false;
         self.window.draw_phase = DrawPhase::None;
         self.window.needs_present.set(true);
-
-        if let Some(TimeToFirstWindowDraw::Pending(start)) = self.app.time_to_first_window_draw {
-            let (tx, rx) = oneshot::channel();
-            *self.window.present_completed.borrow_mut() = Some(tx);
-            self.spawn(|mut cx| async move {
-                rx.await.ok();
-                cx.update(|cx| {
-                    let duration = start.elapsed();
-                    cx.time_to_first_window_draw = Some(TimeToFirstWindowDraw::Done(duration));
-                    log::info!("time to first window draw: {:?}", duration);
-                    cx.push_effect(Effect::Refresh);
-                })
-            })
-            .detach();
-        }
     }
 
     #[profiling::function]
     fn present(&self) {
-        let on_complete = self.window.present_completed.take();
         self.window
             .platform_window
-            .draw(&self.window.rendered_frame.scene, on_complete);
+            .draw(&self.window.rendered_frame.scene);
         self.window.needs_present.set(false);
         profiling::finish_frame!();
     }
@@ -1908,6 +1888,28 @@ impl<'a> WindowContext<'a> {
         result
     }
 
+    pub(crate) fn with_element_opacity<R>(
+        &mut self,
+        opacity: Option<f32>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if opacity.is_none() {
+            return f(self);
+        }
+
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during prepaint, or paint"
+        );
+        self.window_mut().element_opacity = opacity;
+        let result = f(self);
+        self.window_mut().element_opacity = None;
+        result
+    }
+
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
@@ -2019,6 +2021,19 @@ impl<'a> WindowContext<'a> {
             .last()
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Obtain the current element opacity. This method should only be called during the
+    /// prepaint phase of element drawing.
+    pub(crate) fn element_opacity(&self) -> f32 {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during prepaint, or paint"
+        );
+        self.window().element_opacity.unwrap_or(1.0)
     }
 
     /// Obtain the current content mask. This method should only be called during element drawing.
@@ -2258,6 +2273,7 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
         for shadow in shadows {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
@@ -2268,7 +2284,7 @@ impl<'a> WindowContext<'a> {
                 bounds: shadow_bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
                 corner_radii: corner_radii.scale(scale_factor),
-                color: shadow.color,
+                color: shadow.color.opacity(opacity),
             });
         }
     }
@@ -2287,13 +2303,14 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
         self.window.next_frame.scene.insert_primitive(Quad {
             order: 0,
             pad: 0,
             bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
-            background: quad.background,
-            border_color: quad.border_color,
+            background: quad.background.opacity(opacity),
+            border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(scale_factor),
             border_widths: quad.border_widths.scale(scale_factor),
         });
@@ -2311,8 +2328,9 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
         path.content_mask = content_mask;
-        path.color = color.into();
+        path.color = color.into().opacity(opacity);
         self.window
             .next_frame
             .scene
@@ -2345,13 +2363,14 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
+        let element_opacity = self.element_opacity();
 
         self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
-            color: style.color.unwrap_or_default(),
+            color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness: style.thickness.scale(scale_factor),
             wavy: style.wavy,
         });
@@ -2379,6 +2398,7 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
 
         self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
@@ -2386,7 +2406,7 @@ impl<'a> WindowContext<'a> {
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             thickness: style.thickness.scale(scale_factor),
-            color: style.color.unwrap_or_default(),
+            color: style.color.unwrap_or_default().opacity(opacity),
             wavy: false,
         });
     }
@@ -2413,6 +2433,7 @@ impl<'a> WindowContext<'a> {
             "this method can only be called during paint"
         );
 
+        let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let subpixel_variant = Point {
@@ -2451,7 +2472,7 @@ impl<'a> WindowContext<'a> {
                     pad: 0,
                     bounds,
                     content_mask,
-                    color,
+                    color: color.opacity(element_opacity),
                     tile,
                     transformation: TransformationMatrix::unit(),
                 });
@@ -2508,17 +2529,20 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let opacity = self.element_opacity();
 
             self.window
                 .next_frame
                 .scene
                 .insert_primitive(PolychromeSprite {
                     order: 0,
+                    pad: 0,
                     grayscale: false,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
+                    opacity,
                 });
         }
         Ok(())
@@ -2540,6 +2564,7 @@ impl<'a> WindowContext<'a> {
             "this method can only be called during paint"
         );
 
+        let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         // Render the SVG at twice the size to get a higher quality result.
@@ -2574,7 +2599,7 @@ impl<'a> WindowContext<'a> {
                     .map_origin(|origin| origin.floor())
                     .map_size(|size| size.ceil()),
                 content_mask,
-                color,
+                color: color.opacity(element_opacity),
                 tile,
                 transformation,
             });
@@ -2622,17 +2647,20 @@ impl<'a> WindowContext<'a> {
             .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
+        let opacity = self.element_opacity();
 
         self.window
             .next_frame
             .scene
             .insert_primitive(PolychromeSprite {
                 order: 0,
+                pad: 0,
                 grayscale,
                 bounds,
                 content_mask,
                 corner_radii,
                 tile,
+                opacity,
             });
         Ok(())
     }
@@ -2834,7 +2862,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Get the last view id for the current element
-    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+    pub fn parent_view_id(&self) -> Option<EntityId> {
         self.window.next_frame.dispatch_tree.parent_view_id()
     }
 
@@ -3212,24 +3240,23 @@ impl<'a> WindowContext<'a> {
                 && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.window.pending_modifier.saw_keystroke
             {
-                if event.modifiers.number_of_modifiers() == 0 {
-                    let key = match self.window.pending_modifier.modifiers {
-                        modifiers if modifiers.shift => Some("shift"),
-                        modifiers if modifiers.control => Some("control"),
-                        modifiers if modifiers.alt => Some("alt"),
-                        modifiers if modifiers.platform => Some("platform"),
-                        modifiers if modifiers.function => Some("function"),
-                        _ => None,
-                    };
-                    if let Some(key) = key {
-                        keystroke = Some(Keystroke {
-                            key: key.to_string(),
-                            ime_key: None,
-                            modifiers: Modifiers::default(),
-                        });
-                    }
+                let key = match self.window.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => Some("shift"),
+                    modifiers if modifiers.control => Some("control"),
+                    modifiers if modifiers.alt => Some("alt"),
+                    modifiers if modifiers.platform => Some("platform"),
+                    modifiers if modifiers.function => Some("function"),
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    keystroke = Some(Keystroke {
+                        key: key.to_string(),
+                        ime_key: None,
+                        modifiers: Modifiers::default(),
+                    });
                 }
             }
+
             if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
@@ -3576,11 +3603,13 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
-    pub fn invalidate_character_coordinates(&mut self) {
+    pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|cx| {
             if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(cx) {
-                    cx.window.platform_window.update_ime_position(bounds);
+                    cx.window
+                        .platform_window
+                        .update_ime_position(bounds.scale(cx.scale_factor()));
                 }
                 cx.window.platform_window.set_input_handler(input_handler);
             }
@@ -3720,7 +3749,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register a callback that can interrupt the closing of the current window based the returned boolean.
     /// If the callback returns false, the window won't be closed.
-    pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
+    pub fn on_window_should_close(&self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
         let mut this = self.to_async();
         self.window
             .platform_window
@@ -3748,12 +3777,6 @@ impl<'a> WindowContext<'a> {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.window.platform_window.gpu_specs()
-    }
-
-    /// Get the current FPS (frames per second) of the window.
-    /// This is only supported on macOS currently.
-    pub fn fps(&self) -> Option<f32> {
-        self.window.platform_window.fps()
     }
 }
 
@@ -4044,7 +4067,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Sets a given callback to be run on the next frame.
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
+    pub fn on_next_frame(&self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
     where
         V: 'static,
     {
@@ -4136,7 +4159,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// The callback receives a handle to the view's window. This handle may be
     /// invalid, if the window was closed before the view was released.
     pub fn on_release(
-        &mut self,
+        &self,
         on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
@@ -4153,7 +4176,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the given Model or View is released.
     pub fn observe_release<V2, E>(
-        &mut self,
+        &self,
         entity: &E,
         mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
@@ -4186,7 +4209,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the window is resized.
     pub fn observe_window_bounds(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4200,7 +4223,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the window is activated or deactivated.
     pub fn observe_window_activation(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4214,7 +4237,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4226,9 +4249,39 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Register a callback to be invoked when a keystroke is received by the application
+    /// in any window. Note that this fires after all other action and event mechanisms have resolved
+    /// and that this API will not be invoked if the event's propagation is stopped.
+    pub fn observe_keystrokes(
+        &mut self,
+        mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        fn inner(
+            keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_observers.insert((), handler);
+            activate();
+            subscription
+        }
+
+        let view = self.view.downgrade();
+        inner(
+            &mut self.keystroke_observers,
+            Box::new(move |event, cx| {
+                if let Some(view) = view.upgrade() {
+                    view.update(cx, |view, cx| f(view, event, cx));
+                    true
+                } else {
+                    false
+                }
+            }),
+        )
+    }
+
     /// Register a callback to be invoked when the window's pending input changes.
     pub fn observe_pending_input(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4316,7 +4369,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// and this callback lets you chose a default place to restore the users focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_lost(
-        &mut self,
+        &self,
         mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4362,10 +4415,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
-    pub fn spawn<Fut, R>(
-        &mut self,
-        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,

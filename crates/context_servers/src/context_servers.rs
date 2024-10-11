@@ -1,5 +1,4 @@
 use gpui::{actions, AppContext, Context, ViewContext};
-use log;
 use manager::ContextServerManager;
 use workspace::Workspace;
 
@@ -12,6 +11,9 @@ pub mod types;
 pub use registry::*;
 
 actions!(context_servers, [Restart]);
+
+/// The namespace for the context servers actions.
+const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
 
 pub fn init(cx: &mut AppContext) {
     log::info!("initializing context server client");
@@ -27,7 +29,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn restart_servers(_workspace: &mut Workspace, _action: &Restart, cx: &mut ViewContext<Workspace>) {
-    let model = ContextServerManager::global(&cx);
+    let model = ContextServerManager::global(cx);
     cx.update_model(&model, |manager, cx| {
         for server in manager.servers() {
             manager

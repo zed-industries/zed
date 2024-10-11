@@ -1,3 +1,6 @@
+// This won't be documented further as it is intended to be removed, or merged with the `time_format` crate.
+#![allow(missing_docs)]
+
 use chrono::{DateTime, Local, NaiveDateTime};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -42,16 +45,6 @@ impl FormatDistance {
         Self::new(date, DateTimeType::Local(Local::now()))
     }
 
-    pub fn to_string(self) -> String {
-        format_distance(
-            self.date,
-            self.base_date.to_naive(),
-            self.include_seconds,
-            self.add_suffix,
-            self.hide_prefix,
-        )
-    }
-
     pub fn include_seconds(mut self, include_seconds: bool) -> Self {
         self.include_seconds = include_seconds;
         self
@@ -68,6 +61,21 @@ impl FormatDistance {
     }
 }
 
+impl std::fmt::Display for FormatDistance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            format_distance(
+                self.date,
+                self.base_date.to_naive(),
+                self.include_seconds,
+                self.add_suffix,
+                self.hide_prefix,
+            )
+        )
+    }
+}
 /// Calculates the distance in seconds between two [`NaiveDateTime`] objects.
 /// It returns a signed integer denoting the difference. If `date` is earlier than `base_date`, the returned value will be negative.
 ///
@@ -118,12 +126,7 @@ fn distance_string(
         }
         .to_string()
     } else if distance < 40 && include_seconds {
-        if hide_prefix {
-            "half a minute"
-        } else {
-            "half a minute"
-        }
-        .to_string()
+        "half a minute".to_string()
     } else if distance < 60 && include_seconds {
         if hide_prefix {
             "a minute"

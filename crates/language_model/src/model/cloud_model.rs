@@ -12,33 +12,12 @@ pub enum CloudModel {
     Anthropic(anthropic::Model),
     OpenAi(open_ai::Model),
     Google(google_ai::Model),
-    Zed(ZedModel),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, EnumIter)]
 pub enum ZedModel {
-    #[serde(rename = "qwen2-7b-instruct")]
+    #[serde(rename = "Qwen/Qwen2-7B-Instruct")]
     Qwen2_7bInstruct,
-}
-
-impl ZedModel {
-    pub fn id(&self) -> &str {
-        match self {
-            ZedModel::Qwen2_7bInstruct => "qwen2-7b-instruct",
-        }
-    }
-
-    pub fn display_name(&self) -> &str {
-        match self {
-            ZedModel::Qwen2_7bInstruct => "Qwen2 7B Instruct",
-        }
-    }
-
-    pub fn max_token_count(&self) -> usize {
-        match self {
-            ZedModel::Qwen2_7bInstruct => 28000,
-        }
-    }
 }
 
 impl Default for CloudModel {
@@ -53,7 +32,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.id(),
             Self::OpenAi(model) => model.id(),
             Self::Google(model) => model.id(),
-            Self::Zed(model) => model.id(),
         }
     }
 
@@ -62,7 +40,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.display_name(),
             Self::OpenAi(model) => model.display_name(),
             Self::Google(model) => model.display_name(),
-            Self::Zed(model) => model.display_name(),
         }
     }
 
@@ -78,7 +55,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.max_token_count(),
             Self::OpenAi(model) => model.max_token_count(),
             Self::Google(model) => model.max_token_count(),
-            Self::Zed(model) => model.max_token_count(),
         }
     }
 
@@ -102,6 +78,8 @@ impl CloudModel {
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini
+                | open_ai::Model::O1Mini
+                | open_ai::Model::O1Preview
                 | open_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
@@ -112,9 +90,6 @@ impl CloudModel {
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
-            },
-            Self::Zed(model) => match model {
-                ZedModel::Qwen2_7bInstruct => LanguageModelAvailability::RequiresPlan(Plan::ZedPro),
             },
         }
     }

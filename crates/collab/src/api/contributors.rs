@@ -30,7 +30,7 @@ struct CheckIsContributorParams {
 }
 
 impl CheckIsContributorParams {
-    fn as_contributor_selector(self) -> Result<ContributorSelector> {
+    fn into_contributor_selector(self) -> Result<ContributorSelector> {
         if let Some(github_user_id) = self.github_user_id {
             return Ok(ContributorSelector::GitHubUserId { github_user_id });
         }
@@ -54,7 +54,7 @@ async fn check_is_contributor(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<CheckIsContributorParams>,
 ) -> Result<Json<CheckIsContributorResponse>> {
-    let params = params.as_contributor_selector()?;
+    let params = params.into_contributor_selector()?;
 
     if RenovateBot::is_renovate_bot(&params) {
         return Ok(Json(CheckIsContributorResponse {
