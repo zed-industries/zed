@@ -6,6 +6,7 @@ mod context;
 pub mod context_store;
 mod inline_assistant;
 mod model_selector;
+mod patch;
 mod prompt_library;
 mod prompts;
 mod slash_command;
@@ -14,7 +15,6 @@ pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
 mod tools;
-mod workflow;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
@@ -35,6 +35,7 @@ use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 pub(crate) use model_selector::*;
+pub use patch::*;
 pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
@@ -50,7 +51,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
-pub use workflow::*;
 
 use crate::slash_command_settings::SlashCommandSettings;
 

@@ -2476,14 +2476,13 @@ impl ContextEditor {
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
-        let resolution =
-            Context::compute_patch_resolution(project.clone(), patch.edits.clone(), &mut cx).await;
+        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
         let editor = cx.new_view(|cx| {
             let editor = ProposedChangesEditor::new(
                 patch.title.clone(),
-                resolution
-                    .suggestion_groups
+                resolved_patch
+                    .edit_groups
                     .iter()
                     .map(|(buffer, groups)| ProposedChangeLocation {
                         buffer: buffer.clone(),
@@ -2496,9 +2495,7 @@ impl ContextEditor {
                 Some(project.clone()),
                 cx,
             );
-
-            apply_patch(&editor, resolution, cx);
-
+            resolved_patch.apply(&editor, cx);
             editor
         })?;
 
@@ -2527,13 +2524,12 @@ impl ContextEditor {
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
-        let resolution =
-            Context::compute_patch_resolution(project.clone(), patch.edits.clone(), &mut cx).await;
+        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
         this.update(&mut cx, |this, cx| {
             let patch_state = this.patches.get_mut(&patch.range)?;
 
-            let locations = resolution
-                .suggestion_groups
+            let locations = resolved_patch
+                .edit_groups
                 .iter()
                 .map(|(buffer, groups)| ProposedChangeLocation {
                     buffer: buffer.clone(),
@@ -2549,7 +2545,7 @@ impl ContextEditor {
                     editor.update(cx, |editor, cx| {
                         editor.set_title(patch.title.clone(), cx);
                         editor.reset_locations(locations, cx);
-                        apply_patch(&editor, resolution, cx);
+                        resolved_patch.apply(editor, cx);
                     });
 
                     state.opened_patch = patch;
@@ -3821,26 +3817,6 @@ impl ContextEditor {
             )
             .into_any()
     }
-}
-
-fn apply_patch(
-    editor: &ProposedChangesEditor,
-    resolution: crate::AssistantPatchResolution,
-    cx: &mut ViewContext<ProposedChangesEditor>,
-) {
-    for (buffer, groups) in &resolution.suggestion_groups {
-        let branch = editor.branch_buffer_for_base(buffer).unwrap();
-        let mut edits = Vec::new();
-        for group in groups {
-            for suggestion in &group.suggestions {
-                edits.push((suggestion.range(), suggestion.new_text()));
-            }
-        }
-        branch.update(cx, |buffer, cx| {
-            buffer.edit(edits, None, cx);
-        });
-    }
-    editor.recalculate_all_buffer_diffs();
 }
 
 /// Returns the contents of the *outermost* fenced code block that contains the given offset.

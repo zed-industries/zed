@@ -3,8 +3,7 @@ mod context_tests;
 
 use crate::{
     prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantEdit, AssistantPatch,
-    AssistantPatchResolution, AssistantPatchResolutionError, MessageId, MessageStatus,
-    WorkflowSuggestionGroup,
+    MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -16,13 +15,10 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use fs::{Fs, RemoveOptions};
-use futures::{
-    future::{self, Shared},
-    FutureExt, StreamExt, TryFutureExt as _,
-};
+use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage,
-    SharedString, Subscription, Task,
+    AppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage, SharedString,
+    Subscription, Task,
 };
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -39,7 +35,7 @@ use project::Project;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cmp::{self, max, Ordering},
+    cmp::{max, Ordering},
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -1396,7 +1392,7 @@ impl Context {
             };
         }
 
-        // Rebuild the edit suggestions in the range.
+        // Rebuild the patches in the range.
         let new_patches = self.parse_patches(tags_start_ix, range.end, buffer);
         updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
         let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
@@ -1590,100 +1586,6 @@ impl Context {
         }
 
         new_patches
-    }
-
-    pub(crate) async fn compute_patch_resolution(
-        project: Model<Project>,
-        edits: Arc<[Result<AssistantEdit>]>,
-        cx: &mut AsyncAppContext,
-    ) -> AssistantPatchResolution {
-        let mut suggestion_tasks = Vec::new();
-        for (ix, edit) in edits.iter().enumerate() {
-            if let Ok(edit) = edit.as_ref() {
-                suggestion_tasks.push(
-                    edit.resolve(project.clone(), cx.clone())
-                        .map_err(move |error| (ix, error)),
-                );
-            }
-        }
-
-        let suggestions = future::join_all(suggestion_tasks).await;
-        let mut errors = Vec::new();
-        let mut suggestions_by_buffer = HashMap::default();
-        for entry in suggestions {
-            match entry {
-                Ok((buffer, suggestion)) => {
-                    suggestions_by_buffer
-                        .entry(buffer)
-                        .or_insert_with(Vec::new)
-                        .push(suggestion);
-                }
-                Err((edit_ix, error)) => errors.push(AssistantPatchResolutionError {
-                    edit_ix,
-                    message: error.to_string(),
-                }),
-            }
-        }
-
-        // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
-        let mut suggestion_groups_by_buffer = HashMap::default();
-        for (buffer, mut suggestions) in suggestions_by_buffer {
-            let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
-            let Some(snapshot) = buffer.update(cx, |buffer, _| buffer.snapshot()).ok() else {
-                continue;
-            };
-            // Sort suggestions by their range so that earlier, larger ranges come first
-            suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
-
-            // Merge overlapping suggestions
-            suggestions.dedup_by(|a, b| b.try_merge(a, &snapshot));
-
-            // Create context ranges for each suggestion
-            for suggestion in suggestions {
-                let context_range = {
-                    let suggestion_point_range = suggestion.range().to_point(&snapshot);
-                    let start_row = suggestion_point_range.start.row.saturating_sub(5);
-                    let end_row =
-                        cmp::min(suggestion_point_range.end.row + 5, snapshot.max_point().row);
-                    let start = snapshot.anchor_before(Point::new(start_row, 0));
-                    let end =
-                        snapshot.anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
-                    start..end
-                };
-
-                if let Some(last_group) = suggestion_groups.last_mut() {
-                    if last_group
-                        .context_range
-                        .end
-                        .cmp(&context_range.start, &snapshot)
-                        .is_ge()
-                    {
-                        // Merge with the previous group if context ranges overlap
-                        last_group.context_range.end = context_range.end;
-                        last_group.suggestions.push(suggestion);
-                    } else {
-                        // Create a new group
-                        suggestion_groups.push(WorkflowSuggestionGroup {
-                            context_range,
-                            suggestions: vec![suggestion],
-                        });
-                    }
-                } else {
-                    // Create the first group
-                    suggestion_groups.push(WorkflowSuggestionGroup {
-                        context_range,
-                        suggestions: vec![suggestion],
-                    });
-                }
-            }
-
-            suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
-        }
-
-        AssistantPatchResolution {
-            suggestion_groups: suggestion_groups_by_buffer,
-            errors,
-        }
     }
 
     pub fn pending_command_for_position(

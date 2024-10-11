@@ -1,14 +1,12 @@
-use crate::{AssistantPanel, InlineAssistId, InlineAssistant};
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
-use editor::Editor;
-use gpui::AsyncAppContext;
-use gpui::{Model, SharedString, UpdateGlobal as _, View, WeakView, WindowContext};
+use editor::ProposedChangesEditor;
+use futures::{future, TryFutureExt as _};
+use gpui::{AppContext, AsyncAppContext, Model, SharedString};
 use language::{Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
-use std::{ops::Range, path::Path, sync::Arc};
-use text::Bias;
-use workspace::Workspace;
+use std::{cmp, ops::Range, path::Path, sync::Arc};
+use text::{AnchorRangeExt as _, Bias, OffsetRangeExt as _, Point};
 
 #[derive(Clone, Debug)]
 pub(crate) struct AssistantPatch {
@@ -17,32 +15,52 @@ pub(crate) struct AssistantPatch {
     pub edits: Arc<[Result<AssistantEdit>]>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AssistantEdit {
     pub path: String,
     pub kind: AssistantEditKind,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AssistantEditKind {
+    Update {
+        old_text: String,
+        new_text: String,
+        description: String,
+    },
+    Create {
+        new_text: String,
+        description: String,
+    },
+    InsertBefore {
+        old_text: String,
+        new_text: String,
+        description: String,
+    },
+    InsertAfter {
+        old_text: String,
+        new_text: String,
+        description: String,
+    },
+    Delete {
+        old_text: String,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AssistantPatchResolution {
-    pub suggestion_groups: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
+pub(crate) struct ResolvedPatch {
+    pub edit_groups: HashMap<Model<Buffer>, Vec<ResolvedEditGroup>>,
     pub errors: Vec<AssistantPatchResolutionError>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AssistantPatchResolutionError {
-    pub edit_ix: usize,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkflowSuggestionGroup {
+pub struct ResolvedEditGroup {
     pub context_range: Range<language::Anchor>,
-    pub suggestions: Vec<WorkflowSuggestion>,
+    pub edits: Vec<ResolvedEdit>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkflowSuggestion {
+pub enum ResolvedEdit {
     Update {
         range: Range<language::Anchor>,
         new_text: String,
@@ -67,8 +85,32 @@ pub enum WorkflowSuggestion {
     },
 }
 
-impl WorkflowSuggestion {
-    pub fn range(&self) -> Range<language::Anchor> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AssistantPatchResolutionError {
+    pub edit_ix: usize,
+    pub message: String,
+}
+
+impl ResolvedPatch {
+    pub fn apply(&self, editor: &ProposedChangesEditor, cx: &mut AppContext) {
+        for (buffer, groups) in &self.edit_groups {
+            let branch = editor.branch_buffer_for_base(buffer).unwrap();
+            let mut edits = Vec::new();
+            for group in groups {
+                for suggestion in &group.edits {
+                    edits.push((suggestion.range(), suggestion.new_text()));
+                }
+            }
+            branch.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+        }
+        editor.recalculate_all_buffer_diffs();
+    }
+}
+
+impl ResolvedEdit {
+    fn range(&self) -> Range<language::Anchor> {
         match self {
             Self::Update { range, .. } => range.clone(),
             Self::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
@@ -79,7 +121,7 @@ impl WorkflowSuggestion {
         }
     }
 
-    pub fn new_text(&self) -> String {
+    fn new_text(&self) -> String {
         match self {
             Self::Update { new_text, .. }
             | Self::CreateFile { new_text, .. }
@@ -89,7 +131,7 @@ impl WorkflowSuggestion {
         }
     }
 
-    pub fn description(&self) -> Option<&str> {
+    fn description(&self) -> Option<&str> {
         match self {
             Self::Update { description, .. }
             | Self::CreateFile { description, .. }
@@ -127,107 +169,6 @@ impl WorkflowSuggestion {
             }
         }
         true
-    }
-
-    pub fn show(
-        &self,
-        editor: &View<Editor>,
-        excerpt_id: editor::ExcerptId,
-        workspace: &WeakView<Workspace>,
-        assistant_panel: &View<AssistantPanel>,
-        cx: &mut WindowContext,
-    ) -> Option<InlineAssistId> {
-        let mut initial_transaction_id = None;
-        let initial_prompt;
-        let suggestion_range;
-        let buffer = editor.read(cx).buffer().clone();
-        let snapshot = buffer.read(cx).snapshot(cx);
-
-        match self {
-            Self::Update {
-                range, description, ..
-            } => {
-                initial_prompt = description.clone();
-                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
-                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
-            }
-            Self::CreateFile { description, .. } => {
-                initial_prompt = description.clone();
-                suggestion_range = editor::Anchor::min()..editor::Anchor::min();
-            }
-            Self::InsertBefore {
-                position,
-                description,
-                ..
-            } => {
-                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
-                initial_prompt = description.clone();
-                suggestion_range = buffer.update(cx, |buffer, cx| {
-                    buffer.start_transaction(cx);
-                    let line_start = buffer.insert_empty_line(position, true, true, cx);
-                    initial_transaction_id = buffer.end_transaction(cx);
-                    buffer.refresh_preview(cx);
-
-                    let line_start = buffer.read(cx).anchor_before(line_start);
-                    line_start..line_start
-                });
-            }
-            Self::InsertAfter {
-                position,
-                description,
-                ..
-            } => {
-                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
-                initial_prompt = description.clone();
-                suggestion_range = buffer.update(cx, |buffer, cx| {
-                    buffer.start_transaction(cx);
-                    let line_start = buffer.insert_empty_line(position, true, true, cx);
-                    initial_transaction_id = buffer.end_transaction(cx);
-                    buffer.refresh_preview(cx);
-
-                    let line_start = buffer.read(cx).anchor_before(line_start);
-                    line_start..line_start
-                });
-            }
-            Self::Delete { range, .. } => {
-                initial_prompt = "Delete".to_string();
-                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
-                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
-            }
-        }
-
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            Some(inline_assistant.suggest_assist(
-                editor,
-                suggestion_range,
-                initial_prompt,
-                initial_transaction_id,
-                false,
-                Some(workspace.clone()),
-                Some(assistant_panel),
-                cx,
-            ))
-        })
-    }
-}
-
-impl AssistantPatch {
-    pub fn path_count(&self) -> usize {
-        self.paths().count()
-    }
-
-    pub fn paths(&self) -> impl '_ + Iterator<Item = &str> {
-        let mut prev_path = None;
-        self.edits.iter().filter_map(move |edit| {
-            if let Ok(edit) = edit {
-                let path = Some(edit.path.as_str());
-                if path != prev_path {
-                    prev_path = path;
-                    return path;
-                }
-            }
-            None
-        })
     }
 }
 
@@ -275,7 +216,7 @@ impl AssistantEdit {
         &self,
         project: Model<Project>,
         mut cx: AsyncAppContext,
-    ) -> Result<(Model<Buffer>, super::WorkflowSuggestion)> {
+    ) -> Result<(Model<Buffer>, super::ResolvedEdit)> {
         let path = self.path.clone();
         let kind = self.kind.clone();
         let buffer = project
@@ -312,7 +253,7 @@ impl AssistantEdit {
                         description,
                     } => {
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        WorkflowSuggestion::Update {
+                        ResolvedEdit::Update {
                             range,
                             description,
                             new_text,
@@ -321,7 +262,7 @@ impl AssistantEdit {
                     AssistantEditKind::Create {
                         new_text,
                         description,
-                    } => WorkflowSuggestion::CreateFile {
+                    } => ResolvedEdit::CreateFile {
                         description,
                         new_text,
                     },
@@ -332,7 +273,7 @@ impl AssistantEdit {
                     } => {
                         new_text.push('\n');
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        WorkflowSuggestion::InsertBefore {
+                        ResolvedEdit::InsertBefore {
                             position: range.start,
                             description,
                             new_text,
@@ -345,7 +286,7 @@ impl AssistantEdit {
                     } => {
                         new_text.insert(0, '\n');
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        WorkflowSuggestion::InsertAfter {
+                        ResolvedEdit::InsertAfter {
                             position: range.end,
                             description,
                             new_text,
@@ -353,7 +294,7 @@ impl AssistantEdit {
                     }
                     AssistantEditKind::Delete { old_text } => {
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        WorkflowSuggestion::Delete { range }
+                        ResolvedEdit::Delete { range }
                     }
                 }
             })
@@ -445,30 +386,117 @@ impl AssistantEdit {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum AssistantEditKind {
-    Update {
-        old_text: String,
-        new_text: String,
-        description: String,
-    },
-    Create {
-        new_text: String,
-        description: String,
-    },
-    InsertBefore {
-        old_text: String,
-        new_text: String,
-        description: String,
-    },
-    InsertAfter {
-        old_text: String,
-        new_text: String,
-        description: String,
-    },
-    Delete {
-        old_text: String,
-    },
+impl AssistantPatch {
+    pub(crate) async fn resolve(
+        &self,
+        project: Model<Project>,
+        cx: &mut AsyncAppContext,
+    ) -> ResolvedPatch {
+        let mut resolve_tasks = Vec::new();
+        for (ix, edit) in self.edits.iter().enumerate() {
+            if let Ok(edit) = edit.as_ref() {
+                resolve_tasks.push(
+                    edit.resolve(project.clone(), cx.clone())
+                        .map_err(move |error| (ix, error)),
+                );
+            }
+        }
+
+        let edits = future::join_all(resolve_tasks).await;
+        let mut errors = Vec::new();
+        let mut edits_by_buffer = HashMap::default();
+        for entry in edits {
+            match entry {
+                Ok((buffer, edit)) => {
+                    edits_by_buffer
+                        .entry(buffer)
+                        .or_insert_with(Vec::new)
+                        .push(edit);
+                }
+                Err((edit_ix, error)) => errors.push(AssistantPatchResolutionError {
+                    edit_ix,
+                    message: error.to_string(),
+                }),
+            }
+        }
+
+        // Expand the context ranges of each edit and group edits with overlapping context ranges.
+        let mut edit_groups_by_buffer = HashMap::default();
+        for (buffer, mut edits) in edits_by_buffer {
+            let mut edit_groups = Vec::<ResolvedEditGroup>::new();
+            let Some(snapshot) = buffer.update(cx, |buffer, _| buffer.snapshot()).ok() else {
+                continue;
+            };
+            // Sort edits by their range so that earlier, larger ranges come first
+            edits.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
+
+            // Merge overlapping edits
+            edits.dedup_by(|a, b| b.try_merge(a, &snapshot));
+
+            // Create context ranges for each edit
+            for edit in edits {
+                let context_range = {
+                    let edit_point_range = edit.range().to_point(&snapshot);
+                    let start_row = edit_point_range.start.row.saturating_sub(5);
+                    let end_row = cmp::min(edit_point_range.end.row + 5, snapshot.max_point().row);
+                    let start = snapshot.anchor_before(Point::new(start_row, 0));
+                    let end =
+                        snapshot.anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
+                    start..end
+                };
+
+                if let Some(last_group) = edit_groups.last_mut() {
+                    if last_group
+                        .context_range
+                        .end
+                        .cmp(&context_range.start, &snapshot)
+                        .is_ge()
+                    {
+                        // Merge with the previous group if context ranges overlap
+                        last_group.context_range.end = context_range.end;
+                        last_group.edits.push(edit);
+                    } else {
+                        // Create a new group
+                        edit_groups.push(ResolvedEditGroup {
+                            context_range,
+                            edits: vec![edit],
+                        });
+                    }
+                } else {
+                    // Create the first group
+                    edit_groups.push(ResolvedEditGroup {
+                        context_range,
+                        edits: vec![edit],
+                    });
+                }
+            }
+
+            edit_groups_by_buffer.insert(buffer, edit_groups);
+        }
+
+        ResolvedPatch {
+            edit_groups: edit_groups_by_buffer,
+            errors,
+        }
+    }
+
+    pub fn path_count(&self) -> usize {
+        self.paths().count()
+    }
+
+    pub fn paths(&self) -> impl '_ + Iterator<Item = &str> {
+        let mut prev_path = None;
+        self.edits.iter().filter_map(move |edit| {
+            if let Ok(edit) = edit {
+                let path = Some(edit.path.as_str());
+                if path != prev_path {
+                    prev_path = path;
+                    return path;
+                }
+            }
+            None
+        })
+    }
 }
 
 impl PartialEq for AssistantPatch {
