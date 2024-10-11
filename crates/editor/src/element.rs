@@ -1136,9 +1136,11 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
         scroll_position: gpui::Point<f32>,
-        rows_per_page: f32,
+        text_unit_per_page: f32,
         non_visible_cursors: bool,
         cx: &mut WindowContext,
+        axis: Axis,
+        em_width: Pixels,
     ) -> Option<ScrollbarLayout> {
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
         let show_scrollbars = match scrollbar_settings.show {
@@ -1171,7 +1173,10 @@ impl EditorElement {
             return None;
         }
 
-        let visible_row_range = scroll_position.y..scroll_position.y + rows_per_page;
+        let visible_range = match axis {
+            Axis::Vertical => scroll_position.y..scroll_position.y + text_unit_per_page,
+            Axis::Horizontal => scroll_position.x..scroll_position.x + text_unit_per_page,
+        };
 
         // If a drag took place after we started dragging the scrollbar,
         // cancel the scrollbar drag.
@@ -1181,9 +1186,7 @@ impl EditorElement {
             });
         }
 
-        const SCROLL_DIRECTION: Axis = Axis::Horizontal;
-
-        let track_bounds = match SCROLL_DIRECTION {
+        let track_bounds = match axis {
             Axis::Vertical => Bounds::from_corners(
                 point(self.scrollbar_left(&bounds), bounds.origin.y),
                 bounds.lower_right(),
@@ -1199,35 +1202,50 @@ impl EditorElement {
 
         let settings = EditorSettings::get_global(cx);
         let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => rows_per_page,
+            ScrollBeyondLastLine::OnePage => text_unit_per_page,
             ScrollBeyondLastLine::Off => 1.0,
             ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
         };
-        let total_rows =
-            (snapshot.max_point().row().as_f32() + scroll_beyond_last_line).max(rows_per_page);
-        let height = bounds.size.height;
 
-        let px_per_row = match SCROLL_DIRECTION {
-            Axis::Vertical => height / total_rows,
-            Axis::Horizontal => bounds.size.width / total_rows,
+        let total_text_units = match axis {
+            Axis::Vertical => (snapshot.max_point().row().as_f32() + scroll_beyond_last_line)
+                .max(text_unit_per_page),
+            Axis::Horizontal => {
+                let ems_in_bounds = (bounds.right() - bounds.left()) / em_width;
+
+                let longest_line: f32 =
+                    (snapshot.line_len(snapshot.longest_row()) as f32 - ems_in_bounds).max(0.0);
+
+                (longest_line + scroll_beyond_last_line).max(text_unit_per_page)
+            }
         };
 
-        let thumb_size = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
+        let height = bounds.size.height;
 
-        let text_unit_size = match SCROLL_DIRECTION {
-            Axis::Vertical => (height - thumb_size) / (total_rows - rows_per_page).max(0.),
+        let px_per_text_unit = match axis {
+            Axis::Vertical => height / total_text_units,
+            Axis::Horizontal => bounds.size.width / total_text_units,
+        };
+
+        let thumb_size =
+            (text_unit_per_page * px_per_text_unit).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
+
+        let text_unit_size = match axis {
+            Axis::Vertical => {
+                (height - thumb_size) / (total_text_units - text_unit_per_page).max(0.)
+            }
             Axis::Horizontal => {
-                (bounds.size.width - thumb_size) / (total_rows - rows_per_page).max(0.)
+                (bounds.size.width - thumb_size) / (total_text_units - text_unit_per_page).max(0.)
             }
         };
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
-            visible_row_range,
+            visible_range,
             text_unit_size,
             visible: show_scrollbars,
             thumb_size,
-            axis: SCROLL_DIRECTION,
+            axis,
         })
     }
 
@@ -3683,7 +3701,7 @@ impl EditorElement {
         cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout.hitbox);
 
         let text_unit_size = scrollbar_layout.text_unit_size;
-        let row_range = scrollbar_layout.visible_row_range.clone();
+        let text_unit_range = scrollbar_layout.visible_range.clone();
 
         cx.on_mouse_event({
             let editor = self.editor.clone();
@@ -3718,9 +3736,9 @@ impl EditorElement {
                                 let new_x = event.position.x;
                                 if (hitbox.left()..hitbox.right()).contains(&x) {
                                     let mut position = editor.scroll_position(cx);
-                                    position.y += (new_x - x) / text_unit_size;
-                                    if position.y < 0.0 {
-                                        position.y = 0.0;
+                                    position.x += (new_x - x) / text_unit_size;
+                                    if position.x < 0.0 {
+                                        position.x = 0.0;
                                     }
                                     editor.set_scroll_position(position, cx);
                                 }
@@ -3772,7 +3790,7 @@ impl EditorElement {
                                     let center_row =
                                         ((y - hitbox.top()) / text_unit_size).round() as u32;
                                     let top_row = center_row.saturating_sub(
-                                        (row_range.end - row_range.start) as u32 / 2,
+                                        (text_unit_range.end - text_unit_range.start) as u32 / 2,
                                     );
                                     let mut position = editor.scroll_position(cx);
                                     position.y = top_row as f32;
@@ -3789,10 +3807,10 @@ impl EditorElement {
                                     let center_row =
                                         ((x - hitbox.left()) / text_unit_size).round() as u32;
                                     let top_row = center_row.saturating_sub(
-                                        (row_range.end - row_range.start) as u32 / 2,
+                                        (text_unit_range.end - text_unit_range.start) as u32 / 2,
                                     );
                                     let mut position = editor.scroll_position(cx);
-                                    position.y = top_row as f32;
+                                    position.x = top_row as f32;
                                     editor.set_scroll_position(position, cx);
                                 } else {
                                     editor.scroll_manager.show_scrollbar(cx);
@@ -5156,17 +5174,23 @@ impl Element for EditorElement {
                     let content_origin =
                         text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
-                    let height_in_lines = bounds.size.height / line_height;
+                    const AXIS: Axis = Axis::Horizontal;
+
+                    let text_unit_size = match AXIS {
+                        Axis::Vertical => bounds.size.height / line_height,
+                        Axis::Horizontal => bounds.size.width / em_width,
+                    };
+
                     let max_row = snapshot.max_point().row().as_f32();
                     let max_scroll_top = if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
-                        (max_row - height_in_lines + 1.).max(0.)
+                        (max_row - text_unit_size + 1.).max(0.)
                     } else {
                         let settings = EditorSettings::get_global(cx);
                         match settings.scroll_beyond_last_line {
                             ScrollBeyondLastLine::OnePage => max_row,
-                            ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
+                            ScrollBeyondLastLine::Off => (max_row - text_unit_size + 1.).max(0.),
                             ScrollBeyondLastLine::VerticalScrollMargin => {
-                                (max_row - height_in_lines + 1. + settings.vertical_scroll_margin)
+                                (max_row - text_unit_size + 1. + settings.vertical_scroll_margin)
                                     .max(0.)
                             }
                         }
@@ -5190,7 +5214,7 @@ impl Element for EditorElement {
                     let start_row = DisplayRow(scroll_position.y as u32);
                     let max_row = snapshot.max_point().row();
                     let end_row = cmp::min(
-                        (scroll_position.y + height_in_lines).ceil() as u32,
+                        (scroll_position.y + text_unit_size).ceil() as u32,
                         max_row.next_row().0,
                     );
                     let end_row = DisplayRow(end_row);
@@ -5481,13 +5505,18 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let scrollbar_bounds =
+                        Bounds::from_corners(content_origin, bounds.lower_right());
+
                     let scrollbar_layout = self.layout_scrollbar(
                         &snapshot,
-                        bounds,
+                        scrollbar_bounds,
                         scroll_position,
-                        height_in_lines,
+                        text_unit_size,
                         non_visible_cursors,
                         cx,
+                        AXIS,
+                        em_width,
                     );
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
@@ -5876,7 +5905,7 @@ struct ColoredRange<T> {
 #[derive(Clone)]
 struct ScrollbarLayout {
     hitbox: Hitbox,
-    visible_row_range: Range<f32>,
+    visible_range: Range<f32>,
     visible: bool,
     text_unit_size: Pixels,
     thumb_size: Pixels,
@@ -5892,7 +5921,7 @@ impl ScrollbarLayout {
     fn thumb_bounds(&self) -> Bounds<Pixels> {
         match self.axis {
             Axis::Vertical => {
-                let thumb_top = self.y_for_row(self.visible_row_range.start);
+                let thumb_top = self.y_for_row(self.visible_range.start);
                 let thumb_bottom = thumb_top + self.thumb_size;
                 Bounds::from_corners(
                     point(self.hitbox.left(), thumb_top),
@@ -5901,7 +5930,7 @@ impl ScrollbarLayout {
             }
             Axis::Horizontal => {
                 let thumb_left =
-                    self.hitbox.left() + self.visible_row_range.start * self.text_unit_size;
+                    self.hitbox.left() + self.visible_range.start * self.text_unit_size;
                 let thumb_right = thumb_left + self.thumb_size;
                 Bounds::from_corners(
                     point(thumb_left, self.hitbox.top()),
