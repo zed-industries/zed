@@ -545,10 +545,10 @@ impl Vim {
                 if self.operator_stack.is_empty() {
                     CursorShape::Block
                 } else {
-                    CursorShape::Underscore
+                    CursorShape::Underline
                 }
             }
-            Mode::Replace => CursorShape::Underscore,
+            Mode::Replace => CursorShape::Underline,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }

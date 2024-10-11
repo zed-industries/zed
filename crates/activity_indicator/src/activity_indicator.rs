@@ -101,6 +101,7 @@ impl ActivityIndicator {
                             None,
                             cx,
                         );
+                        buffer.set_capability(language::Capability::ReadOnly, cx);
                     })?;
                     workspace.update(&mut cx, |workspace, cx| {
                         workspace.add_item_to_active_pane(

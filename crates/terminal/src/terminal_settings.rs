@@ -134,7 +134,7 @@ pub struct TerminalSettingsContent {
     /// Default: {}
     pub env: Option<HashMap<String, String>>,
     /// Default cursor shape for the terminal.
-    /// Can be "bar", "block", "underscore", or "hollow".
+    /// Can be "bar", "block", "underline", or "hollow".
     ///
     /// Default: None
     pub cursor_shape: Option<CursorShape>,

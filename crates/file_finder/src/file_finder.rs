@@ -758,11 +758,8 @@ impl FileFinderDelegate {
         cx: &mut ViewContext<'_, Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
-            let Some((project, fs)) = picker
-                .update(&mut cx, |picker, cx| {
-                    let fs = Arc::clone(&picker.delegate.project.read(cx).fs());
-                    (picker.delegate.project.clone(), fs)
-                })
+            let Some(project) = picker
+                .update(&mut cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
                 return;
@@ -770,31 +767,36 @@ impl FileFinderDelegate {
 
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
-            match fs.metadata(query_path).await.log_err() {
-                Some(Some(_metadata)) => {
-                    let update_result = project
-                        .update(&mut cx, |project, cx| {
-                            if let Some((worktree, relative_path)) =
-                                project.find_worktree(query_path, cx)
-                            {
-                                path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                                    score: 1.0,
-                                    positions: Vec::new(),
-                                    worktree_id: worktree.read(cx).id().to_usize(),
-                                    path: Arc::from(relative_path),
-                                    path_prefix: "".into(),
-                                    is_dir: false, // File finder doesn't support directories
-                                    distance_to_relative_ancestor: usize::MAX,
-                                }));
-                            }
-                        })
-                        .log_err();
-                    if update_result.is_none() {
-                        return;
-                    }
+
+            let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
+                this.abs_file_path_exists(query.path_query(), cx)
+            }) {
+                task.await
+            } else {
+                false
+            };
+
+            if abs_file_exists {
+                let update_result = project
+                    .update(&mut cx, |project, cx| {
+                        if let Some((worktree, relative_path)) =
+                            project.find_worktree(query_path, cx)
+                        {
+                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                                score: 1.0,
+                                positions: Vec::new(),
+                                worktree_id: worktree.read(cx).id().to_usize(),
+                                path: Arc::from(relative_path),
+                                path_prefix: "".into(),
+                                is_dir: false, // File finder doesn't support directories
+                                distance_to_relative_ancestor: usize::MAX,
+                            }));
+                        }
+                    })
+                    .log_err();
+                if update_result.is_none() {
+                    return;
                 }
-                Some(None) => {}
-                None => return,
             }
 
             picker
@@ -888,7 +890,8 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || (project.is_local() && history_item.absolute.is_some())
+                            || ((project.is_local() || project.is_via_ssh())
+                                && history_item.absolute.is_some())
                     }),
                     self.currently_opened_path.as_ref(),
                     None,
