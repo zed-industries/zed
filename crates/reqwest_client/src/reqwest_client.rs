@@ -22,6 +22,8 @@ use smol::future::FutureExt;
 
 const DEFAULT_CAPACITY: usize = 4096;
 
+// TODO: IMPLEMENT PROXY STUFF
+
 pub struct ReqwestClient {
     client: reqwest::Client,
     proxy: Option<http::Uri>,
@@ -49,7 +51,11 @@ impl ReqwestClient {
     pub fn proxy_and_user_agent(proxy: Option<http::Uri>, agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let client = reqwest::Client::builder().default_headers(map).build()?;
+        let mut client = reqwest::Client::builder().default_headers(map);
+        if let Some(proxy) = proxy.clone() {
+            client = client.proxy(reqwest::Proxy::all(proxy.to_string())?);
+        }
+        let client = client.build()?;
         let mut client: ReqwestClient = client.into();
         client.proxy = proxy;
         Ok(client)
