@@ -771,49 +771,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     assert!(fs.metadata(&expected_server_path).await.unwrap().is_none());
 }
 
-// TODO: REMOVE THIS
-#[gpui::test]
-async fn test_wasi_adapter_download(cx: &mut TestAppContext) {
-    cx.executor().allow_parking();
-    let client = Arc::new(ReqwestClient::user_agent("zed-test-wasi-adapter-download").unwrap());
-
-    let mut response = client
-        .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
-        .await
-        .unwrap();
-
-    let mut content = Vec::new();
-    let mut body = BufReader::new(response.body_mut());
-    body.read_to_end(&mut content).await.unwrap();
-
-    assert!(wasmparser::Parser::is_core_wasm(&content));
-    assert_eq!(content.len(), 96801); // Determined by downloading this to my computer
-    wit_component::ComponentEncoder::default()
-        .adapter("wasi_snapshot_preview1", &content)
-        .unwrap();
-}
-
-#[gpui::test]
-async fn test_wasi_adapter_download_tokio(cx: &mut TestAppContext) {
-    cx.executor().allow_parking();
-    let client = Arc::new(ReqwestClient::new());
-
-    let mut response = client
-        .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
-        .await
-        .unwrap();
-
-    let mut content = Vec::new();
-    let mut body = BufReader::new(response.body_mut());
-    body.read_to_end(&mut content).await.unwrap();
-
-    assert!(wasmparser::Parser::is_core_wasm(&content));
-    assert_eq!(content.len(), 96801); // Determined by downloading this to my computer
-    wit_component::ComponentEncoder::default()
-        .adapter("wasi_snapshot_preview1", &content)
-        .unwrap();
-}
-
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
