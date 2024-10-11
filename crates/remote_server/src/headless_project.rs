@@ -248,14 +248,35 @@ impl HeadlessProject {
             })?
             .await?;
 
-        this.update(&mut cx, |this, cx| {
-            this.worktree_store.update(cx, |worktree_store, cx| {
-                worktree_store.add(&worktree, cx);
-            });
+        let response = this.update(&mut cx, |this, cx| {
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
             })
+        })?;
+
+        // We spawn this asynchronously, so that we can send the response back
+        // *before* `worktree_store.add()` can send out UpdateProject requests
+        // to the client about the new worktree.
+        //
+        // That lets the client manage the reference/handles of the newly-added
+        // worktree, before getting interrupted by an UpdateProject request.
+        //
+        // This fixes the problem of the client sending the AddWorktree request,
+        // headless project sending out a project update, client receiving it
+        // and immediately dropping the reference of the new client, causing it
+        // to be dropped on the headless project, and the client only then
+        // receiving a response to AddWorktree.
+        cx.spawn(|mut cx| async move {
+            this.update(&mut cx, |this, cx| {
+                this.worktree_store.update(cx, |worktree_store, cx| {
+                    worktree_store.add(&worktree, cx);
+                });
+            })
+            .log_err();
         })
+        .detach();
+
+        Ok(response)
     }
 
     pub async fn handle_remove_worktree(

@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    future::Future,
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
@@ -240,18 +239,13 @@ impl WorktreeStore {
         cx.spawn(|this, mut cx| async move {
             let this = this.upgrade().context("Dropped worktree store")?;
 
-            let add_worktree = client.request(proto::AddWorktree {
-                project_id: SSH_PROJECT_ID,
-                path: abs_path.clone(),
-                visible,
-            });
-
-            // If we receive a `ProjectUpdate` message in between sending
-            // `AddWorktree` to the ssh remote and waiting for the response, we
-            // need to ensure that we do not drop a worktree that is still being
-            // created. This can happen because invisible worktrees are stored
-            // as weak references.
-            let response = retain_worktrees(&this, &mut cx, add_worktree).await??;
+            let response = client
+                .request(proto::AddWorktree {
+                    project_id: SSH_PROJECT_ID,
+                    path: abs_path.clone(),
+                    visible,
+                })
+                .await?;
 
             if let Some(existing_worktree) = this.read_with(&cx, |this, cx| {
                 this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
@@ -973,22 +967,4 @@ impl WorktreeHandle {
             WorktreeHandle::Weak(handle) => handle.upgrade(),
         }
     }
-}
-
-/// Ensures that no worktrees can be dropped while waiting for the future to complete (invisible worktrees are weak references).
-async fn retain_worktrees<T>(
-    this: &Model<WorktreeStore>,
-    cx: &mut AsyncAppContext,
-    future: impl Future<Output = T>,
-) -> Result<T> {
-    let prev_value = this.update(cx, |this, _| {
-        let prev_value = this.retain_worktrees;
-        this.retain_worktrees = true;
-        prev_value
-    })?;
-    let value = future.await;
-    this.update(cx, |this, _| {
-        this.retain_worktrees = prev_value;
-    })?;
-    Ok(value)
 }
