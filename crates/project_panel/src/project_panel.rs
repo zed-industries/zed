@@ -2899,14 +2899,17 @@ impl ProjectPanel {
         } else {
             worktree.entry_for_path(&entry.path.parent()?)?
         };
+        println!("--------------------------------------------");
 
         let (active_indent_range, depth) = {
             // let child_count = snapshot.child_entries(&entry.path).count();
+            println!("Determining indent e indent range for {:?}", &entry.path);
 
             let (worktree_ix, child_offset, ix) = self.index_for_entry(entry.id, worktree.id())?;
             let child_paths = &self.visible_entries[worktree_ix].1;
             let mut child_count = 0;
-            while let Some(entry) = child_paths.get(child_offset + child_count) {
+            while let Some(entry) = child_paths.get(child_offset + child_count + 1) {
+                println!("Looking at: {:?}", &entry.path);
                 if entry.path.parent() == Some(&entry.path) {
                     child_count += 1;
                 } else {
@@ -2914,22 +2917,25 @@ impl ProjectPanel {
                 }
             }
 
-            let depth = entry.path.ancestors().count() - 1;
+            println!("Child count: {}", child_count);
+
+            let depth = entry.path.ancestors().count().saturating_sub(1);
             let start = ix + 1;
             let end = start + child_count;
 
             (start..end, depth)
         };
+        println!("--------------------------------------------");
 
         let candidates = indent_guides
             .iter()
             .enumerate()
             .filter(|(_, indent_guide)| indent_guide.offset.x == depth);
 
-        dbg!(&active_indent_range, depth);
+        // dbg!(&active_indent_range, depth);
 
         for (i, indent) in candidates {
-            dbg!(indent);
+            // dbg!(indent);
             // Find matches that are either an exact match, partially on screen, or inside the enclosing indent
             if active_indent_range.start <= indent.offset.y + indent.length
                 && indent.offset.y <= active_indent_range.end
