@@ -76,6 +76,7 @@
 - [Go](./languages/go.md)
 - [Groovy](./languages/groovy.md)
 - [Haskell](./languages/haskell.md)
+- [Helm](./languages/helm.md)
 - [HTML](./languages/html.md)
 - [Java](./languages/java.md)
 - [JavaScript](./languages/javascript.md)
