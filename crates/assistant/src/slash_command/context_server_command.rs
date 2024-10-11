@@ -1,3 +1,4 @@
+use super::create_label_for_command;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
@@ -8,7 +9,7 @@ use context_servers::{
     manager::{ContextServer, ContextServerManager},
     types::Prompt,
 };
-use gpui::{Task, WeakView, WindowContext};
+use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -33,6 +34,16 @@ impl ContextServerSlashCommand {
 impl SlashCommand for ContextServerSlashCommand {
     fn name(&self) -> String {
         self.prompt.name.clone()
+    }
+
+    fn label(&self, cx: &AppContext) -> language::CodeLabel {
+        let mut parts = vec![self.prompt.name.as_str()];
+        if let Some(args) = &self.prompt.arguments {
+            if let Some(arg) = args.first() {
+                parts.push(arg.name.as_str());
+            }
+        }
+        create_label_for_command(&parts[0], &parts[1..], cx)
     }
 
     fn description(&self) -> String {
