@@ -18,8 +18,8 @@ use futures::{
     TryStreamExt as _,
 };
 use gpui::{
-    AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
-    Subscription, Task,
+    AnyElement, AnyView, AppContext, AsyncAppContext, EventEmitter, FontWeight, Global, Model,
+    ModelContext, ReadGlobal, Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use proto::TypedEnvelope;
@@ -96,6 +96,44 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
 }
 
+struct GlobalRefreshLlmTokenListener(Model<RefreshLlmTokenListener>);
+
+impl Global for GlobalRefreshLlmTokenListener {}
+
+pub struct RefreshLlmTokenEvent;
+
+pub struct RefreshLlmTokenListener {
+    _llm_token_subscription: client::Subscription,
+}
+
+impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
+
+impl RefreshLlmTokenListener {
+    pub fn register(client: Arc<Client>, cx: &mut AppContext) {
+        let listener = cx.new_model(|cx| RefreshLlmTokenListener::new(client, cx));
+        cx.set_global(GlobalRefreshLlmTokenListener(listener));
+    }
+
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        GlobalRefreshLlmTokenListener::global(cx).0.clone()
+    }
+
+    fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+        Self {
+            _llm_token_subscription: client
+                .add_message_handler(cx.weak_model(), Self::handle_refresh_llm_token),
+        }
+    }
+
+    async fn handle_refresh_llm_token(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::RefreshLlmToken>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
+    }
+}
+
 pub struct CloudLanguageModelProvider {
     client: Arc<Client>,
     state: gpui::Model<State>,
@@ -109,7 +147,7 @@ pub struct State {
     status: client::Status,
     accept_terms: Option<Task<Result<()>>>,
     _settings_subscription: Subscription,
-    _llm_token_subscription: client::Subscription,
+    _llm_token_subscription: Subscription,
 }
 
 impl State {
@@ -119,6 +157,8 @@ impl State {
         status: client::Status,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
+
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
@@ -128,21 +168,19 @@ impl State {
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
-            _llm_token_subscription: client
-                .add_message_handler(cx.weak_model(), Self::handle_refresh_llm_token),
+            _llm_token_subscription: cx.subscribe(
+                &refresh_llm_token_listener,
+                |this, _listener, _event, cx| {
+                    let client = this.client.clone();
+                    let llm_api_token = this.llm_api_token.clone();
+                    cx.spawn(|_this, _cx| async move {
+                        llm_api_token.refresh(&client).await?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                },
+            ),
         }
-    }
-
-    async fn handle_refresh_llm_token(
-        this: Model<Self>,
-        _: TypedEnvelope<proto::RefreshLlmToken>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        let (llm_api_token, client) = this.update(&mut cx, |this, _cx| {
-            (this.llm_api_token.clone(), this.client.clone())
-        })?;
-        llm_api_token.refresh(&client).await?;
-        Ok(())
     }
 
     fn is_signed_out(&self) -> bool {
