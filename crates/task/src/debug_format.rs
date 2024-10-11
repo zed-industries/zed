@@ -55,6 +55,7 @@ pub enum DebugAdapterKind {
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct CustomArgs {
     /// The connection that a custom debugger should use
+    #[serde(flatten)]
     pub connection: DebugConnectionType,
     /// The cli command used to start the debug adapter e.g. `python3`, `node` or the adapter binary
     pub command: String,
