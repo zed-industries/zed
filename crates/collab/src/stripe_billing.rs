@@ -184,36 +184,50 @@ impl StripeBilling {
     ) -> Result<()> {
         let subscription = stripe::Subscription::retrieve(client, &subscription_id, &[]).await?;
 
-        if !subscription_contains_price(&subscription, &model.input_tokens_price.id)
-            && !subscription_contains_price(
-                &subscription,
-                &model.input_cache_creation_tokens_price.id,
-            )
-            && !subscription_contains_price(&subscription, &model.input_cache_read_tokens_price.id)
-            && !subscription_contains_price(&subscription, &model.output_tokens_price.id)
+        let mut items = Vec::new();
+
+        if !subscription_contains_price(&subscription, &model.input_tokens_price.id) {
+            items.push(stripe::UpdateSubscriptionItems {
+                price: Some(model.input_tokens_price.id.to_string()),
+                ..Default::default()
+            });
+        }
+
+        if !subscription_contains_price(&subscription, &model.input_cache_creation_tokens_price.id)
         {
+            items.push(stripe::UpdateSubscriptionItems {
+                price: Some(model.input_cache_creation_tokens_price.id.to_string()),
+                ..Default::default()
+            });
+        }
+
+        if !subscription_contains_price(&subscription, &model.input_cache_read_tokens_price.id) {
+            items.push(stripe::UpdateSubscriptionItems {
+                price: Some(model.input_cache_read_tokens_price.id.to_string()),
+                ..Default::default()
+            });
+        }
+
+        if !subscription_contains_price(&subscription, &model.output_tokens_price.id) {
+            items.push(stripe::UpdateSubscriptionItems {
+                price: Some(model.output_tokens_price.id.to_string()),
+                ..Default::default()
+            });
+        }
+
+        if !items.is_empty() {
+            items.extend(subscription.items.data.iter().map(|item| {
+                stripe::UpdateSubscriptionItems {
+                    id: Some(item.id.to_string()),
+                    ..Default::default()
+                }
+            }));
+
             stripe::Subscription::update(
                 client,
                 subscription_id,
                 stripe::UpdateSubscription {
-                    items: Some(vec![
-                        stripe::UpdateSubscriptionItems {
-                            price: Some(model.input_tokens_price.id.to_string()),
-                            ..Default::default()
-                        },
-                        stripe::UpdateSubscriptionItems {
-                            price: Some(model.input_cache_creation_tokens_price.id.to_string()),
-                            ..Default::default()
-                        },
-                        stripe::UpdateSubscriptionItems {
-                            price: Some(model.input_cache_read_tokens_price.id.to_string()),
-                            ..Default::default()
-                        },
-                        stripe::UpdateSubscriptionItems {
-                            price: Some(model.output_tokens_price.id.to_string()),
-                            ..Default::default()
-                        },
-                    ]),
+                    items: Some(items),
                     ..Default::default()
                 },
             )
