@@ -2894,7 +2894,8 @@ impl ProjectPanel {
                 .map(|ids| ids.binary_search(&entry.id).is_ok())
                 .unwrap_or(false);
 
-        let entry = if is_expanded_dir {
+        let has_children = worktree.child_entries(&entry.path).next().is_some();
+        let entry = if is_expanded_dir && has_children {
             entry
         } else {
             worktree.entry_for_path(&entry.path.parent()?)?
@@ -2908,22 +2909,21 @@ impl ProjectPanel {
             let (worktree_ix, child_offset, ix) = self.index_for_entry(entry.id, worktree.id())?;
             let child_paths = &self.visible_entries[worktree_ix].1;
             let mut child_count = 0;
+            let depth = entry.path.ancestors().count();
             while let Some(entry) = child_paths.get(child_offset + child_count + 1) {
                 println!("Looking at: {:?}", &entry.path);
-                if entry.path.parent() == Some(&entry.path) {
-                    child_count += 1;
-                } else {
+                if entry.path.ancestors().count() <= depth {
                     break;
                 }
+                child_count += 1;
             }
 
             println!("Child count: {}", child_count);
 
-            let depth = entry.path.ancestors().count().saturating_sub(1);
             let start = ix + 1;
             let end = start + child_count;
 
-            (start..end, depth)
+            (start..end, depth.saturating_sub(1))
         };
         println!("--------------------------------------------");
 
