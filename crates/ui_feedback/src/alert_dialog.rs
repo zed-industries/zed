@@ -2,17 +2,37 @@
 
 use std::sync::Arc;
 
-use gpui::{AppContext, FocusHandle, FocusableView, View};
+use gpui::{AppContext, ClickEvent, FocusHandle, FocusableView, View};
 use ui::{
     div, px, relative, v_flex, vh, ActiveTheme, Button, ButtonCommon, ButtonSize,
-    CheckboxWithLabel, Color, ElementId, ElevationIndex, FixedWidth, FluentBuilder, Headline,
-    HeadlineSize, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement, Render,
-    Selection, SharedString, Spacing, StatefulInteractiveElement, Styled, StyledExt,
+    CheckboxWithLabel, Clickable, Color, ElementId, ElevationIndex, FixedWidth, FluentBuilder,
+    Headline, HeadlineSize, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
+    Render, Selection, SharedString, Spacing, StatefulInteractiveElement, Styled, StyledExt,
     StyledTypography, ViewContext, VisualContext, WindowContext,
 };
 
 const MAX_DIALOG_WIDTH: f32 = 440.0;
 const MIN_DIALOG_WIDTH: f32 = 260.0;
+
+/// A button that appears in an alert dialog.
+#[derive(Clone)]
+pub struct AlertDialogButton {
+    /// The label of the button
+    pub label: SharedString,
+    /// The action to take when the button is clicked
+    pub on_click: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+}
+
+impl From<&str> for AlertDialogButton {
+    fn from(label: &str) -> Self {
+        let label: SharedString = label.to_string().into();
+
+        Self {
+            label,
+            on_click: None,
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum AlertDialogLayout {
@@ -47,10 +67,10 @@ pub struct AlertDialog {
     pub message: Option<SharedString>,
 
     /// The primart action the user can take
-    pub primary_action: SharedString,
+    pub primary_action: AlertDialogButton,
 
     /// The secondary action the user can take
-    pub secondary_action: SharedString,
+    pub secondary_action: AlertDialogButton,
 
     /// A optional checkbox to show in the dialog
     ///
@@ -101,15 +121,36 @@ impl AlertDialog {
         self
     }
 
+    fn add_action(
+        &mut self,
+        label: impl Into<SharedString>,
+        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+    ) -> AlertDialogButton {
+        let action = AlertDialogButton {
+            label: label.into(),
+            on_click: Some(Arc::new(handler)),
+        };
+
+        action
+    }
+
     /// Set the primary action the user can take
-    pub fn primary_action(mut self, primary_action: impl Into<SharedString>) -> Self {
-        self.primary_action = primary_action.into();
+    pub fn primary_action(
+        mut self,
+        label: impl Into<SharedString>,
+        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.primary_action = self.add_action(label, handler);
         self
     }
 
     /// Set the secondary action the user can take
-    pub fn secondary_action(mut self, secondary_action: impl Into<SharedString>) -> Self {
-        self.secondary_action = secondary_action.into();
+    pub fn secondary_action(
+        mut self,
+        label: impl Into<SharedString>,
+        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.secondary_action = self.add_action(label, handler);
         self
     }
 
@@ -121,8 +162,8 @@ impl AlertDialog {
 
     fn dialog_layout(&self) -> AlertDialogLayout {
         let title_len = self.title.len();
-        let primary_action_len = self.primary_action.len();
-        let secondary_action_len = self.secondary_action.len();
+        let primary_action_len = self.primary_action.label.len();
+        let secondary_action_len = self.secondary_action.label.len();
         let message_len = self.message.as_ref().map_or(0, |m| m.len());
 
         if title_len > 35
@@ -136,17 +177,22 @@ impl AlertDialog {
         }
     }
 
-    fn render_button(&self, cx: &WindowContext, label: SharedString) -> impl IntoElement {
-        let id_string: SharedString = format!("action-{}-button", label).into();
+    fn render_button(&self, cx: &WindowContext, action: AlertDialogButton) -> impl IntoElement {
+        let id_string: SharedString = format!("action-{}-button", action.label).into();
         let id: ElementId = ElementId::Name(id_string);
 
-        Button::new(id, label)
+        Button::new(id, action.label)
             .size(ButtonSize::Large)
             .layer(ElevationIndex::ModalSurface)
             .when(
                 self.dialog_layout() == AlertDialogLayout::Vertical,
                 |this| this.full_width(),
             )
+            .when_some(action.on_click, |this, on_click| {
+                this.on_click(move |event, cx| {
+                    on_click(event, cx);
+                })
+            })
     }
 }
 
@@ -237,8 +283,14 @@ impl Render for AlertDialog {
                             .when(layout == AlertDialogLayout::Horizontal, |this| {
                                 this.items_center()
                             })
-                            .child(self.render_button(cx, self.secondary_action.clone()))
-                            .child(self.render_button(cx, self.primary_action.clone())),
+                            .when(layout == AlertDialogLayout::Vertical, |this| {
+                                this.child(self.render_button(cx, self.primary_action.clone()))
+                                    .child(self.render_button(cx, self.secondary_action.clone()))
+                            })
+                            .when(layout == AlertDialogLayout::Horizontal, |this| {
+                                this.child(self.render_button(cx, self.secondary_action.clone()))
+                                    .child(self.render_button(cx, self.primary_action.clone()))
+                            }),
                     ),
             )
     }
@@ -275,8 +327,12 @@ pub mod alert_dialog_stories {
                 dialog
                     .title("Discard changes?")
                     .message("Something bad could happen...")
-                    .primary_action("Discard")
-                    .secondary_action("Cancel")
+                    .primary_action("Discard", |_, _| {
+                        println!("Discarded!");
+                    })
+                    .secondary_action("Cancel", |_, _| {
+                        println!("Cancelled!");
+                    })
             });
 
             let horizontal_alert_dialog = AlertDialog::new(cx, |mut dialog, cx| {
@@ -284,8 +340,8 @@ pub mod alert_dialog_stories {
                     .title("Do you want to leave the current call?")
                     .message("The current window will be closed, and connections to any shared projects will be terminated.")
                     .checkbox("Don't show again")
-                    .primary_action("Leave Call")
-                    .secondary_action("Cancel")
+                    .primary_action("Leave Call", |_, _| {})
+                    .secondary_action("Cancel", |_, _| {})
             });
 
             let long_content = r#"{
@@ -314,8 +370,8 @@ pub mod alert_dialog_stories {
                 dialog
                     .title("A RuntimeError occured")
                     .message(long_content)
-                    .primary_action("Send Report")
-                    .secondary_action("Close")
+                    .primary_action("Send Report", |_, _| {})
+                    .secondary_action("Close", |_, _| {})
             });
 
             Self {
