@@ -174,6 +174,8 @@ impl HeadlineSize {
         }
     }
 
+    // TODO: Just added these to get stared with headlines but these
+    // but we should have a per-headline size line height.
     /// Returns the line height for the headline size.
     pub fn line_height(self) -> Rems {
         match self {
