@@ -37,7 +37,7 @@ use language_model::{
 pub(crate) use model_selector::*;
 pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;
-use semantic_index::{CloudEmbeddingProvider, SemanticDb};
+use semantic_index::{CloudEmbeddingProvider, SemanticDb, SEMANTIC_INDEX_DB_VERSION};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
@@ -215,7 +215,8 @@ pub fn init(
         async move {
             let embedding_provider = CloudEmbeddingProvider::new(client.clone());
             let semantic_index = SemanticDb::new(
-                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
+                paths::embeddings_dir()
+                    .join(format!("semantic-index-db.{SEMANTIC_INDEX_DB_VERSION}.mdb")),
                 Arc::new(embedding_provider),
                 &mut cx,
             )

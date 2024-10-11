@@ -1,10 +1,10 @@
 use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
     summary_index::FileSummary,
+    tfidf::{Bm25Parameters, Bm25Scorer, SimpleTokenizer},
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
 use anyhow::{anyhow, Context, Result};
-use collections::HashMap;
 use fs::Fs;
 use futures::{stream::StreamExt, FutureExt};
 use gpui::{
@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     future::Future,
     num::NonZeroUsize,
     ops::{Range, RangeInclusive},
@@ -232,8 +233,16 @@ impl ProjectIndex {
         &self,
         queries: Vec<String>,
         limit: usize,
+        mixing_param: f32,
         cx: &AppContext,
     ) -> Task<Result<Vec<SearchResult>>> {
+        if !(0.0..=1.0).contains(&mixing_param) {
+            return cx.spawn(|_| async move {
+                Err(anyhow!(
+                    "Semantic search mixing param must be between 0 and 1"
+                ))
+            });
+        }
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
         let mut worktree_scan_tasks = Vec::new();
         for worktree_index in self.worktree_indices.values() {
@@ -241,9 +250,11 @@ impl ProjectIndex {
             let chunks_tx = chunks_tx.clone();
             worktree_scan_tasks.push(cx.spawn(|cx| async move {
                 let index = match worktree_index {
-                    WorktreeIndexHandle::Loading { index } => {
-                        index.clone().await.map_err(|error| anyhow!(error))?
-                    }
+                    WorktreeIndexHandle::Loading { index } => index
+                        .clone()
+                        .await
+                        .map_err(|error| anyhow!(error))
+                        .context("loading worktree index failure")?,
                     WorktreeIndexHandle::Loaded { index } => index.clone(),
                 };
 
@@ -252,22 +263,32 @@ impl ProjectIndex {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
                         let db = *index.embedding_index().db();
+                        let worktree_corpus_stats =
+                            index.embedding_index().worktree_corpus_stats.clone();
                         cx.background_executor().spawn(async move {
                             let txn = db_connection
                                 .read_txn()
                                 .context("failed to create read transaction")?;
                             let db_entries = db.iter(&txn).context("failed to iterate database")?;
                             for db_entry in db_entries {
-                                let (_key, db_embedded_file) = db_entry?;
-                                for chunk in db_embedded_file.chunks {
+                                let (_key, db_embedded_file) =
+                                    db_entry.context("failed to read embedded file")?;
+                                for chunk in &db_embedded_file.chunks {
                                     chunks_tx
-                                        .send((worktree_id, db_embedded_file.path.clone(), chunk))
-                                        .await?;
+                                        .send((
+                                            worktree_id,
+                                            worktree_corpus_stats.clone(),
+                                            db_embedded_file.path.clone(),
+                                            chunk.clone(),
+                                        ))
+                                        .await
+                                        .context("failed to send chunks")?;
                                 }
                             }
                             anyhow::Ok(())
                         })
-                    })?
+                    })
+                    .context("read_with WorktreeIndex failed")?
                     .await
             }));
         }
@@ -275,21 +296,43 @@ impl ProjectIndex {
 
         let project = self.project.clone();
         let embedding_provider = self.embedding_provider.clone();
+        let bm25_params = Bm25Parameters::default();
         cx.spawn(|cx| async move {
+            log::info!("Searching for {queries:?}");
+            // BM-25: Tokenize query
+            #[cfg(debug_assertions)]
+            let bm25_query_start = std::time::Instant::now();
+            let tokenizer = SimpleTokenizer::new();
+            let terms_by_query: Vec<HashMap<Arc<str>, u32>> = queries
+                .iter()
+                .map(|query| {
+                    tokenizer.tokenize_and_stem(query).into_iter().fold(
+                        HashMap::new(),
+                        |mut acc, term| {
+                            *acc.entry(term).or_insert(0) += 1;
+                            acc
+                        },
+                    )
+                })
+                .collect();
+            #[cfg(debug_assertions)]
+            let bm25_query_end = std::time::Instant::now();
+
+            // Similarity search: Embed query
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
-            log::info!("Searching for {queries:?}");
             let queries: Vec<TextToEmbed> = queries
                 .iter()
                 .map(|s| TextToEmbed::new(s.as_str()))
                 .collect();
-
             let query_embeddings = embedding_provider.embed(&queries[..]).await?;
             if query_embeddings.len() != queries.len() {
                 return Err(anyhow!(
                     "The number of query embeddings does not match the number of queries"
                 ));
             }
+            #[cfg(debug_assertions)]
+            let embedding_query_end = std::time::Instant::now();
 
             let mut results_by_worker = Vec::new();
             for _ in 0..cx.background_executor().num_cpus() {
@@ -302,28 +345,58 @@ impl ProjectIndex {
                 .scoped(|cx| {
                     for results in results_by_worker.iter_mut() {
                         cx.spawn(async {
-                            while let Ok((worktree_id, path, chunk)) = chunks_rx.recv().await {
-                                let (score, query_index) =
-                                    chunk.embedding.similarity(&query_embeddings);
+                            while let Ok((worktree_id, worktree_corpus_stats, path, chunk)) =
+                                chunks_rx.recv().await
+                            {
+                                // iterate over every (query_embedding, query_term) and compute its hybrid retrieval score for this chunk
+                                // RetScore(chunk, query_embedding, query_term, m) = m * Sim(query_embedding, chunk) + (1 - m) * Bm25(query_term, chunk)]
+                                let hybrid_scores: Vec<f32> = query_embeddings
+                                    .iter()
+                                    .zip(terms_by_query.iter())
+                                    .map(|(query_embedding, query_term)| {
+                                        let (embedding_score, _) =
+                                            query_embedding.similarity(&[chunk.embedding.clone()]);
+                                        let bm25_score = {
+                                            let corpus_stats =
+                                                worktree_corpus_stats.read().unwrap();
+                                            let score = corpus_stats.calculate_bm25_score(
+                                                query_term,
+                                                &chunk.term_frequencies.0,
+                                                bm25_params.k1,
+                                                bm25_params.b,
+                                            );
+                                            // quick hack to bound the score for long queries
+                                            score / query_term.values().sum::<u32>() as f32
+                                        };
+                                        mixing_param * embedding_score
+                                            + (1. - mixing_param) * bm25_score
+                                    })
+                                    .collect();
 
-                                let ix = match results.binary_search_by(|probe| {
-                                    score.partial_cmp(&probe.score).unwrap_or(Ordering::Equal)
-                                }) {
-                                    Ok(ix) | Err(ix) => ix,
-                                };
-                                if ix < limit {
-                                    results.insert(
-                                        ix,
-                                        WorktreeSearchResult {
-                                            worktree_id,
-                                            path: path.clone(),
-                                            range: chunk.chunk.range.clone(),
-                                            query_index,
-                                            score,
-                                        },
-                                    );
-                                    if results.len() > limit {
-                                        results.pop();
+                                for (query_index, score) in hybrid_scores.into_iter().enumerate() {
+                                    if score != 0.0 {
+                                        let ix = match results.binary_search_by(|probe| {
+                                            score
+                                                .partial_cmp(&probe.score)
+                                                .unwrap_or(Ordering::Equal)
+                                        }) {
+                                            Ok(ix) | Err(ix) => ix,
+                                        };
+                                        if ix < limit {
+                                            results.insert(
+                                                ix,
+                                                WorktreeSearchResult {
+                                                    worktree_id,
+                                                    path: path.clone(),
+                                                    range: chunk.chunk.range.clone(),
+                                                    query_index,
+                                                    score,
+                                                },
+                                            );
+                                            if results.len() > limit {
+                                                results.pop();
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -362,7 +435,9 @@ impl ProjectIndex {
                         search_results.len(),
                         search_elapsed
                     );
-                    let embedding_query_elapsed = embedding_query_start.elapsed();
+                    let bm25_query_elapsed = bm25_query_start - bm25_query_end;
+                    log::debug!("tokenizing query took {:?}", bm25_query_elapsed);
+                    let embedding_query_elapsed = embedding_query_start - embedding_query_end;
                     log::debug!("embedding query took {:?}", embedding_query_elapsed);
                 }
 

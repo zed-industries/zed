@@ -36,8 +36,9 @@ use std::{
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
 const EVAL_DB_PATH: &'static str = "target/eval_db";
-const SEARCH_RESULT_LIMIT: usize = 8;
 const SKIP_EVAL_PATH: &'static str = ".skip_eval";
+const DEFAULT_SEARCH_PARAM: f32 = 0.7;
+const DEFAULT_SEARCH_RESULT_LIMIT: usize = 8;
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -50,6 +51,10 @@ struct Cli {
 enum Commands {
     Fetch {},
     Run {
+        #[arg(long, default_value_t = DEFAULT_SEARCH_PARAM)]
+        search_param: f32,
+        #[arg(long, default_value_t = DEFAULT_SEARCH_RESULT_LIMIT)]
+        search_result_limit: usize,
         #[arg(long)]
         repo: Option<String>,
     },
@@ -115,9 +120,16 @@ fn main() -> Result<()> {
                     })
                     .detach();
             }
-            Commands::Run { repo } => {
+            Commands::Run {
+                search_param,
+                search_result_limit,
+                repo,
+            } => {
                 cx.spawn(|mut cx| async move {
-                    if let Err(err) = run_evaluation(repo, &executor, &mut cx).await {
+                    if let Err(err) =
+                        run_evaluation(search_param, search_result_limit, repo, &executor, &mut cx)
+                            .await
+                    {
                         eprintln!("Error: {}", err);
                         exit(1);
                     }
@@ -249,6 +261,8 @@ struct Counts {
 }
 
 async fn run_evaluation(
+    search_param: f32,
+    search_result_limit: usize,
     only_repo: Option<String>,
     executor: &BackgroundExecutor,
     cx: &mut AsyncAppContext,
@@ -359,6 +373,8 @@ async fn run_evaluation(
         let repo = evaluation_project.repo.clone();
         if let Err(err) = run_eval_project(
             evaluation_project,
+            search_param,
+            search_result_limit,
             &user_store,
             repo_db_path,
             &repo_dir,
@@ -403,6 +419,8 @@ async fn run_evaluation(
 #[allow(clippy::too_many_arguments)]
 async fn run_eval_project(
     evaluation_project: EvaluationProject,
+    search_param: f32,
+    search_result_limit: usize,
     user_store: &Model<UserStore>,
     repo_db_path: PathBuf,
     repo_dir: &Path,
@@ -438,7 +456,12 @@ async fn run_eval_project(
             loop {
                 match cx.update(|cx| {
                     let project_index = project_index.read(cx);
-                    project_index.search(vec![query.query.clone()], SEARCH_RESULT_LIMIT, cx)
+                    project_index.search(
+                        vec![query.query.clone()],
+                        search_result_limit,
+                        search_param,
+                        cx,
+                    )
                 }) {
                     Ok(task) => match task.await {
                         Ok(answer) => {

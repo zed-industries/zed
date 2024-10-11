@@ -399,8 +399,9 @@ rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
-rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
+rust-stemmers = "1.2"
+rustc-demangle = "0.1.23"
 rustls = "0.20.3"
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
@@ -422,6 +423,7 @@ simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 sqlformat = "0.2"
+stop-words = "0.8"
 strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"

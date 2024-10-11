@@ -6,6 +6,7 @@ mod project_index;
 mod project_index_debug_view;
 mod summary_backlog;
 mod summary_index;
+mod tfidf;
 mod worktree_index;
 
 use anyhow::{Context as _, Result};
@@ -27,6 +28,8 @@ pub use embedding::*;
 pub use project_index::{LoadedSearchResult, ProjectIndex, SearchResult, Status};
 pub use project_index_debug_view::ProjectIndexDebugView;
 pub use summary_index::FileSummary;
+
+pub const SEMANTIC_INDEX_DB_VERSION: usize = 1;
 
 pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -268,7 +271,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use chunking::Chunk;
-    use embedding_index::{ChunkedFile, EmbeddingIndex};
+    use embedding_index::{ChunkedFile, EmbeddingIndex, EmbeddingIndexSettings};
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use futures::{future::BoxFuture, FutureExt};
@@ -280,6 +283,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::{channel, stream::StreamExt};
     use std::{future, path::Path, sync::Arc};
+    use tfidf::SimpleTokenizer;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -398,7 +402,7 @@ mod tests {
             .update(|cx| {
                 let project_index = project_index.read(cx);
                 let query = "garbage in, garbage out";
-                project_index.search(vec![query.into()], 4, cx)
+                project_index.search(vec![query.into()], 4, 0.7, cx)
             })
             .await
             .unwrap();
@@ -487,8 +491,18 @@ mod tests {
             .unwrap();
         chunked_files_tx.close();
 
-        let embed_files_task =
-            cx.update(|cx| EmbeddingIndex::embed_files(provider.clone(), chunked_files_rx, cx));
+        let tokenizer = SimpleTokenizer::new();
+        let embedding_settings = EmbeddingIndexSettings::default();
+
+        let embed_files_task = cx.update(|cx| {
+            EmbeddingIndex::embed_files(
+                provider.clone(),
+                chunked_files_rx,
+                tokenizer,
+                embedding_settings,
+                cx,
+            )
+        });
         embed_files_task.task.await.unwrap();
 
         let mut embedded_files_rx = embed_files_task.files;

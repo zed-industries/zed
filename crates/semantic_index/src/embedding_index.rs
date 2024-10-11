@@ -2,6 +2,7 @@ use crate::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
+    tfidf::{SimpleTokenizer, TermCounts, WorktreeTermStats},
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
@@ -17,14 +18,34 @@ use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     future::Future,
     iter,
     path::Path,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, SystemTime},
 };
 use util::ResultExt;
 use worktree::Snapshot;
+
+#[derive(Debug, Clone, Copy)]
+pub struct EmbeddingIndexSettings {
+    pub scan_entries_bound: usize,
+    pub deleted_entries_bound: usize,
+    pub chunk_files_bound: usize,
+    pub embed_files_bound: usize,
+}
+
+impl Default for EmbeddingIndexSettings {
+    fn default() -> Self {
+        Self {
+            scan_entries_bound: 512,
+            deleted_entries_bound: 128,
+            chunk_files_bound: 2048,
+            embed_files_bound: 512,
+        }
+    }
+}
 
 pub struct EmbeddingIndex {
     worktree: Model<Worktree>,
@@ -34,6 +55,9 @@ pub struct EmbeddingIndex {
     language_registry: Arc<LanguageRegistry>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     entry_ids_being_indexed: Arc<IndexingEntrySet>,
+    pub worktree_corpus_stats: Arc<RwLock<WorktreeTermStats>>,
+    tokenizer: SimpleTokenizer,
+    settings: EmbeddingIndexSettings,
 }
 
 impl EmbeddingIndex {
@@ -41,7 +65,7 @@ impl EmbeddingIndex {
         worktree: Model<Worktree>,
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
-        embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
         language_registry: Arc<LanguageRegistry>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
@@ -50,10 +74,17 @@ impl EmbeddingIndex {
             worktree,
             fs,
             db_connection,
-            db: embedding_db,
+            db,
             language_registry,
             embedding_provider,
             entry_ids_being_indexed,
+            worktree_corpus_stats: Arc::new(RwLock::new(WorktreeTermStats::new(
+                HashMap::new(),
+                0,
+                0,
+            ))),
+            tokenizer: SimpleTokenizer::new(),
+            settings: EmbeddingIndexSettings::default(),
         }
     }
 
@@ -62,14 +93,20 @@ impl EmbeddingIndex {
     }
 
     pub fn index_entries_changed_on_disk(
-        &self,
+        &mut self,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
+        let embed = Self::embed_files(
+            self.embedding_provider.clone(),
+            chunk.files,
+            self.tokenizer.clone(),
+            self.settings,
+            cx,
+        );
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
@@ -78,7 +115,7 @@ impl EmbeddingIndex {
     }
 
     pub fn index_updated_entries(
-        &self,
+        &mut self,
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
@@ -86,7 +123,13 @@ impl EmbeddingIndex {
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
+        let embed = Self::embed_files(
+            self.embedding_provider.clone(),
+            chunk.files,
+            self.tokenizer.clone(),
+            self.settings,
+            cx,
+        );
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
@@ -94,12 +137,16 @@ impl EmbeddingIndex {
         }
     }
 
-    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
-        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
-        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
+    fn scan_entries(&mut self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
+        let (updated_entries_tx, updated_entries_rx) =
+            channel::bounded(self.settings.scan_entries_bound);
+        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) =
+            channel::bounded(self.settings.deleted_entries_bound);
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
+        let worktree_corpus_stats = self.worktree_corpus_stats.clone();
+
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
                 .read_txn()
@@ -113,8 +160,15 @@ impl EmbeddingIndex {
             let mut deletion_range: Option<(Bound<&str>, Bound<&str>)> = None;
             for entry in worktree.files(false, 0) {
                 log::trace!("scanning for embedding index: {:?}", &entry.path);
-
                 let entry_db_key = db_key_for_path(&entry.path);
+                if let Some(embedded_file) = db.get(&txn, &entry_db_key)? {
+                    // initialize worktree_corpus_stats from embedded files in database
+                    update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
+                        for chunk in &embedded_file.chunks {
+                            stats.add_counts(&chunk.term_frequencies);
+                        }
+                    });
+                }
 
                 let mut saved_mtime = None;
                 while let Some(db_entry) = db_entries.peek() {
@@ -152,6 +206,7 @@ impl EmbeddingIndex {
                 }
 
                 if entry.mtime != saved_mtime {
+                    // corpus stats will be adjusted later, while these are chunked/embedded
                     let handle = entries_being_indexed.insert(entry.id);
                     updated_entries_tx.send((entry.clone(), handle)).await?;
                 }
@@ -180,8 +235,10 @@ impl EmbeddingIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> ScanEntries {
-        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
-        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
+        let (updated_entries_tx, updated_entries_rx) =
+            channel::bounded(self.settings.scan_entries_bound);
+        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) =
+            channel::bounded(self.settings.deleted_entries_bound);
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             for (path, entry_id, status) in updated_entries.iter() {
@@ -191,6 +248,7 @@ impl EmbeddingIndex {
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
                             if entry.is_file() {
+                                // corpus stats will be adjusted later, while these are chunked/embedded
                                 let handle = entries_being_indexed.insert(entry.id);
                                 updated_entries_tx.send((entry.clone(), handle)).await?;
                             }
@@ -226,7 +284,8 @@ impl EmbeddingIndex {
     ) -> ChunkFiles {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
-        let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
+        let (chunked_files_tx, chunked_files_rx) =
+            channel::bounded(self.settings.chunk_files_bound);
         let task = cx.spawn(|cx| async move {
             cx.background_executor()
                 .scoped(|cx| {
@@ -272,10 +331,11 @@ impl EmbeddingIndex {
     pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
+        tokenizer: SimpleTokenizer,
+        settings: EmbeddingIndexSettings,
         cx: &AppContext,
     ) -> EmbedFiles {
-        let embedding_provider = embedding_provider.clone();
-        let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
+        let (embedded_files_tx, embedded_files_rx) = channel::bounded(settings.embed_files_bound);
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
@@ -284,7 +344,6 @@ impl EmbeddingIndex {
                 // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
                 // Once those are done, reassemble them back into the files in which they belong
                 // If any embeddings fail for a file, the entire file is discarded
-
                 let chunks: Vec<TextToEmbed> = chunked_files
                     .iter()
                     .flat_map(|file| {
@@ -312,11 +371,10 @@ impl EmbeddingIndex {
 
                     embeddings.extend(iter::repeat(None).take(embedding_batch.len()));
                 }
-
                 let mut embeddings = embeddings.into_iter();
                 for chunked_file in chunked_files {
                     let mut embedded_file = EmbeddedFile {
-                        path: chunked_file.path,
+                        path: chunked_file.path.clone(),
                         mtime: chunked_file.mtime,
                         chunks: Vec::new(),
                     };
@@ -326,9 +384,11 @@ impl EmbeddingIndex {
                         chunked_file.chunks.into_iter().zip(embeddings.by_ref())
                     {
                         if let Some(embedding) = embedding {
+                            let chunk_text = &chunked_file.text[chunk.range.clone()];
+                            let chunk_counts = TermCounts::from_text(chunk_text, &tokenizer);
                             embedded_file
                                 .chunks
-                                .push(EmbeddedChunk { chunk, embedding });
+                                .push(EmbeddedChunk { chunk, embedding, term_frequencies: chunk_counts });
                         } else {
                             embedded_all_chunks = false;
                         }
@@ -358,6 +418,7 @@ impl EmbeddingIndex {
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let db = self.db;
+        let worktree_corpus_stats = self.worktree_corpus_stats.clone();
 
         cx.background_executor().spawn(async move {
             loop {
@@ -370,6 +431,15 @@ impl EmbeddingIndex {
                             let end = deletion_range.1.as_ref().map(|end| end.as_str());
                             log::debug!("deleting embeddings in range {:?}", &(start, end));
                             db.delete_range(&mut txn, &(start, end))?;
+                            for (_, embedded_file) in db.range(&txn, &(start, end))?.flatten() {
+                                if let None = update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
+                                    for chunk in &embedded_file.chunks {
+                                        stats.remove_counts(&chunk.term_frequencies);
+                                    }
+                                }) {
+                                    log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
+                                }
+                            }
                             txn.commit()?;
                         }
                     },
@@ -380,6 +450,13 @@ impl EmbeddingIndex {
                             let key = db_key_for_path(&file.path);
                             db.put(&mut txn, &key, &file)?;
                             txn.commit()?;
+                            if let None = update_corpus_stats(worktree_corpus_stats.clone(), |stats| {
+                                for chunk in &file.chunks {
+                                    stats.add_counts(&chunk.term_frequencies);
+                                }
+                            }) {
+                                log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
+                            }
                         }
                     },
                     complete => break,
@@ -399,7 +476,13 @@ impl EmbeddingIndex {
                 .context("failed to create read transaction")?;
             let result = db
                 .iter(&tx)?
-                .map(|entry| Ok(entry?.1.path.clone()))
+                .filter_map(|entry| {
+                    if let Ok((_, file)) = entry {
+                        Some(Ok(file.path.clone()))
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Result<Vec<Arc<Path>>>>();
             drop(tx);
             result
@@ -417,11 +500,10 @@ impl EmbeddingIndex {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;
-            Ok(db
-                .get(&tx, &db_key_for_path(&path))?
-                .ok_or_else(|| anyhow!("no such path"))?
-                .chunks
-                .clone())
+            match db.get(&tx, &db_key_for_path(&path))? {
+                Some(file) => Ok(file.chunks.clone()),
+                None => Err(anyhow!("no such path")),
+            }
         })
     }
 }
@@ -450,7 +532,7 @@ pub struct EmbedFiles {
     pub task: Task<Result<()>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmbeddedFile {
     pub path: Arc<Path>,
     pub mtime: Option<SystemTime>,
@@ -461,8 +543,18 @@ pub struct EmbeddedFile {
 pub struct EmbeddedChunk {
     pub chunk: Chunk,
     pub embedding: Embedding,
+    pub term_frequencies: TermCounts,
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
     path.to_string_lossy().replace('/', "\0")
+}
+
+fn update_corpus_stats<F, R>(stats: Arc<RwLock<WorktreeTermStats>>, f: F) -> Option<R>
+where
+    F: FnOnce(&mut WorktreeTermStats) -> R,
+{
+    stats.write().map(|mut guard| f(&mut guard)).map_err(|_| {
+        log::error!("Failed to acquire write lock for worktree_corpus_stats; corpus stats will be outdated");
+    }).ok()
 }

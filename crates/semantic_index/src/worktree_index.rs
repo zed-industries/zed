@@ -46,14 +46,14 @@ impl WorktreeIndex {
         embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
-        let worktree_for_index = worktree.clone();
+        let worktree_for_embedding = worktree.clone();
         let worktree_for_summary = worktree.clone();
         let worktree_abs_path = worktree.read(cx).abs_path();
         let embedding_fs = Arc::clone(&fs);
         let summary_fs = fs;
         cx.spawn(|mut cx| async move {
             let entries_being_indexed = Arc::new(IndexingEntrySet::new(status_tx));
-            let (embedding_index, summary_index) = cx
+            let (embedding_index, summary_index): (EmbeddingIndex, SummaryIndex) = cx
                 .background_executor()
                 .spawn({
                     let entries_being_indexed = Arc::clone(&entries_being_indexed);
@@ -63,9 +63,8 @@ impl WorktreeIndex {
                         let embedding_index = {
                             let db_name = worktree_abs_path.to_string_lossy();
                             let db = db_connection.create_database(&mut txn, Some(&db_name))?;
-
                             EmbeddingIndex::new(
-                                worktree_for_index,
+                                worktree_for_embedding,
                                 embedding_fs,
                                 db_connection.clone(),
                                 db,
@@ -101,7 +100,7 @@ impl WorktreeIndex {
                             )
                         };
                         txn.commit()?;
-                        anyhow::Ok((embedding_index, summary_index))
+                        Ok::<_, anyhow::Error>((embedding_index, summary_index))
                     }
                 })
                 .await?;
