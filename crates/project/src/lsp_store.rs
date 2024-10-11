@@ -7663,10 +7663,16 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     }
 
     async fn read_text_file(&self, path: PathBuf) -> Result<String> {
-        if self.worktree.entry_for_path(&path).is_none() {
-            return Err(anyhow!("no such path {path:?}"));
-        };
-        self.fs.load(&path).await
+        let entry = self
+            .worktree
+            .entry_for_path(&path)
+            .with_context(|| format!("no worktree entry for path {path:?}"))?;
+        let abs_path = self
+            .worktree
+            .absolutize(&entry.path)
+            .with_context(|| format!("cannot absolutize path {path:?}"))?;
+
+        self.fs.load(&abs_path).await
     }
 }
 
