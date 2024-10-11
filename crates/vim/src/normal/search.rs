@@ -129,14 +129,13 @@ impl Vim {
                     search_bar.select_query(cx);
                     cx.focus_self();
 
-                    if query.is_empty() {
-                        search_bar.set_replacement(None, cx);
-                        search_bar.set_search_options(SearchOptions::REGEX, cx);
-                    }
+                    search_bar.set_replacement(None, cx);
+                    search_bar.set_search_options(SearchOptions::NONE | SearchOptions::REGEX, cx);
+
                     self.search = SearchState {
                         direction,
                         count,
-                        initial_query: query.clone(),
+                        initial_query: query,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
