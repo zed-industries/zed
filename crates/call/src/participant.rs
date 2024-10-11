@@ -1,12 +1,15 @@
 use anyhow::{anyhow, Result};
-use client::ParticipantIndex;
-use client::{proto, User};
+use client::{proto, ParticipantIndex, User};
 use collections::HashMap;
 use gpui::WeakModel;
-pub use live_kit_client::Frame;
-pub use live_kit_client::{RemoteAudioTrack, RemoteVideoTrack};
+use live_kit_client::AudioStream;
 use project::Project;
 use std::sync::Arc;
+
+pub use live_kit_client::{
+    id::TrackSid,
+    track::{RemoteAudioTrack, RemoteVideoTrack},
+};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ParticipantLocation {
@@ -39,7 +42,6 @@ pub struct LocalParticipant {
     pub role: proto::ChannelRole,
 }
 
-#[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub peer_id: proto::PeerId,
@@ -49,6 +51,6 @@ pub struct RemoteParticipant {
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
-    pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
-    pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
+    pub video_tracks: HashMap<TrackSid, RemoteVideoTrack>,
+    pub audio_tracks: HashMap<TrackSid, (RemoteAudioTrack, AudioStream)>,
 }
