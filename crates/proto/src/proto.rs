@@ -365,6 +365,7 @@ messages!(
     (CheckFileExists, Background),
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
+    (RemoveWorktree, Foreground),
 );
 
 request_messages!(
@@ -487,7 +488,8 @@ request_messages!(
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
-    (ShutdownRemoteServer, Ack)
+    (ShutdownRemoteServer, Ack),
+    (RemoveWorktree, Ack)
 );
 
 entity_messages!(

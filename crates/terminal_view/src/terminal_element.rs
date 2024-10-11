@@ -793,7 +793,7 @@ impl Element for TerminalElement {
                             let (shape, text) = match cursor.shape {
                                 AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                                 AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
-                                AlacCursorShape::Underline => (CursorShape::Underscore, None),
+                                AlacCursorShape::Underline => (CursorShape::Underline, None),
                                 AlacCursorShape::Beam => (CursorShape::Bar, None),
                                 AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                                 //This case is handled in the if wrapping the whole cursor layout

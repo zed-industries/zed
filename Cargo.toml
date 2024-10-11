@@ -144,7 +144,6 @@ members = [
     "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
-    "extensions/gleam",
     "extensions/glsl",
     "extensions/haskell",
     "extensions/html",

@@ -58,27 +58,32 @@ struct Args {
     dev_server_token: Option<String>,
 }
 
-fn parse_path_with_position(argument_str: &str) -> Result<String, std::io::Error> {
-    let path = PathWithPosition::parse_str(argument_str);
-    let curdir = env::current_dir()?;
-
-    let canonicalized = path.map_path(|path| match fs::canonicalize(&path) {
-        Ok(path) => Ok(path),
-        Err(e) => {
-            if let Some(mut parent) = path.parent() {
-                if parent == Path::new("") {
-                    parent = &curdir
+fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
+    let canonicalized = match Path::new(argument_str).canonicalize() {
+        Ok(existing_path) => PathWithPosition::from_path(existing_path),
+        Err(_) => {
+            let path = PathWithPosition::parse_str(argument_str);
+            let curdir = env::current_dir().context("reteiving current directory")?;
+            path.map_path(|path| match fs::canonicalize(&path) {
+                Ok(path) => Ok(path),
+                Err(e) => {
+                    if let Some(mut parent) = path.parent() {
+                        if parent == Path::new("") {
+                            parent = &curdir
+                        }
+                        match fs::canonicalize(parent) {
+                            Ok(parent) => Ok(parent.join(path.file_name().unwrap())),
+                            Err(_) => Err(e),
+                        }
+                    } else {
+                        Err(e)
+                    }
                 }
-                match fs::canonicalize(parent) {
-                    Ok(parent) => Ok(parent.join(path.file_name().unwrap())),
-                    Err(_) => Err(e),
-                }
-            } else {
-                Err(e)
-            }
+            })
         }
-    })?;
-    Ok(canonicalized.to_string(|path| path.display().to_string()))
+        .with_context(|| format!("parsing as path with position {argument_str}"))?,
+    };
+    Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
 }
 
 fn main() -> Result<()> {

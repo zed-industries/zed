@@ -118,8 +118,8 @@
   //     "bar"
   //  2. A block that surrounds the following character
   //     "block"
-  //  3. An underline that runs along the following character
-  //     "underscore"
+  //  3. An underline / underscore that runs along the following character
+  //     "underline"
   //  4. A box drawn around the following character
   //     "hollow"
   //
@@ -684,8 +684,8 @@
     //     "block"
     //  2. A vertical bar
     //     "bar"
-    //  3. An underline that runs along the following character
-    //     "underscore"
+    //  3. An underline / underscore that runs along the following character
+    //     "underline"
     //  4. A box drawn around the following character
     //     "hollow"
     //
