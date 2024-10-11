@@ -395,7 +395,7 @@ dependencies = [
  "gpui",
  "handlebars 4.5.0",
  "heed",
- "html_to_markdown 0.1.0",
+ "html_to_markdown",
  "http_client",
  "indexed_docs",
  "indoc",
@@ -5462,18 +5462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "html_to_markdown"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e608e8dd0939bfb6b516d96a5919751b835297a02230aecb88d2fc84ebebaa8a"
-dependencies = [
- "anyhow",
- "html5ever",
- "markup5ever_rcdom",
- "regex",
-]
-
-[[package]]
 name = "http"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5776,7 +5764,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heed",
- "html_to_markdown 0.1.0",
+ "html_to_markdown",
  "http_client",
  "indexmap 1.9.3",
  "indoc",
@@ -14589,14 +14577,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "zed_gleam"
-version = "0.2.0"
-dependencies = [
- "html_to_markdown 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "zed_extension_api 0.1.0",
 ]
 
 [[package]]
