@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-dap-types = { git = "https://github.com/zed-industries/dap-types" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "ca46648b65c5b21c148da9939b41255824e4b7f8" }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
