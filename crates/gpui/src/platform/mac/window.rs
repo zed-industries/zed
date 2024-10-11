@@ -768,6 +768,7 @@ impl Drop for MacWindow {
         unsafe {
             this.native_window.setDelegate_(nil);
         }
+        this.input_handler.take();
         this.executor
             .spawn(async move {
                 unsafe {

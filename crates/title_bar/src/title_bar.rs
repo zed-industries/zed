@@ -24,8 +24,8 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
-    Indicator, PopoverMenu, Tooltip,
+    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
+    IconButtonShape, IconName, IconSize, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -264,28 +264,53 @@ impl TitleBar {
 
     fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let host = self.project.read(cx).ssh_connection_string(cx)?;
-        let meta = SharedString::from(format!("Connected to: {host}"));
-        let indicator_color = match self.project.read(cx).ssh_connection_state(cx)? {
+
+        let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
+            remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
+            remote::ConnectionState::HeartbeatMissed => (
+                Color::Warning,
+                format!("Connection attempt to {host} missed. Retrying..."),
+            ),
+            remote::ConnectionState::Reconnecting => (
+                Color::Warning,
+                format!("Lost connection to {host}. Reconnecting..."),
+            ),
+            remote::ConnectionState::Disconnected => {
+                (Color::Error, format!("Disconnected from {host}"))
+            }
+        };
+
+        let indicator_border_color = cx.theme().colors().title_bar_background;
+
+        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
-            remote::ConnectionState::Connected => Color::Success,
+            remote::ConnectionState::Connected => Color::Default,
             remote::ConnectionState::HeartbeatMissed => Color::Warning,
             remote::ConnectionState::Reconnecting => Color::Warning,
             remote::ConnectionState::Disconnected => Color::Error,
         };
+
+        let meta = SharedString::from(meta);
+
         let indicator = div()
             .absolute()
-            .w_1_4()
-            .h_1_4()
-            .right_0p5()
-            .bottom_0p5()
-            .p_1()
-            .rounded_2xl()
+            .size_2p5()
+            .right_0()
+            .bottom_0()
+            .rounded_full()
+            .border_2()
+            .border_color(indicator_border_color)
             .bg(indicator_color.color(cx));
 
         Some(
             div()
+                .relative()
                 .child(
                     IconButton::new("ssh-server-icon", IconName::Server)
+                        .icon_size(IconSize::Small)
+                        .shape(IconButtonShape::Square)
+                        .icon_color(icon_color)
                         .tooltip(move |cx| {
                             Tooltip::with_meta(
                                 "Remote Project",
@@ -294,7 +319,6 @@ impl TitleBar {
                                 cx,
                             )
                         })
-                        .shape(ui::IconButtonShape::Square)
                         .on_click(|_, cx| {
                             cx.dispatch_action(OpenRemote.boxed_clone());
                         }),
@@ -342,7 +366,7 @@ impl TitleBar {
             return self.render_ssh_project_host(cx);
         }
 
-        if self.project.read(cx).is_disconnected() {
+        if self.project.read(cx).is_disconnected(cx) {
             return Some(
                 Button::new("disconnected", "Disconnected")
                     .disabled(true)

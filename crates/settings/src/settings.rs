@@ -14,8 +14,8 @@ pub use json_schema::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore,
+    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
+    SettingsSources, SettingsStore,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]

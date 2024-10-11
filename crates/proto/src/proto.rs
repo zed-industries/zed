@@ -290,8 +290,6 @@ messages!(
     (SynchronizeBuffersResponse, Foreground),
     (TaskContextForLocation, Background),
     (TaskContext, Background),
-    (TaskTemplates, Background),
-    (TaskTemplatesResponse, Background),
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
@@ -366,6 +364,7 @@ messages!(
     (CheckFileExists, Background),
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
+    (RemoveWorktree, Foreground),
 );
 
 request_messages!(
@@ -460,7 +459,6 @@ request_messages!(
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),
-    (TaskTemplates, TaskTemplatesResponse),
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
@@ -489,7 +487,8 @@ request_messages!(
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
-    (ShutdownRemoteServer, Ack)
+    (ShutdownRemoteServer, Ack),
+    (RemoveWorktree, Ack)
 );
 
 entity_messages!(
@@ -543,7 +542,6 @@ entity_messages!(
     StartLanguageServer,
     SynchronizeBuffers,
     TaskContextForLocation,
-    TaskTemplates,
     UnshareProject,
     UpdateBuffer,
     UpdateBufferFile,

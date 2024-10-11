@@ -237,10 +237,13 @@ impl WorktreeStore {
             .to_string_lossy()
             .to_string();
         cx.spawn(|this, mut cx| async move {
+            let this = this.upgrade().context("Dropped worktree store")?;
+
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
                     path: abs_path.clone(),
+                    visible,
                 })
                 .await?;
 
@@ -252,7 +255,7 @@ impl WorktreeStore {
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
-                    0,
+                    SSH_PROJECT_ID,
                     0,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,

@@ -371,10 +371,10 @@ List of `string` values
 "cursor_shape": "block"
 ```
 
-3. An underscore that runs along the following character:
+3. An underline / underscore that runs along the following character:
 
 ```json
-"cursor_shape": "underscore"
+"cursor_shape": "underline"
 ```
 
 4. An box drawn around the following character:

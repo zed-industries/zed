@@ -4,7 +4,7 @@ mod telemetry;
 mod token;
 
 use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor,
+    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor, Cents,
     Config, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
@@ -22,8 +22,7 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-
-use reqwest_client::ReqwestClient;
+use isahc_http_client::IsahcHttpClient;
 use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -44,7 +43,7 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: ReqwestClient,
+    pub http_client: IsahcHttpClient,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -70,8 +69,11 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client =
-            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
+        let http_client = IsahcHttpClient::builder()
+            .default_header("User-Agent", user_agent)
+            .build()
+            .map(IsahcHttpClient::from)
+            .context("failed to construct http client")?;
 
         let this = Self {
             executor,
@@ -436,10 +438,18 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
-/// The maximum lifetime spending an individual user can reach before being cut off.
+/// The maximum monthly spending an individual user can reach on the free tier
+/// before they have to pay.
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+
+/// The default value to use for maximum spend per month if the user did not
+/// explicitly set a maximum spend.
 ///
-/// Represented in cents.
-const LIFETIME_SPENDING_LIMIT_IN_CENTS: usize = 1_000 * 100;
+/// Used to prevent surprise bills.
+pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
+
+/// The maximum lifetime spending an individual user can reach before being cut off.
+const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
 
 async fn check_usage_limit(
     state: &Arc<LlmState>,
@@ -458,7 +468,19 @@ async fn check_usage_limit(
         )
         .await?;
 
-    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
+    if state.config.is_llm_billing_enabled() {
+        if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
+            if !claims.has_llm_subscription {
+                return Err(Error::http(
+                    StatusCode::PAYMENT_REQUIRED,
+                    "Maximum spending limit reached for this month.".to_string(),
+                ));
+            }
+        }
+    }
+
+    // TODO: Remove this once we've rolled out monthly spending limits.
+    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT {
         return Err(Error::http(
             StatusCode::FORBIDDEN,
             "Maximum spending limit reached.".to_string(),
@@ -505,7 +527,6 @@ async fn check_usage_limit(
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
                 UsageMeasure::TokensPerMinute => "tokens_per_minute",
                 UsageMeasure::TokensPerDay => "tokens_per_day",
-                _ => "",
             };
 
             if let Some(client) = state.clickhouse_client.as_ref() {
@@ -674,8 +695,8 @@ impl<S> Drop for TokenCountingStream<S> {
                                 .cache_read_input_tokens_this_month
                                 as u64,
                             output_tokens_this_month: usage.output_tokens_this_month as u64,
-                            spending_this_month: usage.spending_this_month as u64,
-                            lifetime_spending: usage.lifetime_spending as u64,
+                            spending_this_month: usage.spending_this_month.0 as u64,
+                            lifetime_spending: usage.lifetime_spending.0 as u64,
                         },
                     )
                     .await
