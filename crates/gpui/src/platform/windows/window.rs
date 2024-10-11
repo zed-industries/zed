@@ -238,99 +238,84 @@ impl WindowsWindowStatePtr {
     }
 
     fn toggle_fullscreen(&self) {
-        let state_ptr = self.clone();
-            self
-                .executor
-                .spawn(async move {
-                    let mut lock = state_ptr.state.borrow_mut();
-                    let StyleAndBounds {
+        let Some(state_ptr) = self.this.upgrade() else {
+            log::error!("Unable to toggle fullscreen: window has been dropped");
+            return;
+        };
+        self.executor
+            .spawn(async move {
+                let mut lock = state_ptr.state.borrow_mut();
+                let StyleAndBounds {
+                    style,
+                    x,
+                    y,
+                    cx,
+                    cy,
+                } = if let Some(state) = lock.fullscreen.take() {
+                    state
+                } else {
+                    let (window_bounds, _) = lock.calculate_window_bounds();
+                    lock.fullscreen_restore_bounds = window_bounds;
+                    let style =
+                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
+                    let mut rc = RECT::default();
+                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
+                    let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
+                        x: rc.left,
+                        y: rc.top,
+                        cx: rc.right - rc.left,
+                        cy: rc.bottom - rc.top,
+                    });
+                    let style = style
+                        & !(WS_THICKFRAME
+                            | WS_SYSMENU
+                            | WS_MAXIMIZEBOX
+                            | WS_MINIMIZEBOX
+                            | WS_CAPTION);
+                    let physical_bounds = lock.display.physical_bounds();
+                    StyleAndBounds {
+                        style,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
+                    }
+                };
+                drop(lock);
+                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
+                unsafe {
+                    SetWindowPos(
+                        state_ptr.hwnd,
+                        HWND::default(),
                         x,
                         y,
                         cx,
                         cy,
-                    } = if let Some(state) = lock.fullscreen.take() {
-                        state
-                    } else {
-                        let (window_bounds, _) = lock.calculate_window_bounds();
-                        lock.fullscreen_restore_bounds = window_bounds;
-                        let style = WINDOW_STYLE(unsafe {
-                            get_window_long(state_ptr.hwnd, GWL_STYLE)
-                        } as _);
-                        let mut rc = RECT::default();
-                        unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
-                        let _ = lock.fullscreen.insert(StyleAndBounds {
-                            style,
-                            x: rc.left,
-                            y: rc.top,
-                            cx: rc.right - rc.left,
-                            cy: rc.bottom - rc.top,
-                        });
-                        let style = style
-                            & !(WS_THICKFRAME
-                                | WS_SYSMENU
-                                | WS_MAXIMIZEBOX
-                                | WS_MINIMIZEBOX
-                                | WS_CAPTION);
-                        let physical_bounds = lock.display.physical_bounds();
-                        StyleAndBounds {
-                            style,
-                            x: physical_bounds.left().0,
-                            y: physical_bounds.top().0,
-                            cx: physical_bounds.size.width.0,
-                            cy: physical_bounds.size.height.0,
-                        }
-                    };
-                    drop(lock);
-                    unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
-                    unsafe {
-                        SetWindowPos(
-                            state_ptr.hwnd,
-                            HWND::default(),
-                            x,
-                            y,
-                            cx,
-                            cy,
-                            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
-                        )
-                    }
-                    .log_err();
-                })
-                .detach();
+                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+                    )
+                }
+                .log_err();
+            })
+            .detach();
     }
 
     fn set_window_placement(&self) -> Result<()> {
-        let Some(mut open_status) = self.state.borrow_mut().initial_placement.take() else {
+        let Some(open_status) = self.state.borrow_mut().initial_placement.take() else {
             return Ok(());
         };
         match open_status.state {
-            WindowOpenState::Maximized => {
-                let mut lock = self.state.borrow_mut();
-                let (window_bounds, _) = lock.calculate_window_bounds();
-                lock.fullscreen_restore_bounds = window_bounds;
-                lock.fullscreen = Some(StyleAndBounds {
-                    style: WINDOW_STYLE(unsafe { get_window_long(self.hwnd, GWL_STYLE) } as _),
-                    x: window_bounds.origin.x.0,
-                    y: window_bounds.origin.y.0,
-                    cx: window_bounds.size.width.0,
-                    cy: window_bounds.size.height.0,
-                });
-            }
+            WindowOpenState::Maximized => unsafe {
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+            },
             WindowOpenState::Fullscreen => {
-                unsafe {SetWindowPlacement(self.hwnd, &open_status.placement)?};
-                self.
-                let mut lock = self.state.borrow_mut();
-                let physical_bounds = lock.display.physical_bounds();
-                let style = WINDOW_STYLE(unsafe { get_window_long(self.hwnd, GWL_STYLE) } as _);
-                let x = physical_bounds.left().0;
-                let y = physical_bounds.top().0;
-                let cx = physical_bounds.size.width.0;
-                let cy = physical_bounds.size.height.0;
-                lock.fullscreen = Some(StyleAndBounds { style, x, y, cx, cy });
+                unsafe { SetWindowPlacement(self.hwnd, &open_status.placement)? };
+                self.toggle_fullscreen();
             }
             WindowOpenState::Windowed => unsafe {
                 SetWindowPlacement(self.hwnd, &open_status.placement)?;
-            }
+            },
         }
         Ok(())
     }
@@ -693,6 +678,8 @@ impl PlatformWindow for WindowsWindow {
 
     fn toggle_fullscreen(&self) {
         if unsafe { IsWindowVisible(self.0.hwnd).as_bool() } {
+            self.0.toggle_fullscreen();
+        } else {
             self.0
                 .state
                 .borrow_mut()
@@ -701,66 +688,6 @@ impl PlatformWindow for WindowsWindow {
                 .map(|status| {
                     status.state = WindowOpenState::Fullscreen;
                 });
-        } else {
-            let state_ptr = self.0.clone();
-            self.0
-                .executor
-                .spawn(async move {
-                    let mut lock = state_ptr.state.borrow_mut();
-                    let StyleAndBounds {
-                        style,
-                        x,
-                        y,
-                        cx,
-                        cy,
-                    } = if let Some(state) = lock.fullscreen.take() {
-                        state
-                    } else {
-                        let (window_bounds, _) = lock.calculate_window_bounds();
-                        lock.fullscreen_restore_bounds = window_bounds;
-                        let style = WINDOW_STYLE(unsafe {
-                            get_window_long(state_ptr.hwnd, GWL_STYLE)
-                        } as _);
-                        let mut rc = RECT::default();
-                        unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
-                        let _ = lock.fullscreen.insert(StyleAndBounds {
-                            style,
-                            x: rc.left,
-                            y: rc.top,
-                            cx: rc.right - rc.left,
-                            cy: rc.bottom - rc.top,
-                        });
-                        let style = style
-                            & !(WS_THICKFRAME
-                                | WS_SYSMENU
-                                | WS_MAXIMIZEBOX
-                                | WS_MINIMIZEBOX
-                                | WS_CAPTION);
-                        let physical_bounds = lock.display.physical_bounds();
-                        StyleAndBounds {
-                            style,
-                            x: physical_bounds.left().0,
-                            y: physical_bounds.top().0,
-                            cx: physical_bounds.size.width.0,
-                            cy: physical_bounds.size.height.0,
-                        }
-                    };
-                    drop(lock);
-                    unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
-                    unsafe {
-                        SetWindowPos(
-                            state_ptr.hwnd,
-                            HWND::default(),
-                            x,
-                            y,
-                            cx,
-                            cy,
-                            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
-                        )
-                    }
-                    .log_err();
-                })
-                .detach();
         }
     }
 
