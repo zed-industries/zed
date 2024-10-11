@@ -2,7 +2,7 @@ use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
 use fs::RealFs;
 use futures::channel::mpsc;
-use futures::{select, select_biased, AsyncRead, AsyncWrite, FutureExt, SinkExt};
+use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use gpui::{AppContext, Context as _};
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
@@ -14,7 +14,7 @@ use rpc::proto::Envelope;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::Async;
-use smol::{io::AsyncWriteExt, net::unix::UnixListener, stream::StreamExt as _};
+use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::{
     env,
     io::Write,
@@ -382,33 +382,17 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     });
 
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
+        let mut stderr = Async::new(std::io::stderr())?;
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
-
-        let mut stderr_buffer = Vec::with_capacity(1024);
-        let mut stderr_offset = 0;
-
+        let mut stderr_buffer = vec![0; 2048];
         loop {
-            stderr_buffer.resize(stderr_offset + 1024, 0);
-
-            let result = stream.read(&mut stderr_buffer).await;
-            match result {
+            match stream.read(&mut stderr_buffer).await {
                 Ok(0) => {
                     return anyhow::Ok(());
                 }
-                Ok(len) => {
-                    stderr_offset += len;
-                    let mut start_ix = 0;
-                    while let Some(ix) = stderr_buffer[start_ix..stderr_offset]
-                        .iter()
-                        .position(|b| b == &b'\n')
-                    {
-                        let line_ix = start_ix + ix;
-                        let content = &stderr_buffer[start_ix..line_ix];
-                        start_ix = line_ix + 1;
-                        log::info!("(server) {}", String::from_utf8_lossy(content));
-                    }
-                    stderr_buffer.drain(0..start_ix);
-                    stderr_offset -= start_ix;
+                Ok(n) => {
+                    stderr.write(&mut stderr_buffer[..n]).await?;
+                    stderr.flush().await?;
                 }
                 Err(error) => {
                     Err(anyhow!("error reading stderr: {error:?}"))?;
