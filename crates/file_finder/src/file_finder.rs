@@ -767,23 +767,36 @@ impl FileFinderDelegate {
 
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
-            let update_result = project
-                .update(&mut cx, |project, cx| {
-                    if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
-                        path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                            score: 1.0,
-                            positions: Vec::new(),
-                            worktree_id: worktree.read(cx).id().to_usize(),
-                            path: Arc::from(relative_path),
-                            path_prefix: "".into(),
-                            is_dir: false, // File finder doesn't support directories
-                            distance_to_relative_ancestor: usize::MAX,
-                        }));
-                    }
-                })
-                .log_err();
-            if update_result.is_none() {
-                return;
+
+            let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
+                this.abs_file_path_exists(query.path_query(), cx)
+            }) {
+                task.await
+            } else {
+                false
+            };
+
+            if abs_file_exists {
+                let update_result = project
+                    .update(&mut cx, |project, cx| {
+                        if let Some((worktree, relative_path)) =
+                            project.find_worktree(query_path, cx)
+                        {
+                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                                score: 1.0,
+                                positions: Vec::new(),
+                                worktree_id: worktree.read(cx).id().to_usize(),
+                                path: Arc::from(relative_path),
+                                path_prefix: "".into(),
+                                is_dir: false, // File finder doesn't support directories
+                                distance_to_relative_ancestor: usize::MAX,
+                            }));
+                        }
+                    })
+                    .log_err();
+                if update_result.is_none() {
+                    return;
+                }
             }
 
             picker
