@@ -382,7 +382,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                     return anyhow::Ok(());
                 }
                 Ok(n) => {
-                    stderr.write(&mut stderr_buffer[..n]).await?;
+                    stderr.write_all(&mut stderr_buffer[..n]).await?;
                     stderr.flush().await?;
                 }
                 Err(error) => {
