@@ -56,8 +56,6 @@ impl Tab {
 
     pub const CONTAINER_HEIGHT_IN_REMS: f32 = 29. / BASE_REM_SIZE_IN_PX;
 
-    const CONTENT_HEIGHT_IN_REMS: f32 = 28. / BASE_REM_SIZE_IN_PX;
-
     pub fn position(mut self, position: TabPosition) -> Self {
         self.position = position;
         self
@@ -130,7 +128,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(rems(Self::CONTAINER_HEIGHT_IN_REMS))
+            .h(cx.rem_size() + Spacing::XXLarge.px(cx))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
@@ -157,7 +155,7 @@ impl RenderOnce for Tab {
                 h_flex()
                     .group("")
                     .relative()
-                    .h(rems(Self::CONTENT_HEIGHT_IN_REMS))
+                    .h(cx.rem_size() + Spacing::XXLarge.px(cx))
                     .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .text_color(text_color)

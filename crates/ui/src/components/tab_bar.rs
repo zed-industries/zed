@@ -97,11 +97,7 @@ impl RenderOnce for TabBar {
             .flex()
             .flex_none()
             .w_full()
-            .h(
-                // TODO: This should scale with [UiDensity], however tabs,
-                // and other tab bar tools need to scale dynamically first.
-                rems_from_px(29.),
-            )
+            .h(cx.rem_size() + Spacing::XXLarge.px(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
