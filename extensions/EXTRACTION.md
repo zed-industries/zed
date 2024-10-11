@@ -35,12 +35,8 @@ See: [Git Filter Repo Docs](https://htmlpreview.github.io/?https://github.com/ne
 
 ```sh
 rm -rf zed3
-git clone git@github.com:zed-industries/zed.git zed3
+git clone --single-branch --no-tags git@github.com:zed-industries/zed.git zed3
 cd zed3
-
-# delete tags and branches
-git tag --delete $(git tag -l)
-git branch | grep -v "^* main$" | xargs git branch -D
 
 # This removes the LICENSE symlink
 git filter-repo --invert-paths --path extensions/ruby/LICENSE-APACHE
@@ -78,7 +74,7 @@ git tag v0.0.2 abcd1234
 git tag v0.0.3 deadbeef
 ```
 
-Usually the initial extraction didn't mention a version numer so you can just do that one manually.
+Usually the initial extraction didn't mention a version number so you can just do that one manually.
 
 4. Push to the new repo
 
