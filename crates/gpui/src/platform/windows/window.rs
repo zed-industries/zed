@@ -58,6 +58,7 @@ pub struct WindowsWindowState {
 
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
+    this: Weak<Self>,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -222,9 +223,10 @@ impl WindowsWindowStatePtr {
             context.display,
         )?);
 
-        Ok(Rc::new(Self {
-            state,
+        Ok(Rc::new_cyclic(|this| Self {
             hwnd,
+            this: this.clone(),
+            state,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
