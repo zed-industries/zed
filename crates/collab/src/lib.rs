@@ -10,6 +10,7 @@ pub mod migrations;
 mod rate_limiter;
 pub mod rpc;
 pub mod seed;
+pub mod stripe_billing;
 pub mod user_backfiller;
 
 #[cfg(test)]

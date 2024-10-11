@@ -5,7 +5,6 @@ use axum::{
     Extension, Json, Router,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use collections::HashMap;
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
@@ -21,7 +20,7 @@ use stripe::{
 use util::ResultExt;
 
 use crate::llm::db::LlmDatabase;
-use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
+use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
 use crate::rpc::ResultExt as _;
 use crate::{
     db::{
@@ -30,13 +29,10 @@ use crate::{
         UpdateBillingCustomerParams, UpdateBillingPreferencesParams,
         UpdateBillingSubscriptionParams,
     },
-    llm,
+    stripe_billing::StripeBilling,
 };
 use crate::{
-    db::{
-        billing_subscription::{self, StripeSubscriptionStatus},
-        UserId,
-    },
+    db::{billing_subscription::StripeSubscriptionStatus, UserId},
     Cents,
 };
 use crate::{AppState, Error, Result};
@@ -726,7 +722,7 @@ async fn find_or_create_billing_customer(
     Ok(Some(billing_customer))
 }
 
-const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>, llm_db: LlmDatabase) {
     let Some(stripe_client) = app.stripe_client.clone() else {
@@ -754,29 +750,14 @@ async fn sync_with_stripe(
     llm_db: &LlmDatabase,
     stripe_client: &stripe::Client,
 ) -> anyhow::Result<()> {
+    let mut stripe_billing = StripeBilling::new(stripe_client).await?;
+
     let rollups = llm_db.get_billing_event_rollups().await?;
     let user_ids = rollups
         .iter()
         .map(|rollup| rollup.user_id)
         .collect::<Vec<UserId>>();
-
     let stripe_subscriptions = app.db.get_active_billing_subscriptions(user_ids).await?;
-    let mut stripe_meters_by_event_name = HashMap::default();
-    for meter in StripeMeter::list(stripe_client).await?.data {
-        stripe_meters_by_event_name.insert(meter.event_name, meter);
-    }
-
-    let mut stripe_price_ids_by_meter_id = HashMap::default();
-    for price in stripe::Price::list(stripe_client, &stripe::ListPrices::default())
-        .await?
-        .data
-    {
-        if let Some(recurring) = price.recurring {
-            if let Some(meter) = recurring.meter {
-                stripe_price_ids_by_meter_id.insert(meter, price.id);
-            }
-        }
-    }
 
     for rollup in llm_db.get_billing_event_rollups().await? {
         let Some((stripe_db_customer, stripe_db_subscription)) =
@@ -788,244 +769,42 @@ async fn sync_with_stripe(
             );
             continue;
         };
-        let stripe_subscription_id = stripe_db_subscription
+        let stripe_subscription_id: stripe::SubscriptionId = stripe_db_subscription
             .stripe_subscription_id
             .parse()
             .context("failed to parse stripe subscription id from db")?;
+        let stripe_customer_id: stripe::CustomerId = stripe_db_customer
+            .stripe_customer_id
+            .parse()
+            .context("failed to parse stripe customer id from db")?;
 
-        let stripe_model = billing.get_or_insert_model();
-
-        let stripe_subscription =
-            stripe::Subscription::retrieve(stripe_client, &stripe_subscription_id, &[]).await?;
-
-        if !subscription_contains_price(&stripe_subscription, &stripe_price_id) {
-            Subscription::update(
+        let stripe_model = stripe_billing
+            .register_model(
+                rollup.model_id,
+                &rollup.model_name,
+                Cents::new(rollup.price_per_million_input_tokens as u32),
+                Cents::new(rollup.price_per_million_cache_creation_input_tokens as u32),
+                Cents::new(rollup.price_per_million_cache_read_input_tokens as u32),
+                Cents::new(rollup.price_per_million_output_tokens as u32),
                 stripe_client,
-                &stripe_subscription_id,
-                stripe::UpdateSubscription {
-                    items: Some(vec![stripe::UpdateSubscriptionItems {
-                        price: Some(stripe_price_id.to_string()),
-                        ..Default::default()
-                    }]),
-                    ..Default::default()
-                },
             )
             .await?;
-        }
-
-        // TODO: now that we have a valid meter, continue with getting the prices
-        // https://docs.stripe.com/billing/subscriptions/usage-based/pricing-models
-        //
+        stripe_billing
+            .subscribe_to_model(&stripe_subscription_id, &stripe_model, stripe_client)
+            .await?;
+        stripe_billing
+            .bill_model_usage(
+                &stripe_model,
+                &stripe_customer_id,
+                rollup.input_tokens as u64,
+                rollup.cache_creation_input_tokens as u64,
+                rollup.cache_read_input_tokens as u64,
+                rollup.output_tokens as u64,
+                stripe_client,
+            )
+            .await?;
         llm_db.consume_billing_event_rollup(rollup).await?;
     }
 
     Ok(())
-}
-
-fn subscription_contains_price(
-    subscription: &stripe::Subscription,
-    price_id: &stripe::PriceId,
-) -> bool {
-    subscription.items.data.iter().any(|item| {
-        item.price
-            .as_ref()
-            .map_or(false, |price| price.id == *price_id)
-    })
-}
-
-async fn update_stripe_subscription(
-    llm_db: &LlmDatabase,
-    stripe_client: &stripe::Client,
-    stripe_llm_usage_price_id: &Arc<str>,
-    customer: billing_customer::Model,
-    subscription: billing_subscription::Model,
-) -> Result<(), anyhow::Error> {
-    let monthly_spending = llm_db
-        .get_user_spending_for_month(customer.user_id, Utc::now())
-        .await?;
-    let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
-        .context("failed to parse subscription ID")?;
-
-    let monthly_spending_over_free_tier =
-        monthly_spending.saturating_sub(FREE_TIER_MONTHLY_SPENDING_LIMIT);
-
-    let new_quantity = (monthly_spending_over_free_tier.0 as f32 / 100.).ceil();
-    let current_subscription = Subscription::retrieve(stripe_client, &subscription_id, &[]).await?;
-
-    let mut update_params = stripe::UpdateSubscription {
-        proration_behavior: Some(
-            stripe::generated::billing::subscription::SubscriptionProrationBehavior::None,
-        ),
-        ..Default::default()
-    };
-
-    if let Some(existing_item) = current_subscription.items.data.iter().find(|item| {
-        item.price.as_ref().map_or(false, |price| {
-            price.id == stripe_llm_usage_price_id.as_ref()
-        })
-    }) {
-        update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
-            id: Some(existing_item.id.to_string()),
-            quantity: Some(new_quantity as u64),
-            ..Default::default()
-        }]);
-    } else {
-        update_params.items = Some(vec![stripe::UpdateSubscriptionItems {
-            price: Some(stripe_llm_usage_price_id.to_string()),
-            quantity: Some(new_quantity as u64),
-            ..Default::default()
-        }]);
-    }
-
-    Subscription::update(stripe_client, &subscription_id, update_params).await?;
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct DefaultAggregation {
-    formula: &'static str,
-}
-
-#[derive(Serialize)]
-struct CreateMeterParams<'a> {
-    default_aggregation: DefaultAggregation,
-    display_name: String,
-    event_name: &'a str,
-}
-
-#[derive(Clone, Deserialize)]
-struct StripeMeter {
-    id: String,
-    event_name: String,
-}
-
-impl StripeMeter {
-    pub fn create(client: &stripe::Client, params: CreateMeterParams) -> stripe::Response<Self> {
-        client.post_form("/v1/billing/meters", params)
-    }
-
-    pub fn list(client: &stripe::Client) -> stripe::Response<stripe::List<Self>> {
-        client.get_query("/billing/meters", ())
-    }
-}
-
-struct StripeBilling {
-    meters_by_event_name: HashMap<String, StripeMeter>,
-    price_ids_by_meter_id: HashMap<String, stripe::PriceId>,
-}
-
-struct StripeBillingModel {
-    input_tokens_price: StripeBillingPrice,
-    input_cache_creation_tokens_price: StripeBillingPrice,
-    input_cache_read_tokens_price: StripeBillingPrice,
-    output_tokens_price: StripeBillingPrice,
-}
-
-struct StripeBillingPrice {
-    id: stripe::PriceId,
-    meter_event_name: String,
-}
-
-impl StripeBilling {
-    async fn new(client: &stripe::Client) -> Result<Self> {
-        let mut meters_by_event_name = HashMap::default();
-        for meter in StripeMeter::list(client).await?.data {
-            meters_by_event_name.insert(meter.event_name.clone(), meter);
-        }
-
-        let mut price_ids_by_meter_id = HashMap::default();
-        for price in stripe::Price::list(client, &stripe::ListPrices::default())
-            .await?
-            .data
-        {
-            if let Some(recurring) = price.recurring {
-                if let Some(meter) = recurring.meter {
-                    price_ids_by_meter_id.insert(meter, price.id);
-                }
-            }
-        }
-
-        Ok(Self {
-            meters_by_event_name,
-            price_ids_by_meter_id,
-        })
-    }
-
-    async fn get_or_insert_model(
-        &mut self,
-        model_id: llm::db::ModelId,
-        description: &str,
-        price_per_million_tokens: Cents,
-        client: &stripe::Client,
-    ) -> Result<StripeBillingModel> {
-        todo!()
-        // let stripe_event_name = format!("model_{}", rollup.model_id);
-        // let stripe_meter =
-        //     if let Some(stripe_meter) = stripe_meters_by_event_name.get(&stripe_event_name) {
-        //         stripe_meter.clone()
-        //     } else {
-        //         let stripe_meter = StripeMeter::create(
-        //             stripe_client,
-        //             CreateMeterParams {
-        //                 default_aggregation: DefaultAggregation { formula: "sum" },
-        //                 display_name: format!("Model #{}", rollup.model_id),
-        //                 event_name: &stripe_event_name,
-        //             },
-        //         )
-        //         .await?;
-        //         stripe_meters_by_event_name.insert(stripe_event_name.clone(), stripe_meter.clone());
-        //         stripe_meter
-        //     };
-
-        // let stripe_price_id =
-        //     if let Some(stripe_price_id) = stripe_price_ids_by_meter_id.get(&stripe_meter.id) {
-        //         stripe_price_id.clone()
-        //     } else {
-        //         let price = stripe::Price::create(
-        //             stripe_client,
-        //             stripe::CreatePrice {
-        //                 active: Some(true),
-        //                 billing_scheme: Some(stripe::PriceBillingScheme::PerUnit),
-        //                 currency: stripe::Currency::USD,
-        //                 currency_options: None,
-        //                 custom_unit_amount: None,
-        //                 expand: &[],
-        //                 lookup_key: None,
-        //                 metadata: None,
-        //                 nickname: None,
-        //                 product: None,
-        //                 product_data: Some(stripe::CreatePriceProductData {
-        //                     id: None,
-        //                     active: Some(true),
-        //                     metadata: None,
-        //                     name: "product name".to_string(),
-        //                     statement_descriptor: None,
-        //                     tax_code: None,
-        //                     unit_label: None,
-        //                 }),
-        //                 recurring: Some(stripe::CreatePriceRecurring {
-        //                     aggregate_usage: Some(stripe::CreatePriceRecurringAggregateUsage::Sum),
-        //                     interval: stripe::CreatePriceRecurringInterval::Month,
-        //                     interval_count: None,
-        //                     trial_period_days: None,
-        //                     usage_type: Some(stripe::CreatePriceRecurringUsageType::Metered),
-        //                     meter: Some(stripe_meter.id.clone()),
-        //                 }),
-        //                 tax_behavior: None,
-        //                 tiers: None,
-        //                 tiers_mode: None,
-        //                 transfer_lookup_key: None,
-        //                 transform_quantity: Some(stripe::CreatePriceTransformQuantity {
-        //                     divide_by: 1000000,
-        //                     round: stripe::CreatePriceTransformQuantityRound::Up,
-        //                 }),
-        //                 unit_amount: Some(300),
-        //                 unit_amount_decimal: None,
-        //             },
-        //         )
-        //         .await?;
-        //         stripe_price_ids_by_meter_id.insert(stripe_meter.id, price.id.clone());
-        //         price.id
-        //     };
-    }
 }

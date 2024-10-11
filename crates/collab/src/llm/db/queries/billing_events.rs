@@ -1,16 +1,21 @@
 use super::*;
 use crate::{db::UserId, Result};
-use sea_orm::{FromQueryResult, QuerySelect as _};
+use sea_orm::{FromQueryResult, JoinType, QuerySelect as _};
 
 #[derive(FromQueryResult)]
 pub struct BillingEventRollup {
     pub max_billing_event_id: BillingEventId,
     pub model_id: ModelId,
+    pub model_name: String,
     pub user_id: UserId,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_creation_input_tokens: i64,
     pub cache_read_input_tokens: i64,
+    pub price_per_million_input_tokens: i32,
+    pub price_per_million_cache_creation_input_tokens: i32,
+    pub price_per_million_cache_read_input_tokens: i32,
+    pub price_per_million_output_tokens: i32,
 }
 
 impl LlmDatabase {
@@ -57,8 +62,25 @@ impl LlmDatabase {
                     billing_event::Column::CacheReadInputTokens.sum(),
                     "cache_read_input_tokens",
                 )
+                .column_as(
+                    model::Column::PricePerMillionInputTokens.max(),
+                    "price_per_million_input_tokens",
+                )
+                .column_as(
+                    model::Column::PricePerMillionCacheCreationInputTokens.max(),
+                    "price_per_million_cache_creation_input_tokens",
+                )
+                .column_as(
+                    model::Column::PricePerMillionCacheReadInputTokens.max(),
+                    "price_per_million_cache_read_input_tokens",
+                )
+                .column_as(
+                    model::Column::PricePerMillionOutputTokens.max(),
+                    "price_per_million_output_tokens",
+                )
+                .column_as(model::Column::Name.max(), "model_name")
+                .join(JoinType::InnerJoin, billing_event::Relation::Model.def())
                 .group_by(billing_event::Column::UserId)
-                .group_by(billing_event::Column::ModelId)
                 .into_model::<BillingEventRollup>()
                 .all(&*tx)
                 .await?)
