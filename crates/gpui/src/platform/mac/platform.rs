@@ -216,7 +216,8 @@ impl MacPlatform {
 
         for menu_config in menus {
             let menu = NSMenu::new(nil).autorelease();
-            menu.setTitle_(ns_string(&menu_config.name));
+            let menu_title = ns_string(&menu_config.name);
+            menu.setTitle_(menu_title);
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
@@ -229,6 +230,7 @@ impl MacPlatform {
             }
 
             let menu_item = NSMenuItem::new(nil).autorelease();
+            menu_item.setTitle_(menu_title);
             menu_item.setSubmenu_(menu);
             application_menu.addItem_(menu_item);
 

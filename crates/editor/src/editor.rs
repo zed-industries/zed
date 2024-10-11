@@ -121,10 +121,11 @@ use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
-    lsp_store::FormatTrigger, CodeAction, Completion, CompletionIntent, Item, Location, Project,
-    ProjectPath, ProjectTransaction, TaskSourceKind,
+    lsp_store::FormatTrigger,
+    project_settings::{GitGutterSetting, ProjectSettings},
+    CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Item, Location,
+    LocationLink, Project, ProjectPath, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -546,6 +547,7 @@ pub struct Editor {
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     project: Option<Model<Project>>,
+    semantics_provider: Option<Rc<dyn SemanticsProvider>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
@@ -884,12 +886,12 @@ enum ContextMenu {
 impl ContextMenu {
     fn select_first(
         &mut self,
-        project: Option<&Model<Project>>,
+        provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_first(project, cx),
+                ContextMenu::Completions(menu) => menu.select_first(provider, cx),
                 ContextMenu::CodeActions(menu) => menu.select_first(cx),
             }
             true
@@ -900,12 +902,12 @@ impl ContextMenu {
 
     fn select_prev(
         &mut self,
-        project: Option<&Model<Project>>,
+        provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_prev(project, cx),
+                ContextMenu::Completions(menu) => menu.select_prev(provider, cx),
                 ContextMenu::CodeActions(menu) => menu.select_prev(cx),
             }
             true
@@ -916,12 +918,12 @@ impl ContextMenu {
 
     fn select_next(
         &mut self,
-        project: Option<&Model<Project>>,
+        provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_next(project, cx),
+                ContextMenu::Completions(menu) => menu.select_next(provider, cx),
                 ContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
@@ -932,12 +934,12 @@ impl ContextMenu {
 
     fn select_last(
         &mut self,
-        project: Option<&Model<Project>>,
+        provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_last(project, cx),
+                ContextMenu::Completions(menu) => menu.select_last(provider, cx),
                 ContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
@@ -991,39 +993,55 @@ struct CompletionsMenu {
 }
 
 impl CompletionsMenu {
-    fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+    fn select_first(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         self.selected_item = 0;
         self.scroll_handle.scroll_to_item(self.selected_item);
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
 
-    fn select_prev(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+    fn select_prev(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
             self.selected_item = self.matches.len() - 1;
         }
         self.scroll_handle.scroll_to_item(self.selected_item);
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
 
-    fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+    fn select_next(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         if self.selected_item + 1 < self.matches.len() {
             self.selected_item += 1;
         } else {
             self.selected_item = 0;
         }
         self.scroll_handle.scroll_to_item(self.selected_item);
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
 
-    fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
+    fn select_last(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         self.selected_item = self.matches.len() - 1;
         self.scroll_handle.scroll_to_item(self.selected_item);
-        self.attempt_resolve_selected_completion_documentation(project, cx);
+        self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
 
@@ -1059,7 +1077,7 @@ impl CompletionsMenu {
 
     fn attempt_resolve_selected_completion_documentation(
         &mut self,
-        project: Option<&Model<Project>>,
+        provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
         let settings = EditorSettings::get_global(cx);
@@ -1068,18 +1086,16 @@ impl CompletionsMenu {
         }
 
         let completion_index = self.matches[self.selected_item].candidate_id;
-        let Some(project) = project else {
+        let Some(provider) = provider else {
             return;
         };
 
-        let resolve_task = project.update(cx, |project, cx| {
-            project.resolve_completions(
-                self.buffer.clone(),
-                vec![completion_index],
-                self.completions.clone(),
-                cx,
-            )
-        });
+        let resolve_task = provider.resolve_completions(
+            self.buffer.clone(),
+            vec![completion_index],
+            self.completions.clone(),
+            cx,
+        );
 
         let delay_ms =
             EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
@@ -1671,7 +1687,7 @@ pub(crate) struct NavigationData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GotoDefinitionKind {
+pub enum GotoDefinitionKind {
     Symbol,
     Declaration,
     Type,
@@ -1879,10 +1895,17 @@ impl Editor {
                         }
                     }
                 }));
-                let task_inventory = project.read(cx).task_inventory().clone();
-                project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
-                    editor.tasks_update_task = Some(editor.refresh_runnables(cx));
-                }));
+                if let Some(task_inventory) = project
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .cloned()
+                {
+                    project_subscriptions.push(cx.observe(&task_inventory, |editor, _, cx| {
+                        editor.tasks_update_task = Some(editor.refresh_runnables(cx));
+                    }));
+                }
             }
         }
 
@@ -1930,6 +1953,7 @@ impl Editor {
             active_diagnostics: None,
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
+            semantics_provider: project.clone().map(|project| Rc::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -2298,8 +2322,16 @@ impl Editor {
         self.custom_context_menu = Some(Box::new(f))
     }
 
-    pub fn set_completion_provider(&mut self, provider: Box<dyn CompletionProvider>) {
-        self.completion_provider = Some(provider);
+    pub fn set_completion_provider(&mut self, provider: Option<Box<dyn CompletionProvider>>) {
+        self.completion_provider = provider;
+    }
+
+    pub fn semantics_provider(&self) -> Option<Rc<dyn SemanticsProvider>> {
+        self.semantics_provider.clone()
+    }
+
+    pub fn set_semantics_provider(&mut self, provider: Option<Rc<dyn SemanticsProvider>>) {
+        self.semantics_provider = provider;
     }
 
     pub fn set_inline_completion_provider<T>(
@@ -4034,7 +4066,7 @@ impl Editor {
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut ViewContext<Self>) {
-        if self.project.is_none() || self.mode != EditorMode::Full {
+        if self.semantics_provider.is_none() || self.mode != EditorMode::Full {
             return;
         }
 
@@ -4427,48 +4459,15 @@ impl Editor {
         &mut self,
         item_ix: Option<usize>,
         intent: CompletionIntent,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Task<anyhow::Result<()>>> {
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
+        use language::ToOffset as _;
+
         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
             menu
         } else {
             return None;
         };
-
-        let mut resolve_task_store = completions_menu
-            .selected_completion_documentation_resolve_debounce
-            .lock();
-        let selected_completion_resolve = resolve_task_store.start_now();
-        let menu_pre_resolve = self
-            .completion_documentation_pre_resolve_debounce
-            .start_now();
-        drop(resolve_task_store);
-
-        Some(cx.spawn(|editor, mut cx| async move {
-            match (selected_completion_resolve, menu_pre_resolve) {
-                (None, None) => {}
-                (Some(resolve), None) | (None, Some(resolve)) => resolve.await,
-                (Some(resolve_1), Some(resolve_2)) => {
-                    futures::join!(resolve_1, resolve_2);
-                }
-            }
-            if let Some(apply_edits_task) = editor.update(&mut cx, |editor, cx| {
-                editor.apply_resolved_completion(completions_menu, item_ix, intent, cx)
-            })? {
-                apply_edits_task.await?;
-            }
-            Ok(())
-        }))
-    }
-
-    fn apply_resolved_completion(
-        &mut self,
-        completions_menu: CompletionsMenu,
-        item_ix: Option<usize>,
-        intent: CompletionIntent,
-        cx: &mut ViewContext<'_, Editor>,
-    ) -> Option<Task<anyhow::Result<Option<language::Transaction>>>> {
-        use language::ToOffset as _;
 
         let mat = completions_menu
             .matches
@@ -4628,7 +4627,11 @@ impl Editor {
             // so we should automatically call signature_help
             self.show_signature_help(&ShowSignatureHelp, cx);
         }
-        Some(apply_edits)
+
+        Some(cx.foreground_executor().spawn(async move {
+            apply_edits.await?;
+            Ok(())
+        }))
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
@@ -4717,11 +4720,13 @@ impl Editor {
                                     );
                                 }
                                 project.update(cx, |project, cx| {
-                                    project.task_context_for_location(
-                                        captured_task_variables,
-                                        location,
-                                        cx,
-                                    )
+                                    project.task_store().update(cx, |task_store, cx| {
+                                        task_store.task_context_for_location(
+                                            captured_task_variables,
+                                            location,
+                                            cx,
+                                        )
+                                    })
                                 })
                             });
 
@@ -4933,6 +4938,11 @@ impl Editor {
         Ok(())
     }
 
+    pub fn clear_code_action_providers(&mut self) {
+        self.code_action_providers.clear();
+        self.available_code_actions.take();
+    }
+
     pub fn push_code_action_provider(
         &mut self,
         provider: Arc<dyn CodeActionProvider>,
@@ -5020,7 +5030,7 @@ impl Editor {
             return None;
         }
 
-        let project = self.project.clone()?;
+        let provider = self.semantics_provider.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let cursor_position = newest_selection.head();
@@ -5036,11 +5046,12 @@ impl Editor {
                 .timer(DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let highlights = if let Some(highlights) = project
-                .update(&mut cx, |project, cx| {
-                    project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
+            let highlights = if let Some(highlights) = cx
+                .update(|cx| {
+                    provider.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
                 })
-                .log_err()
+                .ok()
+                .flatten()
             {
                 highlights.await.log_err()
             } else {
@@ -7462,7 +7473,7 @@ impl Editor {
             .context_menu
             .write()
             .as_mut()
-            .map(|menu| menu.select_first(self.project.as_ref(), cx))
+            .map(|menu| menu.select_first(self.completion_provider.as_deref(), cx))
             .unwrap_or(false)
         {
             return;
@@ -7571,7 +7582,7 @@ impl Editor {
             .context_menu
             .write()
             .as_mut()
-            .map(|menu| menu.select_last(self.project.as_ref(), cx))
+            .map(|menu| menu.select_last(self.completion_provider.as_deref(), cx))
             .unwrap_or(false)
         {
             return;
@@ -7623,25 +7634,25 @@ impl Editor {
 
     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_first(self.project.as_ref(), cx);
+            context_menu.select_first(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_prev(self.project.as_ref(), cx);
+            context_menu.select_prev(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_next(self.project.as_ref(), cx);
+            context_menu.select_next(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.write().as_mut() {
-            context_menu.select_last(self.project.as_ref(), cx);
+            context_menu.select_last(self.completion_provider.as_deref(), cx);
         }
     }
 
@@ -9134,23 +9145,29 @@ impl Editor {
                 .map(|file| (file.worktree_id(cx), file.clone()))
                 .unzip();
 
-            (project.task_inventory().clone(), worktree_id, file)
+            (
+                project.task_store().read(cx).task_inventory().cloned(),
+                worktree_id,
+                file,
+            )
         });
 
-        let inventory = inventory.read(cx);
         let tags = mem::take(&mut runnable.tags);
         let mut tags: Vec<_> = tags
             .into_iter()
             .flat_map(|tag| {
                 let tag = tag.0.clone();
                 inventory
-                    .list_tasks(
-                        file.clone(),
-                        Some(runnable.language.clone()),
-                        worktree_id,
-                        cx,
-                    )
+                    .as_ref()
                     .into_iter()
+                    .flat_map(|inventory| {
+                        inventory.read(cx).list_tasks(
+                            file.clone(),
+                            Some(runnable.language.clone()),
+                            worktree_id,
+                            cx,
+                        )
+                    })
                     .filter(move |(_, template)| {
                         template.tags.iter().any(|source_tag| source_tag == &tag)
                     })
@@ -9608,7 +9625,7 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Navigated>> {
-        let Some(workspace) = self.workspace() else {
+        let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
         let buffer = self.buffer.read(cx);
@@ -9619,13 +9636,9 @@ impl Editor {
             return Task::ready(Ok(Navigated::No));
         };
 
-        let project = workspace.read(cx).project().clone();
-        let definitions = project.update(cx, |project, cx| match kind {
-            GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
-            GotoDefinitionKind::Declaration => project.declaration(&buffer, head, cx),
-            GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
-            GotoDefinitionKind::Implementation => project.implementation(&buffer, head, cx),
-        });
+        let Some(definitions) = provider.definitions(&buffer, head, kind, cx) else {
+            return Task::ready(Ok(Navigated::No));
+        };
 
         cx.spawn(|editor, mut cx| async move {
             let definitions = definitions.await?;
@@ -9682,9 +9695,7 @@ impl Editor {
             return;
         };
 
-        let Some(project) = self.project.clone() else {
-            return;
-        };
+        let project = self.project.clone();
 
         cx.spawn(|_, mut cx| async move {
             let result = find_file(&buffer, project, buffer_position, &mut cx).await;
@@ -10086,7 +10097,7 @@ impl Editor {
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
-        let project = self.project.clone()?;
+        let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
         let (cursor_buffer, cursor_buffer_position) = self
             .buffer
@@ -10103,9 +10114,9 @@ impl Editor {
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
         let cursor_buffer_offset_end = cursor_buffer_position_end.to_offset(&snapshot);
-        let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(cursor_buffer.clone(), cursor_buffer_offset, cx)
-        });
+        let prepare_rename = provider
+            .range_for_rename(&cursor_buffer, cursor_buffer_position, cx)
+            .unwrap_or_else(|| Task::ready(Ok(None)));
         drop(snapshot);
 
         Some(cx.spawn(|this, mut cx| async move {
@@ -10276,32 +10287,28 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let rename = self.take_rename(false, cx)?;
-        let workspace = self.workspace()?;
-        let (start_buffer, start) = self
+        let workspace = self.workspace()?.downgrade();
+        let (buffer, start) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(rename.range.start, cx)?;
-        let (end_buffer, end) = self
+        let (end_buffer, _) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(rename.range.end, cx)?;
-        if start_buffer != end_buffer {
+        if buffer != end_buffer {
             return None;
         }
 
-        let buffer = start_buffer;
-        let range = start..end;
         let old_name = rename.old_name;
         let new_name = rename.editor.read(cx).text(cx);
 
-        let rename = workspace
-            .read(cx)
-            .project()
-            .clone()
-            .update(cx, |project, cx| {
-                project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
-            });
-        let workspace = workspace.downgrade();
+        let rename = self.semantics_provider.as_ref()?.perform_rename(
+            &buffer,
+            start,
+            new_name.clone(),
+            cx,
+        )?;
 
         Some(cx.spawn(|editor, mut cx| async move {
             let project_transaction = rename.await?;
@@ -12356,14 +12363,22 @@ impl Editor {
 
         let mut new_selections_by_buffer = HashMap::default();
         for selection in self.selections.all::<usize>(cx) {
-            for (buffer, mut range, _) in
-                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            for (mut buffer_handle, mut range, _) in
+                buffer.range_to_buffer_ranges(selection.range(), cx)
             {
+                // When editing branch buffers, jump to the corresponding location
+                // in their base buffer.
+                let buffer = buffer_handle.read(cx);
+                if let Some(base_buffer) = buffer.diff_base_buffer() {
+                    range = buffer.range_to_version(range, &base_buffer.read(cx).version());
+                    buffer_handle = base_buffer;
+                }
+
                 if selection.reversed {
                     mem::swap(&mut range.start, &mut range.end);
                 }
                 new_selections_by_buffer
-                    .entry(buffer)
+                    .entry(buffer_handle)
                     .or_insert(Vec::new())
                     .push(range)
             }
@@ -12648,24 +12663,13 @@ impl Editor {
     }
 
     pub fn supports_inlay_hints(&self, cx: &AppContext) -> bool {
-        let Some(project) = self.project.as_ref() else {
+        let Some(provider) = self.semantics_provider.as_ref() else {
             return false;
         };
-        let project = project.read(cx);
 
         let mut supports = false;
         self.buffer().read(cx).for_each_buffer(|buffer| {
-            if !supports {
-                supports = project
-                    .language_servers_for_buffer(buffer.read(cx), cx)
-                    .any(
-                        |(_, server)| match server.capabilities().inlay_hint_provider {
-                            Some(lsp::OneOf::Left(enabled)) => enabled,
-                            Some(lsp::OneOf::Right(_)) => true,
-                            None => false,
-                        },
-                    )
-            }
+            supports |= provider.supports_inlay_hints(buffer, cx);
         });
         supports
     }
@@ -12931,6 +12935,62 @@ impl CollaborationHub for Model<Project> {
     }
 }
 
+pub trait SemanticsProvider {
+    fn hover(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Option<Task<Vec<project::Hover>>>;
+
+    fn inlay_hints(
+        &self,
+        buffer_handle: Model<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
+
+    fn resolve_inlay_hint(
+        &self,
+        hint: InlayHint,
+        buffer_handle: Model<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut AppContext,
+    ) -> Option<Task<anyhow::Result<InlayHint>>>;
+
+    fn supports_inlay_hints(&self, buffer: &Model<Buffer>, cx: &AppContext) -> bool;
+
+    fn document_highlights(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<DocumentHighlight>>>>;
+
+    fn definitions(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        kind: GotoDefinitionKind,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<LocationLink>>>>;
+
+    fn range_for_rename(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Option<Range<text::Anchor>>>>>;
+
+    fn perform_rename(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        new_name: String,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<ProjectTransaction>>>;
+}
+
 pub trait CompletionProvider {
     fn completions(
         &self,
@@ -13179,6 +13239,102 @@ impl CompletionProvider for Model<Project> {
             .completion_triggers()
             .iter()
             .any(|string| string == text)
+    }
+}
+
+impl SemanticsProvider for Model<Project> {
+    fn hover(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Option<Task<Vec<project::Hover>>> {
+        Some(self.update(cx, |project, cx| project.hover(buffer, position, cx)))
+    }
+
+    fn document_highlights(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<DocumentHighlight>>>> {
+        Some(self.update(cx, |project, cx| {
+            project.document_highlights(buffer, position, cx)
+        }))
+    }
+
+    fn definitions(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        kind: GotoDefinitionKind,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<LocationLink>>>> {
+        Some(self.update(cx, |project, cx| match kind {
+            GotoDefinitionKind::Symbol => project.definition(&buffer, position, cx),
+            GotoDefinitionKind::Declaration => project.declaration(&buffer, position, cx),
+            GotoDefinitionKind::Type => project.type_definition(&buffer, position, cx),
+            GotoDefinitionKind::Implementation => project.implementation(&buffer, position, cx),
+        }))
+    }
+
+    fn supports_inlay_hints(&self, buffer: &Model<Buffer>, cx: &AppContext) -> bool {
+        // TODO: make this work for remote projects
+        self.read(cx)
+            .language_servers_for_buffer(buffer.read(cx), cx)
+            .any(
+                |(_, server)| match server.capabilities().inlay_hint_provider {
+                    Some(lsp::OneOf::Left(enabled)) => enabled,
+                    Some(lsp::OneOf::Right(_)) => true,
+                    None => false,
+                },
+            )
+    }
+
+    fn inlay_hints(
+        &self,
+        buffer_handle: Model<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
+        Some(self.update(cx, |project, cx| {
+            project.inlay_hints(buffer_handle, range, cx)
+        }))
+    }
+
+    fn resolve_inlay_hint(
+        &self,
+        hint: InlayHint,
+        buffer_handle: Model<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut AppContext,
+    ) -> Option<Task<anyhow::Result<InlayHint>>> {
+        Some(self.update(cx, |project, cx| {
+            project.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
+        }))
+    }
+
+    fn range_for_rename(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Option<Range<text::Anchor>>>>> {
+        Some(self.update(cx, |project, cx| {
+            project.prepare_rename(buffer.clone(), position, cx)
+        }))
+    }
+
+    fn perform_rename(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        new_name: String,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<ProjectTransaction>>> {
+        Some(self.update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), position, new_name, cx)
+        }))
     }
 }
 

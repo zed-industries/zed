@@ -438,8 +438,15 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
-/// The maximum monthly spending an individual user can reach before they have to pay.
-pub const MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+/// The maximum monthly spending an individual user can reach on the free tier
+/// before they have to pay.
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+
+/// The default value to use for maximum spend per month if the user did not
+/// explicitly set a maximum spend.
+///
+/// Used to prevent surprise bills.
+pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
 
 /// The maximum lifetime spending an individual user can reach before being cut off.
 const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
@@ -462,8 +469,8 @@ async fn check_usage_limit(
         .await?;
 
     if state.config.is_llm_billing_enabled() {
-        if usage.spending_this_month >= MONTHLY_SPENDING_LIMIT {
-            if !claims.has_llm_subscription.unwrap_or(false) {
+        if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
+            if !claims.has_llm_subscription {
                 return Err(Error::http(
                     StatusCode::PAYMENT_REQUIRED,
                     "Maximum spending limit reached for this month.".to_string(),

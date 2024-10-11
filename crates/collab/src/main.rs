@@ -155,7 +155,8 @@ async fn main() -> Result<()> {
                     .await
                     .trace_err();
 
-                    if let Some(llm_db) = llm_db {
+                    if let Some(mut llm_db) = llm_db {
+                        llm_db.initialize().await?;
                         sync_llm_usage_with_stripe_periodically(state.clone(), llm_db);
                     }
 

@@ -17,7 +17,8 @@ use futures::{
     StreamExt as _,
 };
 use gpui::{
-    AppContext, AsyncAppContext, Context, Model, ModelContext, SemanticVersion, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SemanticVersion, Task,
+    WeakModel,
 };
 use parking_lot::Mutex;
 use rpc::{
@@ -315,6 +316,10 @@ impl State {
         matches!(self, Self::ReconnectFailed { .. })
     }
 
+    fn is_reconnect_exhausted(&self) -> bool {
+        matches!(self, Self::ReconnectExhausted { .. })
+    }
+
     fn is_reconnecting(&self) -> bool {
         matches!(self, Self::Reconnecting { .. })
     }
@@ -376,7 +381,7 @@ impl State {
 }
 
 /// The state of the ssh connection.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
     Connecting,
     Connected,
@@ -410,6 +415,13 @@ impl Drop for SshRemoteClient {
         self.shutdown_processes();
     }
 }
+
+#[derive(Debug)]
+pub enum SshRemoteEvent {
+    Disconnected,
+}
+
+impl EventEmitter<SshRemoteEvent> for SshRemoteClient {}
 
 impl SshRemoteClient {
     pub fn new(
@@ -672,6 +684,9 @@ impl SshRemoteClient {
 
                 if this.state_is(State::is_reconnect_failed) {
                     this.reconnect(cx)
+                } else if this.state_is(State::is_reconnect_exhausted) {
+                    cx.emit(SshRemoteEvent::Disconnected);
+                    Ok(())
                 } else {
                     log::debug!("State has transition from Reconnecting into new state while attempting reconnect. Ignoring new state.");
                     Ok(())
@@ -851,11 +866,15 @@ impl SshRemoteClient {
                                 log::error!("failed to reconnect because server is not running");
                                 this.update(&mut cx, |this, cx| {
                                     this.set_state(State::ServerNotRunning, cx);
+                                    cx.emit(SshRemoteEvent::Disconnected);
                                 })?;
                             }
                         }
                     } else if exit_code > 0 {
                         log::error!("proxy process terminated unexpectedly");
+                        this.update(&mut cx, |this, cx| {
+                            this.reconnect(cx).ok();
+                        })?;
                     }
                 }
                 Ok(None) => {}
@@ -963,12 +982,26 @@ impl SshRemoteClient {
         self.connection_options.connection_string()
     }
 
+    pub fn connection_options(&self) -> SshConnectionOptions {
+        self.connection_options.clone()
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     pub fn connection_state(&self) -> ConnectionState {
         self.state
             .lock()
             .as_ref()
             .map(ConnectionState::from)
             .unwrap_or(ConnectionState::Disconnected)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn connection_state(&self) -> ConnectionState {
+        ConnectionState::Connected
+    }
+
+    pub fn is_disconnected(&self) -> bool {
+        self.connection_state() == ConnectionState::Disconnected
     }
 
     #[cfg(any(test, feature = "test-support"))]
