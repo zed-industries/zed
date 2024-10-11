@@ -11,6 +11,8 @@ use remote::{
     protocol::{read_message, write_message},
 };
 use rpc::proto::Envelope;
+use smol::channel::{Receiver, Sender};
+use smol::io::AsyncReadExt;
 use smol::Async;
 use smol::{io::AsyncWriteExt, net::unix::UnixListener, stream::StreamExt as _};
 use std::{
@@ -21,36 +23,61 @@ use std::{
     sync::Arc,
 };
 
-pub fn init(log_file: Option<PathBuf>) -> Result<()> {
-    init_logging(log_file)?;
-    init_panic_hook();
-    Ok(())
+fn init_logging_proxy() {
+    env_logger::builder()
+        .format(|buf, record| {
+            serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
+            buf.write_all(b"\n")?;
+            Ok(())
+        })
+        .init();
 }
 
-fn init_logging(log_file: Option<PathBuf>) -> Result<()> {
-    if let Some(log_file) = log_file {
-        let target = Box::new(if log_file.exists() {
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&log_file)
-                .context("Failed to open log file in append mode")?
-        } else {
-            std::fs::File::create(&log_file).context("Failed to create log file")?
-        });
+fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
+    // struct MultiWrite {
+    //     file: Box<dyn std::io::Write + Send + 'static>,
+    //     channel: Sender<Vec<u8>>,
+    //     buffer: Vec<u8>,
+    // }
 
-        env_logger::Builder::from_default_env()
-            .target(env_logger::Target::Pipe(target))
-            .init();
+    // impl std::io::Write for MultiWrite {
+    //     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    //         let written = self.file.write(buf)?;
+    //         self.buffer.extend_from_slice(&buf[..written]);
+    //         Ok(written)
+    //     }
+
+    //     fn flush(&mut self) -> std::io::Result<()> {
+    //         self.channel
+    //             .send_blocking(self.buffer.clone())
+    //             .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+    //         self.buffer.clear();
+    //         self.file.flush()
+    //     }
+    // }
+
+    let log_file = Box::new(if log_file_path.exists() {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&log_file_path)
+            .context("Failed to open log file in append mode")?
     } else {
-        env_logger::builder()
-            .format(|buf, record| {
-                serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
-                buf.write_all(b"\n")?;
-                Ok(())
-            })
-            .init();
-    }
-    Ok(())
+        std::fs::File::create(&log_file_path).context("Failed to create log file")?
+    });
+
+    let (_tx, rx) = smol::channel::unbounded();
+
+    // let target = Box::new(MultiWrite {
+    //     file: log_file,
+    //     channel: tx,
+    //     buffer: Vec::new(),
+    // });
+
+    env_logger::Builder::from_default_env()
+        .target(env_logger::Target::Pipe(log_file))
+        .init();
+
+    Ok(rx)
 }
 
 fn init_panic_hook() {
@@ -92,9 +119,25 @@ fn init_panic_hook() {
     }));
 }
 
+struct ServerListeners {
+    stdin: UnixListener,
+    stdout: UnixListener,
+    stderr: UnixListener,
+}
+
+impl ServerListeners {
+    pub fn new(stdin_path: PathBuf, stdout_path: PathBuf, stderr_path: PathBuf) -> Result<Self> {
+        Ok(Self {
+            stdin: UnixListener::bind(stdin_path).context("failed to bind stdin socket")?,
+            stdout: UnixListener::bind(stdout_path).context("failed to bind stdout socket")?,
+            stderr: UnixListener::bind(stderr_path).context("failed to bind stderr socket")?,
+        })
+    }
+}
+
 fn start_server(
-    stdin_listener: UnixListener,
-    stdout_listener: UnixListener,
+    listeners: ServerListeners,
+    mut _log_rx: Receiver<Vec<u8>>,
     cx: &mut AppContext,
 ) -> Arc<ChannelClient> {
     // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
@@ -113,20 +156,38 @@ fn start_server(
     })
     .detach();
 
+    let (mut log_tx, mut log_rx) = mpsc::unbounded::<Vec<u8>>();
     cx.spawn(|cx| async move {
-        let mut stdin_incoming = stdin_listener.incoming();
-        let mut stdout_incoming = stdout_listener.incoming();
+        let mut i = 0;
+        loop {
+            let message = format!("this is message {}\n", i).into_bytes();
+            log_tx.send(message).await.context("failed to send")?;
+
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(1))
+                .await;
+            i += 1;
+        }
+        anyhow::Ok(())
+    })
+    .detach();
+
+    cx.spawn(|cx| async move {
+        let mut stdin_incoming = listeners.stdin.incoming();
+        let mut stdout_incoming = listeners.stdout.incoming();
+        let mut stderr_incoming = listeners.stderr.incoming();
 
         loop {
-            let streams = futures::future::join(stdin_incoming.next(), stdout_incoming.next());
+            let streams = futures::future::join3(stdin_incoming.next(), stdout_incoming.next(), stderr_incoming.next());
 
             log::info!("server: accepting new connections");
             let result = select! {
                 streams = streams.fuse() => {
-                    let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream))) = streams else {
+                    log::warn!("server: stdin {:?}, stdout: {:?}, stderr: {:?}", streams.0, streams.1, streams.2);
+                    let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream)), Some(Ok(stderr_stream))) = streams else {
                         break;
                     };
-                    anyhow::Ok((stdin_stream, stdout_stream))
+                    anyhow::Ok((stdin_stream, stdout_stream, stderr_stream))
                 }
                 _ = futures::FutureExt::fuse(smol::Timer::after(IDLE_TIMEOUT)) => {
                     log::warn!("server: timed out waiting for new connections after {:?}. exiting.", IDLE_TIMEOUT);
@@ -143,9 +204,11 @@ fn start_server(
                 }
             };
 
-            let Ok((mut stdin_stream, mut stdout_stream)) = result else {
+            let Ok((mut stdin_stream, mut stdout_stream, mut stderr_stream)) = result else {
                 break;
             };
+
+            log::info!("server: yep! we got connections");
 
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
@@ -186,6 +249,22 @@ fn start_server(
                             break;
                         }
                     }
+
+                    // // TODO: How do we handle backpressure?
+                    log_message = log_rx.next().fuse() => {
+                        if let Some(log_message) = log_message {
+                            log::error!("server: logging message: {:?}", String::from_utf8(log_message.clone()));
+                            // TODO: Should we ignore the error here (if we log here we will just end up here again)?
+                            if let Err(error) = stderr_stream.write_all(&log_message).await {
+                                log::error!("server: failed to write log message to stderr: {:?}", error);
+                                break;
+                            }
+                            if let Err(error) = stderr_stream.flush().await {
+                                log::error!("server: failed to flush stderr stream: {:?}", error);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -196,20 +275,28 @@ fn start_server(
     ChannelClient::new(incoming_rx, outgoing_tx, cx)
 }
 
-pub fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: PathBuf) -> Result<()> {
+pub fn execute_run(
+    log_file: PathBuf,
+    pid_file: PathBuf,
+    stdin_socket: PathBuf,
+    stdout_socket: PathBuf,
+    stderr_socket: PathBuf,
+) -> Result<()> {
+    let log_rx = init_logging_server(log_file)?;
+    init_panic_hook();
+
     log::info!(
-        "server: starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}",
+        "server: starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
         stdin_socket,
-        stdout_socket
+        stdout_socket,
+        stderr_socket
     );
 
     write_pid_file(&pid_file)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
-    let stdin_listener = UnixListener::bind(stdin_socket).context("failed to bind stdin socket")?;
-    let stdout_listener =
-        UnixListener::bind(stdout_socket).context("failed to bind stdout socket")?;
+    let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     log::debug!("server: starting gpui app");
     gpui::App::headless().run(move |cx| {
@@ -217,7 +304,8 @@ pub fn execute_run(pid_file: PathBuf, stdin_socket: PathBuf, stdout_socket: Path
         HeadlessProject::init(cx);
 
         log::info!("server: gpui app started, initializing server");
-        let session = start_server(stdin_listener, stdout_listener, cx);
+        let session = start_server(listeners, log_rx, cx);
+
         let project = cx.new_model(|cx| {
             HeadlessProject::new(session, Arc::new(RealFs::new(Default::default(), None)), cx)
         });
@@ -234,6 +322,7 @@ struct ServerPaths {
     pid_file: PathBuf,
     stdin_socket: PathBuf,
     stdout_socket: PathBuf,
+    stderr_socket: PathBuf,
 }
 
 impl ServerPaths {
@@ -243,18 +332,23 @@ impl ServerPaths {
         let pid_file = project_dir.join("server.pid");
         let stdin_socket = project_dir.join("stdin.sock");
         let stdout_socket = project_dir.join("stdout.sock");
+        let stderr_socket = project_dir.join("stderr.sock");
         let log_file = project_dir.join("server.log");
 
         Ok(Self {
             pid_file,
             stdin_socket,
             stdout_socket,
+            stderr_socket,
             log_file,
         })
     }
 }
 
 pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
+    init_logging_proxy();
+    init_panic_hook();
+
     log::debug!("proxy: starting up. PID: {}", std::process::id());
 
     let server_paths = ServerPaths::new(&identifier)?;
@@ -287,9 +381,49 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         handle_io(stream, stdout, "stdout").await
     });
 
-    if let Err(forwarding_result) =
-        smol::block_on(async move { smol::future::race(stdin_task, stdout_task).await })
-    {
+    let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
+        let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
+
+        let mut stderr_buffer = Vec::with_capacity(1024);
+        let mut stderr_offset = 0;
+
+        loop {
+            stderr_buffer.resize(stderr_offset + 1024, 0);
+
+            let result = stream.read(&mut stderr_buffer).await;
+            match result {
+                Ok(0) => {
+                    return anyhow::Ok(());
+                }
+                Ok(len) => {
+                    stderr_offset += len;
+                    let mut start_ix = 0;
+                    while let Some(ix) = stderr_buffer[start_ix..stderr_offset]
+                        .iter()
+                        .position(|b| b == &b'\n')
+                    {
+                        let line_ix = start_ix + ix;
+                        let content = &stderr_buffer[start_ix..line_ix];
+                        start_ix = line_ix + 1;
+                        log::info!("(server) {}", String::from_utf8_lossy(content));
+                    }
+                    stderr_buffer.drain(0..start_ix);
+                    stderr_offset -= start_ix;
+                }
+                Err(error) => {
+                    Err(anyhow!("error reading stderr: {error:?}"))?;
+                }
+            }
+        }
+    });
+
+    if let Err(forwarding_result) = smol::block_on(async move {
+        futures::select! {
+            result = stdin_task.fuse() => result,
+            result = stdout_task.fuse() => result,
+            result = stderr_task.fuse() => result,
+        }
+    }) {
         log::error!(
             "proxy: failed to forward messages: {:?}, terminating...",
             forwarding_result
@@ -320,7 +454,12 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
         .output()
         .context("proxy: failed to kill existing server")?;
 
-    for file in [&paths.pid_file, &paths.stdin_socket, &paths.stdout_socket] {
+    for file in [
+        &paths.pid_file,
+        &paths.stdin_socket,
+        &paths.stdout_socket,
+        &paths.stderr_socket,
+    ] {
         log::debug!(
             "proxy: cleaning up file {:?} before starting new server",
             file
@@ -337,6 +476,9 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     if paths.stdout_socket.exists() {
         std::fs::remove_file(&paths.stdout_socket)?;
     }
+    if paths.stderr_socket.exists() {
+        std::fs::remove_file(&paths.stderr_socket)?;
+    }
 
     let binary_name = std::env::current_exe()?;
     let server_process = std::process::Command::new(binary_name)
@@ -349,13 +491,18 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg(&paths.stdin_socket)
         .arg("--stdout-socket")
         .arg(&paths.stdout_socket)
+        .arg("--stderr-socket")
+        .arg(&paths.stderr_socket)
         .spawn()?;
 
     log::debug!("proxy: server started. PID: {:?}", server_process.id());
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
-    while !paths.stdout_socket.exists() || !paths.stdin_socket.exists() {
+    while !paths.stdout_socket.exists()
+        || !paths.stdin_socket.exists()
+        || !paths.stderr_socket.exists()
+    {
         log::debug!("proxy: waiting for server to be ready to accept connections...");
         std::thread::sleep(wait_duration);
         total_time_waited += wait_duration;
