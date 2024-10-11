@@ -1,20 +1,35 @@
+use std::time::Instant;
+
+use futures::stream::FuturesUnordered;
 use futures::AsyncReadExt as _;
 use http_client::AsyncBody;
 use http_client::HttpClient;
 use reqwest_client::ReqwestClient;
+use smol::stream::StreamExt;
 
 fn main() {
     let app = gpui::App::new();
     app.run(|cx| {
         cx.spawn(|cx| async move {
-            let resp = ReqwestClient::new()
-                .get("http://zed.dev", AsyncBody::empty(), true)
-                .await
-                .unwrap();
-
-            let mut body = String::new();
-            resp.into_body().read_to_string(&mut body).await.unwrap();
-            println!("{}", &body);
+            let client = ReqwestClient::new();
+            let start = Instant::now();
+            let requests = [
+                client.get("https://www.google.com/", AsyncBody::empty(), true),
+                client.get("https://zed.dev/", AsyncBody::empty(), true),
+                client.get("https://docs.rs/", AsyncBody::empty(), true),
+            ];
+            let mut requests = requests.into_iter().collect::<FuturesUnordered<_>>();
+            while let Some(response) = requests.next().await {
+                let mut body = String::new();
+                response
+                    .unwrap()
+                    .into_body()
+                    .read_to_string(&mut body)
+                    .await
+                    .unwrap();
+                println!("{}", &body.len());
+            }
+            println!("{:?}", start.elapsed());
 
             cx.update(|cx| {
                 cx.quit();

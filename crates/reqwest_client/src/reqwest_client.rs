@@ -1,39 +1,21 @@
-use std::{
-    any::type_name,
-    borrow::Cow,
-    io::{self, Read},
-    pin::Pin,
-    task::Poll,
-    thread::{self, JoinHandle},
-};
+use std::{any::type_name, borrow::Cow, io::Read, mem, pin::Pin, sync::OnceLock, task::Poll};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::{
-    channel::{mpsc, oneshot},
-    AsyncRead, StreamExt, TryStreamExt,
-};
-use http_client::{http, ReadTimeout};
+use futures::{AsyncRead, TryStreamExt};
+use http_client::{http, ReadTimeout, RedirectPolicy};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
-    RequestBuilder, Response,
+    redirect,
 };
 use smol::future::FutureExt;
 
 const DEFAULT_CAPACITY: usize = 4096;
 
-// TODO: IMPLEMENT PROXY STUFF
-
 pub struct ReqwestClient {
     client: reqwest::Client,
     proxy: Option<http::Uri>,
-    tokio_tx: Option<
-        mpsc::UnboundedSender<(
-            RequestBuilder,
-            oneshot::Sender<Result<Response, reqwest::Error>>,
-        )>,
-    >,
-    _thread: Option<JoinHandle<io::Result<()>>>,
+    handle: tokio::runtime::Handle,
 }
 
 impl ReqwestClient {
@@ -62,39 +44,28 @@ impl ReqwestClient {
     }
 }
 
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
-        let has_tokio = tokio::runtime::Handle::try_current().is_ok();
+        let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+            println!("no runtime found! using our own");
+            let runtime = RUNTIME.get_or_init(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    // Since we now have two executors, let's try to keep our footprint small
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .expect("Failed to initialize HTTP client")
+            });
 
-        if has_tokio {
-            Self {
-                client,
-                proxy: None,
-                tokio_tx: None,
-                _thread: None,
-            }
-        } else {
-            let (sender, mut receiver) = mpsc::unbounded();
-            Self {
-                client,
-                proxy: None,
-                tokio_tx: Some(sender),
-                _thread: Some(thread::spawn(move || {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()?;
-
-                    runtime.block_on(async {
-                        while let Some((request, response_channel)) = receiver.next().await {
-                            tokio::spawn(async {
-                                response_channel.send(request.send().await).ok();
-                            });
-                        }
-                    });
-
-                    Ok(())
-                })),
-            }
+            runtime.handle().clone()
+        });
+        println!("Done initializing http client");
+        Self {
+            client,
+            handle,
+            proxy: None,
         }
     }
 }
@@ -247,23 +218,17 @@ impl http_client::HttpClient for ReqwestClient {
         let (parts, body) = req.into_parts();
 
         let mut request = self.client.request(parts.method, parts.uri.to_string());
-
         request = request.headers(parts.headers);
-
-        if let Some(redirect_policy) = parts.extensions.get::<http_client::RedirectPolicy>() {
+        if let Some(redirect_policy) = parts.extensions.get::<RedirectPolicy>() {
             request = request.redirect_policy(match redirect_policy {
-                http_client::RedirectPolicy::NoFollow => reqwest::redirect::Policy::none(),
-                http_client::RedirectPolicy::FollowLimit(limit) => {
-                    reqwest::redirect::Policy::limited(*limit as usize)
-                }
-                http_client::RedirectPolicy::FollowAll => reqwest::redirect::Policy::limited(100),
+                RedirectPolicy::NoFollow => redirect::Policy::none(),
+                RedirectPolicy::FollowLimit(limit) => redirect::Policy::limited(*limit as usize),
+                RedirectPolicy::FollowAll => redirect::Policy::limited(100),
             });
         }
-
         if let Some(ReadTimeout(timeout)) = parts.extensions.get::<ReadTimeout>() {
             request = request.timeout(*timeout);
         }
-
         let request = request.body(match body.0 {
             http_client::Inner::Empty => reqwest::Body::default(),
             http_client::Inner::SyncReader(cursor) => {
@@ -274,28 +239,22 @@ impl http_client::HttpClient for ReqwestClient {
             }
         });
 
-        let tokio_tx = self.tokio_tx.clone();
+        let handle = self.handle.clone();
         async move {
-            let response = match tokio_tx {
-                Some(tokio_tx) => {
-                    let (tx, rx) = oneshot::channel();
-                    tokio_tx.unbounded_send((request, tx))?;
-                    rx.await?
-                }
-                None => request.send().await,
-            }
-            .map_err(|e| anyhow!(e))?;
+            let mut response = handle.spawn(async { request.send().await }).await??;
 
-            let status = response.status();
-            let mut builder = http::Response::builder().status(status.as_u16());
-            for (name, value) in response.headers() {
-                builder = builder.header(name, value);
-            }
-            let bytes = response.bytes_stream();
-            let bytes = bytes
+            let headers = mem::take(response.headers_mut());
+            let mut builder = http::Response::builder()
+                .status(response.status().as_u16())
+                .version(response.version());
+            *builder.headers_mut().unwrap() = headers;
+
+            let bytes = response
+                .bytes_stream()
                 .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
                 .into_async_read();
             let body = http_client::AsyncBody::from_reader(bytes);
+
             builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
