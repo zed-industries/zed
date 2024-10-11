@@ -26,7 +26,9 @@ use std::{
 fn init_logging_proxy() {
     env_logger::builder()
         .format(|buf, record| {
-            serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
+            let mut log_record = LogRecord::new(record);
+            log_record.message = format!("(remote proxy) {}", log_record.message);
+            serde_json::to_writer(&mut *buf, &log_record)?;
             buf.write_all(b"\n")?;
             Ok(())
         })
@@ -76,7 +78,9 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     env_logger::Builder::from_default_env()
         .target(env_logger::Target::Pipe(target))
         .format(|buf, record| {
-            serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
+            let mut log_record = LogRecord::new(record);
+            log_record.message = format!("(remote server) {}", log_record.message);
+            serde_json::to_writer(&mut *buf, &log_record)?;
             buf.write_all(b"\n")?;
             Ok(())
         })
@@ -115,7 +119,7 @@ fn init_panic_hook() {
         }
 
         log::error!(
-            "server: panic occurred: {}\nBacktrace:\n{}",
+            "panic occurred: {}\nBacktrace:\n{}",
             payload,
             backtrace.join("\n")
         );
@@ -169,17 +173,17 @@ fn start_server(
         loop {
             let streams = futures::future::join3(stdin_incoming.next(), stdout_incoming.next(), stderr_incoming.next());
 
-            log::info!("server: accepting new connections");
+            log::info!("accepting new connections");
             let result = select! {
                 streams = streams.fuse() => {
-                    log::warn!("server: stdin {:?}, stdout: {:?}, stderr: {:?}", streams.0, streams.1, streams.2);
+                    log::warn!("stdin {:?}, stdout: {:?}, stderr: {:?}", streams.0, streams.1, streams.2);
                     let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream)), Some(Ok(stderr_stream))) = streams else {
                         break;
                     };
                     anyhow::Ok((stdin_stream, stdout_stream, stderr_stream))
                 }
                 _ = futures::FutureExt::fuse(smol::Timer::after(IDLE_TIMEOUT)) => {
-                    log::warn!("server: timed out waiting for new connections after {:?}. exiting.", IDLE_TIMEOUT);
+                    log::warn!("timed out waiting for new connections after {:?}. exiting.", IDLE_TIMEOUT);
                     cx.update(|cx| {
                         // TODO: This is a hack, because in a headless project, shutdown isn't executed
                         // when calling quit, but it should be.
@@ -197,7 +201,7 @@ fn start_server(
                 break;
             };
 
-            log::info!("server: yep! we got connections");
+            log::info!("yep! we got connections");
 
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
@@ -211,30 +215,30 @@ fn start_server(
                         let message = match stdin_message {
                             Ok(message) => message,
                             Err(error) => {
-                                log::warn!("server: error reading message on stdin: {}. exiting.", error);
+                                log::warn!("error reading message on stdin: {}. exiting.", error);
                                 break;
                             }
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
-                            log::error!("server: failed to send message to application: {:?}. exiting.", error);
+                            log::error!("failed to send message to application: {:?}. exiting.", error);
                             return Err(anyhow!(error));
                         }
                     }
 
                     outgoing_message  = outgoing_rx.next().fuse() => {
                         let Some(message) = outgoing_message else {
-                            log::error!("server: stdout handler, no message");
+                            log::error!("stdout handler, no message");
                             break;
                         };
 
                         if let Err(error) =
                             write_message(&mut stdout_stream, &mut output_buffer, message).await
                         {
-                            log::error!("server: failed to write stdout message: {:?}", error);
+                            log::error!("failed to write stdout message: {:?}", error);
                             break;
                         }
                         if let Err(error) = stdout_stream.flush().await {
-                            log::error!("server: failed to flush stdout message: {:?}", error);
+                            log::error!("failed to flush stdout message: {:?}", error);
                             break;
                         }
                     }
@@ -243,11 +247,11 @@ fn start_server(
                     log_message = log_rx.next().fuse() => {
                         if let Some(log_message) = log_message {
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
-                                log::error!("server: failed to write log message to stderr: {:?}", error);
+                                log::error!("failed to write log message to stderr: {:?}", error);
                                 break;
                             }
                             if let Err(error) = stderr_stream.flush().await {
-                                log::error!("server: failed to flush stderr stream: {:?}", error);
+                                log::error!("failed to flush stderr stream: {:?}", error);
                                 break;
                             }
                         }
@@ -273,7 +277,7 @@ pub fn execute_run(
     init_panic_hook();
 
     log::info!(
-        "server: starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
         stdin_socket,
         stdout_socket,
@@ -285,12 +289,12 @@ pub fn execute_run(
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
-    log::debug!("server: starting gpui app");
+    log::debug!("starting gpui app");
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
         HeadlessProject::init(cx);
 
-        log::info!("server: gpui app started, initializing server");
+        log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
 
         let project = cx.new_model(|cx| {
@@ -299,7 +303,7 @@ pub fn execute_run(
 
         mem::forget(project);
     });
-    log::info!("server: gpui app is shut down. quitting.");
+    log::info!("gpui app is shut down. quitting.");
     Ok(())
 }
 
@@ -336,7 +340,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     init_logging_proxy();
     init_panic_hook();
 
-    log::debug!("proxy: starting up. PID: {}", std::process::id());
+    log::debug!("starting up. PID: {}", std::process::id());
 
     let server_paths = ServerPaths::new(&identifier)?;
 
@@ -344,12 +348,12 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     let server_running = server_pid.is_some();
     if is_reconnecting {
         if !server_running {
-            log::error!("proxy: attempted to reconnect, but no server running");
+            log::error!("attempted to reconnect, but no server running");
             return Err(anyhow!(ProxyLaunchError::ServerNotRunning));
         }
     } else {
         if let Some(pid) = server_pid {
-            log::debug!("proxy: found server already running with PID {}. Killing process and cleaning up files...", pid);
+            log::debug!("found server already running with PID {}. Killing process and cleaning up files...", pid);
             kill_running_server(pid, &server_paths)?;
         }
 
@@ -396,7 +400,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         }
     }) {
         log::error!(
-            "proxy: failed to forward messages: {:?}, terminating...",
+            "failed to forward messages: {:?}, terminating...",
             forwarding_result
         );
         return Err(forwarding_result);
@@ -419,11 +423,11 @@ fn create_state_directory(identifier: &str) -> Result<PathBuf> {
 }
 
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
-    log::info!("proxy: killing existing server with PID {}", pid);
+    log::info!("killing existing server with PID {}", pid);
     std::process::Command::new("kill")
         .arg(pid.to_string())
         .output()
-        .context("proxy: failed to kill existing server")?;
+        .context("failed to kill existing server")?;
 
     for file in [
         &paths.pid_file,
@@ -431,10 +435,7 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
         &paths.stdout_socket,
         &paths.stderr_socket,
     ] {
-        log::debug!(
-            "proxy: cleaning up file {:?} before starting new server",
-            file
-        );
+        log::debug!("cleaning up file {:?} before starting new server", file);
         std::fs::remove_file(file).ok();
     }
     Ok(())
@@ -466,7 +467,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg(&paths.stderr_socket)
         .spawn()?;
 
-    log::debug!("proxy: server started. PID: {:?}", server_process.id());
+    log::debug!("server started. PID: {:?}", server_process.id());
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
@@ -474,13 +475,13 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         || !paths.stdin_socket.exists()
         || !paths.stderr_socket.exists()
     {
-        log::debug!("proxy: waiting for server to be ready to accept connections...");
+        log::debug!("waiting for server to be ready to accept connections...");
         std::thread::sleep(wait_duration);
         total_time_waited += wait_duration;
     }
 
     log::info!(
-        "proxy: server ready to accept connections. total time waited: {:?}",
+        "server ready to accept connections. total time waited: {:?}",
         total_time_waited
     );
     Ok(())
@@ -494,19 +495,21 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>> {
         return Ok(None);
     };
 
-    log::debug!("proxy: Checking if process with PID {} exists...", pid);
+    log::debug!("Checking if process with PID {} exists...", pid);
     match std::process::Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()
     {
         Ok(output) if output.status.success() => {
-            log::debug!("proxy: Process with PID {} exists. NOT spawning new server, but attaching to existing one.", pid);
+            log::debug!("Process with PID {} exists. NOT spawning new server, but attaching to existing one.", pid);
             Ok(Some(pid))
         }
         _ => {
-            log::debug!("proxy: Found PID file, but process with that PID does not exist. Removing PID file.");
-            std::fs::remove_file(&path).context("proxy: Failed to remove PID file")?;
+            log::debug!(
+                "Found PID file, but process with that PID does not exist. Removing PID file."
+            );
+            std::fs::remove_file(&path).context("Failed to remove PID file")?;
             Ok(None)
         }
     }
@@ -517,7 +520,7 @@ fn write_pid_file(path: &Path) -> Result<()> {
         std::fs::remove_file(path)?;
     }
     let pid = std::process::id().to_string();
-    log::debug!("server: writing PID {} to file {:?}", pid, path);
+    log::debug!("writing PID {} to file {:?}", pid, path);
     std::fs::write(path, pid).context("Failed to write PID file")
 }
 
@@ -532,11 +535,11 @@ where
     loop {
         read_message_raw(&mut reader, &mut buffer)
             .await
-            .with_context(|| format!("proxy: failed to read message from {}", socket_name))?;
+            .with_context(|| format!("failed to read message from {}", socket_name))?;
 
         write_size_prefixed_buffer(&mut writer, &mut buffer)
             .await
-            .with_context(|| format!("proxy: failed to write message to {}", socket_name))?;
+            .with_context(|| format!("failed to write message to {}", socket_name))?;
 
         writer.flush().await?;
 
