@@ -49,3 +49,12 @@ impl From<Option<bool>> for Selection {
         }
     }
 }
+
+impl Into<bool> for Selection {
+    fn into(self) -> bool {
+        match self {
+            Self::Selected => true,
+            Self::Unselected | Self::Indeterminate => false,
+        }
+    }
+}

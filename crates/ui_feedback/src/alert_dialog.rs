@@ -34,6 +34,50 @@ impl From<&str> for AlertDialogButton {
     }
 }
 
+/// A checkbox that appears in an alert dialog.
+#[derive(Clone)]
+pub struct AlertDialogCheckbox {
+    /// The label of the checkbox
+    pub label: SharedString,
+    /// The current checked state of the checkbox
+    pub checked: bool,
+    /// The action to take when the checkbox is clicked
+    pub on_click: Option<Arc<dyn Fn(bool, &mut WindowContext) + 'static>>,
+}
+
+impl AlertDialogCheckbox {
+    /// Create a new alert dialog checkbox.
+    pub fn new(
+        label: impl Into<SharedString>,
+        checked: bool,
+        on_click: impl Fn(bool, &mut WindowContext) + 'static,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            checked,
+            on_click: Some(Arc::new(on_click)),
+        }
+    }
+
+    /// Sets the action to take when the checkbox is clicked.
+    pub fn on_click(mut self, on_click: impl Fn(bool, &mut WindowContext) + 'static) -> Self {
+        self.on_click = Some(Arc::new(on_click));
+        self
+    }
+}
+
+impl From<&str> for AlertDialogCheckbox {
+    fn from(label: &str) -> Self {
+        let label: SharedString = label.to_string().into();
+
+        Self {
+            label,
+            checked: false,
+            on_click: None,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum AlertDialogLayout {
     /// For dialogs short titles and action names.
@@ -76,7 +120,7 @@ pub struct AlertDialog {
     ///
     /// Used to allow the user to opt-in or out of a secondary action,
     /// such as "Don't ask again" or "Suggest extensions automatically"
-    pub checkbox: Option<(SharedString)>,
+    pub checkbox: Option<AlertDialogCheckbox>,
 
     focus_handle: FocusHandle,
 }
@@ -155,8 +199,8 @@ impl AlertDialog {
     }
 
     /// Sets the checkbox to show in the dialog
-    pub fn checkbox(mut self, checkbox: impl Into<SharedString>) -> Self {
-        self.checkbox = Some(checkbox.into());
+    pub fn checkbox(mut self, checkbox: AlertDialogCheckbox) -> Self {
+        self.checkbox = Some(checkbox);
         self
     }
 
@@ -193,6 +237,28 @@ impl AlertDialog {
                     on_click(event, cx);
                 })
             })
+    }
+
+    fn render_checkbox(
+        &self,
+        cx: &WindowContext,
+        checkbox: AlertDialogCheckbox,
+    ) -> impl IntoElement {
+        let id_string: SharedString = format!("checkbox-{}", checkbox.label).into();
+        let id: ElementId = ElementId::Name(id_string);
+        let label = Label::new(checkbox.label).color(Color::Muted);
+
+        CheckboxWithLabel::new(id, label, checkbox.checked.into(), move |checked, cx| {
+            if let Some(on_click) = &checkbox.on_click {
+                on_click(checked.clone().into(), cx);
+            }
+        })
+    }
+
+    fn toggle_checked(&mut self) {
+        if let Some(checkbox) = &mut self.checkbox {
+            checkbox.checked = !checkbox.checked;
+        }
     }
 }
 
@@ -261,18 +327,13 @@ impl Render for AlertDialog {
                             .h(ButtonSize::Large.rems())
                             .gap(Spacing::Medium.rems(cx))
                     })
-                    .child(div().flex_shrink_0().when_some(
-                        self.checkbox.clone(),
-                        |this, (label)| {
-                            this.child(CheckboxWithLabel::new(
-                                ElementId::Name(label.clone()),
-                                Label::new(label).color(Color::Muted),
-                                false.into(),
-                                // TODO: Pass on_click through self.checkbox
-                                |_, _| {},
-                            ))
-                        },
-                    ))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .when_some(self.checkbox.clone(), |this, checkbox| {
+                                this.child(self.render_checkbox(cx, checkbox))
+                            }),
+                    )
                     .child(
                         div()
                             .flex()
@@ -313,7 +374,7 @@ pub mod alert_dialog_stories {
     use story::{Story, StoryItem, StorySection};
     use ui::{prelude::*, ElevationIndex};
 
-    use super::AlertDialog;
+    use super::{AlertDialog, AlertDialogCheckbox};
 
     pub struct AlertDialogStory {
         vertical_alert_dialog: View<AlertDialog>,
@@ -339,7 +400,7 @@ pub mod alert_dialog_stories {
                 dialog
                     .title("Do you want to leave the current call?")
                     .message("The current window will be closed, and connections to any shared projects will be terminated.")
-                    .checkbox("Don't show again")
+                    .checkbox(AlertDialogCheckbox::new("Don't ask again", true, |_, _| {}))
                     .primary_action("Leave Call", |_, _| {})
                     .secondary_action("Cancel", |_, _| {})
             });
