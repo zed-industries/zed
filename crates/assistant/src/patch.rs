@@ -60,29 +60,10 @@ pub struct ResolvedEditGroup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResolvedEdit {
-    Update {
-        range: Range<language::Anchor>,
-        new_text: String,
-        description: String,
-    },
-    CreateFile {
-        description: String,
-        new_text: String,
-    },
-    InsertBefore {
-        position: language::Anchor,
-        new_text: String,
-        description: String,
-    },
-    InsertAfter {
-        position: language::Anchor,
-        new_text: String,
-        description: String,
-    },
-    Delete {
-        range: Range<language::Anchor>,
-    },
+pub struct ResolvedEdit {
+    range: Range<language::Anchor>,
+    new_text: String,
+    description: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,7 +79,7 @@ impl ResolvedPatch {
             let mut edits = Vec::new();
             for group in groups {
                 for suggestion in &group.edits {
-                    edits.push((suggestion.range(), suggestion.new_text()));
+                    edits.push((suggestion.range.clone(), suggestion.new_text.clone()));
                 }
             }
             branch.update(cx, |buffer, cx| {
@@ -110,50 +91,9 @@ impl ResolvedPatch {
 }
 
 impl ResolvedEdit {
-    fn range(&self) -> Range<language::Anchor> {
-        match self {
-            Self::Update { range, .. } => range.clone(),
-            Self::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
-            Self::InsertBefore { position, .. } | Self::InsertAfter { position, .. } => {
-                *position..*position
-            }
-            Self::Delete { range, .. } => range.clone(),
-        }
-    }
-
-    fn new_text(&self) -> String {
-        match self {
-            Self::Update { new_text, .. }
-            | Self::CreateFile { new_text, .. }
-            | Self::InsertBefore { new_text, .. }
-            | Self::InsertAfter { new_text, .. } => new_text.clone(),
-            Self::Delete { .. } => String::new(),
-        }
-    }
-
-    fn description(&self) -> Option<&str> {
-        match self {
-            Self::Update { description, .. }
-            | Self::CreateFile { description, .. }
-            | Self::InsertBefore { description, .. }
-            | Self::InsertAfter { description, .. } => Some(description),
-            Self::Delete { .. } => None,
-        }
-    }
-
-    fn description_mut(&mut self) -> Option<&mut String> {
-        match self {
-            Self::Update { description, .. }
-            | Self::CreateFile { description, .. }
-            | Self::InsertBefore { description, .. }
-            | Self::InsertAfter { description, .. } => Some(description),
-            Self::Delete { .. } => None,
-        }
-    }
-
     pub fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
-        let range = self.range();
-        let other_range = other.range();
+        let range = &self.range;
+        let other_range = &other.range;
 
         // Don't merge if we don't contain the other suggestion.
         if range.start.cmp(&other_range.start, buffer).is_gt()
@@ -162,8 +102,8 @@ impl ResolvedEdit {
             return false;
         }
 
-        if let Some(description) = self.description_mut() {
-            if let Some(other_description) = other.description() {
+        if let Some(description) = &mut self.description {
+            if let Some(other_description) = &other.description {
                 description.push('\n');
                 description.push_str(other_description);
             }
@@ -253,17 +193,18 @@ impl AssistantEdit {
                         description,
                     } => {
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        ResolvedEdit::Update {
+                        ResolvedEdit {
                             range,
-                            description,
                             new_text,
+                            description: Some(description),
                         }
                     }
                     AssistantEditKind::Create {
                         new_text,
                         description,
-                    } => ResolvedEdit::CreateFile {
-                        description,
+                    } => ResolvedEdit {
+                        range: text::Anchor::MIN..text::Anchor::MAX,
+                        description: Some(description),
                         new_text,
                     },
                     AssistantEditKind::InsertBefore {
@@ -271,12 +212,12 @@ impl AssistantEdit {
                         mut new_text,
                         description,
                     } => {
-                        new_text.push('\n');
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        ResolvedEdit::InsertBefore {
-                            position: range.start,
-                            description,
+                        new_text.push('\n');
+                        ResolvedEdit {
+                            range: range.start..range.start,
                             new_text,
+                            description: Some(description),
                         }
                     }
                     AssistantEditKind::InsertAfter {
@@ -284,17 +225,21 @@ impl AssistantEdit {
                         mut new_text,
                         description,
                     } => {
-                        new_text.insert(0, '\n');
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        ResolvedEdit::InsertAfter {
-                            position: range.end,
-                            description,
+                        new_text.insert(0, '\n');
+                        ResolvedEdit {
+                            range: range.end..range.end,
                             new_text,
+                            description: Some(description),
                         }
                     }
                     AssistantEditKind::Delete { old_text } => {
                         let range = Self::resolve_location(&snapshot, &old_text);
-                        ResolvedEdit::Delete { range }
+                        ResolvedEdit {
+                            range,
+                            new_text: String::new(),
+                            description: None,
+                        }
                     }
                 }
             })
@@ -428,7 +373,7 @@ impl AssistantPatch {
                 continue;
             };
             // Sort edits by their range so that earlier, larger ranges come first
-            edits.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
+            edits.sort_by(|a, b| a.range.cmp(&b.range, &snapshot));
 
             // Merge overlapping edits
             edits.dedup_by(|a, b| b.try_merge(a, &snapshot));
@@ -436,7 +381,7 @@ impl AssistantPatch {
             // Create context ranges for each edit
             for edit in edits {
                 let context_range = {
-                    let edit_point_range = edit.range().to_point(&snapshot);
+                    let edit_point_range = edit.range.to_point(&snapshot);
                     let start_row = edit_point_range.start.row.saturating_sub(5);
                     let end_row = cmp::min(edit_point_range.end.row + 5, snapshot.max_point().row);
                     let start = snapshot.anchor_before(Point::new(start_row, 0));
