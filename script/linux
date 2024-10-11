@@ -43,11 +43,11 @@ if [[ -n $apt ]]; then
     elfutils
     libsqlite3-dev
   )
-  if (grep -qP 'PRETTY_NAME="(.+24\.04)' /etc/os-release); then
+  if (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.04)' /etc/os-release); then
     deps+=( mold libstdc++-14-dev )
-  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|.+22\.04)' /etc/os-release); then
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
     deps+=( mold libstdc++-12-dev )
-  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|.+20\.04)' /etc/os-release); then
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|Linux Mint 20|.+20\.04)' /etc/os-release); then
     deps+=( libstdc++-10-dev )
   fi
 
