@@ -269,6 +269,7 @@ message Envelope {
 
         GetLlmToken get_llm_token = 235;
         GetLlmTokenResponse get_llm_token_response = 236;
+        RefreshLlmToken refresh_llm_token = 259; // current max
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
@@ -284,7 +285,7 @@ message Envelope {
 
         ShutdownRemoteServer shutdown_remote_server = 257;
 
-        RemoveWorktree remove_worktree = 258; // current max
+        RemoveWorktree remove_worktree = 258;
     }
 
     reserved 87 to 88;
@@ -2428,6 +2429,8 @@ message GetLlmToken {}
 message GetLlmTokenResponse {
     string token = 1;
 }
+
+message RefreshLlmToken {}
 
 // Remote FS
 

@@ -836,8 +836,7 @@ impl SshRemoteClient {
                                     let line_ix = start_ix + ix;
                                     let content = &stderr_buffer[start_ix..line_ix];
                                     start_ix = line_ix + 1;
-                                    if let Ok(mut record) = serde_json::from_slice::<LogRecord>(content) {
-                                        record.message = format!("(remote) {}", record.message);
+                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
                                         record.log(log::logger())
                                     } else {
                                         eprintln!("(remote) {}", String::from_utf8_lossy(content));
