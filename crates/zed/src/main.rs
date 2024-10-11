@@ -58,8 +58,9 @@ use workspace::{
     AppState, WorkspaceSettings, WorkspaceStore,
 };
 use zed::{
-    app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
+    app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
+    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -712,13 +713,11 @@ fn handle_open_request(
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
+            let paths_with_position =
+                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
                 connection_info,
-                request
-                    .open_paths
-                    .into_iter()
-                    .map(|path| path.path)
-                    .collect::<Vec<_>>(),
+                paths_with_position.into_iter().map(|p| p.path).collect(),
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,
@@ -733,8 +732,10 @@ fn handle_open_request(
     if !request.open_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(|mut cx| async move {
+            let paths_with_position =
+                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
-                &request.open_paths,
+                &paths_with_position,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,
