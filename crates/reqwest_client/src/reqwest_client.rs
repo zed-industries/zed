@@ -49,7 +49,7 @@ static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
         let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
-            println!("no runtime found! using our own");
+            log::info!("no tokio runtime found, creating one for Reqwest...");
             let runtime = RUNTIME.get_or_init(|| {
                 tokio::runtime::Builder::new_multi_thread()
                     // Since we now have two executors, let's try to keep our footprint small
@@ -61,7 +61,6 @@ impl From<reqwest::Client> for ReqwestClient {
 
             runtime.handle().clone()
         });
-        println!("Done initializing http client");
         Self {
             client,
             handle,

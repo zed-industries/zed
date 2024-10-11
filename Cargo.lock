@@ -9327,6 +9327,7 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "http_client",
+ "log",
  "reqwest 0.12.8",
  "serde",
  "smol",
