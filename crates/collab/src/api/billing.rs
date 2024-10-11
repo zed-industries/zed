@@ -1,6 +1,6 @@
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{collections::HashSet, str::FromStr};
 
 use anyhow::{anyhow, bail, Context};
 use axum::{
@@ -22,11 +22,14 @@ use stripe::{
 };
 use util::ResultExt;
 
-use crate::db::billing_subscription::{self, StripeSubscriptionStatus};
 use crate::db::{
     billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
     CreateBillingSubscriptionParams, CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
     UpdateBillingPreferencesParams, UpdateBillingSubscriptionParams,
+};
+use crate::db::{
+    billing_subscription::{self, StripeSubscriptionStatus},
+    UserId,
 };
 use crate::llm::db::LlmDatabase;
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
@@ -725,24 +728,15 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>, llm_db: LlmDa
         log::warn!("failed to retrieve Stripe client");
         return;
     };
-    let Some(stripe_llm_usage_price_id) = app.config.stripe_llm_usage_price_id.clone() else {
-        log::warn!("failed to retrieve Stripe LLM usage price ID");
-        return;
-    };
 
     let executor = app.executor.clone();
     executor.spawn_detached({
         let executor = executor.clone();
         async move {
             loop {
-                sync_with_stripe(
-                    &app,
-                    &llm_db,
-                    &stripe_client,
-                    stripe_llm_usage_price_id.clone(),
-                )
-                .await
-                .trace_err();
+                sync_with_stripe(&app, &llm_db, &stripe_client)
+                    .await
+                    .trace_err();
 
                 executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
             }
@@ -754,23 +748,69 @@ async fn sync_with_stripe(
     app: &Arc<AppState>,
     llm_db: &LlmDatabase,
     stripe_client: &stripe::Client,
-    stripe_llm_usage_price_id: Arc<str>,
 ) -> anyhow::Result<()> {
-    let subscriptions = app.db.get_active_billing_subscriptions().await?;
+    let rollups = llm_db.get_billing_event_rollups().await?;
+    let user_ids = rollups
+        .iter()
+        .map(|rollup| rollup.user_id)
+        .collect::<Vec<UserId>>();
 
-    for (customer, subscription) in subscriptions {
-        update_stripe_subscription(
-            llm_db,
-            stripe_client,
-            &stripe_llm_usage_price_id,
-            customer,
-            subscription,
-        )
-        .await
-        .log_err();
+    let stripe_customer_ids = app.db.stripe_customer_ids_for_user_ids(user_ids).await?;
+    let mut stripe_meters = HashSet::default();
+    for meter in StripeMeter::list(stripe_client).await?.data {
+        stripe_meters.insert(meter.event_name);
+    }
+
+    for rollup in llm_db.get_billing_event_rollups().await? {
+        let Some(stripe_customer_id) = stripe_customer_ids.get(&rollup.user_id) else {
+            tracing::warn!(
+                user_id = rollup.user_id.0,
+                "Registered billing event for user who is not a Stripe customer. Billing events should only be created for users who are Stripe customers, so this is a mistake on our side."
+            );
+            continue;
+        };
+
+        let stripe_event_name = format!("model_{}", rollup.model_id);
+        if !stripe_meters.contains(&stripe_event_name) {
+            create_stripe_meter(stripe_client, &stripe_event_name, rollup.model_id).await?;
+        }
+
+        // TODO: now that we have a valid meter, continue with getting the prices
+        // https://docs.stripe.com/billing/subscriptions/usage-based/pricing-models
     }
 
     Ok(())
+}
+
+fn create_stripe_meter(
+    stripe_client: &stripe::Client,
+    stripe_event_name: &str,
+    model_id: crate::llm::db::ModelId,
+) -> stripe::Response<StripeMeter> {
+    // create the meter via Stripe's API, using the given event name and ModelId.
+
+    #[derive(Serialize)]
+    struct DefaultAggregation {
+        // Either "count" or "sum"
+        formula: &'static str,
+    }
+
+    #[derive(Serialize)]
+    struct CreateMeterParams<'a> {
+        default_aggregation: DefaultAggregation,
+        display_name: String,
+        event_name: &'a str,
+    }
+
+    // Docs: https://docs.stripe.com/api/billing/meter/create
+    stripe_client.post_form(
+        "/v1/billing/meters",
+        CreateMeterParams {
+            default_aggregation: DefaultAggregation { formula: "sum" },
+            display_name: format!("Model #{}", model_id),
+            event_name: stripe_event_name,
+        },
+    )
 }
 
 async fn update_stripe_subscription(
@@ -819,4 +859,15 @@ async fn update_stripe_subscription(
 
     Subscription::update(stripe_client, &subscription_id, update_params).await?;
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct StripeMeter {
+    event_name: String,
+}
+
+impl StripeMeter {
+    pub fn list(client: &stripe::Client) -> stripe::Response<stripe::List<Self>> {
+        client.get_query("/billing/meters", ())
+    }
 }

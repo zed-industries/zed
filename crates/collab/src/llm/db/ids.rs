@@ -8,3 +8,4 @@ id_type!(ProviderId);
 id_type!(UsageId);
 id_type!(UsageMeasureId);
 id_type!(RevokedAccessTokenId);
+id_type!(BillingEventId);
