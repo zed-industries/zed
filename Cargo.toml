@@ -481,7 +481,7 @@ which = "6.0.0"
 wit-component = "0.201"
 
 [workspace.dependencies.async-stripe]
-version = "0.39"
+path = "../async-stripe"
 default-features = false
 features = [
     "runtime-tokio-hyper-rustls",
