@@ -155,7 +155,6 @@ members = [
     "extensions/proto",
     "extensions/purescript",
     "extensions/ruff",
-    "extensions/ruby",
     "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/svelte",
