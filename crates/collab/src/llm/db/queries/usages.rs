@@ -409,7 +409,8 @@ impl LlmDatabase {
                 monthly_usage.output_tokens as usize,
             );
 
-            if spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT
+            if !is_staff
+                && spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT
                 && has_llm_subscription
                 && spending_this_month <= max_monthly_spend
             {
