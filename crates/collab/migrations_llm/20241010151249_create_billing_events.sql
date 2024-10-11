@@ -4,8 +4,8 @@ create table billing_events (
     user_id integer not null,
     model_id integer not null references models (id) on delete cascade,
     input_tokens bigint not null default 0,
-    input_cache_creation_input_tokens bigint not null default 0,
-    input_cache_read_input_tokens bigint not null default 0,
+    input_cache_creation_tokens bigint not null default 0,
+    input_cache_read_tokens bigint not null default 0,
     output_tokens bigint not null default 0
 );
 
