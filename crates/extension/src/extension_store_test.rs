@@ -29,7 +29,6 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use ureq_client::UreqClient;
 use util::test::temp_tree;
 
 #[cfg(test)]
@@ -578,7 +577,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             std::env::consts::ARCH
         )
     });
-    let builder_client = Arc::new(UreqClient::new(None, user_agent, cx.executor().clone()));
+    let builder_client =
+        Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
     let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(
@@ -771,13 +771,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     assert!(fs.metadata(&expected_server_path).await.unwrap().is_none());
 }
 
+// TODO: REMOVE THIS
 #[gpui::test]
 async fn test_wasi_adapter_download(cx: &mut TestAppContext) {
-    let client = Arc::new(UreqClient::new(
-        None,
-        "zed-test-wasi-adapter-download".to_string(),
-        cx.executor().clone(),
-    ));
+    cx.executor().allow_parking();
+    let client = Arc::new(ReqwestClient::user_agent("zed-test-wasi-adapter-download").unwrap());
 
     let mut response = client
         .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
@@ -795,8 +793,9 @@ async fn test_wasi_adapter_download(cx: &mut TestAppContext) {
         .unwrap();
 }
 
-#[tokio::test]
-async fn test_wasi_adapter_download_tokio() {
+#[gpui::test]
+async fn test_wasi_adapter_download_tokio(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let client = Arc::new(ReqwestClient::new());
 
     let mut response = client

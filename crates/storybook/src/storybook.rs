@@ -14,12 +14,12 @@ use gpui::{
 };
 use log::LevelFilter;
 use project::Project;
+use reqwest_client::ReqwestClient;
 use settings::{KeymapFile, Settings};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
-use ureq_client::UreqClient;
 
 use crate::app_menus::app_menus;
 use crate::assets::Assets;
@@ -68,11 +68,7 @@ fn main() {
     gpui::App::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
-        let http_client = UreqClient::new(
-            None,
-            "zed_storybook".to_string(),
-            cx.background_executor().clone(),
-        );
+        let http_client = ReqwestClient::user_agent("zed_storybook").unwrap();
         cx.set_http_client(Arc::new(http_client));
 
         settings::init(cx);

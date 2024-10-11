@@ -1,50 +1,108 @@
-use std::{any::type_name, borrow::Cow, io::Read, pin::Pin, task::Poll};
+use std::{
+    any::type_name,
+    borrow::Cow,
+    io::{self, Read},
+    pin::Pin,
+    task::Poll,
+    thread::{self, JoinHandle},
+};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::{AsyncRead, TryStreamExt};
-use http_client::{http, AsyncBody, ReadTimeout};
-use reqwest::header::{HeaderMap, HeaderValue};
+use futures::{
+    channel::{mpsc, oneshot},
+    AsyncRead, StreamExt, TryStreamExt,
+};
+use http_client::{http, ReadTimeout};
+use reqwest::{
+    header::{HeaderMap, HeaderValue},
+    RequestBuilder, Response,
+};
 use smol::future::FutureExt;
 
 const DEFAULT_CAPACITY: usize = 4096;
 
 pub struct ReqwestClient {
     client: reqwest::Client,
+    proxy: Option<http::Uri>,
+    tokio_tx: Option<
+        mpsc::UnboundedSender<(
+            RequestBuilder,
+            oneshot::Sender<Result<Response, reqwest::Error>>,
+        )>,
+    >,
+    _thread: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl ReqwestClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
+        reqwest::Client::new().into()
     }
 
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        Ok(Self {
-            client: reqwest::Client::builder().default_headers(map).build()?,
-        })
+        let client = reqwest::Client::builder().default_headers(map).build()?;
+        Ok(client.into())
+    }
+
+    pub fn proxy_and_user_agent(proxy: Option<http::Uri>, agent: &str) -> anyhow::Result<Self> {
+        let mut map = HeaderMap::new();
+        map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
+        let client = reqwest::Client::builder().default_headers(map).build()?;
+        let mut client: ReqwestClient = client.into();
+        client.proxy = proxy;
+        Ok(client)
     }
 }
 
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
-        Self { client }
+        let has_tokio = tokio::runtime::Handle::try_current().is_ok();
+
+        if has_tokio {
+            Self {
+                client,
+                proxy: None,
+                tokio_tx: None,
+                _thread: None,
+            }
+        } else {
+            let (sender, mut reciever) = mpsc::unbounded();
+            Self {
+                client,
+                proxy: None,
+                tokio_tx: Some(sender),
+                _thread: Some(thread::spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?;
+
+                    runtime.block_on(async {
+                        while let Some((request, response_channel)) = reciever.next().await {
+                            tokio::spawn(async {
+                                response_channel.send(request.send().await).ok();
+                            });
+                        }
+                    });
+
+                    Ok(())
+                })),
+            }
+        }
     }
 }
 
 // This struct is essentially a re-implementation of
 // https://docs.rs/tokio-util/0.7.12/tokio_util/io/struct.ReaderStream.html
 // except outside of Tokio's aegis
-struct ReaderStream {
+struct StreamReader {
     reader: Option<Pin<Box<dyn futures::AsyncRead + Send + Sync>>>,
     buf: BytesMut,
     capacity: usize,
 }
 
-impl ReaderStream {
+impl StreamReader {
     fn new(reader: Pin<Box<dyn futures::AsyncRead + Send + Sync>>) -> Self {
         Self {
             reader: Some(reader),
@@ -54,7 +112,7 @@ impl ReaderStream {
     }
 }
 
-impl futures::Stream for ReaderStream {
+impl futures::Stream for StreamReader {
     type Item = std::io::Result<Bytes>;
 
     fn poll_next(
@@ -131,60 +189,42 @@ pub fn poll_read_buf(
     Poll::Ready(Ok(n))
 }
 
-enum WrappedBodyInner {
-    None,
-    SyncReader(std::io::Cursor<Cow<'static, [u8]>>),
-    Stream(ReaderStream),
+struct SyncReader {
+    cursor: Option<std::io::Cursor<Cow<'static, [u8]>>>,
 }
 
-struct WrappedBody(WrappedBodyInner);
-
-impl WrappedBody {
-    fn new(body: AsyncBody) -> Self {
-        match body.0 {
-            http_client::Inner::Empty => Self(WrappedBodyInner::None),
-            http_client::Inner::SyncReader(cursor) => Self(WrappedBodyInner::SyncReader(cursor)),
-            http_client::Inner::AsyncReader(pin) => {
-                Self(WrappedBodyInner::Stream(ReaderStream::new(pin)))
-            }
+impl SyncReader {
+    fn new(cursor: std::io::Cursor<Cow<'static, [u8]>>) -> Self {
+        Self {
+            cursor: Some(cursor),
         }
     }
 }
 
-impl futures::stream::Stream for WrappedBody {
+impl futures::stream::Stream for SyncReader {
     type Item = Result<Bytes, std::io::Error>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        match &mut self.0 {
-            WrappedBodyInner::None => Poll::Ready(None),
-            WrappedBodyInner::SyncReader(cursor) => {
-                let mut buf = Vec::new();
-                match cursor.read_to_end(&mut buf) {
-                    Ok(bytes) => {
-                        if bytes == 0 {
-                            return Poll::Ready(None);
-                        } else {
-                            return Poll::Ready(Some(Ok(Bytes::from(buf))));
-                        }
-                    }
-                    Err(e) => return Poll::Ready(Some(Err(e))),
-                }
+        let Some(mut cursor) = self.cursor.take() else {
+            return Poll::Ready(None);
+        };
+
+        let mut buf = Vec::new();
+        match cursor.read_to_end(&mut buf) {
+            Ok(_) => {
+                return Poll::Ready(Some(Ok(Bytes::from(buf))));
             }
-            WrappedBodyInner::Stream(stream) => {
-                // SAFETY: Pin projection
-                let stream = unsafe { Pin::new_unchecked(stream) };
-                futures::Stream::poll_next(stream, cx)
-            }
+            Err(e) => return Poll::Ready(Some(Err(e))),
         }
     }
 }
 
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&http::Uri> {
-        None
+        self.proxy.as_ref()
     }
 
     fn type_name(&self) -> &'static str {
@@ -218,11 +258,28 @@ impl http_client::HttpClient for ReqwestClient {
             request = request.timeout(*timeout);
         }
 
-        let body = WrappedBody::new(body);
-        let request = request.body(reqwest::Body::wrap_stream(body));
+        let request = request.body(match body.0 {
+            http_client::Inner::Empty => reqwest::Body::default(),
+            http_client::Inner::SyncReader(cursor) => {
+                reqwest::Body::wrap_stream(SyncReader::new(cursor))
+            }
+            http_client::Inner::AsyncReader(stream) => {
+                reqwest::Body::wrap_stream(StreamReader::new(stream))
+            }
+        });
 
+        let tokio_tx = self.tokio_tx.clone();
         async move {
-            let response = request.send().await.map_err(|e| anyhow!(e))?;
+            let response = match tokio_tx {
+                Some(tokio_tx) => {
+                    let (tx, rx) = oneshot::channel();
+                    tokio_tx.unbounded_send((request, tx))?;
+                    rx.await?
+                }
+                None => request.send().await,
+            }
+            .map_err(|e| anyhow!(e))?;
+
             let status = response.status();
             let mut builder = http::Response::builder().status(status.as_u16());
             for (name, value) in response.headers() {
@@ -236,24 +293,5 @@ impl http_client::HttpClient for ReqwestClient {
             builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
-    }
-}
-
-#[cfg(test)]
-mod test {
-
-    use core::str;
-
-    use http_client::AsyncBody;
-    use smol::stream::StreamExt;
-
-    use crate::WrappedBody;
-
-    #[tokio::test]
-    async fn test_sync_streaming_upload() {
-        let mut body = WrappedBody::new(AsyncBody::from("hello there".to_string())).fuse();
-        let result = body.next().await.unwrap().unwrap();
-        assert!(body.next().await.is_none());
-        assert_eq!(str::from_utf8(&result).unwrap(), "hello there");
     }
 }

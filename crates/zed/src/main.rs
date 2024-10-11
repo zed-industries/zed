@@ -26,7 +26,7 @@ use gpui::{
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
-use ureq_client::UreqClient;
+use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -468,7 +468,8 @@ fn main() {
                     .ok()
             })
             .or_else(read_proxy_from_env);
-        let http = UreqClient::new(proxy_url, user_agent, cx.background_executor().clone());
+        let http = ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+            .expect("could not start HTTP client");
         cx.set_http_client(Arc::new(http));
 
         <dyn Fs>::set_global(fs.clone(), cx);

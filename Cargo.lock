@@ -3999,12 +3999,12 @@ dependencies = [
  "node_runtime",
  "open_ai",
  "project",
+ "reqwest_client",
  "semantic_index",
  "serde",
  "serde_json",
  "settings",
  "smol",
- "ureq_client",
 ]
 
 [[package]]
@@ -4109,7 +4109,6 @@ dependencies = [
  "theme",
  "toml 0.8.19",
  "ui",
- "ureq_client",
  "url",
  "util",
  "wasm-encoder 0.215.0",
@@ -9338,6 +9337,7 @@ dependencies = [
  "anyhow",
  "bytes 1.7.1",
  "futures 0.3.30",
+ "gpui",
  "http_client",
  "reqwest 0.12.8",
  "serde",
@@ -10099,6 +10099,7 @@ dependencies = [
  "open_ai",
  "parking_lot",
  "project",
+ "reqwest_client",
  "serde",
  "serde_json",
  "settings",
@@ -10109,7 +10110,6 @@ dependencies = [
  "tree-sitter",
  "ui",
  "unindent",
- "ureq_client",
  "util",
  "workspace",
  "worktree",
@@ -10991,6 +10991,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "reqwest_client",
  "rust-embed",
  "settings",
  "simplelog",
@@ -10999,7 +11000,6 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "ureq_client",
 ]
 
 [[package]]
@@ -12695,37 +12695,6 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
-
-[[package]]
-name = "ureq"
-version = "2.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8cdd25c339e200129fe4de81451814e5228c9b771d57378817d6117cc2b3f97"
-dependencies = [
- "base64 0.21.7",
- "flate2",
- "log",
- "once_cell",
- "rustls 0.21.12",
- "rustls-webpki 0.101.7",
- "url",
- "webpki-roots 0.25.4",
-]
-
-[[package]]
-name = "ureq_client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.30",
- "gpui",
- "http_client",
- "parking_lot",
- "serde",
- "smol",
- "ureq",
- "util",
-]
 
 [[package]]
 name = "url"
@@ -14672,6 +14641,7 @@ dependencies = [
  "release_channel",
  "remote",
  "repl",
+ "reqwest_client",
  "rope",
  "search",
  "serde",
@@ -14697,7 +14667,6 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
- "ureq_client",
  "url",
  "urlencoding",
  "util",

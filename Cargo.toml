@@ -122,7 +122,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
-    "crates/ureq_client",
+    "crates/reqwest_client",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -301,7 +301,6 @@ title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
-ureq_client = { path = "crates/ureq_client" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
