@@ -34,27 +34,27 @@ fn init_logging_proxy() {
 }
 
 fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
-    // struct MultiWrite {
-    //     file: Box<dyn std::io::Write + Send + 'static>,
-    //     channel: Sender<Vec<u8>>,
-    //     buffer: Vec<u8>,
-    // }
+    struct MultiWrite {
+        file: Box<dyn std::io::Write + Send + 'static>,
+        channel: Sender<Vec<u8>>,
+        buffer: Vec<u8>,
+    }
 
-    // impl std::io::Write for MultiWrite {
-    //     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-    //         let written = self.file.write(buf)?;
-    //         self.buffer.extend_from_slice(&buf[..written]);
-    //         Ok(written)
-    //     }
+    impl std::io::Write for MultiWrite {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let written = self.file.write(buf)?;
+            self.buffer.extend_from_slice(&buf[..written]);
+            Ok(written)
+        }
 
-    //     fn flush(&mut self) -> std::io::Result<()> {
-    //         self.channel
-    //             .send_blocking(self.buffer.clone())
-    //             .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
-    //         self.buffer.clear();
-    //         self.file.flush()
-    //     }
-    // }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.channel
+                .send_blocking(self.buffer.clone())
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            self.buffer.clear();
+            self.file.flush()
+        }
+    }
 
     let log_file = Box::new(if log_file_path.exists() {
         std::fs::OpenOptions::new()
@@ -65,16 +65,21 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         std::fs::File::create(&log_file_path).context("Failed to create log file")?
     });
 
-    let (_tx, rx) = smol::channel::unbounded();
+    let (tx, rx) = smol::channel::unbounded();
 
-    // let target = Box::new(MultiWrite {
-    //     file: log_file,
-    //     channel: tx,
-    //     buffer: Vec::new(),
-    // });
+    let target = Box::new(MultiWrite {
+        file: log_file,
+        channel: tx,
+        buffer: Vec::new(),
+    });
 
     env_logger::Builder::from_default_env()
-        .target(env_logger::Target::Pipe(log_file))
+        .target(env_logger::Target::Pipe(target))
+        .format(|buf, record| {
+            serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
+            buf.write_all(b"\n")?;
+            Ok(())
+        })
         .init();
 
     Ok(rx)
@@ -137,7 +142,7 @@ impl ServerListeners {
 
 fn start_server(
     listeners: ServerListeners,
-    mut _log_rx: Receiver<Vec<u8>>,
+    mut log_rx: Receiver<Vec<u8>>,
     cx: &mut AppContext,
 ) -> Arc<ChannelClient> {
     // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
@@ -153,22 +158,6 @@ fn start_server(
             log::info!("app quitting. sending signal to server main loop");
             app_quit_tx.send(()).await.ok();
         }
-    })
-    .detach();
-
-    let (mut log_tx, mut log_rx) = mpsc::unbounded::<Vec<u8>>();
-    cx.spawn(|cx| async move {
-        let mut i = 0;
-        loop {
-            let message = format!("this is message {}\n", i).into_bytes();
-            log_tx.send(message).await.context("failed to send")?;
-
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(1))
-                .await;
-            i += 1;
-        }
-        anyhow::Ok(())
     })
     .detach();
 
@@ -253,8 +242,6 @@ fn start_server(
                     // // TODO: How do we handle backpressure?
                     log_message = log_rx.next().fuse() => {
                         if let Some(log_message) = log_message {
-                            log::error!("server: logging message: {:?}", String::from_utf8(log_message.clone()));
-                            // TODO: Should we ignore the error here (if we log here we will just end up here again)?
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
                                 log::error!("server: failed to write log message to stderr: {:?}", error);
                                 break;
