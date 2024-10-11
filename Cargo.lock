@@ -6291,6 +6291,7 @@ dependencies = [
  "strum 0.25.0",
  "text",
  "theme",
+ "thiserror",
  "tiktoken-rs",
  "ui",
  "unindent",
