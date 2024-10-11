@@ -252,6 +252,7 @@ fn init_ui(
     tab_switcher::init(cx);
     dev_server_projects::init(app_state.client.clone(), cx);
     outline::init(cx);
+    recent_directories::init(cx);
     project_symbols::init(cx);
     project_panel::init(Assets, cx);
     outline_panel::init(Assets, cx);

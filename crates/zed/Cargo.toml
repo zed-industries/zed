@@ -73,6 +73,7 @@ nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
+recent_directories.workspace = true
 outline_panel.workspace = true
 parking_lot.workspace = true
 paths.workspace = true

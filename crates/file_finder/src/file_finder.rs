@@ -92,7 +92,7 @@ impl FileFinder {
             })
             .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path))
             .collect::<Vec<_>>();
-
+        dbg!("history_items", &history_items);
         let project = workspace.project().clone();
         let weak_workspace = cx.view().downgrade();
         workspace.toggle_modal(cx, |cx| {

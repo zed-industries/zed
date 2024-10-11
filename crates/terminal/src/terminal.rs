@@ -688,6 +688,8 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
+                dbg!("wake up the cwd is", self.get_cwd());
+
                 if self.pty_info.has_changed() {
                     cx.emit(Event::TitleChanged);
                 }

@@ -250,6 +250,7 @@ ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
+recent_directories = { path = "crates/recent_directories" }
 paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
