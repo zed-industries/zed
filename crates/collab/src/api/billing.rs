@@ -11,17 +11,14 @@ use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc, time::Duration};
 use stripe::{
-    BillingPortalSession, CheckoutSession, CreateBillingPortalSession,
-    CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
+    BillingPortalSession, CreateBillingPortalSession, CreateBillingPortalSessionFlowData,
+    CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
-    CreateBillingPortalSessionFlowDataType, CreateCheckoutSession, CreateCheckoutSessionLineItems,
-    CreateCustomer, Customer, CustomerId, EventObject, EventType, Expandable, ListEvents,
-    Subscription, SubscriptionId, SubscriptionStatus,
+    CreateBillingPortalSessionFlowDataType, CreateCustomer, Customer, CustomerId, EventObject,
+    EventType, Expandable, ListEvents, Subscription, SubscriptionId, SubscriptionStatus,
 };
 use util::ResultExt;
 
-use crate::db::{billing_subscription::StripeSubscriptionStatus, UserId};
-use crate::llm::db::LlmDatabase;
 use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
 use crate::rpc::ResultExt as _;
 use crate::{
@@ -32,6 +29,10 @@ use crate::{
         UpdateBillingSubscriptionParams,
     },
     stripe_billing::StripeBilling,
+};
+use crate::{
+    db::{billing_subscription::StripeSubscriptionStatus, UserId},
+    llm::db::LlmDatabase,
 };
 use crate::{AppState, Error, Result};
 
@@ -202,12 +203,15 @@ async fn create_billing_subscription(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
-    let Some((stripe_client, stripe_access_price_id)) = app
-        .stripe_client
-        .clone()
-        .zip(app.config.stripe_llm_access_price_id.clone())
-    else {
-        log::error!("failed to retrieve Stripe client or price ID");
+    let Some(stripe_client) = app.stripe_client.clone() else {
+        log::error!("failed to retrieve Stripe client");
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
+    let Some(llm_db) = app.llm_db.clone() else {
+        log::error!("failed to retrieve LLM database");
         Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
@@ -231,26 +235,15 @@ async fn create_billing_subscription(
             customer.id
         };
 
-    let checkout_session = {
-        let mut params = CreateCheckoutSession::new();
-        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
-        params.customer = Some(customer_id);
-        params.client_reference_id = Some(user.github_login.as_str());
-        params.line_items = Some(vec![CreateCheckoutSessionLineItems {
-            price: Some(stripe_access_price_id.to_string()),
-            quantity: Some(1),
-            ..Default::default()
-        }]);
-        let success_url = format!("{}/account", app.config.zed_dot_dev_url());
-        params.success_url = Some(&success_url);
-
-        CheckoutSession::create(&stripe_client, params).await?
-    };
-
+    let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-5-sonnet")?;
+    let mut stripe_billing = StripeBilling::new(stripe_client.clone()).await?;
+    let stripe_model = stripe_billing.register_model(default_model).await?;
+    let success_url = format!("{}/account", app.config.zed_dot_dev_url());
+    let checkout_session_url = stripe_billing
+        .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
+        .await?;
     Ok(Json(CreateBillingSubscriptionResponse {
-        checkout_session_url: checkout_session
-            .url
-            .ok_or_else(|| anyhow!("no checkout session URL"))?,
+        checkout_session_url,
     }))
 }
 
@@ -722,9 +715,13 @@ async fn find_or_create_billing_customer(
 
 const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
 
-pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>, llm_db: LlmDatabase) {
+pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::warn!("failed to retrieve Stripe client");
+        return;
+    };
+    let Some(llm_db) = app.llm_db.clone() else {
+        log::warn!("failed to retrieve LLM database");
         return;
     };
 
@@ -736,7 +733,6 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>, llm_db: LlmDa
                 sync_with_stripe(&app, &llm_db, &stripe_client)
                     .await
                     .trace_err();
-
                 executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
             }
         }
@@ -745,10 +741,10 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>, llm_db: LlmDa
 
 async fn sync_with_stripe(
     app: &Arc<AppState>,
-    llm_db: &LlmDatabase,
-    stripe_client: &stripe::Client,
+    llm_db: &Arc<LlmDatabase>,
+    stripe_client: &Arc<stripe::Client>,
 ) -> anyhow::Result<()> {
-    let mut stripe_billing = StripeBilling::new(stripe_client).await?;
+    let mut stripe_billing = StripeBilling::new(stripe_client.clone()).await?;
 
     let events = llm_db.get_billing_events().await?;
     let user_ids = events
@@ -776,12 +772,12 @@ async fn sync_with_stripe(
             .parse()
             .context("failed to parse stripe customer id from db")?;
 
-        let stripe_model = stripe_billing.register_model(&model, stripe_client).await?;
+        let stripe_model = stripe_billing.register_model(&model).await?;
         stripe_billing
-            .subscribe_to_model(&stripe_subscription_id, &stripe_model, stripe_client)
+            .subscribe_to_model(&stripe_subscription_id, &stripe_model)
             .await?;
         stripe_billing
-            .bill_model_usage(&stripe_customer_id, &stripe_model, &event, stripe_client)
+            .bill_model_usage(&stripe_customer_id, &stripe_model, &event)
             .await?;
         llm_db.consume_billing_event(event.id).await?;
     }
