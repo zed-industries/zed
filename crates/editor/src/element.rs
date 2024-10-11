@@ -15,7 +15,7 @@ use crate::{
     hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
-    scroll::scroll_amount::ScrollAmount,
+    scroll::{scroll_amount::ScrollAmount, Axis},
     BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
@@ -1181,10 +1181,21 @@ impl EditorElement {
             });
         }
 
-        let track_bounds = Bounds::from_corners(
-            point(self.scrollbar_left(&bounds), bounds.origin.y),
-            point(bounds.lower_right().x, bounds.lower_left().y),
-        );
+        const SCROLL_DIRECTION: Axis = Axis::Horizontal;
+
+        let track_bounds = match SCROLL_DIRECTION {
+            Axis::Vertical => Bounds::from_corners(
+                point(self.scrollbar_left(&bounds), bounds.origin.y),
+                bounds.lower_right(),
+            ),
+            Axis::Horizontal => Bounds::from_corners(
+                point(
+                    bounds.lower_left().x,
+                    bounds.lower_left().y - self.style.scrollbar_width,
+                ),
+                bounds.lower_right(),
+            ),
+        };
 
         let settings = EditorSettings::get_global(cx);
         let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
@@ -1195,16 +1206,28 @@ impl EditorElement {
         let total_rows =
             (snapshot.max_point().row().as_f32() + scroll_beyond_last_line).max(rows_per_page);
         let height = bounds.size.height;
-        let px_per_row = height / total_rows;
-        let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
-        let row_height = (height - thumb_height) / (total_rows - rows_per_page).max(0.);
+
+        let px_per_row = match SCROLL_DIRECTION {
+            Axis::Vertical => height / total_rows,
+            Axis::Horizontal => bounds.size.width / total_rows,
+        };
+
+        let thumb_size = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
+
+        let text_unit_size = match SCROLL_DIRECTION {
+            Axis::Vertical => (height - thumb_size) / (total_rows - rows_per_page).max(0.),
+            Axis::Horizontal => {
+                (bounds.size.width - thumb_size) / (total_rows - rows_per_page).max(0.)
+            }
+        };
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
             visible_row_range,
-            row_height,
+            text_unit_size,
             visible: show_scrollbars,
-            thumb_height,
+            thumb_size,
+            axis: SCROLL_DIRECTION,
         })
     }
 
@@ -3612,6 +3635,8 @@ impl EditorElement {
             return;
         };
 
+        let axis = scrollbar_layout.axis.clone();
+
         let thumb_bounds = scrollbar_layout.thumb_bounds();
         if scrollbar_layout.visible {
             cx.paint_layer(scrollbar_layout.hitbox.bounds, |cx| {
@@ -3657,7 +3682,7 @@ impl EditorElement {
 
         cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout.hitbox);
 
-        let row_height = scrollbar_layout.row_height;
+        let text_unit_size = scrollbar_layout.text_unit_size;
         let row_range = scrollbar_layout.visible_row_range.clone();
 
         cx.on_mouse_event({
@@ -3673,18 +3698,36 @@ impl EditorElement {
                     if event.pressed_button == Some(MouseButton::Left)
                         && editor.scroll_manager.is_dragging_scrollbar()
                     {
-                        let y = mouse_position.y;
-                        let new_y = event.position.y;
-                        if (hitbox.top()..hitbox.bottom()).contains(&y) {
-                            let mut position = editor.scroll_position(cx);
-                            position.y += (new_y - y) / row_height;
-                            if position.y < 0.0 {
-                                position.y = 0.0;
-                            }
-                            editor.set_scroll_position(position, cx);
-                        }
+                        match axis {
+                            Axis::Vertical => {
+                                let y = mouse_position.y;
+                                let new_y = event.position.y;
+                                if (hitbox.top()..hitbox.bottom()).contains(&y) {
+                                    let mut position = editor.scroll_position(cx);
+                                    position.y += (new_y - y) / text_unit_size;
+                                    if position.y < 0.0 {
+                                        position.y = 0.0;
+                                    }
+                                    editor.set_scroll_position(position, cx);
+                                }
 
-                        cx.stop_propagation();
+                                cx.stop_propagation();
+                            }
+                            Axis::Horizontal => {
+                                let x = mouse_position.x;
+                                let new_x = event.position.x;
+                                if (hitbox.left()..hitbox.right()).contains(&x) {
+                                    let mut position = editor.scroll_position(cx);
+                                    position.y += (new_x - x) / text_unit_size;
+                                    if position.y < 0.0 {
+                                        position.y = 0.0;
+                                    }
+                                    editor.set_scroll_position(position, cx);
+                                }
+
+                                cx.stop_propagation();
+                            }
+                        }
                     } else {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
                         if hitbox.is_hovered(cx) {
@@ -3722,19 +3765,42 @@ impl EditorElement {
                     editor.update(cx, |editor, cx| {
                         editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
 
-                        let y = event.position.y;
-                        if y < thumb_bounds.top() || thumb_bounds.bottom() < y {
-                            let center_row = ((y - hitbox.top()) / row_height).round() as u32;
-                            let top_row = center_row
-                                .saturating_sub((row_range.end - row_range.start) as u32 / 2);
-                            let mut position = editor.scroll_position(cx);
-                            position.y = top_row as f32;
-                            editor.set_scroll_position(position, cx);
-                        } else {
-                            editor.scroll_manager.show_scrollbar(cx);
-                        }
+                        match axis {
+                            Axis::Vertical => {
+                                let y = event.position.y;
+                                if y < thumb_bounds.top() || thumb_bounds.bottom() < y {
+                                    let center_row =
+                                        ((y - hitbox.top()) / text_unit_size).round() as u32;
+                                    let top_row = center_row.saturating_sub(
+                                        (row_range.end - row_range.start) as u32 / 2,
+                                    );
+                                    let mut position = editor.scroll_position(cx);
+                                    position.y = top_row as f32;
+                                    editor.set_scroll_position(position, cx);
+                                } else {
+                                    editor.scroll_manager.show_scrollbar(cx);
+                                }
 
-                        cx.stop_propagation();
+                                cx.stop_propagation();
+                            }
+                            Axis::Horizontal => {
+                                let x = event.position.x;
+                                if x < thumb_bounds.left() || thumb_bounds.right() < x {
+                                    let center_row =
+                                        ((x - hitbox.left()) / text_unit_size).round() as u32;
+                                    let top_row = center_row.saturating_sub(
+                                        (row_range.end - row_range.start) as u32 / 2,
+                                    );
+                                    let mut position = editor.scroll_position(cx);
+                                    position.y = top_row as f32;
+                                    editor.set_scroll_position(position, cx);
+                                } else {
+                                    editor.scroll_manager.show_scrollbar(cx);
+                                }
+
+                                cx.stop_propagation();
+                            }
+                        }
                     });
                 }
             });
@@ -5812,8 +5878,9 @@ struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_row_range: Range<f32>,
     visible: bool,
-    row_height: Pixels,
-    thumb_height: Pixels,
+    text_unit_size: Pixels,
+    thumb_size: Pixels,
+    axis: Axis,
 }
 
 impl ScrollbarLayout {
@@ -5823,16 +5890,29 @@ impl ScrollbarLayout {
     const MIN_THUMB_HEIGHT: Pixels = px(20.0);
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
-        let thumb_top = self.y_for_row(self.visible_row_range.start);
-        let thumb_bottom = thumb_top + self.thumb_height;
-        Bounds::from_corners(
-            point(self.hitbox.left(), thumb_top),
-            point(self.hitbox.right(), thumb_bottom),
-        )
+        match self.axis {
+            Axis::Vertical => {
+                let thumb_top = self.y_for_row(self.visible_row_range.start);
+                let thumb_bottom = thumb_top + self.thumb_size;
+                Bounds::from_corners(
+                    point(self.hitbox.left(), thumb_top),
+                    point(self.hitbox.right(), thumb_bottom),
+                )
+            }
+            Axis::Horizontal => {
+                let thumb_left =
+                    self.hitbox.left() + self.visible_row_range.start * self.text_unit_size;
+                let thumb_right = thumb_left + self.thumb_size;
+                Bounds::from_corners(
+                    point(thumb_left, self.hitbox.top()),
+                    point(thumb_right, self.hitbox.bottom()),
+                )
+            }
+        }
     }
 
     fn y_for_row(&self, row: f32) -> Pixels {
-        self.hitbox.top() + row * self.row_height
+        self.hitbox.top() + row * self.text_unit_size
     }
 
     fn marker_quads_for_ranges(
@@ -5868,13 +5948,17 @@ impl ScrollbarLayout {
             )
         };
 
-        let row_to_y = |row: DisplayRow| row.as_f32() * self.row_height;
+        // TODO: Correct this for text_unit_size
+        let row_to_y = |row: DisplayRow| row.as_f32() * self.text_unit_size;
         let mut pixel_ranges = row_ranges
             .into_iter()
             .map(|range| {
                 let start_y = row_to_y(range.start);
                 let end_y = row_to_y(range.end)
-                    + self.row_height.max(height_limit.min).min(height_limit.max);
+                    + self
+                        .text_unit_size
+                        .max(height_limit.min)
+                        .min(height_limit.max);
                 ColoredRange {
                     start: start_y,
                     end: end_y,
