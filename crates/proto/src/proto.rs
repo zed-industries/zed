@@ -253,6 +253,7 @@ messages!(
     (ProjectEntryResponse, Foreground),
     (CountLanguageModelTokens, Background),
     (CountLanguageModelTokensResponse, Background),
+    (RefreshLlmToken, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
