@@ -382,13 +382,13 @@ impl Client {
         Ok(())
     }
 
-    pub fn on_notification<F>(&self, method: &'static str, mut f: F)
+    pub fn on_notification<F>(&self, method: &'static str, f: F)
     where
         F: 'static + Send + FnMut(Value, AsyncAppContext),
     {
         self.notification_handlers
             .lock()
-            .insert(method, Box::new(move |params, cx| f(params, cx)));
+            .insert(method, Box::new(f));
     }
 
     pub fn name(&self) -> &str {
