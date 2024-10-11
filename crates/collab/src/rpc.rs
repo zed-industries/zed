@@ -1218,6 +1218,15 @@ impl Server {
         Ok(())
     }
 
+    pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
+        let pool = self.connection_pool.lock();
+        for connection_id in pool.user_connection_ids(user_id) {
+            self.peer
+                .send(connection_id, proto::RefreshLlmToken {})
+                .trace_err();
+        }
+    }
+
     pub async fn snapshot<'a>(self: &'a Arc<Self>) -> ServerSnapshot<'a> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
