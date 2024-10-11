@@ -663,6 +663,7 @@ impl<S> Drop for TokenCountingStream<S> {
                     cache_creation_input_token_count,
                     cache_read_input_token_count,
                     output_token_count,
+                    claims.has_llm_subscription,
                     Utc::now(),
                 )
                 .await
