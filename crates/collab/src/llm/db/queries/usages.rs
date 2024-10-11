@@ -9,15 +9,26 @@ use strum::IntoEnumIterator as _;
 
 use super::*;
 
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+pub struct TokenUsage {
+    pub input: usize,
+    pub input_cache_creation: usize,
+    pub input_cache_read: usize,
+    pub output: usize,
+}
+
+impl TokenUsage {
+    pub fn total(&self) -> usize {
+        self.input + self.input_cache_creation + self.input_cache_read + self.output
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Usage {
     pub requests_this_minute: usize,
     pub tokens_this_minute: usize,
     pub tokens_this_day: usize,
-    pub input_tokens_this_month: usize,
-    pub cache_creation_input_tokens_this_month: usize,
-    pub cache_read_input_tokens_this_month: usize,
-    pub output_tokens_this_month: usize,
+    pub tokens_this_month: TokenUsage,
     pub spending_this_month: Cents,
     pub lifetime_spending: Cents,
 }
@@ -257,18 +268,20 @@ impl LlmDatabase {
                 requests_this_minute,
                 tokens_this_minute,
                 tokens_this_day,
-                input_tokens_this_month: monthly_usage
-                    .as_ref()
-                    .map_or(0, |usage| usage.input_tokens as usize),
-                cache_creation_input_tokens_this_month: monthly_usage
-                    .as_ref()
-                    .map_or(0, |usage| usage.cache_creation_input_tokens as usize),
-                cache_read_input_tokens_this_month: monthly_usage
-                    .as_ref()
-                    .map_or(0, |usage| usage.cache_read_input_tokens as usize),
-                output_tokens_this_month: monthly_usage
-                    .as_ref()
-                    .map_or(0, |usage| usage.output_tokens as usize),
+                tokens_this_month: TokenUsage {
+                    input: monthly_usage
+                        .as_ref()
+                        .map_or(0, |usage| usage.input_tokens as usize),
+                    input_cache_creation: monthly_usage
+                        .as_ref()
+                        .map_or(0, |usage| usage.cache_creation_input_tokens as usize),
+                    input_cache_read: monthly_usage
+                        .as_ref()
+                        .map_or(0, |usage| usage.cache_read_input_tokens as usize),
+                    output: monthly_usage
+                        .as_ref()
+                        .map_or(0, |usage| usage.output_tokens as usize),
+                },
                 spending_this_month,
                 lifetime_spending,
             })
@@ -283,10 +296,7 @@ impl LlmDatabase {
         is_staff: bool,
         provider: LanguageModelProvider,
         model_name: &str,
-        input_tokens: usize,
-        input_cache_creation_tokens: usize,
-        input_cache_read_tokens: usize,
-        output_tokens: usize,
+        tokens: TokenUsage,
         has_llm_subscription: bool,
         max_monthly_spend: Cents,
         now: DateTimeUtc,
@@ -315,10 +325,6 @@ impl LlmDatabase {
                     &tx,
                 )
                 .await?;
-            let total_tokens = input_tokens
-                + input_cache_read_tokens
-                + input_cache_creation_tokens
-                + output_tokens;
             let tokens_this_minute = self
                 .update_usage_for_measure(
                     user_id,
@@ -327,7 +333,7 @@ impl LlmDatabase {
                     &usages,
                     UsageMeasure::TokensPerMinute,
                     now,
-                    total_tokens,
+                    tokens.total(),
                     &tx,
                 )
                 .await?;
@@ -339,7 +345,7 @@ impl LlmDatabase {
                     &usages,
                     UsageMeasure::TokensPerDay,
                     now,
-                    total_tokens,
+                    tokens.total(),
                     &tx,
                 )
                 .await?;
@@ -363,14 +369,14 @@ impl LlmDatabase {
                 Some(usage) => {
                     monthly_usage::Entity::update(monthly_usage::ActiveModel {
                         id: ActiveValue::unchanged(usage.id),
-                        input_tokens: ActiveValue::set(usage.input_tokens + input_tokens as i64),
+                        input_tokens: ActiveValue::set(usage.input_tokens + tokens.input as i64),
                         cache_creation_input_tokens: ActiveValue::set(
-                            usage.cache_creation_input_tokens + input_cache_creation_tokens as i64,
+                            usage.cache_creation_input_tokens + tokens.input_cache_creation as i64,
                         ),
                         cache_read_input_tokens: ActiveValue::set(
-                            usage.cache_read_input_tokens + input_cache_read_tokens as i64,
+                            usage.cache_read_input_tokens + tokens.input_cache_read as i64,
                         ),
-                        output_tokens: ActiveValue::set(usage.output_tokens + output_tokens as i64),
+                        output_tokens: ActiveValue::set(usage.output_tokens + tokens.output as i64),
                         ..Default::default()
                     })
                     .exec(&*tx)
@@ -382,12 +388,12 @@ impl LlmDatabase {
                         model_id: ActiveValue::set(model.id),
                         month: ActiveValue::set(month),
                         year: ActiveValue::set(year),
-                        input_tokens: ActiveValue::set(input_tokens as i64),
+                        input_tokens: ActiveValue::set(tokens.input as i64),
                         cache_creation_input_tokens: ActiveValue::set(
-                            input_cache_creation_tokens as i64,
+                            tokens.input_cache_creation as i64,
                         ),
-                        cache_read_input_tokens: ActiveValue::set(input_cache_read_tokens as i64),
-                        output_tokens: ActiveValue::set(output_tokens as i64),
+                        cache_read_input_tokens: ActiveValue::set(tokens.input_cache_read as i64),
+                        output_tokens: ActiveValue::set(tokens.output as i64),
                         ..Default::default()
                     }
                     .insert(&*tx)
@@ -412,12 +418,12 @@ impl LlmDatabase {
                     idempotency_key: ActiveValue::not_set(),
                     user_id: ActiveValue::set(user_id),
                     model_id: ActiveValue::set(model.id),
-                    input_tokens: ActiveValue::set(input_tokens as i64),
+                    input_tokens: ActiveValue::set(tokens.input as i64),
                     input_cache_creation_tokens: ActiveValue::set(
-                        input_cache_creation_tokens as i64,
+                        tokens.input_cache_creation as i64,
                     ),
-                    input_cache_read_tokens: ActiveValue::set(input_cache_read_tokens as i64),
-                    output_tokens: ActiveValue::set(output_tokens as i64),
+                    input_cache_read_tokens: ActiveValue::set(tokens.input_cache_read as i64),
+                    output_tokens: ActiveValue::set(tokens.output as i64),
                 }
                 .insert(&*tx)
                 .await?;
@@ -437,14 +443,14 @@ impl LlmDatabase {
                 Some(usage) => {
                     lifetime_usage::Entity::update(lifetime_usage::ActiveModel {
                         id: ActiveValue::unchanged(usage.id),
-                        input_tokens: ActiveValue::set(usage.input_tokens + input_tokens as i64),
+                        input_tokens: ActiveValue::set(usage.input_tokens + tokens.input as i64),
                         cache_creation_input_tokens: ActiveValue::set(
-                            usage.cache_creation_input_tokens + input_cache_creation_tokens as i64,
+                            usage.cache_creation_input_tokens + tokens.input_cache_creation as i64,
                         ),
                         cache_read_input_tokens: ActiveValue::set(
-                            usage.cache_read_input_tokens + input_cache_read_tokens as i64,
+                            usage.cache_read_input_tokens + tokens.input_cache_read as i64,
                         ),
-                        output_tokens: ActiveValue::set(usage.output_tokens + output_tokens as i64),
+                        output_tokens: ActiveValue::set(usage.output_tokens + tokens.output as i64),
                         ..Default::default()
                     })
                     .exec(&*tx)
@@ -454,12 +460,12 @@ impl LlmDatabase {
                     lifetime_usage::ActiveModel {
                         user_id: ActiveValue::set(user_id),
                         model_id: ActiveValue::set(model.id),
-                        input_tokens: ActiveValue::set(input_tokens as i64),
+                        input_tokens: ActiveValue::set(tokens.input as i64),
                         cache_creation_input_tokens: ActiveValue::set(
-                            input_cache_creation_tokens as i64,
+                            tokens.input_cache_creation as i64,
                         ),
-                        cache_read_input_tokens: ActiveValue::set(input_cache_read_tokens as i64),
-                        output_tokens: ActiveValue::set(output_tokens as i64),
+                        cache_read_input_tokens: ActiveValue::set(tokens.input_cache_read as i64),
+                        output_tokens: ActiveValue::set(tokens.output as i64),
                         ..Default::default()
                     }
                     .insert(&*tx)
@@ -479,11 +485,12 @@ impl LlmDatabase {
                 requests_this_minute,
                 tokens_this_minute,
                 tokens_this_day,
-                input_tokens_this_month: monthly_usage.input_tokens as usize,
-                cache_creation_input_tokens_this_month: monthly_usage.cache_creation_input_tokens
-                    as usize,
-                cache_read_input_tokens_this_month: monthly_usage.cache_read_input_tokens as usize,
-                output_tokens_this_month: monthly_usage.output_tokens as usize,
+                tokens_this_month: TokenUsage {
+                    input: monthly_usage.input_tokens as usize,
+                    input_cache_creation: monthly_usage.cache_creation_input_tokens as usize,
+                    input_cache_read: monthly_usage.cache_read_input_tokens as usize,
+                    output: monthly_usage.output_tokens as usize,
+                },
                 spending_this_month,
                 lifetime_spending,
             })
