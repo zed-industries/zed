@@ -122,7 +122,7 @@ use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::{
-    lsp_store::{FormatTrigger, FormatTarget},
+    lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Item, Location,
     LocationLink, Project, ProjectPath, ProjectTransaction, TaskSourceKind,

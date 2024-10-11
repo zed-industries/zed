@@ -53,7 +53,6 @@ use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;
 
-use itertools::Itertools;
 use rpc::AnyProtoClient;
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -562,7 +561,7 @@ impl LocalLspStore {
                                 cx,
                             )
                             .await
-                            .context("failed to format via language server")?,
+                            .context("failed to format ranges via language server")?,
                         )),
                     }
                 } else {
@@ -1935,30 +1934,32 @@ impl LspStore {
         settings: &LanguageSettings,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let capabilities = &language_server.capabilities();
+        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
+        if matches!(range_formatting_provider, Some(p) if *p == OneOf::Left(false)) {
+            return Err(anyhow!(
+                "{} language server does not support range formatting",
+                language_server.name()
+            ));
+        }
+
         let uri = lsp::Url::from_file_path(abs_path)
             .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
-        let capabilities = &language_server.capabilities();
 
-        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-
-        let lsp_edits = if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false))
-        {
-            let ranges = selections
-                .into_iter()
-                .map(|s| {
-                    let start = lsp::Position::new(s.start.row, s.start.column);
-                    let end = lsp::Position::new(s.end.row, s.end.column);
-                    (start, end)
-                })
-                .collect_vec();
+        let lsp_edits = {
+            let ranges = selections.into_iter().map(|s| {
+                let start = lsp::Position::new(s.start.row, s.start.column);
+                let end = lsp::Position::new(s.end.row, s.end.column);
+                lsp::Range::new(start, end)
+            });
 
             let mut edits = None;
-            for (buffer_start, buffer_end) in ranges {
+            for range in ranges {
                 if let Some(mut edit) = language_server
                     .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                         text_document: text_document.clone(),
-                        range: lsp::Range::new(buffer_start, buffer_end),
+                        range,
                         options: lsp_command::lsp_formatting_options(settings),
                         work_done_progress_params: Default::default(),
                     })
@@ -1968,8 +1969,6 @@ impl LspStore {
                 }
             }
             edits
-        } else {
-            None
         };
 
         if let Some(lsp_edits) = lsp_edits {
