@@ -729,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn test_trancate_and_trailoff() {
+    fn test_truncate_and_trailoff() {
         assert_eq!(truncate_and_trailoff("", 5), "");
         assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
