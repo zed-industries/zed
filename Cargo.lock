@@ -11357,7 +11357,6 @@ dependencies = [
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
- "language",
  "semantic_version",
  "serde",
 ]

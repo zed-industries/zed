@@ -2146,7 +2146,7 @@ impl Context {
                             model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
-                            language_name,
+                            language_name: language_name.map(|name| name.to_proto()),
                         });
                     }
 
