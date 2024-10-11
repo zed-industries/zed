@@ -184,7 +184,7 @@ pub enum CursorShape {
     /// A block that surrounds the following character
     Block,
     /// An underline that runs along the following character
-    Underscore,
+    Underline,
     /// A box drawn around the following character
     Hollow,
 }

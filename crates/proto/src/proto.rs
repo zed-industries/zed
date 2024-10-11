@@ -253,6 +253,7 @@ messages!(
     (ProjectEntryResponse, Foreground),
     (CountLanguageModelTokens, Background),
     (CountLanguageModelTokensResponse, Background),
+    (RefreshLlmToken, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -364,6 +365,7 @@ messages!(
     (CheckFileExists, Background),
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
+    (RemoveWorktree, Foreground),
 );
 
 request_messages!(
@@ -486,7 +488,8 @@ request_messages!(
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
-    (ShutdownRemoteServer, Ack)
+    (ShutdownRemoteServer, Ack),
+    (RemoveWorktree, Ack)
 );
 
 entity_messages!(

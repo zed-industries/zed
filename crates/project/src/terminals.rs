@@ -362,7 +362,16 @@ pub fn wrap_for_ssh(
     }
 
     let commands = if let Some(path) = path {
-        format!("cd {:?}; {} {}", path, env_changes, to_run)
+        let path_string = path.to_string_lossy().to_string();
+        // shlex will wrap the command in single quotes (''), disabling ~ expansion,
+        // replace ith with something that works
+        let tilde_prefix = "~/";
+        if path.starts_with(tilde_prefix) {
+            let trimmed_path = &path_string[tilde_prefix.len()..];
+            format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
+        } else {
+            format!("cd {path:?}; {env_changes} {to_run}")
+        }
     } else {
         format!("cd; {env_changes} {to_run}")
     };

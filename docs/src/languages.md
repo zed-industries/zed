@@ -61,6 +61,7 @@ Zed supports hundreds of programming languages and text formats. Some work out-o
 - [TypeScript](./languages/typescript.md)
 - [Uiua](./languages/uiua.md)
 - [Vue](./languages/vue.md)
+- [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
@@ -157,4 +158,3 @@ Zed supports hundreds of programming languages and text formats. Some work out-o
 - [VHS](https://github.com/eth0net/zed-vhs)
 - [Wgsl](https://github.com/luan/zed-wgsl)
 - [WIT](https://github.com/valentinegb/zed-wit)
-- [XML](https://github.com/sweetppro/zed-xml)
