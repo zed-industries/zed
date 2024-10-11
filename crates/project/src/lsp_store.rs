@@ -327,9 +327,8 @@ impl LocalLspStore {
                                                 )
                                                 .await
                                             }
-                                        }
-                                        .log_err()
-                                        .flatten();
+                                        }?;
+
                                         if let Some(op) = diff {
                                             format_operations.push(op);
                                         }
@@ -348,9 +347,7 @@ impl LocalLspStore {
                                                 &mut project_transaction,
                                                 &mut cx,
                                             )
-                                            .await
-                                            .log_err()
-                                            .flatten();
+                                            .await?;
                                             if let Some(op) = diff {
                                                 format_operations.push(op);
                                             }
@@ -374,9 +371,7 @@ impl LocalLspStore {
                                         &mut project_transaction,
                                         &mut cx,
                                     )
-                                    .await
-                                    .log_err()
-                                    .flatten();
+                                    .await?;
                                     if let Some(op) = diff {
                                         format_operations.push(op);
                                     }
@@ -426,9 +421,7 @@ impl LocalLspStore {
                                         )
                                         .await
                                     }
-                                }
-                                .log_err()
-                                .flatten();
+                                }?;
 
                                 if let Some(op) = diff {
                                     format_operations.push(op)
@@ -449,9 +442,7 @@ impl LocalLspStore {
                                         &mut project_transaction,
                                         &mut cx,
                                     )
-                                    .await
-                                    .log_err()
-                                    .flatten();
+                                    .await?;
                                     if let Some(op) = diff {
                                         format_operations.push(op);
                                     }
