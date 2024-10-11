@@ -40,6 +40,14 @@ pub enum Spacing {
     ///
     /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     XXLarge,
+    /// 3X Large spacing - @16px/rem: `16px`|`20px`|`24px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
+    Large3X,
+    /// 4X Large spacing - @16px/rem: `20px`|`24px`|`28px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
+    Large4X,
 }
 
 impl Spacing {
@@ -55,6 +63,8 @@ impl Spacing {
                 Spacing::Large => 4. / BASE_REM_SIZE_IN_PX,
                 Spacing::XLarge => 8. / BASE_REM_SIZE_IN_PX,
                 Spacing::XXLarge => 12. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large3X => 16. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large4X => 20. / BASE_REM_SIZE_IN_PX,
             },
             UiDensity::Default => match self {
                 Spacing::None => 0.,
@@ -65,6 +75,8 @@ impl Spacing {
                 Spacing::Large => 8. / BASE_REM_SIZE_IN_PX,
                 Spacing::XLarge => 12. / BASE_REM_SIZE_IN_PX,
                 Spacing::XXLarge => 16. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large3X => 20. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large4X => 24. / BASE_REM_SIZE_IN_PX,
             },
             UiDensity::Comfortable => match self {
                 Spacing::None => 0.,
@@ -75,6 +87,8 @@ impl Spacing {
                 Spacing::Large => 10. / BASE_REM_SIZE_IN_PX,
                 Spacing::XLarge => 16. / BASE_REM_SIZE_IN_PX,
                 Spacing::XXLarge => 20. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large3X => 24. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large4X => 28. / BASE_REM_SIZE_IN_PX,
             },
         }
     }

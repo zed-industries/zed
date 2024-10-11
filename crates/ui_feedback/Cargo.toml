@@ -1,0 +1,23 @@
+[package]
+name = "ui_feedback"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/ui_feedback.rs"
+
+[dependencies]
+gpui.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+story = { workspace = true, optional = true }
+
+[features]
+default = []
+stories = ["dep:story"]

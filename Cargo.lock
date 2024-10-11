@@ -10887,6 +10887,7 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
+ "ui_feedback",
 ]
 
 [[package]]
@@ -12415,6 +12416,17 @@ dependencies = [
  "theme",
  "ui_macros",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "ui_feedback"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "story",
+ "theme",
+ "ui",
 ]
 
 [[package]]

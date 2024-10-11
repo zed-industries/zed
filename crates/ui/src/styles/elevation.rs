@@ -1,5 +1,6 @@
-use gpui::{hsla, point, px, BoxShadow};
+use gpui::{hsla, point, px, BoxShadow, Hsla, WindowContext};
 use smallvec::{smallvec, SmallVec};
+use theme::{color_alpha, ActiveTheme};
 
 /// Today, elevation is primarily used to add shadows to elements, and set the correct background for elements like buttons.
 ///
@@ -60,6 +61,20 @@ impl ElevationIndex {
             ],
 
             _ => smallvec![],
+        }
+    }
+
+    /// Returns an appropriate background color for the given elevation index.
+    pub fn bg(self, cx: &WindowContext) -> Hsla {
+        match self {
+            ElevationIndex::Background => cx.theme().colors().background,
+            ElevationIndex::Surface => cx.theme().colors().surface_background,
+            ElevationIndex::ElevatedSurface => cx.theme().colors().elevated_surface_background,
+            ElevationIndex::Wash => hsla(0., 0., 0., 0.3),
+            ElevationIndex::ModalSurface => cx.theme().colors().elevated_surface_background,
+            ElevationIndex::DraggedElement => {
+                color_alpha(cx.theme().colors().elevated_surface_background, 0.3)
+            }
         }
     }
 }

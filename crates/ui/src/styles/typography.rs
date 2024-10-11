@@ -200,6 +200,7 @@ impl RenderOnce for Headline {
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
         div()
+            .flex_none()
             .font(ui_font)
             .line_height(self.size.line_height())
             .text_size(self.size.rems())
