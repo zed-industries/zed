@@ -29,6 +29,7 @@
 - [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
+- [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
 # Assistant
