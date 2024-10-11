@@ -54,6 +54,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("ocaml", &["ml", "mli"]),
     ("php", &["php"]),
     ("prisma", &["prisma"]),
+    ("proto", &["proto"]),
     ("purescript", &["purs"]),
     ("r", &["r", "R"]),
     ("racket", &["rkt"]),

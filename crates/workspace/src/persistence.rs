@@ -366,6 +366,9 @@ define_connection! {
         );
         ALTER TABLE workspaces ADD COLUMN ssh_project_id INTEGER REFERENCES ssh_projects(id) ON DELETE CASCADE;
     ),
+    sql!(
+        ALTER TABLE ssh_projects RENAME COLUMN path TO paths;
+    ),
     ];
 }
 
@@ -769,39 +772,40 @@ impl WorkspaceDb {
         &self,
         host: String,
         port: Option<u16>,
-        path: String,
+        paths: Vec<String>,
         user: Option<String>,
     ) -> Result<SerializedSshProject> {
+        let paths = serde_json::to_string(&paths)?;
         if let Some(project) = self
-            .get_ssh_project(host.clone(), port, path.clone(), user.clone())
+            .get_ssh_project(host.clone(), port, paths.clone(), user.clone())
             .await?
         {
             Ok(project)
         } else {
-            self.insert_ssh_project(host, port, path, user)
+            self.insert_ssh_project(host, port, paths, user)
                 .await?
                 .ok_or_else(|| anyhow!("failed to insert ssh project"))
         }
     }
 
     query! {
-        async fn get_ssh_project(host: String, port: Option<u16>, path: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
-            SELECT id, host, port, path, user
+        async fn get_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+            SELECT id, host, port, paths, user
             FROM ssh_projects
-            WHERE host IS ? AND port IS ? AND path IS ? AND user IS ?
+            WHERE host IS ? AND port IS ? AND paths IS ? AND user IS ?
             LIMIT 1
         }
     }
 
     query! {
-        async fn insert_ssh_project(host: String, port: Option<u16>, path: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+        async fn insert_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
             INSERT INTO ssh_projects(
                 host,
                 port,
-                path,
+                paths,
                 user
             ) VALUES (?1, ?2, ?3, ?4)
-            RETURNING id, host, port, path, user
+            RETURNING id, host, port, paths, user
         }
     }
 
@@ -840,7 +844,7 @@ impl WorkspaceDb {
 
     query! {
         fn ssh_projects() -> Result<Vec<SerializedSshProject>> {
-            SELECT id, host, port, path, user
+            SELECT id, host, port, paths, user
             FROM ssh_projects
         }
     }
@@ -1656,45 +1660,45 @@ mod tests {
     async fn test_get_or_create_ssh_project() {
         let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project").await);
 
-        let (host, port, path, user) = (
+        let (host, port, paths, user) = (
             "example.com".to_string(),
             Some(22_u16),
-            "/home/user".to_string(),
+            vec!["/home/user".to_string(), "/etc/nginx".to_string()],
             Some("user".to_string()),
         );
 
         let project = db
-            .get_or_create_ssh_project(host.clone(), port, path.clone(), user.clone())
+            .get_or_create_ssh_project(host.clone(), port, paths.clone(), user.clone())
             .await
             .unwrap();
 
         assert_eq!(project.host, host);
-        assert_eq!(project.path, path);
+        assert_eq!(project.paths, paths);
         assert_eq!(project.user, user);
 
         // Test that calling the function again with the same parameters returns the same project
         let same_project = db
-            .get_or_create_ssh_project(host.clone(), port, path.clone(), user.clone())
+            .get_or_create_ssh_project(host.clone(), port, paths.clone(), user.clone())
             .await
             .unwrap();
 
         assert_eq!(project.id, same_project.id);
 
         // Test with different parameters
-        let (host2, path2, user2) = (
+        let (host2, paths2, user2) = (
             "otherexample.com".to_string(),
-            "/home/otheruser".to_string(),
+            vec!["/home/otheruser".to_string()],
             Some("otheruser".to_string()),
         );
 
         let different_project = db
-            .get_or_create_ssh_project(host2.clone(), None, path2.clone(), user2.clone())
+            .get_or_create_ssh_project(host2.clone(), None, paths2.clone(), user2.clone())
             .await
             .unwrap();
 
         assert_ne!(project.id, different_project.id);
         assert_eq!(different_project.host, host2);
-        assert_eq!(different_project.path, path2);
+        assert_eq!(different_project.paths, paths2);
         assert_eq!(different_project.user, user2);
     }
 
@@ -1702,25 +1706,25 @@ mod tests {
     async fn test_get_or_create_ssh_project_with_null_user() {
         let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project_with_null_user").await);
 
-        let (host, port, path, user) = (
+        let (host, port, paths, user) = (
             "example.com".to_string(),
             None,
-            "/home/user".to_string(),
+            vec!["/home/user".to_string()],
             None,
         );
 
         let project = db
-            .get_or_create_ssh_project(host.clone(), port, path.clone(), None)
+            .get_or_create_ssh_project(host.clone(), port, paths.clone(), None)
             .await
             .unwrap();
 
         assert_eq!(project.host, host);
-        assert_eq!(project.path, path);
+        assert_eq!(project.paths, paths);
         assert_eq!(project.user, None);
 
         // Test that calling the function again with the same parameters returns the same project
         let same_project = db
-            .get_or_create_ssh_project(host.clone(), port, path.clone(), user.clone())
+            .get_or_create_ssh_project(host.clone(), port, paths.clone(), user.clone())
             .await
             .unwrap();
 
@@ -1735,32 +1739,32 @@ mod tests {
             (
                 "example.com".to_string(),
                 None,
-                "/home/user".to_string(),
+                vec!["/home/user".to_string()],
                 None,
             ),
             (
                 "anotherexample.com".to_string(),
                 Some(123_u16),
-                "/home/user2".to_string(),
+                vec!["/home/user2".to_string()],
                 Some("user2".to_string()),
             ),
             (
                 "yetanother.com".to_string(),
                 Some(345_u16),
-                "/home/user3".to_string(),
+                vec!["/home/user3".to_string(), "/proc/1234/exe".to_string()],
                 None,
             ),
         ];
 
-        for (host, port, path, user) in projects.iter() {
+        for (host, port, paths, user) in projects.iter() {
             let project = db
-                .get_or_create_ssh_project(host.clone(), *port, path.clone(), user.clone())
+                .get_or_create_ssh_project(host.clone(), *port, paths.clone(), user.clone())
                 .await
                 .unwrap();
 
             assert_eq!(&project.host, host);
             assert_eq!(&project.port, port);
-            assert_eq!(&project.path, path);
+            assert_eq!(&project.paths, paths);
             assert_eq!(&project.user, user);
         }
 

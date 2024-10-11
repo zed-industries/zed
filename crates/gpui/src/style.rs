@@ -156,6 +156,8 @@ pub struct Style {
     pub overflow: Point<Overflow>,
     /// How much space (in points) should be reserved for the scrollbars of `Overflow::Scroll` and `Overflow::Auto` nodes.
     pub scrollbar_width: f32,
+    /// Whether both x and y axis should be scrollable at the same time.
+    pub allow_concurrent_scroll: bool,
 
     // Position properties
     /// What should the `position` value of this struct use as a base offset?
@@ -667,6 +669,7 @@ impl Default for Style {
                 x: Overflow::Visible,
                 y: Overflow::Visible,
             },
+            allow_concurrent_scroll: false,
             scrollbar_width: 0.0,
             position: Position::Relative,
             inset: Edges::auto(),

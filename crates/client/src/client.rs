@@ -394,7 +394,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Model<T>, cx: &mut AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Model<T>, cx: &AsyncAppContext) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -1752,7 +1752,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 }
 
 /// prefix for the zed:// url scheme
-pub static ZED_URL_SCHEME: &str = "zed";
+pub const ZED_URL_SCHEME: &str = "zed";
 
 /// Parses the given link into a Zed link.
 ///

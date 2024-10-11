@@ -30,11 +30,8 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(
-    languages: Arc<LanguageRegistry>,
-    node_runtime: Arc<dyn NodeRuntime>,
-    cx: &mut AppContext,
-) {
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut AppContext) {
+    #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
         ("c", tree_sitter_c::LANGUAGE),
@@ -48,7 +45,6 @@ pub fn init(
         ("jsonc", tree_sitter_json::LANGUAGE),
         ("markdown", tree_sitter_md::LANGUAGE),
         ("markdown-inline", tree_sitter_md::INLINE_LANGUAGE),
-        ("proto", protols_tree_sitter_proto::LANGUAGE),
         ("python", tree_sitter_python::LANGUAGE),
         ("regex", tree_sitter_regex::LANGUAGE),
         ("rust", tree_sitter_rust::LANGUAGE),
@@ -186,7 +182,6 @@ pub fn init(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language!("proto");
 
     // Register globally available language servers.
     //
@@ -280,15 +275,27 @@ pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
 fn load_config(name: &str) -> LanguageConfig {
     let config_toml = String::from_utf8(
         LanguageDir::get(&format!("{}/config.toml", name))
-            .unwrap()
+            .unwrap_or_else(|| panic!("missing config for language {:?}", name))
             .data
             .to_vec(),
     )
     .unwrap();
 
-    ::toml::from_str(&config_toml)
+    #[allow(unused_mut)]
+    let mut config: LanguageConfig = ::toml::from_str(&config_toml)
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
-        .unwrap()
+        .unwrap();
+
+    #[cfg(not(feature = "load-grammars"))]
+    {
+        config = LanguageConfig {
+            name: config.name,
+            matcher: config.matcher,
+            ..Default::default()
+        }
+    }
+
+    config
 }
 
 fn load_queries(name: &str) -> LanguageQueries {

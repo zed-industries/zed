@@ -116,7 +116,7 @@
 ] @string.special.symbol
 
 (regex) @string.regex
-(escape_sequence) @escape
+(escape_sequence) @string.escape
 
 [
   (integer)

@@ -33,7 +33,7 @@ Here's an example of language-specific settings:
   "Python": {
     "tab_size": 4,
     "formatter": "language_server",
-    "format_on_save": true
+    "format_on_save": "on"
   },
   "JavaScript": {
     "tab_size": 2,
@@ -209,11 +209,11 @@ Zed supports both built-in and external formatters. Configure formatters globall
         "arguments": ["--stdin-filepath", "{buffer_path}"]
       }
     },
-    "format_on_save": true
+    "format_on_save": "on"
   },
   "Rust": {
     "formatter": "language_server",
-    "format_on_save": true
+    "format_on_save": "on"
   }
 }
 ```
@@ -225,7 +225,7 @@ To disable formatting for a specific language:
 ```json
 "languages": {
   "Markdown": {
-    "format_on_save": false
+    "format_on_save": "off"
   }
 }
 ```
@@ -276,7 +276,7 @@ Zed allows you to run both formatting and linting on save. Here's an example tha
     "code_actions_on_format": {
       "source.fixAll.eslint": true
     },
-    "format_on_save": true
+    "format_on_save": "on"
   }
 }
 ```

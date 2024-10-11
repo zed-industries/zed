@@ -1,7 +1,6 @@
 mod dev_servers;
 pub mod disconnected_overlay;
 mod ssh_connections;
-mod ssh_remotes;
 use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
@@ -259,23 +258,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                             dev_server_project.paths.join("")
                         )
                     }
-                    SerializedWorkspaceLocation::Ssh(ssh_project) => {
-                        format!(
-                            "{}{}{}{}",
-                            ssh_project.host,
-                            ssh_project
-                                .port
-                                .as_ref()
-                                .map(|port| port.to_string())
-                                .unwrap_or_default(),
-                            ssh_project.path,
-                            ssh_project
-                                .user
-                                .as_ref()
-                                .map(|user| user.to_string())
-                                .unwrap_or_default()
-                        )
-                    }
+                    SerializedWorkspaceLocation::Ssh(ssh_project) => ssh_project
+                        .ssh_urls()
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(""),
                 };
 
                 StringMatchCandidate::new(id, combined_string)
@@ -403,7 +391,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 password: None,
                             };
 
-                            let paths = vec![PathBuf::from(ssh_project.path.clone())];
+                            let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
                             cx.spawn(|_, mut cx| async move {
                                 open_ssh_project(connection_options, paths, app_state, open_options, &mut cx).await
@@ -458,11 +446,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .order()
                     .iter()
                     .filter_map(|i| paths.paths().get(*i).cloned())
+                    .map(|path| path.compact())
                     .collect(),
             ),
-            SerializedWorkspaceLocation::Ssh(ssh_project) => {
-                Arc::new(vec![PathBuf::from(ssh_project.ssh_url())])
-            }
+            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
@@ -475,7 +462,6 @@ impl PickerDelegate for RecentProjectsDelegate {
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
             .iter()
             .map(|path| {
-                let path = path.compact();
                 let highlighted_text =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
 
@@ -511,7 +497,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         .color(Color::Muted)
                                         .into_any_element()
                                 }
-                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Screen)
+                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
                                     .color(Color::Muted)
                                     .into_any_element(),
                                 SerializedWorkspaceLocation::DevServer(_) => {
@@ -579,7 +565,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_t_1()
                 .py_2()
                 .pr_2()
-                .border_color(cx.theme().colors().border)
+                .border_color(cx.theme().colors().border_variant)
                 .justify_end()
                 .gap_4()
                 .child(
@@ -587,7 +573,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("Open remote folder…").color(Color::Muted))
+                        .child(Label::new("Open Remote Folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
@@ -596,7 +582,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             KeyBinding::for_action(&workspace::Open, cx),
                             |button, key| button.child(key),
                         )
-                        .child(Label::new("Open local folder…").color(Color::Muted))
+                        .child(Label::new("Open Local Folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(workspace::Open.boxed_clone())),
                 )
                 .into_any(),
@@ -706,7 +692,6 @@ fn highlights_for_path(
         },
     )
 }
-
 impl RecentProjectsDelegate {
     fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(selected_match) = self.matches.get(ix) {

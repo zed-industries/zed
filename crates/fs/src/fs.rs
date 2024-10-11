@@ -587,44 +587,68 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let root_path = path.to_path_buf();
 
-        watcher::global(|g| {
-            let tx = tx.clone();
-            let pending_paths = pending_paths.clone();
-            g.add(move |event: &notify::Event| {
-                let kind = match event.kind {
-                    EventKind::Create(_) => Some(PathEventKind::Created),
-                    EventKind::Modify(_) => Some(PathEventKind::Changed),
-                    EventKind::Remove(_) => Some(PathEventKind::Removed),
-                    _ => None,
-                };
-                let mut paths = event
-                    .paths
-                    .iter()
-                    .filter_map(|path| {
-                        path.starts_with(&root_path).then(|| PathEvent {
-                            path: path.clone(),
-                            kind,
-                        })
-                    })
-                    .collect::<Vec<_>>();
+        // Check if root path is a symlink
+        let target_path = self.read_link(&path).await.ok();
 
-                if !paths.is_empty() {
-                    paths.sort();
-                    let mut pending_paths = pending_paths.lock();
-                    if pending_paths.is_empty() {
-                        tx.try_send(()).ok();
+        watcher::global({
+            let target_path = target_path.clone();
+            |g| {
+                let tx = tx.clone();
+                let pending_paths = pending_paths.clone();
+                g.add(move |event: &notify::Event| {
+                    let kind = match event.kind {
+                        EventKind::Create(_) => Some(PathEventKind::Created),
+                        EventKind::Modify(_) => Some(PathEventKind::Changed),
+                        EventKind::Remove(_) => Some(PathEventKind::Removed),
+                        _ => None,
+                    };
+                    let mut paths = event
+                        .paths
+                        .iter()
+                        .filter_map(|path| {
+                            if let Some(target) = target_path.clone() {
+                                if path.starts_with(target) {
+                                    return Some(PathEvent {
+                                        path: path.clone(),
+                                        kind,
+                                    });
+                                }
+                            } else if path.starts_with(&root_path) {
+                                return Some(PathEvent {
+                                    path: path.clone(),
+                                    kind,
+                                });
+                            }
+                            None
+                        })
+                        .collect::<Vec<_>>();
+
+                    if !paths.is_empty() {
+                        paths.sort();
+                        let mut pending_paths = pending_paths.lock();
+                        if pending_paths.is_empty() {
+                            tx.try_send(()).ok();
+                        }
+                        util::extend_sorted(&mut *pending_paths, paths, usize::MAX, |a, b| {
+                            a.path.cmp(&b.path)
+                        });
                     }
-                    util::extend_sorted(&mut *pending_paths, paths, usize::MAX, |a, b| {
-                        a.path.cmp(&b.path)
-                    });
-                }
-            })
+                })
+            }
         })
         .log_err();
 
         let watcher = Arc::new(RealWatcher {});
 
         watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
+
+        // Check if path is a symlink and follow the target parent
+        if let Some(target) = target_path {
+            watcher.add(&target).ok();
+            if let Some(parent) = target.parent() {
+                watcher.add(parent).log_err();
+            }
+        }
 
         // watch the parent dir so we can tell when settings.json is created
         if let Some(parent) = path.parent() {

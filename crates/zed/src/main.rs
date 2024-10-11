@@ -29,8 +29,9 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
-use node_runtime::RealNodeRuntime;
+use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
+use project::project_settings::ProjectSettings;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, AppVersion};
 use session::{AppSession, Session};
@@ -43,7 +44,7 @@ use std::{
     env,
     fs::OpenOptions,
     io::{IsTerminal, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process,
     sync::Arc,
 };
@@ -57,8 +58,9 @@ use workspace::{
     AppState, WorkspaceSettings, WorkspaceStore,
 };
 use zed::{
-    app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
+    app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
+    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -255,6 +257,7 @@ fn init_ui(
     project_panel::init(Assets, cx);
     outline_panel::init(Assets, cx);
     tasks_ui::init(cx);
+    snippets_ui::init(cx);
     channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
     search::init(cx);
     vim::init(cx);
@@ -424,15 +427,22 @@ fn main() {
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
-            cx.spawn({
-                let app_state = app_state.clone();
-                |mut cx| async move {
-                    if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
-                        fail_to_open_window_async(e, &mut cx)
+            let ui_has_launched = cx
+                .try_global::<AppMode>()
+                .map(|mode| matches!(mode, AppMode::Ui))
+                .unwrap_or(false);
+
+            if ui_has_launched {
+                cx.spawn({
+                    let app_state = app_state.clone();
+                    |mut cx| async move {
+                        if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
+                            fail_to_open_window_async(e, &mut cx)
+                        }
                     }
-                }
-            })
-            .detach();
+                })
+                .detach();
+            }
         }
     });
 
@@ -442,6 +452,8 @@ fn main() {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
         settings::init(cx);
+        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
         client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -469,15 +481,37 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
-
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
-        let node_runtime = RealNodeRuntime::new(client.http_client());
+        let (tx, rx) = async_watch::channel(None);
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let settings = &ProjectSettings::get_global(cx).node;
+            let options = NodeBinaryOptions {
+                allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+                // TODO: Expose this setting
+                allow_binary_download: true,
+                use_paths: settings.path.as_ref().map(|node_path| {
+                    let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                    let npm_path = settings
+                        .npm_path
+                        .as_ref()
+                        .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                    (
+                        node_path.clone(),
+                        npm_path.unwrap_or_else(|| {
+                            let base_path = PathBuf::new();
+                            node_path.parent().unwrap_or(&base_path).join("npm")
+                        }),
+                    )
+                }),
+            };
+            tx.send(Some(options)).log_err();
+        })
+        .detach();
+        let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -497,6 +531,8 @@ fn main() {
             session_id,
             cx,
         );
+
+        // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
             match (&system_id, &installation_id) {
                 (IdType::New(_), IdType::New(_)) => {
@@ -677,13 +713,11 @@ fn handle_open_request(
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
+            let paths_with_position =
+                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
                 connection_info,
-                request
-                    .open_paths
-                    .into_iter()
-                    .map(|path| path.path)
-                    .collect::<Vec<_>>(),
+                paths_with_position.into_iter().map(|p| p.path).collect(),
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,
@@ -698,8 +732,10 @@ fn handle_open_request(
     if !request.open_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(|mut cx| async move {
+            let paths_with_position =
+                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
-                &request.open_paths,
+                &paths_with_position,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

@@ -23,7 +23,7 @@ use telemetry_events::{
 };
 use uuid::Uuid;
 
-static CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
+const CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
 
 pub fn router() -> Router {
     Router::new()
@@ -364,17 +364,19 @@ pub async fn post_panic(
 }
 
 fn report_to_slack(panic: &Panic) -> bool {
-    if panic.os_name == "Linux" {
-        if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
-            return false;
-        }
+    if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
+        return false;
+    }
 
-        if panic
-            .payload
-            .contains("GPU has crashed, and no debug information is available")
-        {
-            return false;
-        }
+    if panic.payload.contains("ERROR_INITIALIZATION_FAILED") {
+        return false;
+    }
+
+    if panic
+        .payload
+        .contains("GPU has crashed, and no debug information is available")
+    {
+        return false;
     }
 
     true
@@ -427,8 +429,6 @@ pub async fn post_events(
                 country_code.clone(),
                 checksum_matched,
             )),
-            // Needed for clients sending old copilot_event types
-            Event::Copilot(_) => {}
             Event::InlineCompletion(event) => {
                 to_upload
                     .inline_completion_events
@@ -670,13 +670,13 @@ pub struct EditorEventRow {
     time: i64,
     copilot_enabled: bool,
     copilot_enabled_for_language: bool,
-    historical_event: bool,
     architecture: String,
     is_staff: Option<bool>,
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
     checksum_matched: bool,
+    is_via_ssh: bool,
 }
 
 impl EditorEventRow {
@@ -717,7 +717,7 @@ impl EditorEventRow {
             country_code: country_code.unwrap_or("XX".to_string()),
             region_code: "".to_string(),
             city: "".to_string(),
-            historical_event: false,
+            is_via_ssh: event.is_via_ssh,
         }
     }
 }
@@ -905,7 +905,6 @@ impl AssistantEventRow {
 
 #[derive(Debug, clickhouse::Row, Serialize)]
 pub struct CpuEventRow {
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -944,7 +943,6 @@ impl CpuEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -968,7 +966,6 @@ pub struct MemoryEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1000,7 +997,6 @@ impl MemoryEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1024,7 +1020,6 @@ pub struct AppEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1055,7 +1050,6 @@ impl AppEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1078,7 +1072,6 @@ pub struct SettingEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1109,7 +1102,6 @@ impl SettingEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1133,7 +1125,6 @@ pub struct ExtensionEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     session_id: Option<String>,
     is_staff: Option<bool>,
@@ -1169,7 +1160,6 @@ impl ExtensionEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1260,7 +1250,6 @@ pub struct EditEventRow {
     os_version: String,
 
     // ClientEventBase
-    system_id: Option<String>,
     installation_id: Option<String>,
     // Note: This column name has a typo in the ClickHouse table.
     #[serde(rename = "sesssion_id")]
@@ -1272,6 +1261,7 @@ pub struct EditEventRow {
     period_start: i64,
     period_end: i64,
     environment: String,
+    is_via_ssh: bool,
 }
 
 impl EditEventRow {
@@ -1298,7 +1288,6 @@ impl EditEventRow {
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
-            system_id: body.system_id.clone(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1306,6 +1295,7 @@ impl EditEventRow {
             period_start: period_start.timestamp_millis(),
             period_end: period_end.timestamp_millis(),
             environment: event.environment,
+            is_via_ssh: event.is_via_ssh,
         }
     }
 }

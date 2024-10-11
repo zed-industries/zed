@@ -1,5 +1,5 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
-use ::http_client::AsyncBody;
+use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -8,11 +8,10 @@ use async_trait::async_trait;
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
-use isahc::config::{Configurable, RedirectPolicy};
-use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
+use language::{LanguageName, LanguageServerName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -297,10 +296,12 @@ fn convert_request(
     let mut request = ::http_client::Request::builder()
         .method(::http_client::Method::from(extension_request.method))
         .uri(&extension_request.url)
-        .redirect_policy(match extension_request.redirect_policy {
-            http_client::RedirectPolicy::NoFollow => RedirectPolicy::None,
-            http_client::RedirectPolicy::FollowLimit(limit) => RedirectPolicy::Limit(limit),
-            http_client::RedirectPolicy::FollowAll => RedirectPolicy::Follow,
+        .follow_redirects(match extension_request.redirect_policy {
+            http_client::RedirectPolicy::NoFollow => ::http_client::RedirectPolicy::NoFollow,
+            http_client::RedirectPolicy::FollowLimit(limit) => {
+                ::http_client::RedirectPolicy::FollowLimit(limit)
+            }
+            http_client::RedirectPolicy::FollowAll => ::http_client::RedirectPolicy::FollowAll,
         });
     for (key, value) in &extension_request.headers {
         request = request.header(key, value);
@@ -366,7 +367,7 @@ impl ExtensionImports for WasmState {
                             .and_then(|key| {
                                 ProjectSettings::get(location, cx)
                                     .lsp
-                                    .get(&Arc::<str>::from(key))
+                                    .get(&LanguageServerName(key.into()))
                             })
                             .cloned()
                             .unwrap_or_default();

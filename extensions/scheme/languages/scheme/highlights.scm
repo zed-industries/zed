@@ -7,7 +7,7 @@
 (symbol) @variable
 (string) @string
 
-(escape_sequence) @escape
+(escape_sequence) @string.escape
 
 [(comment)
  (block_comment)

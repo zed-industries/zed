@@ -9,7 +9,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
 use project::Project;
-use rpc::{proto, ErrorCode, TypedEnvelope};
+use proto::{self, ErrorCode, TypedEnvelope};
 use settings::{Settings, SettingsStore};
 use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
@@ -25,7 +25,7 @@ pub struct DevServer {
 }
 
 pub struct AppState {
-    pub node_runtime: Arc<dyn NodeRuntime>,
+    pub node_runtime: NodeRuntime,
     pub user_store: Model<UserStore>,
     pub languages: Arc<LanguageRegistry>,
     pub fs: Arc<dyn Fs>,

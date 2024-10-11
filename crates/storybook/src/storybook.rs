@@ -10,6 +10,7 @@ use gpui::{
     div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowBounds,
     WindowOptions,
 };
+use isahc_http_client::IsahcHttpClient;
 use log::LevelFilter;
 use project::Project;
 use settings::{KeymapFile, Settings};
@@ -64,6 +65,9 @@ fn main() {
 
     gpui::App::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
+
+        let http_client = IsahcHttpClient::new(None, Some("zed_storybook".to_string()));
+        cx.set_http_client(http_client);
 
         settings::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);

@@ -706,11 +706,7 @@ pub struct Bounds<T: Clone + Default + Debug> {
 
 impl Bounds<Pixels> {
     /// Generate a centered bounds for the given display or primary display if none is provided
-    pub fn centered(
-        display_id: Option<DisplayId>,
-        size: Size<Pixels>,
-        cx: &mut AppContext,
-    ) -> Self {
+    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &AppContext) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
@@ -730,7 +726,7 @@ impl Bounds<Pixels> {
     }
 
     /// Generate maximized bounds for the given display or primary display if none is provided
-    pub fn maximized(display_id: Option<DisplayId>, cx: &mut AppContext) -> Self {
+    pub fn maximized(display_id: Option<DisplayId>, cx: &AppContext) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
@@ -2609,6 +2605,12 @@ impl From<DevicePixels> for ScaledPixels {
 impl From<ScaledPixels> for f64 {
     fn from(scaled_pixels: ScaledPixels) -> Self {
         scaled_pixels.0 as f64
+    }
+}
+
+impl From<ScaledPixels> for u32 {
+    fn from(pixels: ScaledPixels) -> Self {
+        pixels.0 as u32
     }
 }
 

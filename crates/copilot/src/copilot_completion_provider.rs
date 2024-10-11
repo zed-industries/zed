@@ -767,7 +767,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let buffer_2 = cx.new_model(|cx| Buffer::local("c = 3\nd = 4\n", cx));
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [ExcerptRange {
@@ -1018,7 +1018,7 @@ mod tests {
             .unwrap();
 
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 private_buffer.clone(),
                 [ExcerptRange {

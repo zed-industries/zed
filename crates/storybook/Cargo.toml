@@ -22,6 +22,7 @@ editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 indoc.workspace = true
+isahc_http_client.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true

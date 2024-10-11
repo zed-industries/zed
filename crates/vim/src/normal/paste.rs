@@ -673,6 +673,9 @@ mod test {
         cx.simulate_shared_keystrokes("\" _ d d").await;
         cx.shared_register('_').await.assert_eq("");
 
+        cx.simulate_shared_keystrokes("shift-v \" _ y w").await;
+        cx.shared_register('"').await.assert_eq("jumps");
+
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
                 the ˇlazy dog"});

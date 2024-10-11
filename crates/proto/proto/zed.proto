@@ -108,8 +108,6 @@ message Envelope {
         PrepareRenameResponse prepare_rename_response = 84;
         PerformRename perform_rename = 85;
         PerformRenameResponse perform_rename_response = 86;
-        SearchProject search_project = 87;
-        SearchProjectResponse search_project_response = 88;
 
         UpdateContacts update_contacts = 89;
         UpdateInviteInfo update_invite_info = 90;
@@ -247,8 +245,6 @@ message Envelope {
 
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
-        TaskTemplatesResponse task_templates_response = 205;
-        TaskTemplates task_templates = 206;
 
         LinkedEditingRange linked_editing_range = 209;
         LinkedEditingRangeResponse linked_editing_range_response = 210;
@@ -273,6 +269,7 @@ message Envelope {
 
         GetLlmToken get_llm_token = 235;
         GetLlmTokenResponse get_llm_token_response = 236;
+        RefreshLlmToken refresh_llm_token = 259; // current max
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
@@ -283,22 +280,20 @@ message Envelope {
         CloseBuffer close_buffer = 245;
         UpdateUserSettings update_user_settings = 246;
 
-        CreateLanguageServer create_language_server = 247;
+        CheckFileExists check_file_exists = 255;
+        CheckFileExistsResponse check_file_exists_response = 256;
 
-        WhichCommand which_command = 248;
-        WhichCommandResponse which_command_response = 249;
+        ShutdownRemoteServer shutdown_remote_server = 257;
 
-        ShellEnv shell_env = 250;
-        ShellEnvResponse shell_env_response = 251;
-
-        TryExec try_exec = 252;
-        ReadTextFile read_text_file = 253;
-        ReadTextFileResponse read_text_file_response = 254; // current max
+        RemoveWorktree remove_worktree = 258;
     }
 
+    reserved 87 to 88;
     reserved 158 to 161;
     reserved 166 to 169;
+    reserved 205 to 206;
     reserved 224 to 229;
+    reserved 247 to 254;
 }
 
 // Messages
@@ -651,6 +646,13 @@ message UpdateWorktreeSettings {
     uint64 worktree_id = 2;
     string path = 3;
     optional string content = 4;
+    optional LocalSettingsKind kind = 5;
+}
+
+enum LocalSettingsKind {
+    Settings = 0;
+    Tasks = 1;
+    Editorconfig = 2;
 }
 
 message CreateProjectEntry {
@@ -1219,6 +1221,7 @@ message ResolveCompletionDocumentationResponse {
     Anchor old_start = 3;
     Anchor old_end = 4;
     string new_text = 5;
+    bytes lsp_completion = 6;
 }
 
 message ResolveInlayHint {
@@ -1243,22 +1246,6 @@ message MarkupContent {
 
 message PerformRenameResponse {
     ProjectTransaction transaction = 2;
-}
-
-message SearchProject {
-    uint64 project_id = 1;
-    string query = 2;
-    bool regex = 3;
-    bool whole_word = 4;
-    bool case_sensitive = 5;
-    string files_to_include = 6;
-    string files_to_exclude = 7;
-    bool include_ignored = 8;
-}
-
-message SearchProjectResponse {
-    repeated Location locations = 1;
-    bool limit_reached = 2;
 }
 
 message SearchQuery {
@@ -2275,41 +2262,13 @@ message GetSupermavenApiKeyResponse {
 message TaskContextForLocation {
     uint64 project_id = 1;
     Location location = 2;
+    map<string, string> task_variables = 3;
 }
 
 message TaskContext {
     optional string cwd = 1;
     map<string, string> task_variables = 2;
     map<string, string> project_env = 3;
-}
-
-message TaskTemplates {
-    uint64 project_id = 1;
-    optional Location location = 2;
-    optional uint64 worktree_id = 3;
-}
-
-message TaskTemplatesResponse {
-    repeated TemplatePair templates = 1;
-}
-
-message TemplatePair {
-    TaskSourceKind kind = 1;
-    TaskTemplate template = 2;
-}
-
-message TaskTemplate {
-    string label = 1;
-    string command = 2;
-    repeated string args = 3;
-    map<string, string> env = 4;
-    optional string cwd = 5;
-    bool use_new_terminal = 6;
-    bool allow_concurrent_runs = 7;
-    RevealStrategy reveal = 8;
-    HideStrategy hide = 10;
-    repeated string tags = 9;
-    Shell shell = 11;
 }
 
 message Shell {
@@ -2336,32 +2295,6 @@ enum HideStrategy {
     HideAlways = 0;
     HideNever = 1;
     HideOnSuccess = 2;
-}
-
-message TaskSourceKind {
-    oneof kind {
-        UserInput user_input = 1;
-        Worktree worktree = 2;
-        AbsPath abs_path = 3;
-        Language language = 4;
-    }
-
-    message UserInput {}
-
-    message Worktree {
-        uint64 id = 1;
-        string abs_path = 2;
-        string id_base = 3;
-    }
-
-    message AbsPath {
-        string id_base = 1;
-        string abs_path = 2;
-    }
-
-    message Language {
-        string name = 1;
-    }
 }
 
 message ContextMessageStatus {
@@ -2497,11 +2430,14 @@ message GetLlmTokenResponse {
     string token = 1;
 }
 
+message RefreshLlmToken {}
+
 // Remote FS
 
 message AddWorktree {
     uint64 project_id = 2;
     string path = 1;
+    bool visible = 3;
 }
 
 message AddWorktreeResponse {
@@ -2511,65 +2447,26 @@ message AddWorktreeResponse {
 message UpdateUserSettings {
     uint64 project_id = 1;
     string content = 2;
+    optional Kind kind = 3;
+
+    enum Kind {
+        Settings = 0;
+        Tasks = 1;
+    }
 }
 
-message LanguageServerCommand {
-   string path = 1;
-   repeated string arguments = 2;
-   map<string, string> env = 3;
-}
-
-message AvailableLanguage {
-    string name = 7;
-    string matcher = 8;
-}
-
-message CreateLanguageServer {
+message CheckFileExists {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string name = 3;
-
-    LanguageServerCommand binary = 4;
-    optional string initialization_options = 5;
-    optional string code_action_kinds = 6;
-
-    AvailableLanguage language = 7;
+    string path = 2;
 }
 
-message WhichCommand {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string command = 3;
+message CheckFileExistsResponse {
+    bool exists = 1;
+    string path = 2;
 }
 
-message WhichCommandResponse {
-    optional string path = 1;
-}
+message ShutdownRemoteServer {}
 
-message ShellEnv {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-}
-
-message ShellEnvResponse {
-    map<string, string> env = 1;
-}
-
-message ReadTextFile {
-    uint64 project_id = 1;
-    ProjectPath path = 2;
-}
-
-message ReadTextFileResponse {
-    string text = 1;
-}
-
-message TryExec {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    LanguageServerCommand binary = 3;
-}
-
-message TryExecResponse {
-    string text = 1;
+message RemoveWorktree {
+    uint64 worktree_id = 1;
 }
