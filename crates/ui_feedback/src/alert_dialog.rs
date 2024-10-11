@@ -366,7 +366,7 @@ pub mod alert_dialog_stories {
 
             let long_content_alert_dialog = AlertDialog::new(cx, |mut dialog, cx| {
                 dialog
-                    .title("A RuntimeError occured")
+                    .title("A RuntimeError occurred")
                     .message(long_content)
                     .primary_action("Send Report", |_, _| {})
                     .secondary_action("Close", |_, _| {})
