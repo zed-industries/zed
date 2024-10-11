@@ -248,7 +248,7 @@ impl HeadlessProject {
             })?
             .await?;
 
-        let response = this.update(&mut cx, |this, cx| {
+        let response = this.update(&mut cx, |_, cx| {
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
             })
