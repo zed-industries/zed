@@ -1427,7 +1427,7 @@ impl Buffer {
     fn undo_or_redo(&mut self, transaction: Transaction) -> Operation {
         let mut counts = HashMap::default();
         for edit_id in transaction.edit_ids {
-            counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
+            counts.insert(edit_id, self.undo_map.undo_count(edit_id).saturating_add(1));
         }
 
         let operation = self.undo_operations(counts);

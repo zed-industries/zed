@@ -11,8 +11,8 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, AssistantPatchResolution, CacheStatus, ConfirmCommand, Content, Context, ContextEvent,
-    ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
+    Assist, AssistantPatch, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId,
+    ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
     DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
     MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
     PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
@@ -30,7 +30,7 @@ use editor::{
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorEvent, ProposedChangesBuffer, ProposedChangesEditor, RowExt,
+    Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
     ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
@@ -1441,14 +1441,13 @@ struct PatchViewState {
     header_block_id: CustomBlockId,
     footer_block_id: Option<CustomBlockId>,
     crease_id: Option<CreaseId>,
-    editor: Option<WeakView<ProposedChangesEditor>>,
-    resolution: Option<Arc<AssistantPatchResolution>>,
+    editor: Option<PatchEditorState>,
+    update_task: Option<Task<()>>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct ActivePatch {
-    range: Range<language::Anchor>,
-    resolved: bool,
+struct PatchEditorState {
+    editor: WeakView<ProposedChangesEditor>,
+    opened_patch: AssistantPatch,
 }
 
 type MessageHeader = MessageMetadata;
@@ -1469,7 +1468,7 @@ pub struct ContextEditor {
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
-    active_patch: Option<ActivePatch>,
+    active_patch: Option<Range<language::Anchor>>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
     show_accept_terms: bool,
@@ -1596,7 +1595,11 @@ impl ContextEditor {
 
     fn focus_active_patch(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some((_range, patch)) = self.active_patch() {
-            if let Some(editor) = patch.editor.as_ref().and_then(|view| view.upgrade()) {
+            if let Some(editor) = patch
+                .editor
+                .as_ref()
+                .and_then(|state| state.editor.upgrade())
+            {
                 cx.focus_view(&editor);
                 return true;
             }
@@ -2135,15 +2138,11 @@ impl ContextEditor {
         let mut editors_to_close = Vec::new();
         for range in removed {
             if let Some(state) = self.patches.remove(range) {
-                editors_to_close.extend(self.hide_patch(range.clone(), cx));
+                editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
                 removed_block_ids.insert(state.header_block_id);
                 removed_block_ids.extend(state.footer_block_id);
                 removed_crease_ids.extend(state.crease_id);
             }
-        }
-
-        for range in updated {
-            editors_to_close.extend(self.hide_patch(range.clone(), cx));
         }
 
         self.editor.update(cx, |editor, cx| {
@@ -2152,15 +2151,11 @@ impl ContextEditor {
             let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
 
             for range in updated {
-                let Some(patch) = self.context.read(cx).patch_for_range(&range, cx) else {
+                let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
                     continue;
                 };
 
-                let resolution = patch.resolution.clone();
-                let path_count = resolution
-                    .as_deref()
-                    .map_or(0, |resolution| resolution.suggestion_groups.len());
-
+                let path_count = patch.path_count();
                 let patch_start = patch.range.start;
                 let mut patch_end = patch.range.end.to_offset(&buffer);
                 if buffer.contains_str_at(patch_end, "\n") {
@@ -2216,24 +2211,11 @@ impl ContextEditor {
                             position: patch_end,
                             height: 1,
                             style: BlockStyle::Flex,
-                            render: Box::new({
-                                let this = this.clone();
-                                let range = patch.range.clone();
-                                move |cx| {
-                                    let max_width = cx.max_width;
-                                    let gutter_width = cx.gutter_dimensions.full_width();
-                                    this.update(&mut **cx, |this, cx| {
-                                        this.render_patch_footer(
-                                            range.clone(),
-                                            max_width,
-                                            gutter_width,
-                                            cx,
-                                        )
-                                    })
-                                    .ok()
-                                    .flatten()
+                            render: Box::new(move |cx| {
+                                let max_width = cx.max_width;
+                                let gutter_width = cx.gutter_dimensions.full_width();
+                                Self::render_patch_footer(max_width, gutter_width, cx)
                                     .unwrap_or_else(|| Empty.into_any())
-                                }
                             }),
                             disposition: BlockDisposition::Below,
                             priority: 0,
@@ -2265,12 +2247,12 @@ impl ContextEditor {
                     cx,
                 );
 
-                let state = PatchViewState {
+                let mut state = PatchViewState {
                     header_block_id: block_ids[0],
                     footer_block_id: block_ids.get(1).copied(),
                     crease_id: new_crease_ids.get(0).copied(),
-                    resolution,
                     editor: None,
+                    update_task: None,
                 };
 
                 let mut folds_to_insert = vec![(patch_start..patch_end, header_placeholder)];
@@ -2285,6 +2267,19 @@ impl ContextEditor {
                         removed_block_ids.extend(entry.footer_block_id);
                         removed_crease_ids.extend(entry.crease_id);
                         folds_to_insert.retain(|(range, _)| snapshot.intersects_fold(range.start));
+                        if let Some(editor_state) = &entry.editor {
+                            if editor_state.opened_patch != patch {
+                                state.update_task = Some({
+                                    let this = this.clone();
+                                    cx.spawn(|_, cx| async move {
+                                        Self::update_patch_editor(this.clone(), patch, cx)
+                                            .await
+                                            .log_err();
+                                    })
+                                });
+                            }
+                        }
+                        state.editor = entry.editor.take();
                         *entry = state;
                     }
                 }
@@ -2301,7 +2296,7 @@ impl ContextEditor {
         });
 
         for editor in editors_to_close {
-            self.close_workflow_editor(cx, editor);
+            self.close_patch_editor(editor, cx);
         }
 
         self.update_active_patch(cx);
@@ -2386,56 +2381,59 @@ impl ContextEditor {
 
     fn active_patch(&self) -> Option<(Range<text::Anchor>, &PatchViewState)> {
         let patch = self.active_patch.as_ref()?;
-        Some((patch.range.clone(), self.patches.get(&patch.range)?))
+        Some((patch.clone(), self.patches.get(&patch)?))
     }
 
     fn update_active_patch(&mut self, cx: &mut ViewContext<Self>) {
         let newest_cursor = self.editor.read(cx).selections.newest::<Point>(cx).head();
         let context = self.context.read(cx);
 
-        let new_patch = context
-            .patch_containing(newest_cursor, cx)
-            .map(|patch| ActivePatch {
-                resolved: patch.resolution.is_some(),
-                range: patch.range.clone(),
-            });
+        let new_patch = context.patch_containing(newest_cursor, cx).cloned();
 
-        if new_patch.as_ref() != self.active_patch.as_ref() {
-            let mut old_editor = None;
-            if let Some(old_patch) = self.active_patch.take() {
-                old_editor = self.hide_patch(old_patch.range, cx);
+        if new_patch.as_ref().map(|p| &p.range) == self.active_patch.as_ref() {
+            return;
+        }
+
+        if let Some(old_patch_range) = self.active_patch.take() {
+            if let Some(patch_state) = self.patches.get_mut(&old_patch_range) {
+                if let Some(state) = patch_state.editor.take() {
+                    if let Some(editor) = state.editor.upgrade() {
+                        self.close_patch_editor(editor, cx);
+                    }
+                }
             }
+        }
 
-            let mut new_editor = None;
-            if let Some(new_patch) = new_patch {
-                new_editor = self.show_patch(new_patch.range.clone(), cx);
-                self.active_patch = Some(new_patch);
-            }
+        if let Some(new_patch) = new_patch {
+            self.active_patch = Some(new_patch.range.clone());
 
-            if new_editor != old_editor {
-                if let Some(old_editor) = old_editor {
-                    self.close_workflow_editor(cx, old_editor)
+            if let Some(patch_state) = self.patches.get_mut(&new_patch.range) {
+                let mut editor = None;
+                if let Some(state) = &patch_state.editor {
+                    if let Some(opened_editor) = state.editor.upgrade() {
+                        editor = Some(opened_editor);
+                    }
+                }
+
+                if let Some(editor) = editor {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.activate_item(&editor, true, false, cx);
+                        })
+                        .ok();
+                } else {
+                    patch_state.update_task = Some(cx.spawn(move |this, cx| async move {
+                        Self::open_patch_editor(this, new_patch, cx).await.log_err();
+                    }));
                 }
             }
         }
     }
 
-    fn hide_patch(
+    fn close_patch_editor(
         &mut self,
-        patch_range: Range<language::Anchor>,
-        _cx: &mut ViewContext<Self>,
-    ) -> Option<View<ProposedChangesEditor>> {
-        if let Some(patch) = self.patches.get_mut(&patch_range) {
-            return patch.editor.as_ref()?.upgrade();
-        }
-
-        None
-    }
-
-    fn close_workflow_editor(
-        &mut self,
-        cx: &mut ViewContext<ContextEditor>,
         editor: View<ProposedChangesEditor>,
+        cx: &mut ViewContext<ContextEditor>,
     ) {
         self.workspace
             .update(cx, |workspace, cx| {
@@ -2452,31 +2450,22 @@ impl ContextEditor {
             .ok();
     }
 
-    fn show_patch(
-        &mut self,
-        patch_range: Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<ProposedChangesEditor>> {
-        let patch = self.patches.get_mut(&patch_range)?;
-        let title = self
-            .context
-            .read(cx)
-            .patch_for_range(&patch_range, cx)?
-            .title
-            .clone();
-        if let Some(editor) = patch.editor.clone().and_then(|editor| editor.upgrade()) {
-            return Some(editor);
-        }
-
-        let resolution = patch.resolution.as_ref()?.clone();
+    async fn open_patch_editor(
+        this: WeakView<Self>,
+        patch: AssistantPatch,
+        mut cx: AsyncWindowContext,
+    ) -> Result<()> {
+        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let resolution =
+            Context::compute_patch_resolution(project.clone(), patch.edits.clone(), &mut cx).await;
 
         let editor = cx.new_view(|cx| {
-            ProposedChangesEditor::new(
-                title,
+            let editor = ProposedChangesEditor::new(
+                patch.title.clone(),
                 resolution
                     .suggestion_groups
                     .iter()
-                    .map(|(buffer, groups)| ProposedChangesBuffer {
+                    .map(|(buffer, groups)| ProposedChangeLocation {
                         buffer: buffer.clone(),
                         ranges: groups
                             .iter()
@@ -2484,32 +2473,75 @@ impl ContextEditor {
                             .collect(),
                     })
                     .collect(),
-                Some(self.project.clone()),
+                Some(project.clone()),
                 cx,
-            )
-        });
+            );
 
-        for (buffer, groups) in &resolution.suggestion_groups {
-            let branch = editor.read(cx).branch_buffer_for_base(buffer).unwrap();
-            let mut edits = Vec::new();
-            for group in groups {
-                for suggestion in &group.suggestions {
-                    edits.push((suggestion.range(), suggestion.new_text()));
+            apply_patch(&editor, resolution, cx);
+
+            editor
+        })?;
+
+        this.update(&mut cx, |this, cx| {
+            if let Some(patch_state) = this.patches.get_mut(&patch.range) {
+                patch_state.editor = Some(PatchEditorState {
+                    editor: editor.downgrade(),
+                    opened_patch: patch,
+                });
+                patch_state.update_task.take();
+            }
+
+            this.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
+                })
+                .log_err();
+        })?;
+
+        Ok(())
+    }
+
+    async fn update_patch_editor(
+        this: WeakView<Self>,
+        patch: AssistantPatch,
+        mut cx: AsyncWindowContext,
+    ) -> Result<()> {
+        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let resolution =
+            Context::compute_patch_resolution(project.clone(), patch.edits.clone(), &mut cx).await;
+        this.update(&mut cx, |this, cx| {
+            let patch_state = this.patches.get_mut(&patch.range)?;
+
+            let locations = resolution
+                .suggestion_groups
+                .iter()
+                .map(|(buffer, groups)| ProposedChangeLocation {
+                    buffer: buffer.clone(),
+                    ranges: groups
+                        .iter()
+                        .map(|group| group.context_range.clone())
+                        .collect(),
+                })
+                .collect();
+
+            if let Some(state) = &mut patch_state.editor {
+                if let Some(editor) = state.editor.upgrade() {
+                    editor.update(cx, |editor, cx| {
+                        editor.set_title(patch.title.clone(), cx);
+                        editor.reset_locations(locations, cx);
+                        apply_patch(&editor, resolution, cx);
+                    });
+
+                    state.opened_patch = patch;
+                } else {
+                    patch_state.editor.take();
                 }
             }
-            branch.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
-            });
-        }
+            patch_state.update_task.take();
 
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
-            })
-            .log_err()?;
-
-        patch.editor = Some(editor.downgrade());
-        Some(editor)
+            Some(())
+        })?;
+        Ok(())
     }
 
     fn handle_editor_search_event(
@@ -3424,24 +3456,10 @@ impl ContextEditor {
     ) -> Option<AnyElement> {
         let patch = self.context.read(cx).patch_for_range(&range, cx)?;
 
-        let paths = if let Some(resolution) = patch.resolution.as_deref() {
-            resolution
-                .suggestion_groups
-                .keys()
-                .filter_map(|buffer| {
-                    Some(
-                        buffer
-                            .read(cx)
-                            .file()?
-                            .full_path(cx)
-                            .to_string_lossy()
-                            .to_string(),
-                    )
-                })
-                .collect::<BTreeSet<_>>()
-        } else {
-            BTreeSet::default()
-        };
+        let paths = patch
+            .paths()
+            .map(|p| SharedString::from(p.to_string()))
+            .collect::<BTreeSet<_>>();
 
         let theme = cx.theme().status();
         let editor = self.editor.read(cx);
@@ -3485,11 +3503,9 @@ impl ContextEditor {
     }
 
     fn render_patch_footer(
-        &self,
-        patch_range: Range<text::Anchor>,
         max_width: Pixels,
         gutter_width: Pixels,
-        cx: &mut ViewContext<Self>,
+        cx: &mut AppContext,
     ) -> Option<AnyElement> {
         let theme = cx.theme().status();
         Some(
@@ -3637,6 +3653,26 @@ impl ContextEditor {
                 focus_handle.dispatch_action(&Assist, cx);
             })
     }
+}
+
+fn apply_patch(
+    editor: &ProposedChangesEditor,
+    resolution: crate::AssistantPatchResolution,
+    cx: &mut ViewContext<ProposedChangesEditor>,
+) {
+    for (buffer, groups) in &resolution.suggestion_groups {
+        let branch = editor.branch_buffer_for_base(buffer).unwrap();
+        let mut edits = Vec::new();
+        for group in groups {
+            for suggestion in &group.suggestions {
+                edits.push((suggestion.range(), suggestion.new_text()));
+            }
+        }
+        branch.update(cx, |buffer, cx| {
+            buffer.edit(edits, None, cx);
+        });
+    }
+    editor.recalculate_all_buffer_diffs();
 }
 
 /// Returns the contents of the *outermost* fenced code block that contains the given offset.

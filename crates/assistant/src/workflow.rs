@@ -3,24 +3,21 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::Editor;
 use gpui::AsyncAppContext;
-use gpui::{Model, SharedString, Task, UpdateGlobal as _, View, WeakView, WindowContext};
+use gpui::{Model, SharedString, UpdateGlobal as _, View, WeakView, WindowContext};
 use language::{Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
-use serde::{Deserialize, Serialize};
 use std::{ops::Range, path::Path, sync::Arc};
 use text::Bias;
 use workspace::Workspace;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct AssistantPatch {
     pub range: Range<language::Anchor>,
     pub title: SharedString,
     pub edits: Arc<[Result<AssistantEdit>]>,
-    pub resolution_task: Option<Task<()>>,
-    pub resolution: Option<Arc<AssistantPatchResolution>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AssistantEdit {
     pub path: String,
     pub kind: AssistantEditKind,
@@ -210,6 +207,26 @@ impl WorkflowSuggestion {
                 Some(assistant_panel),
                 cx,
             ))
+        })
+    }
+}
+
+impl AssistantPatch {
+    pub fn path_count(&self) -> usize {
+        self.paths().count()
+    }
+
+    pub fn paths(&self) -> impl '_ + Iterator<Item = &str> {
+        let mut prev_path = None;
+        self.edits.iter().filter_map(move |edit| {
+            if let Ok(edit) = edit {
+                let path = Some(edit.path.as_str());
+                if path != prev_path {
+                    prev_path = path;
+                    return path;
+                }
+            }
+            None
         })
     }
 }
@@ -428,8 +445,7 @@ impl AssistantEdit {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "operation")]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AssistantEditKind {
     Update {
         old_text: String,
@@ -454,6 +470,16 @@ pub enum AssistantEditKind {
         old_text: String,
     },
 }
+
+impl PartialEq for AssistantPatch {
+    fn eq(&self, other: &Self) -> bool {
+        self.range == other.range
+            && self.title == other.title
+            && Arc::ptr_eq(&self.edits, &other.edits)
+    }
+}
+
+impl Eq for AssistantPatch {}
 
 #[cfg(test)]
 mod tests {

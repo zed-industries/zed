@@ -1394,14 +1394,7 @@ impl Context {
         }
 
         // Rebuild the edit suggestions in the range.
-        let mut new_patches = self.parse_patches(tags_start_ix, range.end, buffer);
-
-        if let Some(project) = self.project() {
-            for patch in &mut new_patches {
-                Self::resolve_patch_internal(patch, &project, cx);
-            }
-        }
-
+        let new_patches = self.parse_patches(tags_start_ix, range.end, buffer);
         updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
         let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
         removed.extend(
@@ -1485,13 +1478,11 @@ impl Context {
             if tag.kind == XmlTagKind::Patch && tag.is_open_tag {
                 patch_tag_depth += 1;
                 let patch_start = tag.range.start;
-                let mut edits = Vec::new();
+                let mut edits = Vec::<Result<AssistantEdit>>::new();
                 let mut patch = AssistantPatch {
                     range: patch_start..patch_start,
                     title: String::new().into(),
                     edits: Default::default(),
-                    resolution: None,
-                    resolution_task: None,
                 };
 
                 while let Some(tag) = tags.next() {
@@ -1499,6 +1490,13 @@ impl Context {
                         patch_tag_depth -= 1;
                         if patch_tag_depth == 0 {
                             patch.range.end = tag.range.end;
+                            edits.sort_unstable_by(|a, b| {
+                                if let (Ok(a), Ok(b)) = (a, b) {
+                                    a.path.cmp(&b.path)
+                                } else {
+                                    Ordering::Equal
+                                }
+                            });
                             patch.edits = edits.into();
                             new_patches.push(patch);
                             continue 'tags;
@@ -1591,52 +1589,7 @@ impl Context {
         new_patches
     }
 
-    pub fn resolve_patch(
-        &mut self,
-        tagged_range: Range<text::Anchor>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-        let index = self
-            .patch_index_for_range(&tagged_range, self.buffer.read(cx))
-            .ok()?;
-        let patch = &mut self.patches[index];
-        let project = self.project.as_ref()?;
-        patch.resolution.take();
-        Self::resolve_patch_internal(patch, project, cx);
-        None
-    }
-
-    fn resolve_patch_internal(
-        patch: &mut AssistantPatch,
-        project: &Model<Project>,
-        cx: &mut ModelContext<'_, Context>,
-    ) {
-        patch.resolution_task = Some(cx.spawn({
-            let range = patch.range.clone();
-            let edits = patch.edits.clone();
-            let project = project.clone();
-            |this, mut cx| async move {
-                let resolution = Self::compute_patch_resolution(project, edits, &mut cx).await;
-
-                this.update(&mut cx, |this, cx| {
-                    let buffer = this.buffer.read(cx).text_snapshot();
-                    let ix = this.patch_index_for_range(&range, &buffer).ok();
-                    if let Some(ix) = ix {
-                        let patch = &mut this.patches[ix];
-
-                        patch.resolution = Some(Arc::new(resolution));
-                        cx.emit(ContextEvent::PatchesUpdated {
-                            removed: vec![],
-                            updated: vec![range],
-                        })
-                    }
-                })
-                .ok();
-            }
-        }));
-    }
-
-    async fn compute_patch_resolution(
+    pub(crate) async fn compute_patch_resolution(
         project: Model<Project>,
         edits: Arc<[Result<AssistantEdit>]>,
         cx: &mut AsyncAppContext,

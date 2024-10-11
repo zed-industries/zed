@@ -82,25 +82,11 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    assist_observations: HashMap<
-        InlineAssistId,
-        (
-            async_watch::Sender<AssistStatus>,
-            async_watch::Receiver<AssistStatus>,
-        ),
-    >,
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
-}
-
-pub enum AssistStatus {
-    Idle,
-    Started,
-    Stopped,
-    Finished,
 }
 
 impl Global for InlineAssistant {}
@@ -117,7 +103,6 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
-            assist_observations: HashMap::default(),
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
@@ -829,17 +814,6 @@ impl InlineAssistant {
                     .insert(assist_id, confirmed_alternative);
             }
         }
-
-        // Remove the assist from the status updates map
-        self.assist_observations.remove(&assist_id);
-    }
-
-    pub fn undo_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
-        let Some(codegen) = self.confirmed_assists.remove(&assist_id) else {
-            return false;
-        };
-        codegen.update(cx, |this, cx| this.undo(cx));
-        true
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -1033,10 +1007,6 @@ impl InlineAssistant {
                 codegen.start(user_prompt, assistant_panel_context, cx)
             })
             .log_err();
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Started).ok();
-        }
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -1047,10 +1017,6 @@ impl InlineAssistant {
         };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Stopped).ok();
-        }
     }
 
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
@@ -2233,8 +2199,6 @@ impl InlineAssist {
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
-                            } else if let Some(tx) = this.assist_observations.get(&assist_id) {
-                                tx.0.send(AssistStatus::Finished).ok();
                             }
                         }
                     })
