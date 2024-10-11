@@ -246,7 +246,7 @@ impl InlineAssistant {
                         model_provider: model.provider_id().to_string(),
                         response_latency: None,
                         error_message: None,
-                        language_name: buffer.language().map(|language| language.name()),
+                        language_name: buffer.language().map(|language| language.name().to_proto()),
                     });
                 }
             }
@@ -767,7 +767,7 @@ impl InlineAssistant {
                         model_provider: model.provider_id().to_string(),
                         response_latency: None,
                         error_message: None,
-                        language_name,
+                        language_name: language_name.map(|name| name.to_proto()),
                     });
                 }
             }
@@ -2861,7 +2861,7 @@ impl CodegenAlternative {
                                     model_provider: model_provider_id.to_string(),
                                     response_latency,
                                     error_message,
-                                    language_name,
+                                    language_name: language_name.map(|name| name.to_proto()),
                                 });
                             }
 

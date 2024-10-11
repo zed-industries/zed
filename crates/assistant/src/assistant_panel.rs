@@ -18,7 +18,7 @@ use crate::{
     PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
     SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use assistant_tool::ToolRegistry;
 use client::{proto, Client, Status};
@@ -697,7 +697,9 @@ impl AssistantPanel {
             log::error!("no context found with ID: {}", context_id.to_proto());
             return;
         };
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
+            .log_err()
+            .flatten();
 
         let assistant_panel = cx.view().downgrade();
         let editor = cx.new_view(|cx| {
@@ -971,7 +973,8 @@ impl AssistantPanel {
                 this.update(&mut cx, |this, cx| {
                     let workspace = this.workspace.clone();
                     let project = this.project.clone();
-                    let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
+                    let lsp_adapter_delegate =
+                        make_lsp_adapter_delegate(&project, cx).log_err().flatten();
 
                     let fs = this.fs.clone();
                     let project = this.project.clone();
@@ -1001,7 +1004,9 @@ impl AssistantPanel {
             None
         } else {
             let context = self.context_store.update(cx, |store, cx| store.create(cx));
-            let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+            let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
+                .log_err()
+                .flatten();
 
             let assistant_panel = cx.view().downgrade();
             let editor = cx.new_view(|cx| {
@@ -1207,7 +1212,7 @@ impl AssistantPanel {
         let project = self.project.clone();
         let workspace = self.workspace.clone();
 
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
@@ -1254,7 +1259,9 @@ impl AssistantPanel {
             .update(cx, |store, cx| store.open_remote_context(id, cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
+            .log_err()
+            .flatten();
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
@@ -1452,6 +1459,13 @@ struct PatchEditorState {
 
 type MessageHeader = MessageMetadata;
 
+#[derive(Clone)]
+enum AssistError {
+    PaymentRequired,
+    MaxMonthlySpendReached,
+    Message(SharedString),
+}
+
 pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
@@ -1470,7 +1484,7 @@ pub struct ContextEditor {
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
     active_patch: Option<Range<language::Anchor>>,
     assistant_panel: WeakView<AssistantPanel>,
-    error_message: Option<SharedString>,
+    last_error: Option<AssistError>,
     show_accept_terms: bool,
     pub(crate) slash_menu_handle:
         PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
@@ -1509,7 +1523,7 @@ impl ContextEditor {
             editor.set_show_runnables(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Box::new(completion_provider));
+            editor.set_completion_provider(Some(Box::new(completion_provider)));
             editor.set_collaboration_hub(Box::new(project.clone()));
             editor
         });
@@ -1541,7 +1555,7 @@ impl ContextEditor {
             patches: HashMap::default(),
             active_patch: None,
             assistant_panel,
-            error_message: None,
+            last_error: None,
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
@@ -1588,7 +1602,7 @@ impl ContextEditor {
             return;
         }
 
-        self.error_message = None;
+        self.last_error = None;
         self.send_to_model(cx);
         cx.notify();
     }
@@ -1629,7 +1643,7 @@ impl ContextEditor {
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        self.error_message = None;
+        self.last_error = None;
 
         if self
             .context
@@ -2121,7 +2135,13 @@ impl ContextEditor {
             }
             ContextEvent::Operation(_) => {}
             ContextEvent::ShowAssistError(error_message) => {
-                self.error_message = Some(error_message.clone());
+                self.last_error = Some(AssistError::Message(error_message.clone()));
+            }
+            ContextEvent::ShowPaymentRequiredError => {
+                self.last_error = Some(AssistError::PaymentRequired);
+            }
+            ContextEvent::ShowMaxMonthlySpendReachedError => {
+                self.last_error = Some(AssistError::MaxMonthlySpendReached);
             }
         }
     }
@@ -3653,6 +3673,154 @@ impl ContextEditor {
                 focus_handle.dispatch_action(&Assist, cx);
             })
     }
+
+    fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let last_error = self.last_error.as_ref()?;
+
+        Some(
+            div()
+                .absolute()
+                .right_3()
+                .bottom_12()
+                .max_w_96()
+                .py_2()
+                .px_3()
+                .elevation_2(cx)
+                .occlude()
+                .child(match last_error {
+                    AssistError::PaymentRequired => self.render_payment_required_error(cx),
+                    AssistError::MaxMonthlySpendReached => {
+                        self.render_max_monthly_spend_reached_error(cx)
+                    }
+                    AssistError::Message(error_message) => {
+                        self.render_assist_error(error_message, cx)
+                    }
+                })
+                .into_any(),
+        )
+    }
+
+    fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
+        const SUBSCRIBE_URL: &str = "https://zed.dev/ai/subscribe";
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Free Usage Exceeded").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(ERROR_MESSAGE)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.open_url(SUBSCRIBE_URL);
+                            cx.notify();
+                        },
+                    )))
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
+    fn render_max_monthly_spend_reached_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
+        const ACCOUNT_URL: &str = "https://zed.dev/account";
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(ERROR_MESSAGE)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(
+                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
+                            cx.listener(|this, _, cx| {
+                                this.last_error = None;
+                                cx.open_url(ACCOUNT_URL);
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
+    fn render_assist_error(
+        &self,
+        error_message: &SharedString,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(
+                        Label::new("Error interacting with language model")
+                            .weight(FontWeight::MEDIUM),
+                    ),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(error_message.clone())),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
 }
 
 fn apply_patch(
@@ -3809,48 +3977,7 @@ impl Render for ContextEditor {
                         .child(element),
                 )
             })
-            .when_some(self.error_message.clone(), |this, error_message| {
-                this.child(
-                    div()
-                        .absolute()
-                        .right_3()
-                        .bottom_12()
-                        .max_w_96()
-                        .py_2()
-                        .px_3()
-                        .elevation_2(cx)
-                        .occlude()
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .items_center()
-                                        .child(Icon::new(IconName::XCircle).color(Color::Error))
-                                        .child(
-                                            Label::new("Error interacting with language model")
-                                                .weight(FontWeight::MEDIUM),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id("error-message")
-                                        .max_h_24()
-                                        .overflow_y_scroll()
-                                        .child(Label::new(error_message)),
-                                )
-                                .child(h_flex().justify_end().mt_1().child(
-                                    Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                                        |this, _, cx| {
-                                            this.error_message = None;
-                                            cx.notify();
-                                        },
-                                    )),
-                                )),
-                        ),
-                )
-            })
+            .children(self.render_last_error(cx))
             .child(
                 h_flex().w_full().relative().child(
                     h_flex()
@@ -4853,22 +4980,21 @@ fn render_docs_slash_command_trailer(
 fn make_lsp_adapter_delegate(
     project: &Model<Project>,
     cx: &mut AppContext,
-) -> Result<Arc<dyn LspAdapterDelegate>> {
+) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
     project.update(cx, |project, cx| {
         // TODO: Find the right worktree.
-        let worktree = project
-            .worktrees(cx)
-            .next()
-            .ok_or_else(|| anyhow!("no worktrees when constructing LocalLspAdapterDelegate"))?;
+        let Some(worktree) = project.worktrees(cx).next() else {
+            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
+        };
         let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
-            Ok(LocalLspAdapterDelegate::new(
+            Ok(Some(LocalLspAdapterDelegate::new(
                 lsp_store,
                 &worktree,
                 http_client,
                 project.fs().clone(),
                 cx,
-            ) as Arc<dyn LspAdapterDelegate>)
+            ) as Arc<dyn LspAdapterDelegate>))
         })
     })
 }

@@ -24,9 +24,9 @@ use gpui::{
     UpdateGlobal as _, VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
+use isahc_http_client::IsahcHttpClient;
 use language::LanguageRegistry;
 use log::LevelFilter;
-use ureq_client::UreqClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -58,8 +58,9 @@ use workspace::{
     AppState, WorkspaceSettings, WorkspaceStore,
 };
 use zed::{
-    app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
-    initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
+    app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
+    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 use crate::zed::inline_completion_registry;
@@ -334,7 +335,9 @@ fn main() {
 
     log::info!("========== starting zed ==========");
 
-    let app = App::new().with_assets(Assets);
+    let app = App::new()
+        .with_assets(Assets)
+        .with_http_client(IsahcHttpClient::new(None, None));
 
     let system_id = app.background_executor().block(system_id()).ok();
     let installation_id = app.background_executor().block(installation_id()).ok();
@@ -468,8 +471,8 @@ fn main() {
                     .ok()
             })
             .or_else(read_proxy_from_env);
-        let http = UreqClient::new(proxy_url, user_agent, cx.background_executor().clone());
-        cx.set_http_client(Arc::new(http));
+        let http = IsahcHttpClient::new(proxy_url, Some(user_agent));
+        cx.set_http_client(http);
 
         <dyn Fs>::set_global(fs.clone(), cx);
 
@@ -710,13 +713,11 @@ fn handle_open_request(
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
+            let paths_with_position =
+                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
                 connection_info,
-                request
-                    .open_paths
-                    .into_iter()
-                    .map(|path| path.path)
-                    .collect::<Vec<_>>(),
+                paths_with_position.into_iter().map(|p| p.path).collect(),
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,
@@ -731,8 +732,10 @@ fn handle_open_request(
     if !request.open_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(|mut cx| async move {
+            let paths_with_position =
+                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
-                &request.open_paths,
+                &paths_with_position,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

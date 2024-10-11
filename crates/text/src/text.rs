@@ -2439,6 +2439,42 @@ impl BufferSnapshot {
         }
         false
     }
+
+    pub fn range_to_version(&self, range: Range<usize>, version: &clock::Global) -> Range<usize> {
+        let mut offsets = self.offsets_to_version([range.start, range.end], version);
+        offsets.next().unwrap()..offsets.next().unwrap()
+    }
+
+    /// Converts the given sequence of offsets into their corresponding offsets
+    /// at a prior version of this buffer.
+    pub fn offsets_to_version<'a>(
+        &'a self,
+        offsets: impl 'a + IntoIterator<Item = usize>,
+        version: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = usize> {
+        let mut edits = self.edits_since(version).peekable();
+        let mut last_old_end = 0;
+        let mut last_new_end = 0;
+        offsets.into_iter().map(move |new_offset| {
+            while let Some(edit) = edits.peek() {
+                if edit.new.start > new_offset {
+                    break;
+                }
+
+                if edit.new.end <= new_offset {
+                    last_new_end = edit.new.end;
+                    last_old_end = edit.old.end;
+                    edits.next();
+                    continue;
+                }
+
+                let overshoot = new_offset - edit.new.start;
+                return (edit.old.start + overshoot).min(edit.old.end);
+            }
+
+            last_old_end + new_offset.saturating_sub(last_new_end)
+        })
+    }
 }
 
 struct RopeBuilder<'a> {
