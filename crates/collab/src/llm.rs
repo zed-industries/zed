@@ -639,6 +639,7 @@ where
 impl<S> Drop for TokenCountingStream<S> {
     fn drop(&mut self) {
         let state = self.state.clone();
+        let is_llm_billing_enabled = state.config.is_llm_billing_enabled();
         let claims = self.claims.clone();
         let provider = self.provider;
         let model = std::mem::take(&mut self.model);
@@ -652,7 +653,14 @@ impl<S> Drop for TokenCountingStream<S> {
                     provider,
                     &model,
                     tokens,
-                    claims.has_llm_subscription,
+                    // We're passing `false` here if LLM billing is not enabled
+                    // so that we don't write any records to the
+                    // `billing_events` table until we're ready to bill users.
+                    if is_llm_billing_enabled {
+                        claims.has_llm_subscription
+                    } else {
+                        false
+                    },
                     Cents(claims.max_monthly_spend_in_cents),
                     Utc::now(),
                 )
