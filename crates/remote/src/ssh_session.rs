@@ -118,6 +118,20 @@ pub struct SshPlatform {
     pub arch: &'static str,
 }
 
+impl SshPlatform {
+    pub fn triple(&self) -> Option<String> {
+        Some(format!(
+            "{}-{}",
+            self.arch,
+            match self.os {
+                "linux" => "unknown-linux-gnu",
+                "macos" => "apple-darwin",
+                _ => return None,
+            }
+        ))
+    }
+}
+
 pub trait SshClientDelegate: Send + Sync {
     fn ask_password(
         &self,

@@ -75,8 +75,12 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     }
 
     match guess_compositor() {
+        #[cfg(feature = "wayland")]
         "Wayland" => Rc::new(WaylandClient::new()),
+
+        #[cfg(feature = "x11")]
         "X11" => Rc::new(X11Client::new()),
+
         "Headless" => Rc::new(HeadlessClient::new()),
         _ => unreachable!(),
     }
@@ -87,11 +91,21 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 #[cfg(target_os = "linux")]
 #[inline]
 pub fn guess_compositor() -> &'static str {
+    use std::ffi::OsString;
+
     if std::env::var_os("ZED_HEADLESS").is_some() {
         return "Headless";
     }
+
+    #[cfg(feature = "wayland")]
     let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+    #[cfg(not(feature = "wayland"))]
+    let x11_display: Option<OsString> = None;
+
+    #[cfg(feature = "x11")]
     let x11_display = std::env::var_os("DISPLAY");
+    #[cfg(not(feature = "x11"))]
+    let x11_display: Option<OsString> = None;
 
     let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
     let use_x11 = x11_display.is_some_and(|display| !display.is_empty());

@@ -2,7 +2,9 @@ mod dispatcher;
 mod headless;
 mod platform;
 mod text_system;
+#[cfg(feature = "wayland")]
 mod wayland;
+#[cfg(feature = "x11")]
 mod x11;
 mod xdg_desktop_portal;
 
