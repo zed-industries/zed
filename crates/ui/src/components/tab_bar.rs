@@ -97,7 +97,7 @@ impl RenderOnce for TabBar {
             .flex()
             .flex_none()
             .w_full()
-            .h(cx.rem_size() + Spacing::XXLarge.px(cx))
+            .h(crate::Tab::height(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
