@@ -1244,6 +1244,13 @@ impl Terminal {
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            if keystroke.is_valid_ime_commit() {
+                return false;
+            }
+        }
+
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
