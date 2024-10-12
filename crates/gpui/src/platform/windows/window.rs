@@ -662,15 +662,8 @@ impl PlatformWindow for WindowsWindow {
         unsafe {
             if IsWindowVisible(self.0.hwnd).as_bool() {
                 ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
-            } else {
-                self.0
-                    .state
-                    .borrow_mut()
-                    .initial_placement
-                    .as_mut()
-                    .map(|status| {
-                        status.state = WindowOpenState::Maximized;
-                    });
+            } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+                status.state = WindowOpenState::Maximized;
             }
         }
     }
@@ -678,15 +671,8 @@ impl PlatformWindow for WindowsWindow {
     fn toggle_fullscreen(&self) {
         if unsafe { IsWindowVisible(self.0.hwnd).as_bool() } {
             self.0.toggle_fullscreen();
-        } else {
-            self.0
-                .state
-                .borrow_mut()
-                .initial_placement
-                .as_mut()
-                .map(|status| {
-                    status.state = WindowOpenState::Fullscreen;
-                });
+        } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+            status.state = WindowOpenState::Fullscreen;
         }
     }
 
