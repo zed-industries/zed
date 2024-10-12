@@ -79,14 +79,11 @@ pub struct AlertDialog {
     focus_handle: FocusHandle,
 }
 
-struct AlertDialogView {
-    dialog: AlertDialog,
-    focus_handle: FocusHandle,
+impl ModalView for AlertDialog {
+    fn fade_out_background(&self) -> bool {
+        true
+    }
 }
-
-impl AlertDialogView {}
-
-impl ModalView for AlertDialog {}
 
 impl EventEmitter<DismissEvent> for AlertDialog {}
 impl FocusableView for AlertDialog {
@@ -162,6 +159,17 @@ impl AlertDialog {
         self
     }
 
+    /// Set the primary action to dismiss the dialog
+    pub fn secondary_dismiss_action(
+        mut self,
+        label: impl Into<SharedString>,
+        cx: &ViewContext<Self>,
+    ) -> Self {
+        self.secondary_action =
+            self.add_action(label.into(), cx.listener(|_, _, cx| cx.emit(DismissEvent)));
+        self
+    }
+
     fn render_button(&self, cx: &WindowContext, action: AlertDialogButton) -> impl IntoElement {
         let id_string: SharedString = format!("action-{}-button", action.label).into();
         let id: ElementId = ElementId::Name(id_string);
@@ -207,6 +215,10 @@ impl AlertDialog {
         })
         .detach();
     }
+
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent);
+    }
 }
 
 impl Render for AlertDialog {
@@ -219,13 +231,15 @@ impl Render for AlertDialog {
         };
 
         v_flex()
+            .debug_below()
+            // .w(px(MIN_DIALOG_WIDTH))
             .min_w(px(MIN_DIALOG_WIDTH))
             .max_w(if layout == AlertDialogLayout::Horizontal {
                 px(MAX_DIALOG_WIDTH)
             } else {
                 px(MIN_DIALOG_WIDTH)
             })
-            .max_h(relative(0.75))
+            .max_h(vh(0.75, cx))
             .flex_none()
             .overflow_hidden()
             .p(spacing)
