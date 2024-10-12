@@ -1,6 +1,6 @@
 # Java
 
-Java language support in Zed is provided the [zed Java extension](https://github.com/zed-extensions/java) and [zed-java-eclipse-jdtls](https://github.com/ABckh/zed-java-eclipse-jdtls).
+Java language support in Zed is provided the [zed Java extension](https://github.com/zed-extensions/java) and [zed-java-eclipse-jdtls](https://github.com/ABckh/zed-java-eclipse-jdtls). You may choose one between them to satisfy your needs.
 
 ## Java extension for Zed
 
