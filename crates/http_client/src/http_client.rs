@@ -12,7 +12,7 @@ use http::request::Builder;
 use std::fmt;
 use std::{
     any::type_name,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 pub use url::Url;
@@ -34,23 +34,6 @@ pub enum RedirectPolicy {
     FollowAll,
 }
 pub struct FollowRedirects(pub bool);
-
-pub static TLS_CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
-    let mut root_store = rustls::RootCertStore::empty();
-
-    let root_certs = rustls_native_certs::load_native_certs();
-    for error in root_certs.errors {
-        log::warn!("error loading native certs: {:?}", error);
-    }
-    root_store.add_parsable_certificates(&root_certs.certs);
-
-    Arc::new(
-        rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(root_store)
-            .with_no_client_auth(),
-    )
-});
 
 pub trait HttpRequestExt {
     /// Set a read timeout on the request.

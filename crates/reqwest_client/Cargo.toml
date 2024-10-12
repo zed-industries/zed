@@ -28,7 +28,7 @@ serde.workspace = true
 smol.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-reqwest = { workspace = true, features = ["rustls-tls-manual-roots", "stream"] }
+reqwest.workspace = true
 
 [dev-dependencies]
 gpui.workspace = true
