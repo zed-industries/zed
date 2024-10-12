@@ -9,24 +9,26 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [features]
-test-support = []
+test-support = [
+  "tree-sitter"
+]
 load-grammars = [
-    "tree-sitter-bash",
-    "tree-sitter-c",
-    "tree-sitter-cpp",
-    "tree-sitter-css",
-    "tree-sitter-go",
-    "tree-sitter-go-mod",
-    "tree-sitter-gowork",
-    "tree-sitter-jsdoc",
-    "tree-sitter-json",
-    "tree-sitter-md",
-    "tree-sitter-python",
-    "tree-sitter-regex",
-    "tree-sitter-rust",
-    "tree-sitter-typescript",
-    "tree-sitter-yaml",
-    "tree-sitter"
+  "tree-sitter-bash",
+  "tree-sitter-c",
+  "tree-sitter-cpp",
+  "tree-sitter-css",
+  "tree-sitter-go",
+  "tree-sitter-go-mod",
+  "tree-sitter-gowork",
+  "tree-sitter-jsdoc",
+  "tree-sitter-json",
+  "tree-sitter-md",
+  "tree-sitter-python",
+  "tree-sitter-regex",
+  "tree-sitter-rust",
+  "tree-sitter-typescript",
+  "tree-sitter-yaml",
+  "tree-sitter"
 ]
 
 [dependencies]
@@ -73,6 +75,7 @@ tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
 
 [dev-dependencies]
+tree-sitter.workspace = true
 text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
