@@ -44,8 +44,12 @@ impl ReqwestClient {
         let mut client = reqwest::Client::builder()
             .use_rustls_tls()
             .default_headers(map);
-        if let Some(proxy) = proxy.clone() {
-            client = client.proxy(reqwest::Proxy::all(proxy.to_string())?);
+        if let Some(proxy) = proxy.clone().and_then(|proxy_uri| {
+            reqwest::Proxy::all(proxy_uri.to_string())
+                .inspect_err(|e| log::error!("Failed to parse proxy URI {}: {}", proxy_uri, e))
+                .ok()
+        }) {
+            client = client.proxy(proxy);
         }
         let client = client.build()?;
         let mut client: ReqwestClient = client.into();
