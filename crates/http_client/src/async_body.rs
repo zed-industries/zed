@@ -16,10 +16,7 @@ pub enum Inner {
     Empty,
 
     /// A body stored in memory.
-    Bytes {
-        bytes: Bytes,
-        cursor: std::io::Cursor<Bytes>,
-    },
+    Bytes(std::io::Cursor<Bytes>),
 
     /// An asynchronous reader.
     AsyncReader(Pin<Box<dyn futures::AsyncRead + Send + Sync>>),
@@ -42,10 +39,7 @@ impl AsyncBody {
     }
 
     pub fn from_bytes(bytes: Bytes) -> Self {
-        Self(Inner::Bytes {
-            cursor: Cursor::new(bytes.clone()),
-            bytes,
-        })
+        Self(Inner::Bytes(Cursor::new(bytes.clone())))
     }
 }
 
@@ -113,7 +107,7 @@ impl futures::AsyncRead for AsyncBody {
         match inner {
             Inner::Empty => Poll::Ready(Ok(0)),
             // Blocking call is over an in-memory buffer
-            Inner::Bytes { cursor, .. } => Poll::Ready(cursor.read(buf)),
+            Inner::Bytes(cursor) => Poll::Ready(cursor.read(buf)),
             Inner::AsyncReader(async_reader) => {
                 AsyncRead::poll_read(async_reader.as_mut(), cx, buf)
             }

@@ -5536,7 +5536,6 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
- "smol",
  "url",
 ]
 

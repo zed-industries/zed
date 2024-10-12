@@ -24,5 +24,4 @@ http = "1.1"
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-smol.workspace = true
 url.workspace = true

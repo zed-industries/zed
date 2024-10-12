@@ -205,7 +205,7 @@ impl http_client::HttpClient for ReqwestClient {
         }
         let request = request.body(match body.0 {
             http_client::Inner::Empty => reqwest::Body::default(),
-            http_client::Inner::Bytes { bytes, .. } => bytes.into(),
+            http_client::Inner::Bytes(cursor) => cursor.into_inner().into(),
             http_client::Inner::AsyncReader(stream) => {
                 reqwest::Body::wrap_stream(StreamReader::new(stream))
             }
