@@ -210,6 +210,13 @@ async fn create_billing_subscription(
             "not supported".into(),
         ))?
     };
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::error!("failed to retrieve Stripe billing object");
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
     let Some(llm_db) = app.llm_db.clone() else {
         log::error!("failed to retrieve LLM database");
         Err(Error::http(
@@ -236,7 +243,6 @@ async fn create_billing_subscription(
         };
 
     let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-5-sonnet")?;
-    let mut stripe_billing = StripeBilling::new(stripe_client.clone()).await?;
     let stripe_model = stripe_billing.register_model(default_model).await?;
     let success_url = format!("{}/account", app.config.zed_dot_dev_url());
     let checkout_session_url = stripe_billing
@@ -716,8 +722,8 @@ async fn find_or_create_billing_customer(
 const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
-    let Some(stripe_client) = app.stripe_client.clone() else {
-        log::warn!("failed to retrieve Stripe client");
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::warn!("failed to retrieve Stripe billing object");
         return;
     };
     let Some(llm_db) = app.llm_db.clone() else {
@@ -730,7 +736,7 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
         let executor = executor.clone();
         async move {
             loop {
-                sync_with_stripe(&app, &llm_db, &stripe_client)
+                sync_with_stripe(&app, &llm_db, &stripe_billing)
                     .await
                     .trace_err();
                 executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
@@ -742,10 +748,8 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
 async fn sync_with_stripe(
     app: &Arc<AppState>,
     llm_db: &Arc<LlmDatabase>,
-    stripe_client: &Arc<stripe::Client>,
+    stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
-    let mut stripe_billing = StripeBilling::new(stripe_client.clone()).await?;
-
     let events = llm_db.get_billing_events().await?;
     let user_ids = events
         .iter()

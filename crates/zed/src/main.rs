@@ -24,9 +24,9 @@ use gpui::{
     UpdateGlobal as _, VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
-use isahc_http_client::IsahcHttpClient;
 use language::LanguageRegistry;
 use log::LevelFilter;
+use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -335,9 +335,7 @@ fn main() {
 
     log::info!("========== starting zed ==========");
 
-    let app = App::new()
-        .with_assets(Assets)
-        .with_http_client(IsahcHttpClient::new(None, None));
+    let app = App::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
     let installation_id = app.background_executor().block(installation_id()).ok();
@@ -471,8 +469,9 @@ fn main() {
                     .ok()
             })
             .or_else(read_proxy_from_env);
-        let http = IsahcHttpClient::new(proxy_url, Some(user_agent));
-        cx.set_http_client(http);
+        let http = ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+            .expect("could not start HTTP client");
+        cx.set_http_client(Arc::new(http));
 
         <dyn Fs>::set_global(fs.clone(), cx);
 

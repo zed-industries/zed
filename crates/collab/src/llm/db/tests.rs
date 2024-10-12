@@ -1,3 +1,4 @@
+mod billing_tests;
 mod provider_tests;
 mod usage_tests;
 
