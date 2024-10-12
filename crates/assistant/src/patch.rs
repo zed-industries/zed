@@ -3,7 +3,7 @@ use collections::HashMap;
 use editor::ProposedChangesEditor;
 use futures::{future, TryFutureExt as _};
 use gpui::{AppContext, AsyncAppContext, Model, SharedString};
-use language::{Buffer, BufferSnapshot};
+use language::{AutoindentMode, Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
 use std::{cmp, ops::Range, path::Path, sync::Arc};
 use text::{AnchorRangeExt as _, Bias, OffsetRangeExt as _, Point};
@@ -76,22 +76,37 @@ impl ResolvedPatch {
     pub fn apply(&self, editor: &ProposedChangesEditor, cx: &mut AppContext) {
         for (buffer, groups) in &self.edit_groups {
             let branch = editor.branch_buffer_for_base(buffer).unwrap();
-            let mut edits = Vec::new();
-            for group in groups {
-                for suggestion in &group.edits {
-                    edits.push((suggestion.range.clone(), suggestion.new_text.clone()));
-                }
-            }
-            branch.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
-            });
+            Self::apply_edit_groups(groups, &branch, cx);
         }
         editor.recalculate_all_buffer_diffs();
+    }
+
+    fn apply_edit_groups(
+        groups: &Vec<ResolvedEditGroup>,
+        buffer: &Model<Buffer>,
+        cx: &mut AppContext,
+    ) {
+        let mut edits = Vec::new();
+        for group in groups {
+            for suggestion in &group.edits {
+                edits.push((suggestion.range.clone(), suggestion.new_text.clone()));
+            }
+        }
+        buffer.update(cx, |buffer, cx| {
+            let original_indent_columns = (0..edits.len()).map(|_| 0).collect();
+            buffer.edit(
+                edits,
+                Some(AutoindentMode::Block {
+                    original_indent_columns,
+                }),
+                cx,
+            );
+        });
     }
 }
 
 impl ResolvedEdit {
-    pub fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
+    pub fn try_merge(&mut self, other: &Self, buffer: &text::BufferSnapshot) -> bool {
         let range = &self.range;
         let other_range = &other.range;
 
@@ -156,7 +171,7 @@ impl AssistantEdit {
         &self,
         project: Model<Project>,
         mut cx: AsyncAppContext,
-    ) -> Result<(Model<Buffer>, super::ResolvedEdit)> {
+    ) -> Result<(Model<Buffer>, ResolvedEdit)> {
         let path = self.path.clone();
         let kind = self.kind.clone();
         let buffer = project
@@ -185,67 +200,71 @@ impl AssistantEdit {
         let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
         let suggestion = cx
             .background_executor()
-            .spawn(async move {
-                match kind {
-                    AssistantEditKind::Update {
-                        old_text,
-                        new_text,
-                        description,
-                    } => {
-                        let range = Self::resolve_location(&snapshot, &old_text);
-                        ResolvedEdit {
-                            range,
-                            new_text,
-                            description: Some(description),
-                        }
-                    }
-                    AssistantEditKind::Create {
-                        new_text,
-                        description,
-                    } => ResolvedEdit {
-                        range: text::Anchor::MIN..text::Anchor::MAX,
-                        description: Some(description),
-                        new_text,
-                    },
-                    AssistantEditKind::InsertBefore {
-                        old_text,
-                        mut new_text,
-                        description,
-                    } => {
-                        let range = Self::resolve_location(&snapshot, &old_text);
-                        new_text.push('\n');
-                        ResolvedEdit {
-                            range: range.start..range.start,
-                            new_text,
-                            description: Some(description),
-                        }
-                    }
-                    AssistantEditKind::InsertAfter {
-                        old_text,
-                        mut new_text,
-                        description,
-                    } => {
-                        let range = Self::resolve_location(&snapshot, &old_text);
-                        new_text.insert(0, '\n');
-                        ResolvedEdit {
-                            range: range.end..range.end,
-                            new_text,
-                            description: Some(description),
-                        }
-                    }
-                    AssistantEditKind::Delete { old_text } => {
-                        let range = Self::resolve_location(&snapshot, &old_text);
-                        ResolvedEdit {
-                            range,
-                            new_text: String::new(),
-                            description: None,
-                        }
-                    }
-                }
-            })
+            .spawn(async move { kind.resolve(&snapshot) })
             .await;
 
         Ok((buffer, suggestion))
+    }
+}
+
+impl AssistantEditKind {
+    fn resolve(self, snapshot: &BufferSnapshot) -> ResolvedEdit {
+        match self {
+            Self::Update {
+                old_text,
+                new_text,
+                description,
+            } => {
+                let range = Self::resolve_location(&snapshot, &old_text);
+                ResolvedEdit {
+                    range,
+                    new_text,
+                    description: Some(description),
+                }
+            }
+            Self::Create {
+                new_text,
+                description,
+            } => ResolvedEdit {
+                range: text::Anchor::MIN..text::Anchor::MAX,
+                description: Some(description),
+                new_text,
+            },
+            Self::InsertBefore {
+                old_text,
+                mut new_text,
+                description,
+            } => {
+                let range = Self::resolve_location(&snapshot, &old_text);
+                new_text.push('\n');
+                ResolvedEdit {
+                    range: range.start..range.start,
+                    new_text,
+                    description: Some(description),
+                }
+            }
+            Self::InsertAfter {
+                old_text,
+                mut new_text,
+                description,
+            } => {
+                let range = Self::resolve_location(&snapshot, &old_text);
+                new_text.insert(0, '\n');
+                ResolvedEdit {
+                    range: range.end..range.end,
+                    new_text,
+                    description: Some(description),
+                }
+            }
+            Self::Delete { old_text } => {
+                let range = Self::resolve_location(&snapshot, &old_text);
+                ResolvedEdit {
+                    range,
+                    new_text: String::new(),
+                    description: None,
+                }
+            }
+        }
     }
 
     fn resolve_location(buffer: &text::BufferSnapshot, search_query: &str) -> Range<text::Anchor> {
@@ -367,62 +386,67 @@ impl AssistantPatch {
 
         // Expand the context ranges of each edit and group edits with overlapping context ranges.
         let mut edit_groups_by_buffer = HashMap::default();
-        for (buffer, mut edits) in edits_by_buffer {
-            let mut edit_groups = Vec::<ResolvedEditGroup>::new();
-            let Some(snapshot) = buffer.update(cx, |buffer, _| buffer.snapshot()).ok() else {
-                continue;
-            };
-            // Sort edits by their range so that earlier, larger ranges come first
-            edits.sort_by(|a, b| a.range.cmp(&b.range, &snapshot));
-
-            // Merge overlapping edits
-            edits.dedup_by(|a, b| b.try_merge(a, &snapshot));
-
-            // Create context ranges for each edit
-            for edit in edits {
-                let context_range = {
-                    let edit_point_range = edit.range.to_point(&snapshot);
-                    let start_row = edit_point_range.start.row.saturating_sub(5);
-                    let end_row = cmp::min(edit_point_range.end.row + 5, snapshot.max_point().row);
-                    let start = snapshot.anchor_before(Point::new(start_row, 0));
-                    let end =
-                        snapshot.anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
-                    start..end
-                };
-
-                if let Some(last_group) = edit_groups.last_mut() {
-                    if last_group
-                        .context_range
-                        .end
-                        .cmp(&context_range.start, &snapshot)
-                        .is_ge()
-                    {
-                        // Merge with the previous group if context ranges overlap
-                        last_group.context_range.end = context_range.end;
-                        last_group.edits.push(edit);
-                    } else {
-                        // Create a new group
-                        edit_groups.push(ResolvedEditGroup {
-                            context_range,
-                            edits: vec![edit],
-                        });
-                    }
-                } else {
-                    // Create the first group
-                    edit_groups.push(ResolvedEditGroup {
-                        context_range,
-                        edits: vec![edit],
-                    });
-                }
+        for (buffer, edits) in edits_by_buffer {
+            if let Ok(snapshot) = buffer.update(cx, |buffer, _| buffer.text_snapshot()) {
+                edit_groups_by_buffer.insert(buffer, Self::group_edits(edits, &snapshot));
             }
-
-            edit_groups_by_buffer.insert(buffer, edit_groups);
         }
 
         ResolvedPatch {
             edit_groups: edit_groups_by_buffer,
             errors,
         }
+    }
+
+    fn group_edits(
+        mut edits: Vec<ResolvedEdit>,
+        snapshot: &text::BufferSnapshot,
+    ) -> Vec<ResolvedEditGroup> {
+        let mut edit_groups = Vec::<ResolvedEditGroup>::new();
+        // Sort edits by their range so that earlier, larger ranges come first
+        edits.sort_by(|a, b| a.range.cmp(&b.range, &snapshot));
+
+        // Merge overlapping edits
+        edits.dedup_by(|a, b| b.try_merge(a, &snapshot));
+
+        // Create context ranges for each edit
+        for edit in edits {
+            let context_range = {
+                let edit_point_range = edit.range.to_point(&snapshot);
+                let start_row = edit_point_range.start.row.saturating_sub(5);
+                let end_row = cmp::min(edit_point_range.end.row + 5, snapshot.max_point().row);
+                let start = snapshot.anchor_before(Point::new(start_row, 0));
+                let end = snapshot.anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
+                start..end
+            };
+
+            if let Some(last_group) = edit_groups.last_mut() {
+                if last_group
+                    .context_range
+                    .end
+                    .cmp(&context_range.start, &snapshot)
+                    .is_ge()
+                {
+                    // Merge with the previous group if context ranges overlap
+                    last_group.context_range.end = context_range.end;
+                    last_group.edits.push(edit);
+                } else {
+                    // Create a new group
+                    edit_groups.push(ResolvedEditGroup {
+                        context_range,
+                        edits: vec![edit],
+                    });
+                }
+            } else {
+                // Create the first group
+                edit_groups.push(ResolvedEditGroup {
+                    context_range,
+                    edits: vec![edit],
+                });
+            }
+        }
+
+        edit_groups
     }
 
     pub fn path_count(&self) -> usize {
@@ -459,6 +483,7 @@ mod tests {
     use super::*;
     use gpui::{AppContext, Context};
     use text::{OffsetRangeExt, Point};
+    use unindent::Unindent as _;
 
     #[gpui::test]
     fn test_resolve_location(cx: &mut AppContext) {
@@ -476,7 +501,7 @@ mod tests {
             });
             let snapshot = buffer.read(cx).snapshot();
             assert_eq!(
-                AssistantEdit::resolve_location(&snapshot, "ipsum\ndolor").to_point(&snapshot),
+                AssistantEditKind::resolve_location(&snapshot, "ipsum\ndolor").to_point(&snapshot),
                 Point::new(1, 0)..Point::new(2, 18)
             );
         }
@@ -498,7 +523,7 @@ mod tests {
             });
             let snapshot = buffer.read(cx).snapshot();
             assert_eq!(
-                AssistantEdit::resolve_location(&snapshot, "fn foo1(b: usize) {\n42\n}")
+                AssistantEditKind::resolve_location(&snapshot, "fn foo1(b: usize) {\n42\n}")
                     .to_point(&snapshot),
                 Point::new(0, 0)..Point::new(2, 1)
             );
@@ -524,9 +549,104 @@ mod tests {
             });
             let snapshot = buffer.read(cx).snapshot();
             assert_eq!(
-                AssistantEdit::resolve_location(&snapshot, "Foo.bar.baz.qux()").to_point(&snapshot),
+                AssistantEditKind::resolve_location(&snapshot, "Foo.bar.baz.qux()")
+                    .to_point(&snapshot),
                 Point::new(1, 0)..Point::new(4, 14)
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_resolve_edits(cx: &mut AppContext) {
+        assert_edits(
+            "
+                /// A person
+                struct Person {
+                    name: String,
+                    age: usize,
+                }
+
+                /// A dog
+                struct Dog {
+                    weight: f32,
+                }
+
+                impl Person {
+                    fn name(&self) -> &str {
+                        &self.name
+                    }
+                }
+            "
+            .unindent(),
+            vec![
+                AssistantEditKind::Update {
+                    old_text: "
+                        name: String,
+                    "
+                    .unindent(),
+                    new_text: "
+                        first_name: String,
+                        last_name: String,
+                    "
+                    .unindent(),
+                    description: "".into(),
+                },
+                AssistantEditKind::Update {
+                    old_text: "
+                        fn name(&self) -> &str {
+                            &self.name
+                        }
+                    "
+                    .unindent(),
+                    new_text: "
+                        fn name(&self) -> String {
+                            format!(\"{} {}\", self.first_name, self.last_name)
+                        }
+                    "
+                    .unindent(),
+                    description: "".into(),
+                },
+            ],
+            "
+                /// A person
+                struct Person {
+                    first_name: String,
+                    last_name: String,
+                    age: usize,
+                }
+
+                /// A dog
+                struct Dog {
+                    weight: f32,
+                }
+
+                impl Person {
+                    fn name(&self) -> String {
+                        format!(\"{} {}\", self.first_name, self.last_name)
+                    }
+                }
+            "
+            .unindent(),
+            cx,
+        );
+    }
+
+    #[track_caller]
+    fn assert_edits(
+        old_text: String,
+        edits: Vec<AssistantEditKind>,
+        new_text: String,
+        cx: &mut AppContext,
+    ) {
+        let buffer = cx.new_model(|cx| Buffer::local(old_text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+        let resolved_edits = edits
+            .into_iter()
+            .map(|kind| kind.resolve(&snapshot))
+            .collect();
+        let edit_groups = AssistantPatch::group_edits(resolved_edits, &snapshot);
+        ResolvedPatch::apply_edit_groups(&edit_groups, &buffer, cx);
+        let actual_new_text = buffer.read(cx).text();
+        pretty_assertions::assert_eq!(actual_new_text, new_text);
     }
 }
