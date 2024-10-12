@@ -271,3 +271,47 @@ impl http_client::HttpClient for ReqwestClient {
         .boxed()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use http_client::{http, HttpClient};
+
+    use crate::ReqwestClient;
+
+    #[test]
+    fn test_proxy_uri() {
+        let client = ReqwestClient::new();
+        assert_eq!(client.proxy(), None);
+
+        let proxy = http::Uri::from_static("http://localhost:10809");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("https://localhost:10809");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks4://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks4a://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks5://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks5h://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_proxy_uri() {
+        let proxy = http::Uri::from_static("file:///etc/hosts");
+        ReqwestClient::proxy_and_user_agent(Some(proxy), "test").unwrap();
+    }
+}
