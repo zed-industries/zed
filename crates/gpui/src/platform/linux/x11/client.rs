@@ -1421,10 +1421,12 @@ impl LinuxClient for X11Client {
     }
 
     fn open_uri(&self, uri: &str) {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         open_uri_internal(self.background_executor(), uri, None);
     }
 
     fn reveal_path(&self, path: PathBuf) {
+        #[cfg(any(feature = "x11", feature = "wayland"))]
         reveal_path_internal(self.background_executor(), path, None);
     }
 
