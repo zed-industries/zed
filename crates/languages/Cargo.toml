@@ -81,24 +81,6 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
 
-tree-sitter-bash = { workspace = true, optional = true }
-tree-sitter-c = { workspace = true, optional = true }
-tree-sitter-cpp = { workspace = true, optional = true }
-tree-sitter-css = { workspace = true, optional = true }
-tree-sitter-go = { workspace = true, optional = true }
-tree-sitter-go-mod = { workspace = true, optional = true }
-tree-sitter-gowork = { workspace = true, optional = true }
-tree-sitter-jsdoc = { workspace = true, optional = true }
-tree-sitter-json = { workspace = true, optional = true }
-tree-sitter-md = { workspace = true, optional = true }
-protols-tree-sitter-proto = { workspace = true, optional = true }
-tree-sitter-python = { workspace = true, optional = true }
-tree-sitter-regex = { workspace = true, optional = true }
-tree-sitter-rust = { workspace = true, optional = true }
-tree-sitter-typescript = { workspace = true, optional = true }
-tree-sitter-yaml = { workspace = true, optional = true }
-tree-sitter = { workspace = true, optional = true }
-
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 
