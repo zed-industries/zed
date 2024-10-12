@@ -23,7 +23,6 @@ test-support = [
 ]
 runtime_shaders = []
 macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
-windowing = []
 wayland = [
     "blade-graphics",
     "blade-macros",

@@ -477,6 +477,7 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
+zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"
@@ -599,8 +600,19 @@ should_implement_trait = { level = "allow" }
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
 
 [workspace.metadata.cross.target.x86_64-unknown-linux-gnu]
-env.volumes = ["script=script"]
 pre-build = [
+    "curl -fsSL --output - \"https://github.com/rui314/mold/releases/download/v2.34.0/mold-2.34.0-x86_64-linux.tar.gz\" | tar -C /home --strip-components=1 --no-overwrite-dir -xzf -",
+    "mv /home/bin/ld.mold /usr/local/bin/ld.mold",
+    "mv /home/bin/mold /usr/local/bin/mold",
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get --assume-yes install clang",
+]
+
+[workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "curl -fsSL --output - \"https://github.com/rui314/mold/releases/download/v2.34.0/mold-2.34.0-aarch64-linux.tar.gz\" | tar -C /home --strip-components=1 --no-overwrite-dir -xzf -",
+    "mv /home/bin/ld.mold /usr/local/bin/ld.mold",
+    "mv /home/bin/mold /usr/local/bin/mold",
     "dpkg --add-architecture $CROSS_DEB_ARCH",
     "apt-get update && apt-get --assume-yes install clang",
 ]

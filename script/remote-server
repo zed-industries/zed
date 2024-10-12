@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -xeuo pipefail
+
+# if root or if sudo/unavailable, define an empty variable
+if [ "$(id -u)" -eq 0 ]
+then maysudo=''
+else maysudo="$(command -v sudo || command -v doas || true)"
+fi
+
+apt=$(command -v apt-get || true)
+if [[ -n $apt ]]; then
+  deps=(
+    clang
+  )
+
+  $maysudo "$apt" update
+  $maysudo "$apt" install -y "${deps[@]}"
+  finalize
+  exit 0
+fi

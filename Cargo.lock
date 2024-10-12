@@ -14669,6 +14669,7 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
+ "zstd",
 ]
 
 [[package]]
