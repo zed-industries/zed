@@ -24,6 +24,8 @@ mod tailwind;
 mod typescript;
 mod vtsls;
 mod yaml;
+#[cfg(test)]
+mod languages_tests;
 
 #[derive(RustEmbed)]
 #[folder = "src/"]
@@ -272,7 +274,7 @@ pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
     )
 }
 
-fn load_config(name: &str) -> LanguageConfig {
+pub fn load_config(name: &str) -> LanguageConfig {
     let config_toml = String::from_utf8(
         LanguageDir::get(&format!("{}/config.toml", name))
             .unwrap_or_else(|| panic!("missing config for language {:?}", name))
