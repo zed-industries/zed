@@ -4744,7 +4744,7 @@ impl Render for Workspace {
                                                         cx,
                                                         |left_dock, cx| {
                                                             if WorkspaceSettings::get_global(cx)
-                                                                .sync_dock_size
+                                                                .sync_panel_size_within_dock
                                                                 .contains(&DockPosition::Left)
                                                             {
                                                                 left_dock.resize_all_panels(
@@ -4767,7 +4767,7 @@ impl Render for Workspace {
                                                         cx,
                                                         |right_dock, cx| {
                                                             if WorkspaceSettings::get_global(cx)
-                                                                .sync_dock_size
+                                                                .sync_panel_size_within_dock
                                                                 .contains(&DockPosition::Right)
                                                             {
                                                                 right_dock.resize_all_panels(
@@ -4790,7 +4790,7 @@ impl Render for Workspace {
                                                         cx,
                                                         |bottom_dock, cx| {
                                                             if WorkspaceSettings::get_global(cx)
-                                                                .sync_dock_size
+                                                                .sync_panel_size_within_dock
                                                                 .contains(&DockPosition::Bottom)
                                                             {
                                                                 bottom_dock.resize_all_panels(

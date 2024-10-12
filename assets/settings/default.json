@@ -84,9 +84,9 @@
     // workspace when the centered layout is used.
     "right_padding": 0.2
   },
-  // Whether to sync the sizes of panels a dock. This setting takes in a list of dock positions.
+  // Whether to sync the sizes of panels within a dock. This setting takes in a list of dock positions.
   // Note that this setting cannot sync size between docks.
-  "sync_dock_size": [],
+  "sync_panel_size_within_dock": [],
   // The key to use for adding multiple cursors
   // Currently "alt" or "cmd_or_ctrl"  (also aliased as
   // "cmd" and "ctrl") are supported.
