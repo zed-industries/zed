@@ -2,7 +2,7 @@ use std::{any::type_name, borrow::Cow, io::Read, mem, pin::Pin, sync::OnceLock, 
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::{AsyncRead, TryStreamExt};
+use futures::{AsyncRead, TryStreamExt as _};
 use http_client::{http, ReadTimeout, RedirectPolicy};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -11,6 +11,7 @@ use reqwest::{
 use smol::future::FutureExt;
 
 const DEFAULT_CAPACITY: usize = 4096;
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 pub struct ReqwestClient {
     client: reqwest::Client,
@@ -20,20 +21,29 @@ pub struct ReqwestClient {
 
 impl ReqwestClient {
     pub fn new() -> Self {
-        reqwest::Client::new().into()
+        reqwest::Client::builder()
+            .use_rustls_tls()
+            .build()
+            .expect("Failed to initialize HTTP client")
+            .into()
     }
 
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let client = reqwest::Client::builder().default_headers(map).build()?;
+        let client = reqwest::Client::builder()
+            .default_headers(map)
+            .use_rustls_tls()
+            .build()?;
         Ok(client.into())
     }
 
     pub fn proxy_and_user_agent(proxy: Option<http::Uri>, agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let mut client = reqwest::Client::builder().default_headers(map);
+        let mut client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .default_headers(map);
         if let Some(proxy) = proxy.clone() {
             client = client.proxy(reqwest::Proxy::all(proxy.to_string())?);
         }
@@ -43,8 +53,6 @@ impl ReqwestClient {
         Ok(client)
     }
 }
-
-static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {

@@ -1137,13 +1137,31 @@ impl Client {
 
             match url_scheme {
                 Https => {
+                    let client_config = {
+                        let mut root_store = rustls::RootCertStore::empty();
+
+                        let root_certs = rustls_native_certs::load_native_certs();
+                        for error in root_certs.errors {
+                            log::warn!("error loading native certs: {:?}", error);
+                        }
+                        root_store.add_parsable_certificates(
+                            &root_certs
+                                .certs
+                                .into_iter()
+                                .map(|cert| cert.as_ref().to_owned())
+                                .collect::<Vec<_>>(),
+                        );
+                        rustls::ClientConfig::builder()
+                            .with_safe_defaults()
+                            .with_root_certificates(root_store)
+                            .with_no_client_auth()
+                    };
+
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some(async_tls::TlsConnector::from(
-                                http_client::TLS_CONFIG.clone(),
-                            )),
+                            Some(client_config.into()),
                         )
                         .await?;
                     Ok(Connection::new(
