@@ -5529,13 +5529,13 @@ name = "http_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes 1.7.1",
  "derive_more",
  "futures 0.3.30",
  "http 1.1.0",
  "log",
  "serde",
  "serde_json",
- "smol",
  "url",
 ]
 

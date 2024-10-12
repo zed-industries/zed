@@ -21,7 +21,7 @@ path = "examples/client.rs"
 
 [dependencies]
 anyhow.workspace = true
-bytes = "1.0"
+bytes.workspace = true
 futures.workspace = true
 http_client.workspace = true
 serde.workspace = true
