@@ -588,7 +588,7 @@ impl Render for NotificationPanel {
                     .px_2()
                     .py_1()
                     // Match the height of the tab bar so they line up.
-                    .h(rems(ui::Tab::CONTAINER_HEIGHT_IN_REMS))
+                    .h(ui::Tab::height(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(Label::new("Notifications"))
