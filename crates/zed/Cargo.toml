@@ -51,7 +51,7 @@ futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 go_to_line.workspace = true
-gpui = { workspace = true, features = ["wayland", "x11"] }
+gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 headless.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
