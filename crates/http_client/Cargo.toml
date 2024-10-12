@@ -16,6 +16,7 @@ path = "src/http_client.rs"
 doctest = true
 
 [dependencies]
+bytes.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true

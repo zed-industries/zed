@@ -336,6 +336,7 @@ blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blake3 = "1.5.3"
+bytes = "1.0"
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
