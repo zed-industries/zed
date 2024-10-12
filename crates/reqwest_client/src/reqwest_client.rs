@@ -19,10 +19,6 @@ pub struct ReqwestClient {
     handle: tokio::runtime::Handle,
 }
 
-// TODO for reqwest:
-// 1. Determine whether or Use the rustls certificates.
-// 2. Check the async_tungstenite change we just pushed out. Fix it if need be.
-
 impl ReqwestClient {
     pub fn new() -> Self {
         reqwest::Client::builder()
