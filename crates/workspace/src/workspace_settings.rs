@@ -21,7 +21,7 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
-    pub sync_dock_size: Vec<DockPosition>,
+    pub sync_panel_size_within_dock: Vec<DockPosition>,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -114,8 +114,8 @@ pub struct WorkspaceSettingsContent {
     /// Whether to sync the sizes of panels in a dock.
     /// When a dock position is on the list, resizing one panel will resize all panels in that dock.
     ///
-    /// Default: none
-    pub sync_dock_size: Option<Vec<DockPosition>>,
+    /// Default: []
+    pub sync_panel_size_within_dock: Option<Vec<DockPosition>>,
 }
 
 #[derive(Deserialize)]
