@@ -659,7 +659,6 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn zoom(&self) {
-        // unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err() };
         unsafe {
             if IsWindowVisible(self.0.hwnd).as_bool() {
                 ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
