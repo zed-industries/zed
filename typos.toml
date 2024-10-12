@@ -48,7 +48,6 @@ extend-ignore-re = [
     'cl\[ist]',
     '\[lan\]guage',
     '"ba"',
-    ":ba\\|z",
     # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
     "COLUMN enviroment",
     # Typo in ClickHouse column name.
