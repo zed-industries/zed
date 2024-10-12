@@ -17,8 +17,9 @@ use std::{
 };
 pub use url::Url;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ReadTimeout(pub Duration);
+
 impl Default for ReadTimeout {
     fn default() -> Self {
         Self(Duration::from_secs(5))

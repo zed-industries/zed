@@ -1763,7 +1763,7 @@ See Buffer Font Features
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": {
       "on": {
         // Default directories to search for virtual environments, relative
@@ -1782,7 +1782,7 @@ Disable with:
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": "off"
   }
 }

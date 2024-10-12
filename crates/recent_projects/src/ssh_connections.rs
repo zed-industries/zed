@@ -515,9 +515,24 @@ pub async fn open_ssh_project(
 
     let did_open_ssh_project = cx
         .update(|cx| {
-            workspace::open_ssh_project(window, connection_options, delegate, app_state, paths, cx)
+            workspace::open_ssh_project(
+                window,
+                connection_options,
+                delegate.clone(),
+                app_state,
+                paths,
+                cx,
+            )
         })?
         .await;
+
+    let did_open_ssh_project = match did_open_ssh_project {
+        Ok(ok) => Ok(ok),
+        Err(e) => {
+            delegate.update_error(e.to_string(), cx);
+            Err(e)
+        }
+    };
 
     did_open_ssh_project
 }
