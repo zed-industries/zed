@@ -598,21 +598,3 @@ should_implement_trait = { level = "allow" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
-
-[workspace.metadata.cross.target.x86_64-unknown-linux-gnu]
-pre-build = [
-    "curl -fsSL --output - \"https://github.com/rui314/mold/releases/download/v2.34.0/mold-2.34.0-x86_64-linux.tar.gz\" | tar -C /home --strip-components=1 --no-overwrite-dir -xzf -",
-    "mv /home/bin/ld.mold /usr/local/bin/ld.mold",
-    "mv /home/bin/mold /usr/local/bin/mold",
-    "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update && apt-get --assume-yes install clang",
-]
-
-[workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
-pre-build = [
-    "curl -fsSL --output - \"https://github.com/rui314/mold/releases/download/v2.34.0/mold-2.34.0-aarch64-linux.tar.gz\" | tar -C /home --strip-components=1 --no-overwrite-dir -xzf -",
-    "mv /home/bin/ld.mold /usr/local/bin/ld.mold",
-    "mv /home/bin/mold /usr/local/bin/mold",
-    "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update && apt-get --assume-yes install clang",
-]

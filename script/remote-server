@@ -8,14 +8,10 @@ then maysudo=''
 else maysudo="$(command -v sudo || command -v doas || true)"
 fi
 
-apt=$(command -v apt-get || true)
-if [[ -n $apt ]]; then
-  deps=(
-    clang
-  )
+deps=(
+  clang
+)
 
-  $maysudo "$apt" update
-  $maysudo "$apt" install -y "${deps[@]}"
-  finalize
-  exit 0
-fi
+$maysudo apt-get update
+$maysudo apt-get install -y "${deps[@]}"
+exit 0
