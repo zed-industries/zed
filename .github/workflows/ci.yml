@@ -99,7 +99,10 @@ jobs:
         run: cargo build -p collab
 
       - name: Build other binaries and features
-        run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
+        run: |
+          cargo build --workspace --bins --all-features
+          cargo check -p gpui --features "macos-blade"
+          cargo build -p remote_server
 
   linux_tests:
     timeout-minutes: 60
@@ -155,9 +158,6 @@ jobs:
 
       - name: Install Clang & Mold
         run: ./script/remote-server && ./script/install-mold 2.34.0
-
-      - name: cargo clippy
-        run: ./script/clippy
 
       - name: Build Remote Server
         run: cargo build -p remote_server
